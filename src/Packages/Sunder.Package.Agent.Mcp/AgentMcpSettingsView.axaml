@@ -1,0 +1,117 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Sunder.Package.Agent.Mcp"
+             xmlns:ae="clr-namespace:AvaloniaEdit;assembly=AvaloniaEdit"
+             x:Class="Sunder.Package.Agent.Mcp.AgentMcpSettingsView"
+             x:DataType="vm:AgentMcpSettingsViewModel"
+             mc:Ignorable="d">
+  <Grid ColumnDefinitions="Auto,*"
+        ColumnSpacing="18">
+    <Border Padding="12">
+      <DockPanel LastChildFill="True">
+        <StackPanel DockPanel.Dock="Bottom"
+                    Spacing="10">
+          <Button Content="New MCP Server"
+                  Command="{Binding CreateServerCommand}"
+                  HorizontalAlignment="Stretch" />
+          <Button Content="Delete MCP Server"
+                  Command="{Binding DeleteCommand}"
+                  HorizontalAlignment="Stretch" />
+        </StackPanel>
+
+        <StackPanel Spacing="10">
+          <TextBlock Text="Configured MCP Servers"
+                     FontSize="20"
+                     FontWeight="SemiBold" />
+          <TextBlock Text="Create one server at a time, then paste the bare local or remote MCP object into the editor."
+                     TextWrapping="Wrap" />
+          <ListBox ItemsSource="{Binding Servers}"
+                   SelectedItem="{Binding SelectedServer, Mode=TwoWay}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:ConfiguredMcpServerRecord">
+                <StackPanel Spacing="2">
+                  <TextBlock Text="{Binding DisplayName}" />
+                  <TextBlock Text="{Binding Name}"
+                             Opacity="0.75"
+                             FontSize="12" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <Border Grid.Column="1"
+            Padding="12"
+            MinWidth="0"
+            ClipToBounds="True">
+      <Grid RowDefinitions="Auto,Auto,Auto,*,Auto"
+             RowSpacing="10">
+        <TextBlock Text="MCP Server Editor"
+                   FontSize="18"
+                   FontWeight="SemiBold" />
+
+        <StackPanel Grid.Row="1"
+                    Spacing="6">
+          <TextBlock Text="Machine name" />
+          <TextBox Text="{Binding Name, Mode=TwoWay}"
+                   PlaceholderText="context7" />
+          <TextBlock Text="Paste only the bare MCP server object. JSONC comments and trailing commas are accepted and will be reformatted on save."
+                     TextWrapping="Wrap"
+                     Opacity="0.8" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="2"
+                    Orientation="Horizontal"
+                    Spacing="10">
+          <Button Content="Local Template"
+                  Command="{Binding LoadLocalTemplateCommand}" />
+          <Button Content="Remote Template"
+                  Command="{Binding LoadRemoteTemplateCommand}" />
+          <Button Content="Format"
+                  Command="{Binding FormatCommand}" />
+        </StackPanel>
+
+        <Border Grid.Row="3"
+                BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
+                BorderThickness="1"
+                CornerRadius="6"
+                Padding="6"
+                MinWidth="0"
+                MinHeight="0"
+                ClipToBounds="True">
+          <ae:TextEditor x:Name="ConfigEditor"
+                          IsReadOnly="False"
+                          ShowLineNumbers="True"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto"
+                          Background="{DynamicResource Sunder.Brush.Surface.Code}"
+                          Foreground="{DynamicResource Sunder.Brush.Foreground.Code}"
+                          FontFamily="Cascadia Code,Consolas,Menlo,Monospace"
+                          FontSize="13"
+                          MinWidth="0"
+                          MinHeight="0"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Stretch"
+                          WordWrap="False" />
+        </Border>
+
+        <Grid Grid.Row="4"
+              ColumnDefinitions="Auto,*"
+              ColumnSpacing="10"
+              MinWidth="0">
+          <Button Content="Save MCP Server"
+                  Command="{Binding SaveCommand}" />
+          <TextBlock Grid.Column="1"
+                     Text="{Binding StatusText}"
+                     TextWrapping="Wrap"
+                     VerticalAlignment="Center"
+                     MinWidth="0" />
+        </Grid>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

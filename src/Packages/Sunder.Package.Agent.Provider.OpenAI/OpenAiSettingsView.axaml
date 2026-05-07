@@ -1,0 +1,63 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Sunder.Package.Agent.Provider.OpenAI"
+             x:Class="Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsView"
+             x:DataType="vm:OpenAiSettingsViewModel"
+             mc:Ignorable="d">
+  <ScrollViewer>
+    <StackPanel Margin="0,0,0,8"
+                Spacing="16">
+      <Border Classes="card-surface">
+        <StackPanel Spacing="12">
+          <TextBlock Classes="section-title" Text="ChatGPT Plus/Pro" />
+          <TextBlock Classes="caption"
+                     Text="Authorize this provider with your ChatGPT Plus or Pro account. This is used when auth mode is set to ChatGPT Plus/Pro."
+                     TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal"
+                      Spacing="10">
+            <Button Content="Authorize"
+                    Command="{Binding AuthorizeCommand}"
+                    IsEnabled="{Binding !IsBusy}" />
+            <Button Classes="secondary-action"
+                     Content="Disconnect"
+                     Command="{Binding DisconnectCommand}"
+                     IsEnabled="{Binding CanDisconnect}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card-surface">
+        <StackPanel Spacing="12">
+          <TextBlock Classes="section-title" Text="API Key" />
+          <TextBlock Classes="caption"
+                     Text="A stored API key enables embeddings and is used for chat when auth mode is set to API key. Existing keys remain stored unless you replace them here."
+                     TextWrapping="Wrap" />
+          <TextBox Text="{Binding ApiKeyValue}"
+                   PlaceholderText="sk-..." />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card-surface">
+        <StackPanel Spacing="12">
+          <TextBlock Classes="section-title" Text="Status" />
+          <TextBlock Classes="muted"
+                     Text="{Binding StatusText}"
+                     TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal"
+                      Spacing="10">
+            <Button Classes="secondary-action"
+                    Content="Refresh"
+                    Command="{Binding RefreshStatusCommand}"
+                    IsEnabled="{Binding !IsBusy}" />
+            <Button Classes="primary-action"
+                    Content="Save"
+                    Command="{Binding SaveCommand}"
+                    IsEnabled="{Binding !IsBusy}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

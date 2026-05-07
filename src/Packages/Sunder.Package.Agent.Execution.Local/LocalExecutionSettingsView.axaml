@@ -1,0 +1,77 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Sunder.Package.Agent.Execution.Local"
+             x:Class="Sunder.Package.Agent.Execution.Local.LocalExecutionSettingsView"
+             x:DataType="vm:LocalExecutionSettingsViewModel">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Spacing="16">
+      <StackPanel Spacing="6">
+        <TextBlock Text="Local Execution Shells"
+                   FontSize="24"
+                   FontWeight="SemiBold" />
+        <TextBlock Text="Manage shells available to local workspaces. Add a shell when you need a non-standard executable."
+                   TextWrapping="Wrap" />
+      </StackPanel>
+
+      <Border Padding="14">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Shells"
+                     FontWeight="SemiBold" />
+          <Button Content="Add Shell"
+                  HorizontalAlignment="Left"
+                  Command="{Binding AddShellCommand}" />
+          <Grid ColumnDefinitions="2*,3*,Auto"
+                ColumnSpacing="10"
+                Margin="0,4,0,0">
+            <TextBlock Text="Name"
+                       FontWeight="SemiBold" />
+            <TextBlock Grid.Column="1"
+                       Text="Executable Path"
+                       FontWeight="SemiBold" />
+            <TextBlock Grid.Column="2"
+                       Text="Syntax"
+                       FontWeight="SemiBold" />
+          </Grid>
+          <ListBox ItemsSource="{Binding Shells}"
+                   SelectedItem="{Binding SelectedShell, Mode=TwoWay}"
+                   MinHeight="160">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:LocalShellRowViewModel">
+                <Grid ColumnDefinitions="2*,3*,Auto"
+                      ColumnSpacing="10"
+                      Margin="0,4">
+                  <TextBox Text="{Binding DisplayName, Mode=TwoWay}"
+                           IsReadOnly="{Binding IsDetected}"
+                           PlaceholderText="Display name" />
+                  <TextBox Grid.Column="1"
+                           Text="{Binding ExecutablePath, Mode=TwoWay}"
+                           IsReadOnly="{Binding IsDetected}"
+                           PlaceholderText="Executable path" />
+                  <ComboBox Grid.Column="2"
+                             ItemsSource="{Binding SyntaxOptions}"
+                             IsEnabled="{Binding CanEdit}"
+                             SelectedItem="{Binding SelectedSyntax, Mode=TwoWay}">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:ShellSyntaxOption">
+                        <TextBlock Text="{Binding DisplayName}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <StackPanel Orientation="Horizontal"
+                      Spacing="8">
+            <Button Content="Delete Selected"
+                    Command="{Binding DeleteSelectedShellCommand}" />
+            <Button Content="Save Shells"
+                    Command="{Binding SaveShellsCommand}" />
+          </StackPanel>
+          <TextBlock Text="{Binding StatusText}"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

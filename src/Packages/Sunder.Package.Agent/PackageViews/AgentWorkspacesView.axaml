@@ -1,0 +1,442 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Sunder.Package.Agent.PackageViews"
+             xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
+             x:Class="Sunder.Package.Agent.PackageViews.AgentWorkspacesView"
+             x:DataType="vm:AgentWorkspacesViewModel"
+             mc:Ignorable="d">
+
+  <UserControl.Styles>
+    <Style Selector="Border.workspace-shell">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="ClipToBounds" Value="True" />
+    </Style>
+
+    <Style Selector="Border.workspace-pane">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+    </Style>
+
+    <Style Selector="Border.workspace-list-pane">
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,0,1,0" />
+    </Style>
+
+    <Style Selector="Border.workspace-pane-header">
+      <Setter Property="Padding" Value="28,24,28,18" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+
+    <Style Selector="Border.workspace-list-body">
+      <Setter Property="Padding" Value="18" />
+    </Style>
+
+    <Style Selector="Border.workspace-editor-body">
+      <Setter Property="Padding" Value="28,24" />
+    </Style>
+
+    <Style Selector="Border.workspace-actions">
+      <Setter Property="Padding" Value="18" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,1,0,0" />
+    </Style>
+
+    <Style Selector="TextBlock.workspace-title">
+      <Setter Property="FontSize" Value="26" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    </Style>
+
+    <Style Selector="TextBlock.workspace-caption">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="TextBlock.field-label">
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+      <Setter Property="Margin" Value="0,0,0,4" />
+    </Style>
+
+    <Style Selector="TextBlock.field-help">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="ListBox.workspace-list">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+    </Style>
+
+    <Style Selector="ListBox.workspace-list ListBoxItem">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="14,12" />
+      <Setter Property="Margin" Value="0,0,0,8" />
+    </Style>
+
+    <Style Selector="ListBox.workspace-list ListBoxItem:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+    </Style>
+
+    <Style Selector="ListBox.workspace-list ListBoxItem:selected">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Selected}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Warning}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    </Style>
+
+    <Style Selector="TextBlock.workspace-list-meta">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <Style Selector="ListBox.workspace-list ListBoxItem:selected TextBlock.workspace-list-meta">
+      <Setter Property="Foreground" Value="#C7B799" />
+    </Style>
+
+    <Style Selector="Button.workspace-open-action">
+      <Setter Property="Width" Value="32" />
+      <Setter Property="MinWidth" Value="32" />
+      <Setter Property="Height" Value="36" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="FontSize" Value="24" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Button.workspace-open-action:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+
+    <Style Selector="Button.workspace-open-action:pressed">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+
+    <Style Selector="Border.editor-card">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+
+    <Style Selector="Border.default-pill">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Full}" />
+      <Setter Property="Padding" Value="8,4" />
+    </Style>
+
+    <Style Selector="ListBox.path-list">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="6" />
+      <Setter Property="MinHeight" Value="120" />
+    </Style>
+
+    <Style Selector="ListBox.path-list ListBoxItem">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="6" />
+      <Setter Property="Margin" Value="0,0,0,4" />
+    </Style>
+
+    <Style Selector="ListBox.path-list ListBoxItem:selected">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+    </Style>
+  </UserControl.Styles>
+
+  <Border Classes="workspace-shell">
+    <Grid x:Name="WorkspaceAdaptiveLayout"
+          ColumnDefinitions="360,*"
+          ColumnSpacing="4">
+      <Border x:Name="WorkspaceListPane"
+              Classes="workspace-pane workspace-list-pane"
+              IsVisible="{Binding ShowListPane}">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <Border Grid.Row="0"
+                  Classes="workspace-pane-header">
+            <StackPanel Spacing="8">
+              <TextBlock Classes="workspace-title"
+                         Text="Workspaces" />
+              <TextBlock Classes="workspace-caption"
+                         Text="Workspaces bind sessions to an execution environment" />
+            </StackPanel>
+          </Border>
+
+          <Border Grid.Row="1"
+                  Classes="workspace-list-body">
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+              <ListBox Classes="workspace-list"
+                       ItemsSource="{Binding Workspaces}"
+                       SelectedItem="{Binding SelectedWorkspace, Mode=TwoWay}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="m:AgentWorkspaceRecord">
+                    <Grid ColumnDefinitions="*,1,Auto"
+                          ColumnSpacing="10">
+                      <Grid RowDefinitions="Auto,Auto"
+                            RowSpacing="3"
+                            MinWidth="0">
+                        <TextBlock Text="{Binding DisplayName}"
+                                   FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" />
+                         <TextBlock Grid.Row="1"
+                                    Text="{Binding Description}"
+                                    Classes="workspace-list-meta"
+                                    TextTrimming="CharacterEllipsis" />
+                      </Grid>
+                      <Border Grid.Column="1"
+                              Background="{DynamicResource Sunder.Brush.Border.Subtle}"
+                              Margin="2,-2,0,-2" />
+                      <Button Grid.Column="2"
+                              Classes="workspace-open-action"
+                              Content="›"
+                              Command="{Binding $parent[UserControl].DataContext.OpenWorkspaceEditorCommand}"
+                              CommandParameter="{Binding}"
+                              ToolTip.Tip="Open workspace" />
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </ScrollViewer>
+          </Border>
+
+          <Border Grid.Row="2"
+                  Classes="workspace-actions">
+            <Grid ColumnDefinitions="*,*"
+                  ColumnSpacing="10">
+              <Button Grid.Column="0"
+                      Classes="secondary-action danger-action"
+                      Content="Delete Workspace"
+                      Command="{Binding DeleteWorkspaceCommand}"
+                      IsEnabled="{Binding CanDeleteSelected}"
+                      HorizontalAlignment="Stretch" />
+              <Button Grid.Column="1"
+                      Classes="primary-action"
+                      Content="New Workspace"
+                      Command="{Binding CreateWorkspaceCommand}"
+                      HorizontalAlignment="Stretch" />
+            </Grid>
+          </Border>
+        </Grid>
+      </Border>
+
+      <Border x:Name="WorkspaceEditorPane"
+              Grid.Column="1"
+              Classes="workspace-pane"
+              IsVisible="{Binding ShowEditorPane}">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <Border Grid.Row="0"
+                  Classes="workspace-pane-header">
+            <Grid>
+              <StackPanel Spacing="8">
+                <TextBlock Classes="workspace-title"
+                           Text="Workspace" />
+                <TextBlock Classes="workspace-caption"
+                           Text="Configure workspace and other settings." />
+              </StackPanel>
+            </Grid>
+          </Border>
+
+          <ScrollViewer Grid.Row="1"
+                        HorizontalScrollBarVisibility="Disabled"
+                        VerticalScrollBarVisibility="Auto">
+            <Border Classes="workspace-editor-body">
+              <StackPanel Spacing="18">
+                <StackPanel Spacing="5">
+                  <TextBlock Classes="field-label"
+                             Text="Display name" />
+                  <TextBox Text="{Binding DisplayName, Mode=TwoWay}"
+                           PlaceholderText="Workspace name" />
+                </StackPanel>
+
+                <StackPanel Spacing="5">
+                  <TextBlock Classes="field-label"
+                             Text="Description" />
+                  <TextBox Text="{Binding Description, Mode=TwoWay}"
+                           PlaceholderText="Description" />
+                </StackPanel>
+
+                <StackPanel Spacing="5"
+                            IsVisible="{Binding HasExecutionTargetChoices}">
+                  <TextBlock Classes="field-label"
+                             Text="Execution target" />
+                  <ComboBox ItemsSource="{Binding ExecutionTargets}"
+                            SelectedItem="{Binding SelectedExecutionTarget, Mode=TwoWay}"
+                            HorizontalAlignment="Stretch">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:ExecutionTargetOption">
+                        <StackPanel Spacing="2">
+                          <TextBlock Text="{Binding DisplayName}" />
+                          <TextBlock Text="{Binding Description}"
+                                     Classes="field-help" />
+                        </StackPanel>
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </StackPanel>
+
+                <ItemsControl ItemsSource="{Binding EditorSections}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:AgentEditorSectionViewModel">
+                      <Border Classes="editor-card"
+                              Margin="0,0,0,12">
+                        <StackPanel Spacing="12">
+                          <StackPanel Spacing="4">
+                            <TextBlock Text="{Binding Title}"
+                                       FontWeight="SemiBold"
+                                       Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+                            <TextBlock Text="{Binding Description}"
+                                       Classes="workspace-caption"
+                                       IsVisible="{Binding HasDescription}" />
+                          </StackPanel>
+
+                          <ItemsControl ItemsSource="{Binding Fields}">
+                            <ItemsControl.DataTemplates>
+                              <DataTemplate DataType="vm:AgentEditorTextFieldViewModel"
+                                            x:DataType="vm:AgentEditorTextFieldViewModel">
+                                <StackPanel Spacing="5"
+                                            Margin="0,0,0,12">
+                                  <TextBlock Classes="field-label"
+                                             Text="{Binding Label}" />
+                                  <TextBlock Classes="field-help"
+                                             Text="{Binding Description}"
+                                             IsVisible="{Binding HasDescription}" />
+                                  <TextBox Text="{Binding Value, Mode=TwoWay}" />
+                                </StackPanel>
+                              </DataTemplate>
+
+                              <DataTemplate DataType="vm:AgentEditorSelectFieldViewModel"
+                                            x:DataType="vm:AgentEditorSelectFieldViewModel">
+                                <StackPanel Spacing="5"
+                                            Margin="0,0,0,12">
+                                  <TextBlock Classes="field-label"
+                                             Text="{Binding Label}" />
+                                  <TextBlock Classes="field-help"
+                                             Text="{Binding Description}"
+                                             IsVisible="{Binding HasDescription}" />
+                                  <ComboBox ItemsSource="{Binding Options}"
+                                            SelectedItem="{Binding SelectedOption, Mode=TwoWay}"
+                                            HorizontalAlignment="Stretch">
+                                    <ComboBox.ItemTemplate>
+                                      <DataTemplate x:DataType="vm:AgentEditorOptionViewModel">
+                                        <StackPanel Spacing="2">
+                                          <TextBlock Text="{Binding Label}" />
+                                          <TextBlock Text="{Binding Description}"
+                                                     Classes="field-help"
+                                                     IsVisible="{Binding HasDescription}" />
+                                        </StackPanel>
+                                      </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                  </ComboBox>
+                                </StackPanel>
+                              </DataTemplate>
+
+                              <DataTemplate DataType="vm:AgentEditorPathListFieldViewModel"
+                                            x:DataType="vm:AgentEditorPathListFieldViewModel">
+                                <StackPanel Spacing="10">
+                                  <StackPanel Spacing="4">
+                                    <TextBlock Classes="field-label"
+                                               Text="{Binding Label}" />
+                                    <TextBlock Classes="field-help"
+                                               Text="{Binding Description}"
+                                               IsVisible="{Binding HasDescription}" />
+                                  </StackPanel>
+
+                                  <Button Classes="secondary-action compact-action"
+                                          Content="{Binding AddItemLabel}"
+                                          HorizontalAlignment="Left"
+                                          Click="OnAddEditorPathItemClick" />
+
+                                  <ListBox Classes="path-list"
+                                           ItemsSource="{Binding Items}"
+                                           SelectedItem="{Binding SelectedItem, Mode=TwoWay}">
+                                    <ListBox.ItemTemplate>
+                                      <DataTemplate x:DataType="vm:AgentEditorPathListItemViewModel">
+                                        <Grid ColumnDefinitions="*,Auto"
+                                              ColumnSpacing="8">
+                                          <TextBox Text="{Binding Value, Mode=TwoWay}" />
+                                          <Border Grid.Column="1"
+                                                  Classes="default-pill"
+                                                  IsVisible="{Binding IsDefault}"
+                                                  VerticalAlignment="Center">
+                                            <TextBlock Text="Default"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource Sunder.Brush.Accent}" />
+                                          </Border>
+                                        </Grid>
+                                      </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                  </ListBox>
+
+                                  <WrapPanel Orientation="Horizontal">
+                                    <Button Classes="secondary-action compact-action"
+                                            Content="Set Selected As Default"
+                                            Margin="0,0,8,8"
+                                            Click="OnSetSelectedEditorPathItemAsDefaultClick" />
+                                    <Button Classes="secondary-action compact-action danger-action"
+                                            Content="Delete Selected"
+                                            Margin="0,0,8,8"
+                                            Click="OnDeleteSelectedEditorPathItemClick" />
+                                  </WrapPanel>
+                                </StackPanel>
+                              </DataTemplate>
+                            </ItemsControl.DataTemplates>
+                          </ItemsControl>
+                        </StackPanel>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </Border>
+          </ScrollViewer>
+
+          <Border Grid.Row="2"
+                  Classes="workspace-actions">
+            <Grid ColumnDefinitions="*,Auto,Auto"
+                  ColumnSpacing="12">
+              <TextBlock Grid.Column="0"
+                         Classes="workspace-caption"
+                         Text="{Binding StatusText}"
+                         VerticalAlignment="Center" />
+              <Button Grid.Column="1"
+                      Classes="secondary-action compact-action"
+                      Content="Back"
+                      Command="{Binding BackToWorkspaceListCommand}"
+                      IsVisible="{Binding IsCompactLayout}" />
+              <Button Grid.Column="2"
+                      Classes="primary-action"
+                      Content="Save"
+                      Command="{Binding SaveWorkspaceCommand}" />
+            </Grid>
+          </Border>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</UserControl>

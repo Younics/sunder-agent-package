@@ -1,0 +1,288 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Sunder.Package.Agent.Memory.Semantic.PackageViews"
+             xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
+             x:Class="Sunder.Package.Agent.Memory.Semantic.PackageViews.MemoryInspectorView"
+             x:DataType="vm:MemoryInspectorViewModel"
+             HorizontalAlignment="Stretch"
+             VerticalAlignment="Stretch"
+             mc:Ignorable="d">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                VerticalScrollBarVisibility="Hidden">
+    <Grid RowDefinitions="Auto,Auto,*"
+           RowSpacing="14"
+           HorizontalAlignment="Stretch"
+           VerticalAlignment="Stretch">
+    <WrapPanel Orientation="Horizontal"
+               ItemSpacing="10"
+               LineSpacing="10">
+      <TextBlock Text="Memory Inspector"
+                  FontSize="24"
+                  FontWeight="SemiBold"
+                  VerticalAlignment="Center" />
+      <ComboBox ItemsSource="{Binding Sessions}"
+                SelectedItem="{Binding SelectedSession, Mode=TwoWay}">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="m:AgentSessionRecord">
+            <TextBlock Text="{Binding Title}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+      <TextBox Text="{Binding SearchText, Mode=TwoWay}"
+                PlaceholderText="Search memories" />
+      <CheckBox IsChecked="{Binding IncludeInactive, Mode=TwoWay}"
+                 VerticalAlignment="Center"
+                 Content="Include inactive" />
+      <Button Content="Reindex Semantic"
+              Command="{Binding ReindexSemanticIndexCommand}"
+              IsEnabled="{Binding CanReindexSemanticIndex}" />
+      <Button Content="Refresh"
+              Command="{Binding RefreshCommand}"
+              IsEnabled="{Binding !IsBusy}" />
+    </WrapPanel>
+
+    <StackPanel Grid.Row="1"
+                Spacing="10">
+      <Border Padding="14"
+              BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
+              BorderThickness="1"
+              CornerRadius="10">
+        <StackPanel Spacing="6">
+          <TextBlock Text="Semantic Retrieval"
+                     FontWeight="SemiBold" />
+          <TextBlock Text="{Binding SemanticStatusText}"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+
+      <Border Padding="14"
+              BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
+              BorderThickness="1"
+              CornerRadius="10"
+              IsVisible="{Binding HasSemanticWorkerStatus}">
+        <StackPanel Spacing="6">
+          <TextBlock Text="Semantic Index Worker"
+                     FontWeight="SemiBold" />
+          <TextBlock Text="{Binding SemanticWorkerStatusText}"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+
+      <Border Padding="14"
+              BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
+              BorderThickness="1"
+              CornerRadius="10"
+              IsVisible="{Binding HasMemoryMetricsSummary}">
+        <StackPanel Spacing="6">
+          <TextBlock Text="Memory Metrics"
+                     FontWeight="SemiBold" />
+          <TextBlock Text="{Binding MemoryMetricsSummaryText}"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+
+      <Border Padding="14"
+              BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
+              BorderThickness="1"
+              CornerRadius="10"
+              IsVisible="{Binding HasWorkingSummary}">
+        <StackPanel Spacing="6">
+          <TextBlock Text="Session Working Summary"
+                     FontWeight="SemiBold" />
+          <TextBlock Text="{Binding WorkingSummaryText}"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+    </StackPanel>
+
+    <Grid Grid.Row="2"
+          ColumnDefinitions="2*,4,3*">
+      <Border Padding="14"
+              BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
+              BorderThickness="1"
+              CornerRadius="10">
+        <StackPanel Spacing="10">
+          <TextBlock Text="Stored Memories"
+                     FontSize="18"
+                     FontWeight="SemiBold" />
+          <ListBox ItemsSource="{Binding Memories}"
+                   SelectedItem="{Binding SelectedMemory, Mode=TwoWay}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:MemoryListItemViewModel">
+                <Border Padding="8"
+                        Margin="0,0,0,6"
+                        BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                  <StackPanel Spacing="4">
+                    <Grid ColumnDefinitions="*,Auto,Auto,Auto"
+                          ColumnSpacing="8">
+                      <TextBlock Text="{Binding CategoryLabel}"
+                                 FontWeight="SemiBold" />
+                      <TextBlock Grid.Column="1"
+                                 Text="{Binding StateLabel}"
+                                 Opacity="0.8" />
+                      <TextBlock Grid.Column="2"
+                                 Text="{Binding SemanticIndexBadgeText}"
+                                 Opacity="0.8"
+                                 IsVisible="{Binding HasSemanticIndexStatus}" />
+                      <TextBlock Grid.Column="3"
+                                 Text="{Binding UpdatedAtLabel}"
+                                 Opacity="0.8" />
+                    </Grid>
+                    <TextBlock Text="{Binding PreviewText}"
+                               TextWrapping="Wrap" />
+                    <TextBlock Text="Pinned"
+                               IsVisible="{Binding IsPinned}"
+                               Opacity="0.8" />
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </StackPanel>
+      </Border>
+
+      <GridSplitter Grid.Column="1"
+                    ResizeDirection="Columns"
+                    ShowsPreview="False"
+                    Background="{DynamicResource Sunder.Brush.Border.Subtle}" />
+
+      <Border Grid.Column="2"
+              Padding="14"
+              BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
+              BorderThickness="1"
+              CornerRadius="10">
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Hidden">
+          <StackPanel Spacing="12">
+            <TextBlock Text="Memory Details"
+                       FontSize="18"
+                       FontWeight="SemiBold" />
+
+            <TextBlock Text="Select a memory to inspect or edit."
+                       IsVisible="{Binding HasNoSelection}" />
+
+            <StackPanel Spacing="12"
+                        IsVisible="{Binding HasSelection}">
+              <TextBlock Text="Category" />
+              <ComboBox ItemsSource="{Binding CategoryOptions}"
+                        SelectedItem="{Binding EditCategory, Mode=TwoWay}" />
+
+              <TextBlock Text="Content" />
+              <TextBox Text="{Binding EditContent, Mode=TwoWay}"
+                       AcceptsReturn="True"
+                       MinHeight="140"
+                       TextWrapping="Wrap" />
+
+              <StackPanel Orientation="Horizontal"
+                          Spacing="10">
+                <Button Content="Save"
+                        Command="{Binding SaveMemoryCommand}" />
+                <Button Content="Create Correction"
+                        Command="{Binding CreateCorrectionCommand}" />
+                <Button Content="{Binding PinButtonText}"
+                        Command="{Binding TogglePinnedCommand}" />
+                <Button Content="{Binding ContestButtonText}"
+                        Command="{Binding ContestMemoryCommand}" />
+                <Button Content="Forget"
+                        Command="{Binding ForgetMemoryCommand}" />
+                <Button Content="Supersede"
+                        Command="{Binding SupersedeMemoryCommand}" />
+              </StackPanel>
+
+              <StackPanel Spacing="6"
+                          IsVisible="{Binding HasSupersedingMemory}">
+                <TextBlock Text="Superseded By"
+                           FontSize="16"
+                           FontWeight="SemiBold" />
+                <Border Padding="10"
+                        BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="{Binding SupersedingMemory.CategoryLabel}"
+                               FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding SupersedingMemory.PreviewText}"
+                               TextWrapping="Wrap" />
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+
+              <StackPanel Spacing="6"
+                          IsVisible="{Binding HasSupersededMemories}">
+                <TextBlock Text="Supersedes"
+                           FontSize="16"
+                           FontWeight="SemiBold" />
+                <ItemsControl ItemsSource="{Binding SupersededMemoryItems}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:MemoryListItemViewModel">
+                      <Border Padding="10"
+                              Margin="0,0,0,8"
+                              BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
+                              BorderThickness="1"
+                              CornerRadius="8">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding CategoryLabel}"
+                                     FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding PreviewText}"
+                                     TextWrapping="Wrap" />
+                        </StackPanel>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+
+              <StackPanel Spacing="6"
+                          IsVisible="{Binding HasSelectedMemorySemanticStatus}">
+                <TextBlock Text="Semantic Index"
+                           FontSize="16"
+                           FontWeight="SemiBold" />
+                <TextBlock Text="{Binding SelectedMemory.SemanticIndexStatusText}"
+                           TextWrapping="Wrap" />
+              </StackPanel>
+
+              <StackPanel Spacing="6"
+                          IsVisible="{Binding HasCorrectionLineage}">
+                <TextBlock Text="Correction Lineage"
+                           FontSize="16"
+                           FontWeight="SemiBold" />
+                <TextBlock Text="{Binding CorrectionLineageSummaryText}"
+                           TextWrapping="Wrap" />
+              </StackPanel>
+
+              <TextBlock Text="Evidence"
+                         FontSize="16"
+                         FontWeight="SemiBold" />
+              <ItemsControl ItemsSource="{Binding EvidenceItems}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:MemoryEvidenceItemViewModel">
+                    <Border Padding="10"
+                            Margin="0,0,0,8"
+                            BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
+                            BorderThickness="1"
+                            CornerRadius="8">
+                      <StackPanel Spacing="4">
+                        <TextBlock Text="{Binding TimestampLabel}"
+                                   Opacity="0.8" />
+                        <TextBlock Text="{Binding Text}"
+                                   TextWrapping="Wrap" />
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+
+            <TextBlock Text="{Binding StatusText}"
+                       TextWrapping="Wrap" />
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+    </Grid>
+  </ScrollViewer>
+</UserControl>

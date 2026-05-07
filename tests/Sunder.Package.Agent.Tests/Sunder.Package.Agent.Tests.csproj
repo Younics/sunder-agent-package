@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Packages\Sunder.Package.Agent\Sunder.Package.Agent.csproj" />
+    <ProjectReference Include="..\..\src\Packages\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\Packages\Sunder.Package.Agent.Execution.Docker\Sunder.Package.Agent.Execution.Docker.csproj" />
+    <ProjectReference Include="..\..\src\Packages\Sunder.Package.Agent.Execution.Local\Sunder.Package.Agent.Execution.Local.csproj" />
+    <ProjectReference Include="..\..\src\Packages\Sunder.Package.Agent.Tools.Files\Sunder.Package.Agent.Tools.Files.csproj" />
+    <ProjectReference Include="..\..\src\Packages\Sunder.Package.Agent.Tools.Shell\Sunder.Package.Agent.Tools.Shell.csproj" />
+    <ProjectReference Include="..\..\src\Packages\Sunder.Package.Agent.Tools.Web\Sunder.Package.Agent.Tools.Web.csproj" />
+    <ProjectReference Include="..\..\src\Packages\Sunder.Package.Agent.Memory.Semantic\Sunder.Package.Agent.Memory.Semantic.csproj" />
+    <ProjectReference Include="..\..\src\Packages\Sunder.Package.Agent.Mcp\Sunder.Package.Agent.Mcp.csproj" />
+    <ProjectReference Include="..\..\src\Packages\Sunder.Package.Agent.Skills\Sunder.Package.Agent.Skills.csproj" />
+    <ProjectReference Include="..\..\src\Packages\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj" />
+    <ProjectReference Include="..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj" Condition="Exists('..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj')" />
+    <PackageReference Include="Sunder.Sdk" Condition="!Exists('..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

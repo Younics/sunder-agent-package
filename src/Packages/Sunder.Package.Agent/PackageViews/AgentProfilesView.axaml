@@ -1,0 +1,479 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Sunder.Package.Agent.PackageViews"
+             xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
+             x:Class="Sunder.Package.Agent.PackageViews.AgentProfilesView"
+             x:DataType="vm:AgentProfilesViewModel"
+             mc:Ignorable="d">
+
+  <UserControl.Styles>
+    <Style Selector="Border.profile-shell">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="ClipToBounds" Value="True" />
+    </Style>
+
+    <Style Selector="Border.profile-pane">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+    </Style>
+
+    <Style Selector="Border.profile-list-pane">
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,0,1,0" />
+    </Style>
+
+    <Style Selector="Border.profile-pane-header">
+      <Setter Property="Padding" Value="28,24,28,18" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+
+    <Style Selector="Border.profile-list-body">
+      <Setter Property="Padding" Value="18" />
+    </Style>
+
+    <Style Selector="Border.profile-editor-body">
+      <Setter Property="Padding" Value="28,24" />
+    </Style>
+
+    <Style Selector="Border.profile-actions">
+      <Setter Property="Padding" Value="18" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,1,0,0" />
+    </Style>
+
+    <Style Selector="TextBlock.profile-title">
+      <Setter Property="FontSize" Value="26" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    </Style>
+
+    <Style Selector="TextBlock.profile-caption">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="TextBlock.profile-field-label">
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+      <Setter Property="Margin" Value="0,0,0,4" />
+    </Style>
+
+    <Style Selector="TextBlock.profile-field-help">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="ListBox.profile-list">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+    </Style>
+
+    <Style Selector="ListBox.profile-list ListBoxItem">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="14,12" />
+      <Setter Property="Margin" Value="0,0,0,8" />
+    </Style>
+
+    <Style Selector="ListBox.profile-list ListBoxItem:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+    </Style>
+
+    <Style Selector="ListBox.profile-list ListBoxItem:selected">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+
+    <Style Selector="Button.profile-open-action">
+      <Setter Property="Width" Value="32" />
+      <Setter Property="MinWidth" Value="32" />
+      <Setter Property="Height" Value="36" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="FontSize" Value="24" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Button.profile-open-action:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+
+    <Style Selector="Button.profile-open-action:pressed">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+
+    <Style Selector="Border.profile-card">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+
+    <Style Selector="TextBox.profile-instructions">
+      <Setter Property="MinHeight" Value="140" />
+      <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+    </Style>
+  </UserControl.Styles>
+
+  <Border Classes="profile-shell">
+    <Grid x:Name="ProfileAdaptiveLayout"
+          ColumnDefinitions="360,*"
+          ColumnSpacing="4">
+      <Border x:Name="ProfileListPane"
+              Classes="profile-pane profile-list-pane"
+              IsVisible="{Binding ShowListPane}">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <Border Grid.Row="0"
+                  Classes="profile-pane-header">
+            <StackPanel Spacing="8">
+              <TextBlock Classes="profile-title"
+                         Text="Agent Profiles" />
+              <TextBlock Classes="profile-caption"
+                         Text="Compose model choices, instructions, and runtime capabilities." />
+            </StackPanel>
+          </Border>
+
+          <Border Grid.Row="1"
+                  Classes="profile-list-body">
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+              <ListBox Classes="profile-list"
+                       ItemsSource="{Binding Profiles}"
+                       SelectedItem="{Binding SelectedProfile, Mode=TwoWay}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="m:AgentProfileRecord">
+                    <Grid ColumnDefinitions="*,1,Auto"
+                          ColumnSpacing="10">
+                      <Grid RowDefinitions="Auto,Auto"
+                            RowSpacing="3"
+                            MinWidth="0">
+                        <TextBlock Text="{Binding DisplayName}"
+                                   FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Row="1"
+                                   Text="{Binding Description}"
+                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
+                                   FontSize="12"
+                                   TextTrimming="CharacterEllipsis" />
+                      </Grid>
+                      <Border Grid.Column="1"
+                              Background="{DynamicResource Sunder.Brush.Border.Subtle}"
+                              Margin="2,-2,0,-2" />
+                      <Button Grid.Column="2"
+                              Classes="profile-open-action"
+                              Content="›"
+                              Command="{Binding $parent[UserControl].DataContext.OpenProfileEditorCommand}"
+                              CommandParameter="{Binding}"
+                              ToolTip.Tip="Open profile" />
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </ScrollViewer>
+          </Border>
+
+          <Border Grid.Row="2"
+                  Classes="profile-actions">
+            <Grid ColumnDefinitions="*,*"
+                  ColumnSpacing="10">
+              <Button Grid.Column="0"
+                      Classes="secondary-action danger-action"
+                      Content="Delete Profile"
+                      Command="{Binding DeleteProfileCommand}"
+                      HorizontalAlignment="Stretch" />
+              <Button Grid.Column="1"
+                      Classes="primary-action"
+                      Content="New Profile"
+                      Command="{Binding CreateProfileCommand}"
+                      HorizontalAlignment="Stretch" />
+            </Grid>
+          </Border>
+        </Grid>
+      </Border>
+
+      <Border x:Name="ProfileEditorPane"
+              Grid.Column="1"
+              Classes="profile-pane"
+              IsVisible="{Binding ShowEditorPane}">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <Border Grid.Row="0"
+                  Classes="profile-pane-header">
+            <StackPanel Spacing="8">
+              <TextBlock Classes="profile-title"
+                         Text="Profile" />
+              <TextBlock Classes="profile-caption"
+                         Text="Configure model selection, instructions, run policy, and capabilities." />
+            </StackPanel>
+          </Border>
+
+          <ScrollViewer Grid.Row="1"
+                        HorizontalScrollBarVisibility="Disabled"
+                        VerticalScrollBarVisibility="Auto">
+            <Border Classes="profile-editor-body">
+              <StackPanel Spacing="18">
+                <Border Classes="profile-card">
+                  <StackPanel Spacing="14">
+                    <StackPanel Spacing="5">
+                      <TextBlock Classes="profile-field-label"
+                                 Text="Display name" />
+                      <TextBox Text="{Binding DisplayName, Mode=TwoWay}"
+                               PlaceholderText="Profile name" />
+                    </StackPanel>
+
+                    <StackPanel Spacing="5">
+                      <TextBlock Classes="profile-field-label"
+                                 Text="Description" />
+                      <TextBox Text="{Binding Description, Mode=TwoWay}"
+                               PlaceholderText="Description" />
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="profile-card">
+                  <StackPanel Spacing="14">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="Behavior"
+                                 FontWeight="SemiBold"
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+                      <TextBlock Classes="profile-caption"
+                                 Text="Choose the runtime loop used for this profile. Default keeps the simple base agent behavior." />
+                    </StackPanel>
+
+                    <StackPanel Spacing="5">
+                      <TextBlock Classes="profile-field-label"
+                                 Text="Behavior loop" />
+                      <ComboBox ItemsSource="{Binding BehaviorLoops}"
+                                SelectedItem="{Binding SelectedBehaviorLoop, Mode=TwoWay}"
+                                HorizontalAlignment="Stretch">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:BehaviorLoopOption">
+                            <StackPanel Spacing="2">
+                              <TextBlock Text="{Binding Label}" />
+                              <TextBlock Classes="profile-field-help"
+                                         Text="{Binding Description}" />
+                            </StackPanel>
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="profile-card">
+                  <StackPanel Spacing="14">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="Chat Model"
+                                 FontWeight="SemiBold"
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+                      <TextBlock Classes="profile-caption"
+                                 Text="Select the provider, model, and optional reasoning mode used for chat completions." />
+                    </StackPanel>
+
+                    <StackPanel Spacing="5">
+                      <TextBlock Classes="profile-field-label"
+                                 Text="Chat provider" />
+                      <ComboBox ItemsSource="{Binding ChatProviders}"
+                                SelectedItem="{Binding SelectedChatProvider, Mode=TwoWay}"
+                                HorizontalAlignment="Stretch">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:ProviderOption">
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                      <TextBlock Classes="profile-field-help"
+                                 Text="{Binding ChatProviderStatusText}" />
+                    </StackPanel>
+
+                    <StackPanel Spacing="5">
+                      <TextBlock Classes="profile-field-label"
+                                 Text="Chat model" />
+                      <ComboBox ItemsSource="{Binding ChatModels}"
+                                SelectedItem="{Binding SelectedChatModel, Mode=TwoWay}"
+                                HorizontalAlignment="Stretch">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:ModelOption">
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                    </StackPanel>
+
+                    <StackPanel Spacing="5"
+                                IsVisible="{Binding HasReasoningOptions}">
+                      <TextBlock Classes="profile-field-label"
+                                 Text="Reasoning" />
+                      <ComboBox ItemsSource="{Binding ReasoningOptions}"
+                                SelectedItem="{Binding SelectedReasoningOption, Mode=TwoWay}"
+                                HorizontalAlignment="Stretch">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:ModelReasoningOption">
+                            <StackPanel Spacing="2">
+                              <TextBlock Text="{Binding Label}" />
+                              <TextBlock Classes="profile-field-help"
+                                         Text="{Binding Description}"
+                                         IsVisible="{Binding HasDescription}" />
+                            </StackPanel>
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                      <TextBlock Classes="profile-field-help"
+                                 Text="Default preserves the provider's normal reasoning behavior." />
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="profile-card"
+                        IsVisible="{Binding CanConfigureEmbeddings}">
+                  <StackPanel Spacing="14">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="Embeddings"
+                                 FontWeight="SemiBold"
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+                      <TextBlock Classes="profile-caption"
+                                 Text="Optional provider/model for embedding-based package features." />
+                    </StackPanel>
+
+                    <StackPanel Spacing="5">
+                      <TextBlock Classes="profile-field-label"
+                                 Text="Embedding provider" />
+                      <ComboBox ItemsSource="{Binding EmbeddingProviders}"
+                                SelectedItem="{Binding SelectedEmbeddingProvider, Mode=TwoWay}"
+                                HorizontalAlignment="Stretch">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:ProviderOption">
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                      <TextBlock Classes="profile-field-help"
+                                 Text="{Binding EmbeddingProviderStatusText}" />
+                    </StackPanel>
+
+                    <StackPanel Spacing="5">
+                      <TextBlock Classes="profile-field-label"
+                                 Text="Embedding model" />
+                      <ComboBox ItemsSource="{Binding EmbeddingModels}"
+                                SelectedItem="{Binding SelectedEmbeddingModel, Mode=TwoWay}"
+                                IsEnabled="{Binding CanSelectEmbeddingModel}"
+                                HorizontalAlignment="Stretch">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:ModelOption">
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="profile-card">
+                  <StackPanel Spacing="5">
+                    <TextBlock Classes="profile-field-label"
+                               Text="Instructions" />
+                    <TextBox Classes="profile-instructions"
+                             Text="{Binding Instructions, Mode=TwoWay}"
+                             PlaceholderText="Instructions"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap" />
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="profile-card"
+                        IsVisible="{Binding HasToolCallingConfiguration}">
+                  <StackPanel Spacing="12">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="Capabilities"
+                                 FontWeight="SemiBold"
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+                      <TextBlock Classes="profile-caption"
+                                 Text="Choose tools, skills, and MCP capabilities available to this profile." />
+                    </StackPanel>
+
+                    <ItemsControl ItemsSource="{Binding CapabilityGroups}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ProfileCapabilityGroupViewModel">
+                          <StackPanel Spacing="8"
+                                      Margin="0,4,0,10">
+                            <StackPanel Spacing="2">
+                              <TextBlock Classes="profile-field-label"
+                                         Text="{Binding Title}" />
+                              <TextBlock Classes="profile-field-help"
+                                         Text="{Binding Description}"
+                                         IsVisible="{Binding HasDescription}" />
+                            </StackPanel>
+                            <ItemsControl ItemsSource="{Binding Options}">
+                              <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:ProfileCapabilityOptionViewModel">
+                                  <Border Padding="0,4">
+                                    <StackPanel Spacing="4">
+                                      <CheckBox IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                                                IsEnabled="{Binding CanSelect}">
+                                        <TextBlock Text="{Binding DisplayName}" />
+                                      </CheckBox>
+                                      <TextBlock Classes="profile-field-help"
+                                                 Text="{Binding Description}"
+                                                 Margin="24,0,0,0" />
+                                      <TextBlock Classes="profile-field-help"
+                                                 Text="{Binding StatusText}"
+                                                 Margin="24,0,0,0"
+                                                 IsVisible="{Binding HasStatusText}" />
+                                    </StackPanel>
+                                  </Border>
+                                </DataTemplate>
+                              </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                          </StackPanel>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </Border>
+          </ScrollViewer>
+
+          <Border Grid.Row="2"
+                  Classes="profile-actions">
+            <Grid ColumnDefinitions="*,Auto,Auto"
+                  ColumnSpacing="12">
+              <TextBlock Grid.Column="0"
+                         Classes="profile-caption"
+                         Text="{Binding StatusText}"
+                         VerticalAlignment="Center" />
+              <Button Grid.Column="1"
+                      Classes="secondary-action compact-action"
+                      Content="Back"
+                      Command="{Binding BackToProfileListCommand}"
+                      IsVisible="{Binding IsCompactLayout}" />
+              <Button Grid.Column="2"
+                      Classes="primary-action"
+                      Content="Save"
+                      Command="{Binding SaveProfileCommand}" />
+            </Grid>
+          </Border>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</UserControl>

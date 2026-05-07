@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenAI" />
+    <ProjectReference Include="..\..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj" Condition="Exists('..\..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj')" />
+    <PackageReference Include="Sunder.Sdk" Condition="!Exists('..\..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj')" />
+    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="!Exists('..\..\..\..\sunder-core\src\Sdk\Sunder.Package.Build\build\Sunder.Package.Build.targets')">
+    <PackageReference Include="Sunder.Package.Build" PrivateAssets="all" />
+  </ItemGroup>
+
+  <Import Project="..\..\..\..\sunder-core\src\Sdk\Sunder.Package.Build\build\Sunder.Package.Build.targets"
+          Condition="Exists('..\..\..\..\sunder-core\src\Sdk\Sunder.Package.Build\build\Sunder.Package.Build.targets')" />
+
+</Project>

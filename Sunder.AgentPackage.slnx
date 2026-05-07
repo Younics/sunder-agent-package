@@ -1,0 +1,23 @@
+<Solution>
+  <Folder Name="/Packages/">
+    <Project Path="src/Packages/Sunder.Package.Agent.Contracts/Sunder.Package.Agent.Contracts.csproj" />
+    <Project Path="src/Packages/Sunder.Package.Agent.Execution.Docker/Sunder.Package.Agent.Execution.Docker.csproj" />
+    <Project Path="src/Packages/Sunder.Package.Agent.Execution.Local/Sunder.Package.Agent.Execution.Local.csproj" />
+    <Project Path="src/Packages/Sunder.Package.Agent.Mcp/Sunder.Package.Agent.Mcp.csproj" />
+    <Project Path="src/Packages/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj" />
+    <Project Path="src/Packages/Sunder.Package.Agent.Provider.Anthropic/Sunder.Package.Agent.Provider.Anthropic.csproj" />
+    <Project Path="src/Packages/Sunder.Package.Agent.Provider.Gemini/Sunder.Package.Agent.Provider.Gemini.csproj" />
+    <Project Path="src/Packages/Sunder.Package.Agent.Provider.LMStudio/Sunder.Package.Agent.Provider.LMStudio.csproj" />
+    <Project Path="src/Packages/Sunder.Package.Agent.Provider.OpenAI/Sunder.Package.Agent.Provider.OpenAI.csproj" />
+    <Project Path="src/Packages/Sunder.Package.Agent.Skills/Sunder.Package.Agent.Skills.csproj" />
+    <Project Path="src/Packages/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj" />
+    <Project Path="src/Packages/Sunder.Package.Agent.Tools.Files/Sunder.Package.Agent.Tools.Files.csproj" />
+    <Project Path="src/Packages/Sunder.Package.Agent.Tools.Shell/Sunder.Package.Agent.Tools.Shell.csproj" />
+    <Project Path="src/Packages/Sunder.Package.Agent.Tools.Web/Sunder.Package.Agent.Tools.Web.csproj" />
+    <Project Path="src/Packages/Sunder.Package.Agent/Sunder.Package.Agent.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Provider.OpenAI.Tests/Sunder.Package.Agent.Provider.OpenAI.Tests.csproj" />
+  </Folder>
+</Solution>

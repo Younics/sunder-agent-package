@@ -1,0 +1,107 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Sunder.Package.Agent.Skills.PackageViews"
+             x:Class="Sunder.Package.Agent.Skills.PackageViews.SkillSettingsView"
+             x:DataType="vm:SkillSettingsViewModel"
+             mc:Ignorable="d">
+  <Grid ColumnDefinitions="280,*"
+        ColumnSpacing="18">
+    <Border Padding="18">
+      <DockPanel LastChildFill="True">
+        <StackPanel DockPanel.Dock="Bottom"
+                    Spacing="10">
+          <Button Content="Add Local Folder"
+                  Click="OnAddLocalFolderClick" />
+          <Button Content="Delete Selected"
+                  Command="{Binding DeleteSelectedSkillCommand}" />
+          <Button Content="Refresh"
+                  Command="{Binding RefreshCommand}" />
+        </StackPanel>
+
+        <StackPanel Spacing="10">
+          <TextBlock Text="Agent Skills"
+                     FontSize="24"
+                     FontWeight="SemiBold" />
+          <TextBlock Text="Install skill folders, then enable them per Agent Profile."
+                     TextWrapping="Wrap" />
+          <ListBox ItemsSource="{Binding Skills}"
+                   SelectedItem="{Binding SelectedSkill, Mode=TwoWay}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:InstalledSkillItemViewModel">
+                <StackPanel Spacing="2">
+                  <TextBlock Text="{Binding DisplayName}"
+                             FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding Description}"
+                             TextWrapping="Wrap"
+                             Opacity="0.8" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <Border Grid.Column="1"
+            Padding="18">
+      <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Hidden">
+        <StackPanel Spacing="12">
+          <TextBlock Text="Install From GitHub"
+                     FontSize="20"
+                     FontWeight="SemiBold" />
+          <TextBlock Text="Paste a GitHub tree/blob/raw URL that points at a skill folder or SKILL.md."
+                     TextWrapping="Wrap" />
+          <TextBox Text="{Binding GithubUrl, Mode=TwoWay}"
+                   PlaceholderText="https://github.com/owner/repo/tree/main/skills/my-skill" />
+          <Button Content="Import GitHub Skill"
+                  Command="{Binding ImportGitHubCommand}" />
+          <TextBlock Text="{Binding StatusText}"
+                     TextWrapping="Wrap" />
+
+          <TextBlock Text="Selected Skill"
+                     FontSize="20"
+                     FontWeight="SemiBold" />
+          <StackPanel Spacing="8">
+            <TextBlock Text="Skill id" />
+            <TextBox Text="{Binding SelectedSkill.SkillId}"
+                     IsReadOnly="True" />
+            <TextBlock Text="Description" />
+            <TextBox Text="{Binding SelectedSkill.Description}"
+                     IsReadOnly="True"
+                     TextWrapping="Wrap" />
+            <TextBlock Text="Version" />
+            <TextBox Text="{Binding SelectedSkill.Version}"
+                     IsReadOnly="True" />
+            <TextBlock Text="Author" />
+            <TextBox Text="{Binding SelectedSkill.Author}"
+                     IsReadOnly="True" />
+            <TextBlock Text="Source" />
+            <TextBox Text="{Binding SelectedSkill.Source}"
+                     IsReadOnly="True" />
+            <TextBlock Text="Resolved commit" />
+            <TextBox Text="{Binding SelectedSkill.ResolvedCommitSha}"
+                     IsReadOnly="True" />
+            <TextBlock Text="Installed folder" />
+            <TextBox Text="{Binding SelectedSkill.RootPath}"
+                     IsReadOnly="True" />
+            <TextBlock Text="Metadata" />
+            <TextBox Text="{Binding SelectedSkill.MetadataText}"
+                     IsReadOnly="True"
+                     AcceptsReturn="True"
+                     MinHeight="80"
+                     TextWrapping="Wrap" />
+            <TextBlock Text="Warnings" />
+            <TextBox Text="{Binding SelectedSkill.WarningsText}"
+                     IsReadOnly="True"
+                     AcceptsReturn="True"
+                     MinHeight="80"
+                     TextWrapping="Wrap" />
+          </StackPanel>
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+  </Grid>
+</UserControl>

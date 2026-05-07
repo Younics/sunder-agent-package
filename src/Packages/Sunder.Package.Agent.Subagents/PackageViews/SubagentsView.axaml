@@ -1,0 +1,407 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Sunder.Package.Agent.Subagents.PackageViews"
+             xmlns:m="using:Sunder.Package.Agent.Subagents.Models"
+             x:Class="Sunder.Package.Agent.Subagents.PackageViews.SubagentsView"
+             x:DataType="vm:SubagentsViewModel"
+             mc:Ignorable="d">
+
+  <UserControl.Styles>
+    <Style Selector="Border.subagent-shell">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="ClipToBounds" Value="True" />
+    </Style>
+
+    <Style Selector="Border.subagent-pane">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+    </Style>
+
+    <Style Selector="Border.subagent-list-pane">
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,0,1,0" />
+    </Style>
+
+    <Style Selector="Border.subagent-pane-header">
+      <Setter Property="Padding" Value="28,24,28,18" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+
+    <Style Selector="Border.subagent-list-body">
+      <Setter Property="Padding" Value="18" />
+    </Style>
+
+    <Style Selector="Border.subagent-editor-body">
+      <Setter Property="Padding" Value="28,24" />
+    </Style>
+
+    <Style Selector="Border.subagent-actions">
+      <Setter Property="Padding" Value="18" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,1,0,0" />
+    </Style>
+
+    <Style Selector="TextBlock.subagent-title">
+      <Setter Property="FontSize" Value="26" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    </Style>
+
+    <Style Selector="TextBlock.subagent-caption">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="TextBlock.subagent-field-label">
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+      <Setter Property="Margin" Value="0,0,0,4" />
+    </Style>
+
+    <Style Selector="TextBlock.subagent-field-help">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="ListBox.subagent-list">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+    </Style>
+
+    <Style Selector="ListBox.subagent-list ListBoxItem">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="14,12" />
+      <Setter Property="Margin" Value="0,0,0,8" />
+    </Style>
+
+    <Style Selector="ListBox.subagent-list ListBoxItem:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+    </Style>
+
+    <Style Selector="ListBox.subagent-list ListBoxItem:selected">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+
+    <Style Selector="Button.subagent-open-action">
+      <Setter Property="Width" Value="32" />
+      <Setter Property="MinWidth" Value="32" />
+      <Setter Property="Height" Value="36" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="FontSize" Value="20" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Button.subagent-open-action:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+
+    <Style Selector="Button.subagent-open-action:pressed">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+
+    <Style Selector="Border.subagent-card">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+
+    <Style Selector="TextBox.subagent-instructions">
+      <Setter Property="MinHeight" Value="140" />
+      <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+    </Style>
+  </UserControl.Styles>
+
+  <Border Classes="subagent-shell">
+    <Grid x:Name="SubagentAdaptiveLayout"
+          ColumnDefinitions="360,*"
+          ColumnSpacing="4">
+      <Border x:Name="SubagentListPane"
+              Classes="subagent-pane subagent-list-pane"
+              IsVisible="{Binding ShowListPane}">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <Border Grid.Row="0"
+                  Classes="subagent-pane-header">
+            <StackPanel Spacing="8">
+              <TextBlock Classes="subagent-title"
+                         Text="Subagents" />
+              <TextBlock Classes="subagent-caption"
+                         Text="Create delegated specialists for orchestrated Agent Profiles." />
+            </StackPanel>
+          </Border>
+
+          <Border Grid.Row="1"
+                  Classes="subagent-list-body">
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+              <ListBox Classes="subagent-list"
+                       ItemsSource="{Binding Subagents}"
+                       SelectedItem="{Binding SelectedSubagent, Mode=TwoWay}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="m:SubagentRecord">
+                    <Grid ColumnDefinitions="*,1,Auto"
+                          ColumnSpacing="10">
+                      <Grid RowDefinitions="Auto,Auto"
+                            RowSpacing="3"
+                            MinWidth="0">
+                        <TextBlock Text="{Binding DisplayName}"
+                                   FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Row="1"
+                                   Text="{Binding DescriptionDisplay}"
+                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
+                                   FontSize="12"
+                                   TextTrimming="CharacterEllipsis" />
+                      </Grid>
+                      <Border Grid.Column="1"
+                              Background="{DynamicResource Sunder.Brush.Border.Subtle}"
+                              Margin="2,-2,0,-2" />
+                      <Button Grid.Column="2"
+                              Classes="subagent-open-action"
+                              Content=">"
+                              Command="{Binding $parent[UserControl].DataContext.OpenSubagentEditorCommand}"
+                              CommandParameter="{Binding}"
+                              ToolTip.Tip="Open subagent" />
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </ScrollViewer>
+          </Border>
+
+          <Border Grid.Row="2"
+                  Classes="subagent-actions">
+            <Grid ColumnDefinitions="*,*"
+                  ColumnSpacing="10">
+              <Button Grid.Column="0"
+                      Classes="secondary-action danger-action"
+                      Content="Delete Subagent"
+                      Command="{Binding DeleteSubagentCommand}"
+                      HorizontalAlignment="Stretch" />
+              <Button Grid.Column="1"
+                      Classes="primary-action"
+                      Content="New Subagent"
+                      Command="{Binding CreateSubagentCommand}"
+                      HorizontalAlignment="Stretch" />
+            </Grid>
+          </Border>
+        </Grid>
+      </Border>
+
+      <Border x:Name="SubagentEditorPane"
+              Grid.Column="1"
+              Classes="subagent-pane"
+              IsVisible="{Binding ShowEditorPane}">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <Border Grid.Row="0"
+                  Classes="subagent-pane-header">
+            <StackPanel Spacing="8">
+              <TextBlock Classes="subagent-title"
+                         Text="Subagent" />
+               <TextBlock Classes="subagent-caption"
+                          Text="Configure delegated instructions, model overrides, and capabilities." />
+            </StackPanel>
+          </Border>
+
+          <ScrollViewer Grid.Row="1"
+                        HorizontalScrollBarVisibility="Disabled"
+                        VerticalScrollBarVisibility="Auto">
+            <Border Classes="subagent-editor-body">
+              <StackPanel Spacing="18"
+                          IsVisible="{Binding HasSelectedSubagent}">
+                <Border Classes="subagent-card">
+                  <StackPanel Spacing="14">
+                    <StackPanel Spacing="5">
+                      <TextBlock Classes="subagent-field-label"
+                                 Text="Display name" />
+                      <TextBox Text="{Binding DisplayName, Mode=TwoWay}"
+                               PlaceholderText="Subagent name" />
+                    </StackPanel>
+
+                    <StackPanel Spacing="5">
+                      <TextBlock Classes="subagent-field-label"
+                                 Text="Description" />
+                      <TextBox Text="{Binding Description, Mode=TwoWay}"
+                               PlaceholderText="Required: describe exactly when this subagent should be used" />
+                      <TextBlock Classes="subagent-field-help"
+                                 Text="{Binding DescriptionValidationText}"
+                                 IsVisible="{Binding IsSelectedSubagentIncomplete}" />
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="subagent-card">
+                  <StackPanel Spacing="14">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="Instructions"
+                                 FontWeight="SemiBold"
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+                      <TextBlock Classes="subagent-caption"
+                                 Text="Define how this specialist should complete delegated work." />
+                    </StackPanel>
+                    <TextBox Classes="subagent-instructions"
+                             Text="{Binding Instructions, Mode=TwoWay}"
+                             PlaceholderText="Subagent instructions"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap" />
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="subagent-card">
+                  <StackPanel Spacing="14">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="Chat Model Override"
+                                 FontWeight="SemiBold"
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+                      <TextBlock Classes="subagent-caption"
+                                 Text="Optionally override the parent profile chat provider and model for this subagent." />
+                    </StackPanel>
+
+                    <StackPanel Spacing="5">
+                      <TextBlock Classes="subagent-field-label"
+                                 Text="Chat provider override" />
+                      <ComboBox ItemsSource="{Binding ChatProviders}"
+                                SelectedItem="{Binding SelectedChatProvider, Mode=TwoWay}"
+                                HorizontalAlignment="Stretch">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:SubagentProviderOption">
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                    </StackPanel>
+
+                    <StackPanel Spacing="5"
+                                IsVisible="{Binding HasSelectedChatProvider}">
+                      <TextBlock Classes="subagent-field-label"
+                                 Text="Chat model override" />
+                      <ComboBox ItemsSource="{Binding ChatModels}"
+                                SelectedItem="{Binding SelectedChatModel, Mode=TwoWay}"
+                                HorizontalAlignment="Stretch">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:SubagentModelOption">
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                    </StackPanel>
+
+                    <StackPanel Spacing="5"
+                                IsVisible="{Binding HasReasoningOptions}">
+                      <TextBlock Classes="subagent-field-label"
+                                 Text="Reasoning" />
+                      <ComboBox ItemsSource="{Binding ReasoningOptions}"
+                                SelectedItem="{Binding SelectedReasoningOption, Mode=TwoWay}"
+                                HorizontalAlignment="Stretch">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:SubagentReasoningOption">
+                            <StackPanel Spacing="2">
+                              <TextBlock Text="{Binding Label}" />
+                              <TextBlock Classes="subagent-field-help"
+                                         Text="{Binding Description}"
+                                         IsVisible="{Binding HasDescription}" />
+                            </StackPanel>
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                      <TextBlock Classes="subagent-field-help"
+                                 Text="Default preserves the selected model's normal reasoning behavior." />
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="subagent-card">
+                  <StackPanel Spacing="12">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="Capabilities"
+                                 FontWeight="SemiBold"
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+                      <TextBlock Classes="subagent-caption"
+                                 Text="Choose tools, skills, and MCP capabilities available to this subagent." />
+                    </StackPanel>
+
+                    <ItemsControl ItemsSource="{Binding CapabilityGroups}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:SubagentCapabilityGroupViewModel">
+                          <StackPanel Spacing="8"
+                                      Margin="0,4,0,10">
+                            <StackPanel Spacing="2">
+                              <TextBlock Classes="subagent-field-label"
+                                         Text="{Binding Title}" />
+                              <TextBlock Classes="subagent-field-help"
+                                         Text="{Binding Description}"
+                                         IsVisible="{Binding HasDescription}" />
+                            </StackPanel>
+                            <ItemsControl ItemsSource="{Binding Options}">
+                              <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:SubagentCapabilityOptionViewModel">
+                                  <Border Padding="0,4">
+                                    <StackPanel Spacing="4">
+                                      <CheckBox IsChecked="{Binding IsEnabled, Mode=TwoWay}">
+                                        <TextBlock Text="{Binding DisplayName}" />
+                                      </CheckBox>
+                                      <TextBlock Classes="subagent-field-help"
+                                                 Text="{Binding Description}"
+                                                 Margin="24,0,0,0" />
+                                    </StackPanel>
+                                  </Border>
+                                </DataTemplate>
+                              </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                          </StackPanel>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </Border>
+          </ScrollViewer>
+
+          <Border Grid.Row="2"
+                  Classes="subagent-actions">
+            <Grid ColumnDefinitions="*,Auto,Auto"
+                  ColumnSpacing="12">
+              <TextBlock Grid.Column="0"
+                         Classes="subagent-caption"
+                         Text="{Binding StatusText}"
+                         VerticalAlignment="Center" />
+              <Button Grid.Column="1"
+                      Classes="secondary-action compact-action"
+                      Content="Back"
+                      Command="{Binding BackToSubagentListCommand}"
+                      IsVisible="{Binding IsCompactLayout}" />
+              <Button Grid.Column="2"
+                      Classes="primary-action"
+                      Content="Save"
+                      Command="{Binding SaveSubagentCommand}" />
+            </Grid>
+          </Border>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</UserControl>
