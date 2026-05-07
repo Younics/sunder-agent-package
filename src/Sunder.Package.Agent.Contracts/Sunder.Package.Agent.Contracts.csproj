@@ -8,8 +8,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
-    <ProjectReference Include="..\..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj" Condition="Exists('..\..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj')" />
-    <PackageReference Include="Sunder.Sdk" Condition="!Exists('..\..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj')" />
+    <ProjectReference Include="..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj" Condition="Exists('..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj')" />
+    <PackageReference Include="Sunder.Sdk" Condition="!Exists('..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj')" />
   </ItemGroup>
 
 </Project>

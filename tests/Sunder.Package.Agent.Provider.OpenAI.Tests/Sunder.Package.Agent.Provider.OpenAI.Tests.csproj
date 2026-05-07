@@ -6,8 +6,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Packages\Sunder.Package.Agent.Provider.OpenAI\Sunder.Package.Agent.Provider.OpenAI.csproj" />
-    <ProjectReference Include="..\..\src\Packages\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.OpenAI\Sunder.Package.Agent.Provider.OpenAI.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>

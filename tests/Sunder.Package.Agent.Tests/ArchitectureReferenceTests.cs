@@ -8,7 +8,7 @@ public sealed class ArchitectureReferenceTests
     public void AgentExtensionPackages_DoNotReferenceBaseAgentImplementationProject()
     {
         var root = GetRepositoryRoot();
-        var packagesRoot = Path.Combine(root.FullName, "src", "Packages");
+        var packagesRoot = Path.Combine(root.FullName, "src");
         var extensionProjects = Directory.EnumerateFiles(packagesRoot, "*.csproj", SearchOption.AllDirectories)
             .Where(path => Path.GetFileNameWithoutExtension(path).StartsWith("Sunder.Package.Agent.", StringComparison.OrdinalIgnoreCase))
             .Where(path => !Path.GetFileNameWithoutExtension(path).EndsWith(".Contracts", StringComparison.OrdinalIgnoreCase))
@@ -28,7 +28,7 @@ public sealed class ArchitectureReferenceTests
     public void AgentExtensionPackages_ReferenceAgentContractsProject()
     {
         var root = GetRepositoryRoot();
-        var packagesRoot = Path.Combine(root.FullName, "src", "Packages");
+        var packagesRoot = Path.Combine(root.FullName, "src");
         var extensionProjects = Directory.EnumerateFiles(packagesRoot, "*.csproj", SearchOption.AllDirectories)
             .Where(path => Path.GetFileNameWithoutExtension(path).StartsWith("Sunder.Package.Agent.", StringComparison.OrdinalIgnoreCase))
             .Where(path => !Path.GetFileNameWithoutExtension(path).EndsWith(".Contracts", StringComparison.OrdinalIgnoreCase))
@@ -47,7 +47,7 @@ public sealed class ArchitectureReferenceTests
     [Fact]
     public void AgentContracts_DoNotReferenceBaseAgentImplementationNamespaces()
     {
-        var contractsRoot = Path.Combine(GetRepositoryRoot().FullName, "src", "Packages", "Sunder.Package.Agent.Contracts");
+        var contractsRoot = Path.Combine(GetRepositoryRoot().FullName, "src", "Sunder.Package.Agent.Contracts");
         var sourceFiles = Directory.EnumerateFiles(contractsRoot, "*.*", SearchOption.AllDirectories)
             .Where(path => Path.GetExtension(path) is ".cs" or ".csproj")
             .Where(IsSourceFile)
@@ -68,7 +68,7 @@ public sealed class ArchitectureReferenceTests
     [Fact]
     public void SunderPackages_DoNotReferenceHostImplementationProjectsOrNamespaces()
     {
-        var packagesRoot = Path.Combine(GetRepositoryRoot().FullName, "src", "Packages");
+        var packagesRoot = Path.Combine(GetRepositoryRoot().FullName, "src");
         var sourceFiles = EnumerateSourceFiles(packagesRoot, [".cs", ".csproj"]);
 
         Assert.NotEmpty(sourceFiles);
@@ -85,7 +85,7 @@ public sealed class ArchitectureReferenceTests
     [Fact]
     public void PackageProjects_DoNotKeepSourceManifests()
     {
-        var packagesRoot = Path.Combine(GetRepositoryRoot().FullName, "src", "Packages");
+        var packagesRoot = Path.Combine(GetRepositoryRoot().FullName, "src");
         var manifestPaths = Directory.EnumerateFiles(packagesRoot, "sunder-package.json", SearchOption.AllDirectories)
             .Where(IsSourceFile)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
@@ -97,7 +97,7 @@ public sealed class ArchitectureReferenceTests
     [Fact]
     public void PackageProjects_DeclarePackageMetadataInCode()
     {
-        var packagesRoot = Path.Combine(GetRepositoryRoot().FullName, "src", "Packages");
+        var packagesRoot = Path.Combine(GetRepositoryRoot().FullName, "src");
         var packageProjects = Directory.EnumerateFiles(packagesRoot, "Sunder.Package.*.csproj", SearchOption.AllDirectories)
             .Where(path => !Path.GetFileNameWithoutExtension(path).EndsWith(".Contracts", StringComparison.OrdinalIgnoreCase))
             .Where(IsSourceFile)
@@ -118,7 +118,7 @@ public sealed class ArchitectureReferenceTests
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
         {
             if (File.Exists(Path.Combine(directory.FullName, "Sunder.AgentPackage.slnx"))
-                && Directory.Exists(Path.Combine(directory.FullName, "src", "Packages")))
+                && Directory.Exists(Path.Combine(directory.FullName, "src", "Sunder.Package.Agent")))
             {
                 return directory;
             }

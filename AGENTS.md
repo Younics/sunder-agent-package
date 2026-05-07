@@ -4,15 +4,15 @@ This repository contains the public first-party Sunder Agent package family.
 
 ## Project Map
 
-- `src/Packages/Sunder.Package.Agent` -- main Agent package.
-- `src/Packages/Sunder.Package.Agent.Contracts` -- public contracts used by Agent extension packages.
-- `src/Packages/Sunder.Package.Agent.Execution.*` -- execution backends.
-- `src/Packages/Sunder.Package.Agent.Provider.*` -- model/provider integrations.
-- `src/Packages/Sunder.Package.Agent.Tools.*` -- tool packages.
-- `src/Packages/Sunder.Package.Agent.Memory.*` -- memory packages.
-- `src/Packages/Sunder.Package.Agent.Mcp` -- MCP integration package.
-- `src/Packages/Sunder.Package.Agent.Skills` -- skills package.
-- `src/Packages/Sunder.Package.Agent.Subagents` -- subagents package.
+- `src/Sunder.Package.Agent` -- main Agent package.
+- `src/Sunder.Package.Agent.Contracts` -- public contracts used by Agent extension packages.
+- `src/Sunder.Package.Agent.Execution.*` -- execution backends.
+- `src/Sunder.Package.Agent.Provider.*` -- model/provider integrations.
+- `src/Sunder.Package.Agent.Tools.*` -- tool packages.
+- `src/Sunder.Package.Agent.Memory.*` -- memory packages.
+- `src/Sunder.Package.Agent.Mcp` -- MCP integration package.
+- `src/Sunder.Package.Agent.Skills` -- skills package.
+- `src/Sunder.Package.Agent.Subagents` -- subagents package.
 
 ## References
 
