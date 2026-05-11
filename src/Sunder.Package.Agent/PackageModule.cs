@@ -55,18 +55,22 @@ public sealed partial class PackageModule : ISunderPackageModule
         registry.RegisterPackageView<AgentChatView>(new PackageViewRegistration(
             "sunder.package.agent.chat",
             "Agent Chat",
+            "Assets/chat-icon.png",
             defaultPlacement: PackageViewPlacement.Middle));
         registry.RegisterPackageView<AgentSessionsView>(new PackageViewRegistration(
             "sunder.package.agent.sessions",
             "Sessions",
+            "Assets/session-icon.png",
             defaultPlacement: PackageViewPlacement.LeftTop));
         registry.RegisterPackageView<AgentProfilesView>(new PackageViewRegistration(
             "sunder.package.agent.profiles",
             "Agent Profiles",
+            "Assets/profile-icon.png",
             defaultPlacement: PackageViewPlacement.RightTop));
         registry.RegisterPackageView<AgentWorkspacesView>(new PackageViewRegistration(
             "sunder.package.agent.workspaces",
             "Workspaces",
+            "Assets/workspace-icon.png",
             defaultPlacement: PackageViewPlacement.RightTop));
         registry.RegisterSettingsView<AgentPermissionsView>();
     }

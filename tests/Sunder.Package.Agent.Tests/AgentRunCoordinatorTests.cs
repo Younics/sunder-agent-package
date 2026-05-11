@@ -5132,11 +5132,15 @@ public sealed class AgentRunCoordinatorTests
             => throw new NotSupportedException();
     }
 
-    private sealed class TestExtensionCatalog : IPackageExtensionCatalog, IPackageExtensionCatalogChangeNotifier
+    private sealed class TestExtensionCatalog : IPackageExtensionCatalog, IPackageExtensionCatalogChangeNotifier, IPackageExtensionCatalogMonitor
     {
         private readonly Dictionary<string, List<object>> _extensions = new(StringComparer.OrdinalIgnoreCase);
 
-        public event Action? ExtensionsChanged;
+        private long _revision;
+
+        public event EventHandler? ExtensionsChanged;
+
+        public event EventHandler<PackageExtensionCatalogChangedEventArgs>? Changed;
 
         public void AddExtension<TContract>(PackageExtensionPoint<TContract> extensionPoint, TContract extension)
         {
@@ -5147,7 +5151,12 @@ public sealed class AgentRunCoordinatorTests
             }
 
             entries.Add(extension!);
-            ExtensionsChanged?.Invoke();
+            var args = new PackageExtensionCatalogChangedEventArgs(
+                Interlocked.Increment(ref _revision),
+                PackageExtensionCatalogChangeReason.PackageActivated,
+                [new PackageExtensionChange("test.package", extensionPoint.Id, PackageExtensionChangeKind.Added, extension?.GetType())]);
+            ExtensionsChanged?.Invoke(this, EventArgs.Empty);
+            Changed?.Invoke(this, args);
         }
 
         public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint)

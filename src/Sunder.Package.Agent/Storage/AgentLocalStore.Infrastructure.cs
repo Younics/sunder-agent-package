@@ -5,7 +5,14 @@ namespace Sunder.Package.Agent.Storage;
 
 public sealed partial class AgentLocalStore
 {
-    private SqliteConnection CreateConnection() => new($"Data Source={DatabasePath}");
+    private SqliteConnection CreateConnection() => new(CreateConnectionString(DatabasePath));
+
+    private static string CreateConnectionString(string databasePath)
+        => new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Pooling = false,
+        }.ToString();
 
     private static void EnsureSqliteNativeLibraryLoaded(string installPath)
     {

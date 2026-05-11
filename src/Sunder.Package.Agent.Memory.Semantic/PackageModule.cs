@@ -35,6 +35,7 @@ public sealed class PackageModule : ISunderPackageModule
         registry.RegisterPackageView<MemoryInspectorView>(new PackageViewRegistration(
             "sunder.package.agent.memory.semantic.inspector",
             "Memory Inspector",
+            "assets/memory-icon.png",
             defaultPlacement: PackageViewPlacement.LeftBottom));
     }
 }

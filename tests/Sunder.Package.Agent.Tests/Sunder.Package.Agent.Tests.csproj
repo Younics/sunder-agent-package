@@ -17,6 +17,10 @@
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Mcp\Sunder.Package.Agent.Mcp.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Sunder.Package.Agent.Skills.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Anthropic\Sunder.Package.Agent.Provider.Anthropic.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Gemini\Sunder.Package.Agent.Provider.Gemini.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.LMStudio\Sunder.Package.Agent.Provider.LMStudio.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.OpenAI\Sunder.Package.Agent.Provider.OpenAI.csproj" />
     <ProjectReference Include="..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj" Condition="Exists('..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj')" />
     <PackageReference Include="Sunder.Sdk" Condition="!Exists('..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj')" />
   </ItemGroup>

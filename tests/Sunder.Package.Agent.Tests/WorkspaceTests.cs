@@ -460,6 +460,48 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
+    public async Task AgentWorkspacesViewModel_RefreshesExecutionTargets_WhenCatalogChanges()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var catalog = new TestExtensionCatalog();
+        var workspaceService = new AgentWorkspaceService(store);
+        var executionTargetService = new AgentExecutionTargetService(catalog);
+        using var viewModel = new AgentWorkspacesViewModel(workspaceService, executionTargetService, catalog);
+
+        viewModel.CreateWorkspaceCommand.Execute(null);
+        Assert.False(viewModel.HasExecutionTargetChoices);
+
+        var target = new CountingExecutionTarget("docker");
+        catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target);
+
+        await WaitUntilAsync(() => viewModel.ExecutionTargets.Any(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase)));
+        Assert.True(viewModel.HasExecutionTargetChoices);
+    }
+
+    [Fact]
+    public async Task AgentWorkspacesViewModel_RefreshesEditorSections_WhenCatalogChanges()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var catalog = new TestExtensionCatalog();
+        var workspaceService = new AgentWorkspaceService(store);
+        var executionTargetService = new AgentExecutionTargetService(catalog);
+        using var viewModel = new AgentWorkspacesViewModel(workspaceService, executionTargetService, catalog);
+
+        viewModel.CreateWorkspaceCommand.Execute(null);
+        var target = new CountingExecutionTarget("docker");
+        catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target);
+        await WaitUntilAsync(() => viewModel.ExecutionTargets.Any(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase)));
+        viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase));
+        Assert.Empty(viewModel.EditorSections);
+
+        catalog.AddExtension(PackageExtensionPoints.WorkspaceEditorContributors, new TestWorkspaceEditorContributor("docker"));
+
+        await WaitUntilAsync(() => viewModel.EditorSections.Any(section => string.Equals(section.SectionId, "test-editor", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [Fact]
     public async Task AgentChatViewModel_WarmsExecutionTarget_WhenWorkspaceSelectionChanges()
     {
         using var scope = TestScope.Create();
@@ -1382,9 +1424,14 @@ public sealed class WorkspaceTests
         }
     }
 
-    private sealed class TestExtensionCatalog : IPackageExtensionCatalog
+    private sealed class TestExtensionCatalog : IPackageExtensionCatalog, IPackageExtensionCatalogChangeNotifier, IPackageExtensionCatalogMonitor
     {
         private readonly Dictionary<string, List<object>> _extensions = new(StringComparer.OrdinalIgnoreCase);
+        private long _revision;
+
+        public event EventHandler? ExtensionsChanged;
+
+        public event EventHandler<PackageExtensionCatalogChangedEventArgs>? Changed;
 
         public void AddExtension<TContract>(PackageExtensionPoint<TContract> extensionPoint, TContract extension)
         {
@@ -1395,6 +1442,12 @@ public sealed class WorkspaceTests
             }
 
             entries.Add(extension!);
+            var args = new PackageExtensionCatalogChangedEventArgs(
+                Interlocked.Increment(ref _revision),
+                PackageExtensionCatalogChangeReason.PackageActivated,
+                [new PackageExtensionChange("test.package", extensionPoint.Id, PackageExtensionChangeKind.Added, extension?.GetType())]);
+            ExtensionsChanged?.Invoke(this, EventArgs.Empty);
+            Changed?.Invoke(this, args);
         }
 
         public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
@@ -1427,6 +1480,28 @@ public sealed class WorkspaceTests
 
         public ValueTask<AgentFileMutationResult> DeleteFileAsync(AgentExecutionTargetContext context, AgentFileDeleteRequest request, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
+    }
+
+    private sealed class TestWorkspaceEditorContributor(string targetId) : IAgentWorkspaceEditorContributor
+    {
+        public string ContributorId => "test-workspace-editor";
+
+        public bool CanEdit(AgentWorkspaceEditorContext context)
+            => string.Equals(context.TargetId, targetId, StringComparison.OrdinalIgnoreCase);
+
+        public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
+            AgentWorkspaceEditorContext context,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<IReadOnlyList<AgentEditorSection>>(
+            [
+                new AgentEditorSection("test-editor", "Test Editor", null, []),
+            ]);
+
+        public ValueTask<AgentEditorSaveResult> SaveSectionAsync(
+            AgentWorkspaceEditorContext context,
+            AgentEditorSaveRequest request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(AgentEditorSaveResult.Ok("Saved."));
     }
 
     private sealed class ScriptedExecutionTarget(string targetKind, string targetId, IEnumerable<AgentShellCommandResult> results) : IAgentExecutionTarget

@@ -24,12 +24,15 @@ public sealed class PackageModule : ISunderPackageModule
         registry.RegisterPackageView<SubagentsView>(new PackageViewRegistration(
             "sunder.package.agent.subagents",
             "Subagents",
+            "assets/sub-profile-icon.png",
             defaultPlacement: PackageViewPlacement.LeftTop));
         registry.RegisterPackageView<SubsessionsView>(new PackageViewRegistration(
             SubagentConstants.SubsessionsViewId,
             "Subsessions",
+            "assets/sub-session-icon.png",
             defaultPlacement: PackageViewPlacement.LeftTop,
             showInHotbarByDefault: false));
+        
         registry.RegisterExtension(PackageExtensionPoints.ProfileSelectableCapabilityProviders, feature);
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, feature);
         registry.RegisterExtension(PackageExtensionPoints.SystemPromptContributors, feature);

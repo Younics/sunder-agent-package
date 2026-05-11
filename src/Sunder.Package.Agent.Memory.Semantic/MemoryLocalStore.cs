@@ -715,7 +715,14 @@ public sealed class MemoryLocalStore
         }
     }
 
-    private SqliteConnection CreateConnection() => new($"Data Source={DatabasePath}");
+    private SqliteConnection CreateConnection() => new(CreateConnectionString(DatabasePath));
+
+    private static string CreateConnectionString(string databasePath)
+        => new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Pooling = false,
+        }.ToString();
 
     private static void DeleteSessionRows(SqliteConnection connection, SqliteTransaction transaction, string tableName, Guid sessionId)
     {

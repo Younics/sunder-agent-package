@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts;
@@ -14,8 +15,11 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private readonly AgentWorkspaceService _workspaceService;
     private readonly AgentExecutionTargetService _targetService;
     private readonly IPackageExtensionCatalog _extensionCatalog;
+    private readonly IPackageExtensionCatalogMonitor? _extensionCatalogMonitor;
+    private readonly IPackageExtensionCatalogChangeNotifier? _extensionCatalogChangeNotifier;
     private readonly AgentExecutionTargetWarmupService? _warmupService;
     private bool _suppressSelectionHandlers;
+    private bool _disposed;
 
     public AgentWorkspacesViewModel(
         AgentWorkspaceService workspaceService,
@@ -26,6 +30,17 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         _workspaceService = workspaceService;
         _targetService = targetService;
         _extensionCatalog = extensionCatalog;
+        _extensionCatalogMonitor = extensionCatalog as IPackageExtensionCatalogMonitor;
+        if (_extensionCatalogMonitor is not null)
+        {
+            _extensionCatalogMonitor.Changed += OnExtensionCatalogChanged;
+        }
+        else if (extensionCatalog is IPackageExtensionCatalogChangeNotifier changeNotifier)
+        {
+            _extensionCatalogChangeNotifier = changeNotifier;
+            changeNotifier.ExtensionsChanged += OnExtensionCatalogChanged;
+        }
+
         _warmupService = warmupService;
         ReloadTargets();
         ReloadWorkspaces(selectWorkspaceId: null);
@@ -93,6 +108,21 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        if (_extensionCatalogMonitor is not null)
+        {
+            _extensionCatalogMonitor.Changed -= OnExtensionCatalogChanged;
+        }
+
+        if (_extensionCatalogChangeNotifier is not null)
+        {
+            _extensionCatalogChangeNotifier.ExtensionsChanged -= OnExtensionCatalogChanged;
+        }
     }
 
     partial void OnIsCompactLayoutChanged(bool value)
@@ -222,7 +252,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         IsEditorActive = true;
     }
 
-    private void ReloadTargets()
+    private void ReloadTargets(string? preferredTargetId = null)
     {
         ExecutionTargets.Clear();
         ExecutionTargets.Add(ExecutionTargetOption.Unconfigured);
@@ -234,7 +264,43 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
                 target.Description ?? target.TargetId));
         }
 
+        if (preferredTargetId is not null)
+        {
+            SetSelectionSilently(() => SelectedExecutionTarget = ResolveTargetOption(preferredTargetId));
+        }
+
         OnPropertyChanged(nameof(HasExecutionTargetChoices));
+    }
+
+    private void OnExtensionCatalogChanged(object? sender, EventArgs e)
+        => RunOnUiThread(ApplyExtensionCatalogChanges);
+
+    private void OnExtensionCatalogChanged(object? sender, PackageExtensionCatalogChangedEventArgs e)
+    {
+        if (!e.IncludesExtensionPoint(PackageExtensionPoints.ExecutionTargets.Id)
+            && !e.IncludesExtensionPoint(PackageExtensionPoints.WorkspaceEditorContributors.Id))
+        {
+            return;
+        }
+
+        RunOnUiThread(ApplyExtensionCatalogChanges);
+    }
+
+    private void ApplyExtensionCatalogChanges()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        var preferredTargetId = SelectedExecutionTarget?.TargetId;
+        if (string.IsNullOrWhiteSpace(preferredTargetId) && SelectedWorkspace is not null)
+        {
+            preferredTargetId = ResolveWorkspaceTargetId(SelectedWorkspace.WorkspaceId);
+        }
+
+        ReloadTargets(preferredTargetId);
+        _ = RefreshEditorSectionsAsync();
     }
 
     private void ReloadWorkspaces(string? selectWorkspaceId)
@@ -271,6 +337,11 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         SelectedExecutionTarget = ResolveTargetOption(binding?.ContributionId);
         _ = RefreshEditorSectionsAsync();
     }
+
+    private string? ResolveWorkspaceTargetId(string workspaceId)
+        => _workspaceService.ListBindings(workspaceId)
+            .FirstOrDefault(item => string.Equals(item.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase))
+            ?.ContributionId;
 
     private async Task RefreshEditorSectionsAsync()
     {
@@ -333,6 +404,30 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private ExecutionTargetOption ResolveTargetOption(string? contributionId)
         => ExecutionTargets.FirstOrDefault(target => string.Equals(target.TargetId, contributionId, StringComparison.OrdinalIgnoreCase))
            ?? ExecutionTargetOption.Unconfigured;
+
+    private static void RunOnUiThread(Action action)
+    {
+        if (Avalonia.Application.Current is null || Dispatcher.UIThread.CheckAccess())
+        {
+            action();
+            return;
+        }
+
+        Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
+    }
+
+    private void SetSelectionSilently(Action action)
+    {
+        _suppressSelectionHandlers = true;
+        try
+        {
+            action();
+        }
+        finally
+        {
+            _suppressSelectionHandlers = false;
+        }
+    }
 }
 
 public sealed class AgentEditorSectionViewModel : ObservableObject

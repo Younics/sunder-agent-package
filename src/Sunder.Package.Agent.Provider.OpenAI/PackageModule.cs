@@ -19,6 +19,7 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddTransient<OpenAiSettingsViewModel>();
         services.AddSingleton<OpenAiPackageAuthHandler>();
         services.AddSingleton<IPackageAuthHandler>(serviceProvider => serviceProvider.GetRequiredService<OpenAiPackageAuthHandler>());
+        services.AddSingleton<IPackageCallbackHandler>(serviceProvider => serviceProvider.GetRequiredService<OpenAiPackageAuthHandler>());
         services.AddSingleton<OpenAiAgentProvider>();
         services.AddSingleton<OpenAiEmbeddingProvider>();
         services.AddSingleton<IAgentChatProvider>(serviceProvider => serviceProvider.GetRequiredService<OpenAiAgentProvider>());

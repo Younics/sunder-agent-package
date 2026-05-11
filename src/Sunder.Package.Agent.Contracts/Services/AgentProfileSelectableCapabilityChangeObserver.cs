@@ -7,6 +7,7 @@ namespace Sunder.Package.Agent.Contracts.Services;
 public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
 {
     private readonly IPackageExtensionCatalog _extensionCatalog;
+    private readonly IPackageExtensionCatalogMonitor? _extensionCatalogMonitor;
     private readonly IPackageExtensionCatalogChangeNotifier? _extensionCatalogChangeNotifier;
     private readonly object _syncRoot = new();
     private readonly HashSet<IAgentProfileSelectableCapabilityChangeNotifier> _subscribedProviders = [];
@@ -15,7 +16,12 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
     public AgentProfileSelectableCapabilityChangeObserver(IPackageExtensionCatalog extensionCatalog)
     {
         _extensionCatalog = extensionCatalog;
-        if (_extensionCatalog is IPackageExtensionCatalogChangeNotifier changeNotifier)
+        if (_extensionCatalog is IPackageExtensionCatalogMonitor monitor)
+        {
+            _extensionCatalogMonitor = monitor;
+            monitor.Changed += OnExtensionCatalogChanged;
+        }
+        else if (_extensionCatalog is IPackageExtensionCatalogChangeNotifier changeNotifier)
         {
             _extensionCatalogChangeNotifier = changeNotifier;
             changeNotifier.ExtensionsChanged += OnExtensionCatalogChanged;
@@ -54,7 +60,13 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
         }
     }
 
-    private void OnExtensionCatalogChanged()
+    private void OnExtensionCatalogChanged(object? sender, EventArgs e)
+    {
+        RefreshProviderSubscriptions();
+        Changed?.Invoke();
+    }
+
+    private void OnExtensionCatalogChanged(object? sender, PackageExtensionCatalogChangedEventArgs e)
     {
         RefreshProviderSubscriptions();
         Changed?.Invoke();
@@ -73,6 +85,11 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
             }
 
             _disposed = true;
+            if (_extensionCatalogMonitor is not null)
+            {
+                _extensionCatalogMonitor.Changed -= OnExtensionCatalogChanged;
+            }
+
             if (_extensionCatalogChangeNotifier is not null)
             {
                 _extensionCatalogChangeNotifier.ExtensionsChanged -= OnExtensionCatalogChanged;
