@@ -1,6 +1,4 @@
-using Avalonia;
 using Avalonia.Media;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Theming;
@@ -27,7 +25,7 @@ public sealed partial class AgentSessionListItemViewModel : ObservableObject
     private string _statusBadgeText = "Idle";
 
     [ObservableProperty]
-    private IBrush _statusBrush = Brushes.Gray;
+    private IBrush? _statusBrush;
 
     [ObservableProperty]
     private bool _hasUnreadActivity;
@@ -107,7 +105,7 @@ public sealed partial class AgentSessionListItemViewModel : ObservableObject
     private static string FormatCheckpoint(AgentRunCheckpointRecord checkpoint)
         => $"Current run revision: {checkpoint.RunRevision} · Status: {checkpoint.Status} · {checkpoint.Summary}";
 
-    private static IBrush ResolveStatusBrush(AgentRunStatus status)
+    private static IBrush? ResolveStatusBrush(AgentRunStatus status)
     {
         var resourceKey = status switch
         {
@@ -118,35 +116,6 @@ public sealed partial class AgentSessionListItemViewModel : ObservableObject
             _ => SunderThemeKeys.ForegroundMutedBrush
         };
 
-        if (TryGetBrush(resourceKey) is { } brush)
-        {
-            return brush;
-        }
-
-        return status switch
-        {
-            AgentRunStatus.Completed => Brushes.MediumSeaGreen,
-            AgentRunStatus.Running => Brushes.SteelBlue,
-            AgentRunStatus.Failed => Brushes.IndianRed,
-            AgentRunStatus.Interrupted or AgentRunStatus.Stopped => Brushes.Goldenrod,
-            _ => Brushes.Gray
-        };
-    }
-
-    private static IBrush? TryGetBrush(string resourceKey)
-    {
-        if (!Dispatcher.UIThread.CheckAccess())
-        {
-            return null;
-        }
-
-        var application = Application.Current;
-        if (application?.Resources.TryGetResource(resourceKey, application.ActualThemeVariant, out var resource) == true
-            && resource is IBrush brush)
-        {
-            return brush;
-        }
-
-        return null;
+        return AgentThemeBrushes.Resolve(resourceKey);
     }
 }

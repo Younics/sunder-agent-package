@@ -920,7 +920,7 @@ public sealed partial class SubsessionListItemViewModel : ObservableObject
     private string _statusBadgeText = "Idle";
 
     [ObservableProperty]
-    private IBrush _statusBrush = Brushes.Gray;
+    private IBrush? _statusBrush;
 
     [ObservableProperty]
     private bool _isRunActive;
@@ -957,7 +957,7 @@ public sealed partial class SubsessionListItemViewModel : ObservableObject
         IsRunActive = checkpoint.Status == AgentRunStatus.Running;
     }
 
-    private static IBrush ResolveStatusBrush(AgentRunStatus status)
+    private static IBrush? ResolveStatusBrush(AgentRunStatus status)
     {
         var resourceKey = status switch
         {
@@ -968,21 +968,6 @@ public sealed partial class SubsessionListItemViewModel : ObservableObject
             _ => SunderThemeKeys.ForegroundMutedBrush
         };
 
-        var application = Avalonia.Application.Current;
-        if (Dispatcher.UIThread.CheckAccess()
-            && application?.Resources.TryGetResource(resourceKey, application.ActualThemeVariant, out var resource) == true
-            && resource is IBrush brush)
-        {
-            return brush;
-        }
-
-        return status switch
-        {
-            AgentRunStatus.Completed => Brushes.MediumSeaGreen,
-            AgentRunStatus.Running => Brushes.SteelBlue,
-            AgentRunStatus.Failed => Brushes.IndianRed,
-            AgentRunStatus.Interrupted or AgentRunStatus.Stopped => Brushes.Goldenrod,
-            _ => Brushes.Gray
-        };
+        return SubagentThemeBrushes.Resolve(resourceKey);
     }
 }

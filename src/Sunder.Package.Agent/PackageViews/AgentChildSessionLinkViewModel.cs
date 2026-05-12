@@ -1,6 +1,4 @@
-using Avalonia;
 using Avalonia.Media;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Theming;
@@ -38,10 +36,10 @@ public sealed partial class AgentChildSessionLinkViewModel : ObservableObject
     private string _statusIconText = "!";
 
     [ObservableProperty]
-    private IBrush _stateBrush = Brushes.Gray;
+    private IBrush? _stateBrush;
 
     [ObservableProperty]
-    private IBrush _stateSoftBrush = Brushes.Transparent;
+    private IBrush? _stateSoftBrush;
 
     public string DisplayText => string.IsNullOrWhiteSpace(Subtitle) ? Title : $"{Subtitle} · {Title}";
 
@@ -68,7 +66,7 @@ public sealed partial class AgentChildSessionLinkViewModel : ObservableObject
             _ => "!",
         };
 
-    private static IBrush ResolveStateBrush(AgentRunStatus status)
+    private static IBrush? ResolveStateBrush(AgentRunStatus status)
     {
         var resourceKey = status switch
         {
@@ -79,22 +77,10 @@ public sealed partial class AgentChildSessionLinkViewModel : ObservableObject
             _ => SunderThemeKeys.ForegroundMutedBrush,
         };
 
-        if (TryGetBrush(resourceKey) is { } brush)
-        {
-            return brush;
-        }
-
-        return status switch
-        {
-            AgentRunStatus.Completed => Brushes.MediumSeaGreen,
-            AgentRunStatus.Running => Brushes.SteelBlue,
-            AgentRunStatus.Failed => Brushes.IndianRed,
-            AgentRunStatus.Interrupted or AgentRunStatus.Stopped => Brushes.Goldenrod,
-            _ => Brushes.Gray,
-        };
+        return AgentThemeBrushes.Resolve(resourceKey);
     }
 
-    private static IBrush ResolveStateSoftBrush(AgentRunStatus status)
+    private static IBrush? ResolveStateSoftBrush(AgentRunStatus status)
     {
         var resourceKey = status switch
         {
@@ -105,23 +91,6 @@ public sealed partial class AgentChildSessionLinkViewModel : ObservableObject
             _ => SunderThemeKeys.SurfacePopoverBrush,
         };
 
-        return TryGetBrush(resourceKey) ?? Brushes.Transparent;
-    }
-
-    private static IBrush? TryGetBrush(string resourceKey)
-    {
-        if (!Dispatcher.UIThread.CheckAccess())
-        {
-            return null;
-        }
-
-        var application = Application.Current;
-        if (application?.Resources.TryGetResource(resourceKey, application.ActualThemeVariant, out var resource) == true
-            && resource is IBrush brush)
-        {
-            return brush;
-        }
-
-        return null;
+        return AgentThemeBrushes.Resolve(resourceKey);
     }
 }

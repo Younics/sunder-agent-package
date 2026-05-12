@@ -1,9 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text.Json;
-using Avalonia;
 using Avalonia.Media;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using LiveMarkdown.Avalonia;
@@ -69,10 +67,10 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
     private ObservableStringBuilder _detailMarkdownBuilder = new();
 
     [ObservableProperty]
-    private IBrush _stateBrush = Brushes.Gray;
+    private IBrush? _stateBrush;
 
     [ObservableProperty]
-    private IBrush _stateSoftBrush = Brushes.Transparent;
+    private IBrush? _stateSoftBrush;
 
     public string ToolLabel
     {
@@ -520,54 +518,25 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
                 ? "i"
                 : "!";
 
-    private static IBrush ResolveStateBrush(string statusText)
+    private static IBrush? ResolveStateBrush(string statusText)
     {
-        if (TryGetBrush(
-                string.Equals(statusText, "Completed", StringComparison.OrdinalIgnoreCase)
-                    ? SunderThemeKeys.SuccessBrush
-                    : string.Equals(statusText, "Running", StringComparison.OrdinalIgnoreCase)
-                        ? SunderThemeKeys.AccentBrush
-                        : SunderThemeKeys.DangerBrush) is { } brush)
-        {
-            return brush;
-        }
-
-        return string.Equals(statusText, "Completed", StringComparison.OrdinalIgnoreCase)
-            ? Brushes.MediumSeaGreen
+        var resourceKey = string.Equals(statusText, "Completed", StringComparison.OrdinalIgnoreCase)
+            ? SunderThemeKeys.SuccessBrush
             : string.Equals(statusText, "Running", StringComparison.OrdinalIgnoreCase)
-                ? Brushes.SteelBlue
-                : Brushes.IndianRed;
+                ? SunderThemeKeys.AccentBrush
+                : SunderThemeKeys.DangerBrush;
+
+        return AgentThemeBrushes.Resolve(resourceKey);
     }
 
-    private static IBrush ResolveStateSoftBrush(string statusText)
+    private static IBrush? ResolveStateSoftBrush(string statusText)
     {
-        if (TryGetBrush(
-                string.Equals(statusText, "Completed", StringComparison.OrdinalIgnoreCase)
-                    ? SunderThemeKeys.SuccessSoftBrush
-                    : string.Equals(statusText, "Running", StringComparison.OrdinalIgnoreCase)
-                        ? SunderThemeKeys.InfoSoftBrush
-                        : SunderThemeKeys.DangerSoftBrush) is { } brush)
-        {
-            return brush;
-        }
+        var resourceKey = string.Equals(statusText, "Completed", StringComparison.OrdinalIgnoreCase)
+            ? SunderThemeKeys.SuccessSoftBrush
+            : string.Equals(statusText, "Running", StringComparison.OrdinalIgnoreCase)
+                ? SunderThemeKeys.InfoSoftBrush
+                : SunderThemeKeys.DangerSoftBrush;
 
-        return Brushes.Transparent;
-    }
-
-    private static IBrush? TryGetBrush(string resourceKey)
-    {
-        if (!Dispatcher.UIThread.CheckAccess())
-        {
-            return null;
-        }
-
-        var application = Application.Current;
-        if (application?.Resources.TryGetResource(resourceKey, application.ActualThemeVariant, out var resource) == true
-            && resource is IBrush brush)
-        {
-            return brush;
-        }
-
-        return null;
+        return AgentThemeBrushes.Resolve(resourceKey);
     }
 }

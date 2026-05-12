@@ -71,7 +71,7 @@
     </Style>
 
     <Style Selector="ListBox.workspace-list">
-      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="0" />
     </Style>
@@ -91,8 +91,8 @@
     </Style>
 
     <Style Selector="ListBox.workspace-list ListBoxItem:selected">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Selected}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Warning}" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
     </Style>
 
@@ -101,17 +101,13 @@
       <Setter Property="FontSize" Value="12" />
     </Style>
 
-    <Style Selector="ListBox.workspace-list ListBoxItem:selected TextBlock.workspace-list-meta">
-      <Setter Property="Foreground" Value="#C7B799" />
-    </Style>
-
     <Style Selector="Button.workspace-open-action">
       <Setter Property="Width" Value="32" />
       <Setter Property="MinWidth" Value="32" />
       <Setter Property="Height" Value="36" />
       <Setter Property="Padding" Value="0" />
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
@@ -173,7 +169,7 @@
     </Style>
 
     <Style Selector="ListBox.path-list ListBoxItem">
-      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="6" />
       <Setter Property="Margin" Value="0,0,0,4" />
