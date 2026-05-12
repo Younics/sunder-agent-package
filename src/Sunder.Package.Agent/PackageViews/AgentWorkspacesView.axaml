@@ -139,12 +139,28 @@
       <Setter Property="Padding" Value="16" />
     </Style>
 
-    <Style Selector="Border.default-pill">
+    <Style Selector="Border.default-icon">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Full}" />
-      <Setter Property="Padding" Value="8,4" />
+      <Setter Property="Width" Value="28" />
+      <Setter Property="Height" Value="28" />
+    </Style>
+
+    <Style Selector="TextBlock.path-row-label">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="Margin" Value="0,0,0,2" />
+    </Style>
+
+    <Style Selector="Button.path-icon-action">
+      <Setter Property="Width" Value="36" />
+      <Setter Property="MinWidth" Value="36" />
+      <Setter Property="Height" Value="34" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
 
     <Style Selector="ListBox.path-list">
@@ -377,17 +393,43 @@
                                     <ListBox.ItemTemplate>
                                       <DataTemplate x:DataType="vm:AgentEditorPathListItemViewModel">
                                         <Grid ColumnDefinitions="*,Auto"
-                                              ColumnSpacing="8">
-                                          <TextBox Text="{Binding Value, Mode=TwoWay}" />
+                                              RowDefinitions="Auto,Auto"
+                                              ColumnSpacing="8"
+                                              RowSpacing="8">
+                                          <StackPanel>
+                                            <TextBlock Classes="path-row-label"
+                                                       Text="{Binding ItemValueLabel}"
+                                                       IsVisible="{Binding HasItemValueLabel}" />
+                                            <TextBox Text="{Binding Value, Mode=TwoWay}" />
+                                          </StackPanel>
                                           <Border Grid.Column="1"
-                                                  Classes="default-pill"
+                                                  Classes="default-icon"
                                                   IsVisible="{Binding IsDefault}"
-                                                  VerticalAlignment="Center">
-                                            <TextBlock Text="Default"
-                                                       FontSize="12"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="{DynamicResource Sunder.Brush.Accent}" />
+                                                  VerticalAlignment="Bottom"
+                                                  ToolTip.Tip="Default working directory">
+                                            <TextBlock Text="✓"
+                                                       FontSize="14"
+                                                       FontWeight="Bold"
+                                                       Foreground="{DynamicResource Sunder.Brush.Accent}"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center" />
                                           </Border>
+                                          <StackPanel Grid.Row="1"
+                                                      Grid.ColumnSpan="2"
+                                                      IsVisible="{Binding HasSecondaryValue}">
+                                            <TextBlock Classes="path-row-label"
+                                                       Text="{Binding SecondaryItemValueLabel}" />
+                                            <Grid ColumnDefinitions="*,Auto"
+                                                  ColumnSpacing="8">
+                                              <TextBox Text="{Binding SecondaryValue, Mode=TwoWay}" />
+                                              <Button Grid.Column="1"
+                                                      Classes="secondary-action compact-action path-icon-action"
+                                                      Content="..."
+                                                      Click="OnPickEditorPathItemSecondaryFolderClick"
+                                                      IsVisible="{Binding UseSecondaryFolderPicker}"
+                                                      ToolTip.Tip="Pick folder" />
+                                            </Grid>
+                                          </StackPanel>
                                         </Grid>
                                       </DataTemplate>
                                     </ListBox.ItemTemplate>

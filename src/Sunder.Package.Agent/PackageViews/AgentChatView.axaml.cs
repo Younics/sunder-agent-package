@@ -44,8 +44,8 @@ public partial class AgentChatView : UserControl
         ConfigureComposerDropTarget(ExpandedComposerTextBox);
         ConfigureComposerDropTarget(CollapsedComposerDropTarget);
         ConfigureComposerDropTarget(CollapsedComposerTextBox);
-        ConfigureComposerPasteHandler(ExpandedComposerTextBox);
-        ConfigureComposerPasteHandler(CollapsedComposerTextBox);
+        ConfigureComposerKeyHandler(ExpandedComposerTextBox);
+        ConfigureComposerKeyHandler(CollapsedComposerTextBox);
         TranscriptScrollViewer.PropertyChanged += OnScrollViewerPropertyChanged;
         Loaded += (_, _) =>
         {
@@ -157,20 +157,33 @@ public partial class AgentChatView : UserControl
         control.AddHandler(DragDrop.DropEvent, OnComposerDrop);
     }
 
-    private void ConfigureComposerPasteHandler(TextBox textBox)
+    private void ConfigureComposerKeyHandler(TextBox textBox)
     {
         textBox.AddHandler(KeyDownEvent, OnComposerKeyDown, RoutingStrategies.Tunnel);
     }
 
     private async void OnComposerKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Handled || sender is not TextBox textBox || !IsPasteShortcut(e))
+        if (e.Handled || sender is not TextBox textBox)
         {
             return;
         }
 
-        e.Handled = true;
-        await PasteClipboardContentAsync(textBox);
+        if (IsPasteShortcut(e))
+        {
+            e.Handled = true;
+            await PasteClipboardContentAsync(textBox);
+            return;
+        }
+
+        if (IsSendShortcut(e) && _viewModel?.IsSendOnEnterEnabled == true)
+        {
+            e.Handled = true;
+            if (_viewModel.SendMessageCommand.CanExecute(null))
+            {
+                await _viewModel.SendMessageCommand.ExecuteAsync(null);
+            }
+        }
     }
 
     private async Task PasteClipboardContentAsync(TextBox textBox)
@@ -279,6 +292,9 @@ public partial class AgentChatView : UserControl
         => e.Key == Key.V
            && (e.KeyModifiers.HasFlag(KeyModifiers.Control)
                || e.KeyModifiers.HasFlag(KeyModifiers.Meta));
+
+    private static bool IsSendShortcut(KeyEventArgs e)
+        => e.Key == Key.Enter && e.KeyModifiers == KeyModifiers.None;
 
     private void OnComposerDragEnter(object? sender, DragEventArgs e)
         => UpdateComposerDragState(e);

@@ -23,11 +23,23 @@ public sealed record AgentEditorField(
     IReadOnlyList<AgentEditorListItem>? Items = null,
     string? AddItemLabel = null,
     bool UseFolderPicker = false,
-    string? DefaultNewItemValue = null);
+    string? DefaultNewItemValue = null)
+{
+    public string? ItemValueLabel { get; init; }
+
+    public string? SecondaryItemValueLabel { get; init; }
+
+    public bool UseSecondaryFolderPicker { get; init; }
+
+    public string? DefaultNewSecondaryItemValue { get; init; }
+}
 
 public sealed record AgentEditorOption(string Value, string Label, string? Description = null);
 
-public sealed record AgentEditorListItem(string ItemId, string Value, bool IsDefault = false);
+public sealed record AgentEditorListItem(string ItemId, string Value, bool IsDefault = false)
+{
+    public string? SecondaryValue { get; init; }
+}
 
 public sealed record AgentEditorFieldValue(
     string? Value = null,

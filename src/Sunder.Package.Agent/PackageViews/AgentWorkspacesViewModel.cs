@@ -522,8 +522,12 @@ public sealed partial class AgentEditorPathListFieldViewModel : AgentEditorField
         AddItemLabel = string.IsNullOrWhiteSpace(field.AddItemLabel) ? "Add" : field.AddItemLabel;
         UseFolderPicker = field.UseFolderPicker;
         DefaultNewItemValue = string.IsNullOrWhiteSpace(field.DefaultNewItemValue) ? string.Empty : field.DefaultNewItemValue;
+        ItemValueLabel = string.IsNullOrWhiteSpace(field.ItemValueLabel) ? string.Empty : field.ItemValueLabel;
+        SecondaryItemValueLabel = string.IsNullOrWhiteSpace(field.SecondaryItemValueLabel) ? string.Empty : field.SecondaryItemValueLabel;
+        UseSecondaryFolderPicker = field.UseSecondaryFolderPicker;
+        DefaultNewSecondaryItemValue = string.IsNullOrWhiteSpace(field.DefaultNewSecondaryItemValue) ? string.Empty : field.DefaultNewSecondaryItemValue;
         Items = new ObservableCollection<AgentEditorPathListItemViewModel>((field.Items ?? [])
-            .Select(item => new AgentEditorPathListItemViewModel(item.Value, item.IsDefault)));
+            .Select(item => CreateItem(item.Value, item.IsDefault, item.SecondaryValue)));
         SelectedItem = Items.FirstOrDefault(item => item.IsDefault) ?? Items.FirstOrDefault();
     }
 
@@ -533,6 +537,16 @@ public sealed partial class AgentEditorPathListFieldViewModel : AgentEditorField
 
     public string DefaultNewItemValue { get; }
 
+    public string ItemValueLabel { get; }
+
+    public string SecondaryItemValueLabel { get; }
+
+    public bool HasSecondaryValue => !string.IsNullOrWhiteSpace(SecondaryItemValueLabel);
+
+    public bool UseSecondaryFolderPicker { get; }
+
+    public string DefaultNewSecondaryItemValue { get; }
+
     public ObservableCollection<AgentEditorPathListItemViewModel> Items { get; }
 
     [ObservableProperty]
@@ -540,7 +554,7 @@ public sealed partial class AgentEditorPathListFieldViewModel : AgentEditorField
 
     public void AddItem(string value)
     {
-        var item = new AgentEditorPathListItemViewModel(value, Items.Count == 0);
+        var item = CreateItem(value, Items.Count == 0, DefaultNewSecondaryItemValue);
         Items.Add(item);
         SelectedItem = item;
     }
@@ -593,8 +607,14 @@ public sealed partial class AgentEditorPathListFieldViewModel : AgentEditorField
 
     public override AgentEditorFieldValue ToValue()
         => new(Items: Items
-            .Select((item, index) => new AgentEditorListItem(index.ToString(), item.Value, item.IsDefault))
+            .Select((item, index) => new AgentEditorListItem(index.ToString(), item.Value, item.IsDefault)
+            {
+                SecondaryValue = item.SecondaryValue,
+            })
             .ToArray());
+
+    private AgentEditorPathListItemViewModel CreateItem(string value, bool isDefault, string? secondaryValue)
+        => new(value, isDefault, secondaryValue ?? string.Empty, HasSecondaryValue, ItemValueLabel, SecondaryItemValueLabel, UseSecondaryFolderPicker);
 }
 
 public sealed record AgentEditorOptionViewModel(string Value, string Label, string Description)
@@ -602,10 +622,30 @@ public sealed record AgentEditorOptionViewModel(string Value, string Label, stri
     public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
 }
 
-public sealed partial class AgentEditorPathListItemViewModel(string value, bool isDefault) : ObservableObject
+public sealed partial class AgentEditorPathListItemViewModel(
+    string value,
+    bool isDefault,
+    string secondaryValue,
+    bool hasSecondaryValue,
+    string itemValueLabel,
+    string secondaryItemValueLabel,
+    bool useSecondaryFolderPicker) : ObservableObject
 {
+    public bool HasItemValueLabel => !string.IsNullOrWhiteSpace(ItemValueLabel);
+
+    public string ItemValueLabel { get; } = itemValueLabel;
+
+    public bool HasSecondaryValue { get; } = hasSecondaryValue;
+
+    public string SecondaryItemValueLabel { get; } = secondaryItemValueLabel;
+
+    public bool UseSecondaryFolderPicker { get; } = useSecondaryFolderPicker;
+
     [ObservableProperty]
     private string _value = value;
+
+    [ObservableProperty]
+    private string _secondaryValue = secondaryValue;
 
     [ObservableProperty]
     private bool _isDefault = isDefault;

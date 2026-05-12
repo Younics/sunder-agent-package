@@ -166,6 +166,9 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private bool _isUnrestrictedModeEnabled;
 
     [ObservableProperty]
+    private bool _isSendOnEnterEnabled = true;
+
+    [ObservableProperty]
     private bool _isComposerExpanded;
 
     [ObservableProperty]

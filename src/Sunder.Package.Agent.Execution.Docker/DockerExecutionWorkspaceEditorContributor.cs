@@ -29,7 +29,7 @@ public sealed class DockerExecutionWorkspaceEditorContributor(DockerExecutionWor
             new AgentEditorSection(
                 SectionId,
                 "Docker Execution Settings",
-                "Docker creates or reuses a workspace container from this image. Allowed roots are container paths.",
+                "Docker creates or reuses a workspace container from this image. Each container root can mount a generated or custom host folder.",
                 [
                     new AgentEditorField(
                         ImageFieldId,
@@ -50,10 +50,18 @@ public sealed class DockerExecutionWorkspaceEditorContributor(DockerExecutionWor
                             .Select((root, index) => new AgentEditorListItem(
                                 index.ToString(),
                                 root,
-                                string.Equals(root, config.DefaultWorkingDirectory, StringComparison.Ordinal)))
+                                string.Equals(root, config.DefaultWorkingDirectory, StringComparison.Ordinal))
+                            {
+                                SecondaryValue = configService.ResolveHostPath(config, root),
+                            })
                             .ToArray(),
                         AddItemLabel: "Add Container Root",
-                        DefaultNewItemValue: "/workspace"),
+                        DefaultNewItemValue: DockerExecutionWorkspaceConfigService.DefaultContainerRoot)
+                    {
+                        ItemValueLabel = "Container root",
+                        SecondaryItemValueLabel = "Host folder",
+                        UseSecondaryFolderPicker = true,
+                    },
                 ]),
         ];
 
@@ -88,21 +96,36 @@ public sealed class DockerExecutionWorkspaceEditorContributor(DockerExecutionWor
             : null;
         try
         {
-            var normalizedRoots = roots
-                .Where(root => !string.IsNullOrWhiteSpace(root.Value))
-                .Select(root => DockerExecutionWorkspaceConfigService.NormalizeContainerPath(root.Value))
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
+            var normalizedMounts = new List<AgentEditorListItem>();
+            foreach (var root in roots.Where(root => !string.IsNullOrWhiteSpace(root.Value)))
+            {
+                var containerRoot = DockerExecutionWorkspaceConfigService.NormalizeContainerPath(root.Value);
+                if (normalizedMounts.Any(item => string.Equals(item.Value, containerRoot, StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                var hostRoot = string.IsNullOrWhiteSpace(root.SecondaryValue)
+                    ? configService.ResolveDefaultHostPath(containerRoot)
+                    : DockerExecutionWorkspaceConfigService.NormalizeHostPath(root.SecondaryValue);
+                normalizedMounts.Add(new AgentEditorListItem(root.ItemId, containerRoot, root.IsDefault)
+                {
+                    SecondaryValue = hostRoot,
+                });
+            }
+
+            var normalizedRoots = normalizedMounts.Select(root => root.Value).ToArray();
             if (normalizedRoots.Length == 0)
             {
                 return ValueTask.FromResult(AgentEditorSaveResult.Failed("Configure at least one Docker allowed root."));
             }
 
-            var defaultRoot = roots.FirstOrDefault(root => root.IsDefault)?.Value ?? normalizedRoots[0];
-            configService.SaveConfig(context.ConfigurationId, new DockerExecutionWorkspaceConfig(image, normalizedRoots, defaultRoot, null, shellPath));
+            var defaultRoot = normalizedMounts.FirstOrDefault(root => root.IsDefault)?.Value ?? normalizedRoots[0];
+            var hostRoots = normalizedMounts.ToDictionary(root => root.Value, root => root.SecondaryValue ?? string.Empty, StringComparer.Ordinal);
+            configService.SaveConfig(context.ConfigurationId, new DockerExecutionWorkspaceConfig(image, normalizedRoots, defaultRoot, null, shellPath, hostRoots));
             return ValueTask.FromResult(AgentEditorSaveResult.Ok("Docker execution settings saved."));
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             return ValueTask.FromResult(AgentEditorSaveResult.Failed(ex.Message));
         }

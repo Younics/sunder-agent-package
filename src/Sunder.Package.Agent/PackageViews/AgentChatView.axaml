@@ -1123,6 +1123,10 @@
                                 Content="∞"
                                 IsChecked="{Binding IsUnrestrictedModeEnabled, Mode=TwoWay}"
                                 ToolTip.Tip="Unrestricted Mode" />
+                  <ToggleButton Classes="composer-action"
+                                Content="↵"
+                                IsChecked="{Binding IsSendOnEnterEnabled, Mode=TwoWay}"
+                                ToolTip.Tip="Send with Enter" />
                   <Button Classes="primary-action composer-action"
                           Content="↑"
                           Command="{Binding SendMessageCommand}"
@@ -1249,6 +1253,10 @@
                                 Content="∞"
                                 IsChecked="{Binding IsUnrestrictedModeEnabled, Mode=TwoWay}"
                                 ToolTip.Tip="Unrestricted Mode" />
+                  <ToggleButton Classes="composer-action"
+                                Content="↵"
+                                IsChecked="{Binding IsSendOnEnterEnabled, Mode=TwoWay}"
+                                ToolTip.Tip="Send with Enter" />
                   <Button Classes="primary-action composer-action"
                           Content="↑"
                           Command="{Binding SendMessageCommand}"

@@ -5,7 +5,8 @@ public sealed record DockerExecutionWorkspaceConfig(
     IReadOnlyList<string> AllowedRoots,
     string? DefaultWorkingDirectory,
     string? ContainerName,
-    string? ShellPath = null);
+    string? ShellPath = null,
+    IReadOnlyDictionary<string, string>? HostRoots = null);
 
 public sealed record DockerExecutionMount(
     string HostPath,

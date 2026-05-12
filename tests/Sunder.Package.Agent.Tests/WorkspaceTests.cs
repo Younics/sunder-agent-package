@@ -332,7 +332,40 @@ public sealed class WorkspaceTests
         Assert.Equal("/workspace/test", config.DefaultWorkingDirectory);
         Assert.NotNull(config.ContainerName);
         Assert.DoesNotContain(':', config.ContainerName!);
-        Assert.True(Directory.Exists(Path.Combine(scope.RootPath, "files", "workspace", "test")));
+        var defaultHostRoot = Path.Combine(scope.RootPath, "files", "workspace", "test");
+        var mount = Assert.Single(configService.ResolveMounts(config));
+        Assert.Equal(Path.GetFullPath(defaultHostRoot), mount.HostPath);
+        Assert.Equal("/workspace/test", mount.ContainerPath);
+        Assert.True(Directory.Exists(defaultHostRoot));
+    }
+
+    [Fact]
+    public void DockerExecutionWorkspaceConfigService_SaveConfig_UsesCustomHostRoot()
+    {
+        using var scope = TestScope.Create();
+        var configService = new DockerExecutionWorkspaceConfigService(scope.Context);
+        var hostRoot = Path.Combine(scope.RootPath, "custom-docker-root");
+
+        configService.SaveConfig(
+            "workspace:primary-execution-target",
+            new DockerExecutionWorkspaceConfig(
+                "test-image:latest",
+                ["/workspace"],
+                "/workspace",
+                null,
+                "/bin/sh",
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["/workspace"] = hostRoot,
+                }));
+
+        var config = configService.GetConfig("workspace:primary-execution-target");
+        var mount = Assert.Single(configService.ResolveMounts(config));
+
+        Assert.Equal(Path.GetFullPath(hostRoot), config.HostRoots!["/workspace"]);
+        Assert.Equal(Path.GetFullPath(hostRoot), mount.HostPath);
+        Assert.Equal("/workspace", mount.ContainerPath);
+        Assert.True(Directory.Exists(hostRoot));
     }
 
     [Fact]

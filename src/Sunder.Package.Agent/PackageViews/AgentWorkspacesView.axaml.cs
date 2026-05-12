@@ -99,4 +99,30 @@ public partial class AgentWorkspacesView : UserControl
             field.DeleteSelectedItem();
         }
     }
+
+    private async void OnPickEditorPathItemSecondaryFolderClick(object? sender, RoutedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is not AgentEditorPathListItemViewModel item)
+        {
+            return;
+        }
+
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel?.StorageProvider is null)
+        {
+            return;
+        }
+
+        var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select host folder",
+            AllowMultiple = false,
+        });
+
+        var folder = folders.FirstOrDefault();
+        if (folder is not null)
+        {
+            item.SecondaryValue = folder.Path.LocalPath;
+        }
+    }
 }

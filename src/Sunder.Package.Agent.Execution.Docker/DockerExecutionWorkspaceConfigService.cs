@@ -43,21 +43,42 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
     {
         var normalized = Normalize("mount-resolution", config);
         return normalized.AllowedRoots
-            .Select(root => new DockerExecutionMount(ResolveHostPath(root), root))
+            .Select(root => new DockerExecutionMount(ResolveHostPathCore(normalized, root), root))
             .ToArray();
+    }
+
+    public string ResolveHostPath(DockerExecutionWorkspaceConfig config, string containerRoot)
+    {
+        var normalized = Normalize("host-path-resolution", config);
+        var root = NormalizeContainerPath(containerRoot, allowRoot: false);
+        return ResolveHostPathCore(normalized, root);
+    }
+
+    public string ResolveDefaultHostPath(string containerRoot)
+    {
+        var relativePath = ToFileStoreRelativePath(containerRoot);
+        return Path.GetFullPath(packageContext.Storage.Files.GetPath(relativePath));
     }
 
     public void EnsureHostRoots(DockerExecutionWorkspaceConfig config)
     {
         foreach (var mount in ResolveMounts(config))
         {
+            if (File.Exists(mount.HostPath))
+            {
+                throw new InvalidOperationException($"Docker host mount path points to a file: {mount.HostPath}");
+            }
+
             Directory.CreateDirectory(mount.HostPath);
         }
     }
 
     private static DockerExecutionWorkspaceConfig Normalize(string bindingId, DockerExecutionWorkspaceConfig config)
     {
-        var roots = (config.AllowedRoots.Count == 0 ? [DefaultContainerRoot] : config.AllowedRoots)
+        var configuredRoots = config.AllowedRoots is { Count: > 0 }
+            ? config.AllowedRoots
+            : [DefaultContainerRoot];
+        var roots = configuredRoots
             .Where(root => !string.IsNullOrWhiteSpace(root))
             .Select(root => NormalizeContainerPath(root, allowRoot: false))
             .Distinct(StringComparer.Ordinal)
@@ -80,13 +101,15 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
         var shellPath = string.IsNullOrWhiteSpace(config.ShellPath)
             ? DefaultShellPath
             : NormalizeContainerPath(config.ShellPath, allowRoot: false);
+        var hostRoots = NormalizeHostRoots(config.HostRoots, roots);
 
         return new DockerExecutionWorkspaceConfig(
             string.IsNullOrWhiteSpace(config.ImageReference) ? DefaultImageReference : config.ImageReference.Trim(),
             roots,
             defaultWorkingDirectory,
             ResolveContainerName(bindingId, config.ContainerName),
-            shellPath);
+            shellPath,
+            hostRoots);
     }
 
     internal static string NormalizeContainerPath(string path)
@@ -118,10 +141,45 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
                || candidate.StartsWith(root + "/", StringComparison.Ordinal);
     }
 
-    private string ResolveHostPath(string containerRoot)
+    internal static string NormalizeHostPath(string hostPath)
+        => Path.GetFullPath(Environment.ExpandEnvironmentVariables(hostPath.Trim()));
+
+    private static IReadOnlyDictionary<string, string> NormalizeHostRoots(IReadOnlyDictionary<string, string>? hostRoots, IReadOnlyList<string> allowedRoots)
     {
-        var relativePath = ToFileStoreRelativePath(containerRoot);
-        return Path.GetFullPath(packageContext.Storage.Files.GetPath(relativePath));
+        var normalized = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (hostRoots is null)
+        {
+            return normalized;
+        }
+
+        foreach (var pair in hostRoots)
+        {
+            if (string.IsNullOrWhiteSpace(pair.Key) || string.IsNullOrWhiteSpace(pair.Value))
+            {
+                continue;
+            }
+
+            var root = NormalizeContainerPath(pair.Key, allowRoot: false);
+            if (!allowedRoots.Contains(root, StringComparer.Ordinal))
+            {
+                continue;
+            }
+
+            normalized[root] = NormalizeHostPath(pair.Value);
+        }
+
+        return normalized;
+    }
+
+    private string ResolveHostPathCore(DockerExecutionWorkspaceConfig config, string containerRoot)
+    {
+        if (config.HostRoots?.TryGetValue(containerRoot, out var hostPath) == true
+            && !string.IsNullOrWhiteSpace(hostPath))
+        {
+            return hostPath;
+        }
+
+        return ResolveDefaultHostPath(containerRoot);
     }
 
     internal static string ToFileStoreRelativePath(string containerRoot)
