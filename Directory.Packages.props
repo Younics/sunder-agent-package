@@ -2,11 +2,12 @@
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+    <CentralPackageFloatingVersionsEnabled>true</CentralPackageFloatingVersionsEnabled>
   </PropertyGroup>
   <ItemGroup>
     <!-- Sunder / Avalonia -->
-    <PackageVersion Include="Sunder.Sdk" Version="0.1.0-SUNDER" />
-    <PackageVersion Include="Sunder.Package.Build" Version="0.1.0-SUNDER" />
+    <PackageVersion Include="Sunder.Sdk" Version="*" />
+    <PackageVersion Include="Sunder.Package.Build" Version="*" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.2.4" />
     <PackageVersion Include="AWSSDK.S3" Version="4.0.22.2" />
     <PackageVersion Include="Avalonia" Version="12.0.2" />

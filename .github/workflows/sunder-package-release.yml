@@ -1,0 +1,277 @@
+name: Sunder Agent Package Release
+
+on:
+  push:
+    tags:
+      - "agent/v*"
+      - "agent-execution-docker/v*"
+      - "agent-execution-local/v*"
+      - "agent-mcp/v*"
+      - "agent-memory-semantic/v*"
+      - "agent-provider-anthropic/v*"
+      - "agent-provider-gemini/v*"
+      - "agent-provider-lmstudio/v*"
+      - "agent-provider-openai/v*"
+      - "agent-skills/v*"
+      - "agent-subagents/v*"
+      - "agent-tools-files/v*"
+      - "agent-tools-shell/v*"
+      - "agent-tools-web/v*"
+
+permissions: {}
+
+concurrency:
+  group: sunder-agent-package-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_VERSION: "10.0.x"
+  MSBUILDDISABLENODEREUSE: "1"
+
+jobs:
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_name: ${{ steps.release.outputs.artifact_name }}
+      is_prerelease: ${{ steps.release.outputs.is_prerelease }}
+      package_id: ${{ steps.release.outputs.package_id }}
+      project_path: ${{ steps.release.outputs.project_path }}
+      release_title: ${{ steps.release.outputs.release_title }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Validate release tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^([a-z0-9-]+)/v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$ ]]; then
+            echo "Sunder Agent package release tags must use '<package>/v<semver>', for example agent/v0.8.0 or agent-provider-openai/v0.8.0-beta.1." >&2
+            exit 1
+          fi
+
+          package_key="${BASH_REMATCH[1]}"
+          version="${BASH_REMATCH[2]}"
+
+          case "$package_key" in
+            agent)
+              project_path="src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+              package_id="sunder.package.agent"
+              release_title="Sunder Agent"
+              artifact_name="sunder-agent-package"
+              ;;
+            agent-execution-docker)
+              project_path="src/Sunder.Package.Agent.Execution.Docker/Sunder.Package.Agent.Execution.Docker.csproj"
+              package_id="sunder.package.agent.execution.docker"
+              release_title="Sunder Agent Execution Docker"
+              artifact_name="sunder-agent-execution-docker-package"
+              ;;
+            agent-execution-local)
+              project_path="src/Sunder.Package.Agent.Execution.Local/Sunder.Package.Agent.Execution.Local.csproj"
+              package_id="sunder.package.agent.execution.local"
+              release_title="Sunder Agent Execution Local"
+              artifact_name="sunder-agent-execution-local-package"
+              ;;
+            agent-mcp)
+              project_path="src/Sunder.Package.Agent.Mcp/Sunder.Package.Agent.Mcp.csproj"
+              package_id="sunder.package.agent.mcp"
+              release_title="Sunder Agent MCP"
+              artifact_name="sunder-agent-mcp-package"
+              ;;
+            agent-memory-semantic)
+              project_path="src/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj"
+              package_id="sunder.package.agent.memory.semantic"
+              release_title="Sunder Agent Memory Semantic"
+              artifact_name="sunder-agent-memory-semantic-package"
+              ;;
+            agent-provider-anthropic)
+              project_path="src/Sunder.Package.Agent.Provider.Anthropic/Sunder.Package.Agent.Provider.Anthropic.csproj"
+              package_id="sunder.package.agent.provider.anthropic"
+              release_title="Sunder Agent Provider Anthropic"
+              artifact_name="sunder-agent-provider-anthropic-package"
+              ;;
+            agent-provider-gemini)
+              project_path="src/Sunder.Package.Agent.Provider.Gemini/Sunder.Package.Agent.Provider.Gemini.csproj"
+              package_id="sunder.package.agent.provider.gemini"
+              release_title="Sunder Agent Provider Gemini"
+              artifact_name="sunder-agent-provider-gemini-package"
+              ;;
+            agent-provider-lmstudio)
+              project_path="src/Sunder.Package.Agent.Provider.LMStudio/Sunder.Package.Agent.Provider.LMStudio.csproj"
+              package_id="sunder.package.agent.provider.lmstudio"
+              release_title="Sunder Agent Provider LM Studio"
+              artifact_name="sunder-agent-provider-lmstudio-package"
+              ;;
+            agent-provider-openai)
+              project_path="src/Sunder.Package.Agent.Provider.OpenAI/Sunder.Package.Agent.Provider.OpenAI.csproj"
+              package_id="sunder.package.agent.provider.openai"
+              release_title="Sunder Agent Provider OpenAI"
+              artifact_name="sunder-agent-provider-openai-package"
+              ;;
+            agent-skills)
+              project_path="src/Sunder.Package.Agent.Skills/Sunder.Package.Agent.Skills.csproj"
+              package_id="sunder.package.agent.skills"
+              release_title="Sunder Agent Skills"
+              artifact_name="sunder-agent-skills-package"
+              ;;
+            agent-subagents)
+              project_path="src/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj"
+              package_id="sunder.package.agent.subagents"
+              release_title="Sunder Agent Subagents"
+              artifact_name="sunder-agent-subagents-package"
+              ;;
+            agent-tools-files)
+              project_path="src/Sunder.Package.Agent.Tools.Files/Sunder.Package.Agent.Tools.Files.csproj"
+              package_id="sunder.package.agent.tools.files"
+              release_title="Sunder Agent Tools Files"
+              artifact_name="sunder-agent-tools-files-package"
+              ;;
+            agent-tools-shell)
+              project_path="src/Sunder.Package.Agent.Tools.Shell/Sunder.Package.Agent.Tools.Shell.csproj"
+              package_id="sunder.package.agent.tools.shell"
+              release_title="Sunder Agent Tools Shell"
+              artifact_name="sunder-agent-tools-shell-package"
+              ;;
+            agent-tools-web)
+              project_path="src/Sunder.Package.Agent.Tools.Web/Sunder.Package.Agent.Tools.Web.csproj"
+              package_id="sunder.package.agent.tools.web"
+              release_title="Sunder Agent Tools Web"
+              artifact_name="sunder-agent-tools-web-package"
+              ;;
+            *)
+              echo "Unsupported Sunder Agent package release tag prefix '$package_key'." >&2
+              exit 1
+              ;;
+          esac
+
+          is_prerelease="false"
+          if [[ "$version" == *-* ]]; then
+            is_prerelease="true"
+          fi
+
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
+          echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
+          echo "project_path=$project_path" >> "$GITHUB_OUTPUT"
+          echo "release_title=$release_title" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  package:
+    name: Package .sunderpkg
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore packages
+        shell: bash
+        run: dotnet restore Sunder.AgentPackage.slnx --force-evaluate
+
+      - name: Build solution
+        shell: bash
+        run: dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 -p:Version=${{ needs.prepare.outputs.version }} -p:InformationalVersion=${{ needs.prepare.outputs.version }} -p:ContinuousIntegrationBuild=true
+
+      - name: Test architecture
+        shell: bash
+        run: dotnet test tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj -c Release --no-build
+
+      - name: Test OpenAI provider
+        shell: bash
+        run: dotnet test tests/Sunder.Package.Agent.Provider.OpenAI.Tests/Sunder.Package.Agent.Provider.OpenAI.Tests.csproj -c Release --no-build
+
+      - name: Shutdown build servers
+        shell: bash
+        run: dotnet build-server shutdown
+
+      - name: Publish package archive
+        shell: bash
+        env:
+          PROJECT_PATH: ${{ needs.prepare.outputs.project_path }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          release_dir="$PWD/artifacts/release"
+
+          dotnet msbuild "$PROJECT_PATH" \
+            -t:PackSunderPackage \
+            -m:1 \
+            -p:Configuration=Release \
+            -p:Version="$VERSION" \
+            -p:InformationalVersion="$VERSION" \
+            -p:ContinuousIntegrationBuild=true \
+            -p:SunderPackageOutputPath="$release_dir/${{ needs.prepare.outputs.package_id }}.$VERSION.sunderpkg"
+
+          shopt -s nullglob
+          packages=("$release_dir"/*.sunderpkg)
+          if [[ ${#packages[@]} -ne 1 ]]; then
+            echo "Expected exactly one .sunderpkg in '$release_dir', found ${#packages[@]}." >&2
+            exit 1
+          fi
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.prepare.outputs.artifact_name }}
+          path: artifacts/release/*.sunderpkg
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - prepare
+      - package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Upload release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
+          RELEASE_TITLE: ${{ needs.prepare.outputs.release_title }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          tag="${GITHUB_REF_NAME}"
+          assets=(release-assets/${{ needs.prepare.outputs.artifact_name }}/*.sunderpkg)
+          if [[ ${#assets[@]} -eq 0 ]]; then
+            echo "No Sunder package release assets were downloaded." >&2
+            exit 1
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber
+          else
+            create_args=(
+              release create "$tag"
+              --title "$RELEASE_TITLE $VERSION"
+              --notes "Automated $RELEASE_TITLE package release for $VERSION."
+            )
+
+            if [[ "$IS_PRERELEASE" == "true" ]]; then
+              create_args+=(--prerelease)
+            fi
+
+            gh "${create_args[@]}" "${assets[@]}"
+          fi
