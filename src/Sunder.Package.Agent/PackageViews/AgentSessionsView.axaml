@@ -220,21 +220,12 @@
         <Grid RowDefinitions="Auto,*,Auto">
           <Border Grid.Row="0"
                   Classes="session-pane-header">
-            <Grid ColumnDefinitions="Auto,*"
-                  ColumnSpacing="12">
-              <Button Grid.Column="0"
-                      Classes="secondary-action compact-action"
-                      Content="Back"
-                      Command="{Binding BackToSessionListCommand}"
-                      IsVisible="{Binding IsCompactLayout}" />
-              <StackPanel Grid.Column="1"
-                          Spacing="8">
-                <TextBlock Classes="session-title"
-                           Text="Session" />
-                <TextBlock Classes="session-caption"
-                           Text="Rename a conversation or delete it with its sub-sessions." />
-              </StackPanel>
-            </Grid>
+            <StackPanel Spacing="8">
+              <TextBlock Classes="session-title"
+                         Text="Session" />
+              <TextBlock Classes="session-caption"
+                         Text="Rename a conversation or delete it with its sub-sessions." />
+            </StackPanel>
           </Border>
 
           <ScrollViewer Grid.Row="1"
@@ -280,10 +271,18 @@
 
           <Border Grid.Row="2"
                   Classes="session-actions">
-            <Button Classes="primary-action"
-                    Content="Save Session"
-                    Command="{Binding SaveSessionCommand}"
-                    HorizontalAlignment="Stretch" />
+            <Grid ColumnDefinitions="*,Auto,Auto"
+                  ColumnSpacing="12">
+              <Button Grid.Column="1"
+                      Classes="secondary-action compact-action"
+                      Content="Back"
+                      Command="{Binding BackToSessionListCommand}"
+                      IsVisible="{Binding IsCompactLayout}" />
+              <Button Grid.Column="2"
+                      Classes="primary-action"
+                      Content="Save Session"
+                      Command="{Binding SaveSessionCommand}" />
+            </Grid>
           </Border>
         </Grid>
       </Border>

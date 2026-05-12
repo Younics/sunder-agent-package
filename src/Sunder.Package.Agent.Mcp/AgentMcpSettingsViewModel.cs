@@ -23,8 +23,28 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
 
     public ObservableCollection<ConfiguredMcpServerRecord> Servers { get; } = [];
 
+    public bool HasSelectedServer => SelectedServer is not null;
+
+    public bool IsListActive => !IsEditorActive;
+
+    public bool ShowWideLayout => !IsCompactLayout;
+
+    public bool ShowCompactList => IsCompactLayout && IsListActive;
+
+    public bool ShowCompactEditor => IsCompactLayout && IsEditorActive;
+
+    public bool ShowListPane => ShowWideLayout || ShowCompactList;
+
+    public bool ShowEditorPane => ShowWideLayout || ShowCompactEditor;
+
     [ObservableProperty]
     private ConfiguredMcpServerRecord? _selectedServer;
+
+    [ObservableProperty]
+    private bool _isCompactLayout;
+
+    [ObservableProperty]
+    private bool _isEditorActive;
 
     [ObservableProperty]
     private string _name = string.Empty;
@@ -56,6 +76,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
     partial void OnSelectedServerChanged(ConfiguredMcpServerRecord? value)
     {
         DeleteCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(HasSelectedServer));
 
         if (_suppressSelectionHandlers)
         {
@@ -77,7 +98,24 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
         SelectedServer = null;
         Name = "mcp_server";
         EditorText = McpConfigurationDocument.CreateLocalTemplate();
+        IsEditorActive = true;
         StatusText = "Editing a new MCP server draft. Paste a bare MCP server object or start from a template.";
+    }
+
+    [RelayCommand]
+    private void BackToServerList()
+        => IsEditorActive = false;
+
+    [RelayCommand]
+    private void OpenServerEditor(ConfiguredMcpServerRecord? server)
+    {
+        if (server is null)
+        {
+            return;
+        }
+
+        SelectedServer = server;
+        IsEditorActive = true;
     }
 
     [RelayCommand]
@@ -161,10 +199,29 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
         await _serverCatalogService.DeleteServerAsync(SelectedServer.ServerId);
         await _connectionManager.DisconnectServerAsync(serverId);
         await ReloadServersAsync(selectServerId: null);
+        IsEditorActive = false;
         StatusText = $"Deleted MCP server '{deletedName}'.";
     }
 
     private bool CanDeleteServer() => SelectedServer is not null;
+
+    partial void OnIsCompactLayoutChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowWideLayout));
+        OnPropertyChanged(nameof(ShowCompactList));
+        OnPropertyChanged(nameof(ShowCompactEditor));
+        OnPropertyChanged(nameof(ShowListPane));
+        OnPropertyChanged(nameof(ShowEditorPane));
+    }
+
+    partial void OnIsEditorActiveChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsListActive));
+        OnPropertyChanged(nameof(ShowCompactList));
+        OnPropertyChanged(nameof(ShowCompactEditor));
+        OnPropertyChanged(nameof(ShowListPane));
+        OnPropertyChanged(nameof(ShowEditorPane));
+    }
 
     private async Task LoadSelectedServerAsync(ConfiguredMcpServerRecord server, int version)
     {

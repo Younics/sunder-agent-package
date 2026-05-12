@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Avalonia;
 using Avalonia.Controls;
 using AvaloniaEdit.TextMate;
 using Sunder.Package.Agent.Mcp.Services;
@@ -8,6 +9,8 @@ namespace Sunder.Package.Agent.Mcp;
 
 public partial class AgentMcpSettingsView : UserControl
 {
+    private const double WideMcpMinimumWidth = 820;
+
     private AgentMcpSettingsViewModel? _viewModel;
     private bool _syncingEditor;
     private bool _syncingViewModel;
@@ -17,6 +20,8 @@ public partial class AgentMcpSettingsView : UserControl
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         AttachedToVisualTree += OnAttachedToVisualTree;
+        Loaded += (_, _) => ApplyResponsiveLayout();
+        SizeChanged += (_, _) => ApplyResponsiveLayout();
         ConfigEditor.TextChanged += OnEditorTextChanged;
         ConfigureEditor();
     }
@@ -60,8 +65,30 @@ public partial class AgentMcpSettingsView : UserControl
 
     private void OnAttachedToVisualTree(object? sender, Avalonia.VisualTreeAttachmentEventArgs e)
     {
+        ApplyResponsiveLayout();
         ApplyViewModelText();
-        ConfigEditor.Focus();
+        if (McpEditorPane.IsVisible)
+        {
+            ConfigEditor.Focus();
+        }
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        var useCompactLayout = Bounds.Width > 0 && Bounds.Width < WideMcpMinimumWidth;
+        var viewModel = _viewModel ?? DataContext as AgentMcpSettingsViewModel;
+        if (viewModel is not null)
+        {
+            viewModel.IsCompactLayout = useCompactLayout;
+        }
+
+        McpAdaptiveLayout.ColumnSpacing = useCompactLayout ? 0 : 4;
+        McpListPane.BorderThickness = useCompactLayout ? new Thickness(0) : new Thickness(0, 0, 1, 0);
+
+        Grid.SetColumn(McpListPane, 0);
+        Grid.SetColumn(McpEditorPane, useCompactLayout ? 0 : 1);
+        Grid.SetColumnSpan(McpListPane, useCompactLayout ? 2 : 1);
+        Grid.SetColumnSpan(McpEditorPane, useCompactLayout ? 2 : 1);
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)

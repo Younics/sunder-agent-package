@@ -48,6 +48,12 @@
       <Setter Property="Padding" Value="28,24" />
     </Style>
 
+    <Style Selector="Border.subsession-actions">
+      <Setter Property="Padding" Value="18" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,1,0,0" />
+    </Style>
+
     <Style Selector="TextBlock.subsession-title">
       <Setter Property="FontSize" Value="26" />
       <Setter Property="FontWeight" Value="SemiBold" />
@@ -424,24 +430,15 @@
               Grid.Column="1"
               Classes="subsession-pane"
               IsVisible="{Binding ShowDetailPane}">
-        <Grid RowDefinitions="Auto,*">
+        <Grid RowDefinitions="Auto,*,Auto">
           <Border Grid.Row="0"
                   Classes="subsession-pane-header">
-            <Grid ColumnDefinitions="Auto,*"
-                  ColumnSpacing="12">
-              <Button Grid.Column="0"
-                      Classes="secondary-action compact-action"
-                      Content="Back"
-                      Command="{Binding BackToSubsessionsListCommand}"
-                      IsVisible="{Binding IsCompactLayout}" />
-              <StackPanel Grid.Column="1"
-                          Spacing="8">
-                <TextBlock Classes="subsession-title"
-                           Text="{Binding SelectedSubsession.Title}" />
-                <TextBlock Classes="subsession-caption"
-                           Text="{Binding SelectedSubsession.Subtitle}" />
-              </StackPanel>
-            </Grid>
+            <StackPanel Spacing="8">
+              <TextBlock Classes="subsession-title"
+                         Text="{Binding SelectedSubsession.Title}" />
+              <TextBlock Classes="subsession-caption"
+                         Text="{Binding SelectedSubsession.Subtitle}" />
+            </StackPanel>
           </Border>
 
           <ScrollViewer x:Name="TranscriptScrollViewer"
@@ -467,6 +464,18 @@
               </StackPanel>
             </Border>
           </ScrollViewer>
+
+          <Border Grid.Row="2"
+                  Classes="subsession-actions"
+                  IsVisible="{Binding IsCompactLayout}">
+            <Grid ColumnDefinitions="*,Auto">
+              <Button Grid.Column="1"
+                      Classes="secondary-action compact-action"
+                      Content="Back"
+                      Command="{Binding BackToSubsessionsListCommand}"
+                      IsVisible="{Binding IsCompactLayout}" />
+            </Grid>
+          </Border>
         </Grid>
       </Border>
     </Grid>

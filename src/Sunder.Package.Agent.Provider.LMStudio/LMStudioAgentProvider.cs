@@ -103,7 +103,13 @@ public sealed class LMStudioAgentProvider(IPackageContext packageContext) : IAge
         return ValueTask.FromResult<AIChatClient>(new LMStudioChatClient(context, GetBaseUrl, GetApiKey));
     }
 
-    private string? GetBaseUrl() => packageContext.Configuration.GetValue("connection.baseUrl")?.Trim().TrimEnd('/');
+    private string GetBaseUrl()
+    {
+        var configuredBaseUrl = packageContext.Configuration.GetValue("connection.baseUrl")?.Trim().TrimEnd('/');
+        return string.IsNullOrWhiteSpace(configuredBaseUrl)
+            ? LMStudioProviderConfiguration.DefaultBaseUrl
+            : configuredBaseUrl;
+    }
 
     private string? GetApiKey() => packageContext.Secrets.GetSecret("connection.apiKey");
 

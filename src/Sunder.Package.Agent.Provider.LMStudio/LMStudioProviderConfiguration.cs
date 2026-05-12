@@ -4,6 +4,8 @@ namespace Sunder.Package.Agent.Provider.LMStudio;
 
 public static class LMStudioProviderConfiguration
 {
+    public const string DefaultBaseUrl = "http://127.0.0.1:1234/v1";
+
     public static PackageConfigurationSchema Schema { get; } = new(
         "sunder.package.agent.provider.lmstudio",
         "Sunder Agent Provider LM Studio",
@@ -20,8 +22,8 @@ public static class LMStudioProviderConfiguration
                         PackageConfigurationFieldKind.Text,
                         Description: "LM Studio OpenAI-compatible base URL.",
                         IsRequired: true,
-                        DefaultValue: "http://127.0.0.1:1234/v1",
-                        Placeholder: "http://127.0.0.1:1234/v1"
+                        DefaultValue: DefaultBaseUrl,
+                        Placeholder: DefaultBaseUrl
                     ),
                     new PackageConfigurationField(
                         "connection.apiKey",

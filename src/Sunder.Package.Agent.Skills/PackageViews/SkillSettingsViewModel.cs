@@ -19,8 +19,28 @@ public sealed partial class SkillSettingsViewModel : ObservableObject
 
     public ObservableCollection<InstalledSkillItemViewModel> Skills { get; } = [];
 
+    public bool HasSelectedSkill => SelectedSkill is not null;
+
+    public bool IsListActive => !IsDetailActive;
+
+    public bool ShowWideLayout => !IsCompactLayout;
+
+    public bool ShowCompactList => IsCompactLayout && IsListActive;
+
+    public bool ShowCompactDetail => IsCompactLayout && IsDetailActive;
+
+    public bool ShowListPane => ShowWideLayout || ShowCompactList;
+
+    public bool ShowDetailPane => ShowWideLayout || ShowCompactDetail;
+
     [ObservableProperty]
     private InstalledSkillItemViewModel? _selectedSkill;
+
+    [ObservableProperty]
+    private bool _isCompactLayout;
+
+    [ObservableProperty]
+    private bool _isDetailActive;
 
     [ObservableProperty]
     private string _githubUrl = string.Empty;
@@ -30,6 +50,33 @@ public sealed partial class SkillSettingsViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isBusy;
+
+    partial void OnSelectedSkillChanged(InstalledSkillItemViewModel? value)
+    {
+        DeleteSelectedSkillCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(HasSelectedSkill));
+    }
+
+    partial void OnIsBusyChanged(bool value)
+        => DeleteSelectedSkillCommand.NotifyCanExecuteChanged();
+
+    partial void OnIsCompactLayoutChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowWideLayout));
+        OnPropertyChanged(nameof(ShowCompactList));
+        OnPropertyChanged(nameof(ShowCompactDetail));
+        OnPropertyChanged(nameof(ShowListPane));
+        OnPropertyChanged(nameof(ShowDetailPane));
+    }
+
+    partial void OnIsDetailActiveChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsListActive));
+        OnPropertyChanged(nameof(ShowCompactList));
+        OnPropertyChanged(nameof(ShowCompactDetail));
+        OnPropertyChanged(nameof(ShowListPane));
+        OnPropertyChanged(nameof(ShowDetailPane));
+    }
 
     [RelayCommand]
     private async Task ImportGitHubAsync()
@@ -46,7 +93,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject
     public Task ImportLocalFolderAsync(string folderPath)
         => RunImportAsync(() => _importService.ImportLocalFolderAsync(folderPath), "Imported local skill folder.");
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanDeleteSelectedSkill))]
     private void DeleteSelectedSkill()
     {
         if (SelectedSkill is null)
@@ -59,6 +106,11 @@ public sealed partial class SkillSettingsViewModel : ObservableObject
             var displayName = SelectedSkill.DisplayName;
             _store.DeleteSkill(SelectedSkill.SkillId);
             Reload();
+            if (SelectedSkill is null)
+            {
+                IsDetailActive = false;
+            }
+
             StatusText = $"Deleted skill '{displayName}'.";
         }
         catch (Exception ex)
@@ -67,8 +119,30 @@ public sealed partial class SkillSettingsViewModel : ObservableObject
         }
     }
 
+    private bool CanDeleteSelectedSkill() => SelectedSkill is not null && !IsBusy;
+
     [RelayCommand]
-    private void Refresh() => Reload();
+    private void BackToSkillList()
+        => IsDetailActive = false;
+
+    [RelayCommand]
+    private void NewSkill()
+    {
+        SelectedSkill = null;
+        IsDetailActive = true;
+        StatusText = "Import a skill from GitHub or select a local skill folder.";
+    }
+
+    [RelayCommand]
+    private void OpenSkillDetail(InstalledSkillItemViewModel? skill)
+    {
+        if (skill is not null)
+        {
+            SelectedSkill = skill;
+        }
+
+        IsDetailActive = true;
+    }
 
     private async Task RunImportAsync(Func<Task<InstalledSkillRecord>> action, string successMessage)
     {
@@ -77,6 +151,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject
         {
             var imported = await action();
             Reload(imported.SkillId);
+            IsDetailActive = true;
             StatusText = successMessage;
         }
         catch (Exception ex)

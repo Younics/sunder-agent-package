@@ -6,102 +6,302 @@
              x:Class="Sunder.Package.Agent.Skills.PackageViews.SkillSettingsView"
              x:DataType="vm:SkillSettingsViewModel"
              mc:Ignorable="d">
-  <Grid ColumnDefinitions="280,*"
-        ColumnSpacing="18">
-    <Border Padding="18">
-      <DockPanel LastChildFill="True">
-        <StackPanel DockPanel.Dock="Bottom"
-                    Spacing="10">
-          <Button Content="Add Local Folder"
-                  Click="OnAddLocalFolderClick" />
-          <Button Content="Delete Selected"
-                  Command="{Binding DeleteSelectedSkillCommand}" />
-          <Button Content="Refresh"
-                  Command="{Binding RefreshCommand}" />
-        </StackPanel>
+  <UserControl.Styles>
+    <Style Selector="Border.skill-shell">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+      <Setter Property="ClipToBounds" Value="True" />
+    </Style>
 
-        <StackPanel Spacing="10">
-          <TextBlock Text="Agent Skills"
-                     FontSize="24"
-                     FontWeight="SemiBold" />
-          <TextBlock Text="Install skill folders, then enable them per Agent Profile."
-                     TextWrapping="Wrap" />
-          <ListBox ItemsSource="{Binding Skills}"
-                   SelectedItem="{Binding SelectedSkill, Mode=TwoWay}">
-            <ListBox.ItemTemplate>
-              <DataTemplate x:DataType="vm:InstalledSkillItemViewModel">
-                <StackPanel Spacing="2">
-                  <TextBlock Text="{Binding DisplayName}"
-                             FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding Description}"
-                             TextWrapping="Wrap"
-                             Opacity="0.8" />
-                </StackPanel>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
-        </StackPanel>
-      </DockPanel>
-    </Border>
+    <Style Selector="Border.skill-pane">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+    </Style>
 
-    <Border Grid.Column="1"
-            Padding="18">
-      <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                    VerticalScrollBarVisibility="Hidden">
-        <StackPanel Spacing="12">
-          <TextBlock Text="Install From GitHub"
-                     FontSize="20"
-                     FontWeight="SemiBold" />
-          <TextBlock Text="Paste a GitHub tree/blob/raw URL that points at a skill folder or SKILL.md."
-                     TextWrapping="Wrap" />
-          <TextBox Text="{Binding GithubUrl, Mode=TwoWay}"
-                   PlaceholderText="https://github.com/owner/repo/tree/main/skills/my-skill" />
-          <Button Content="Import GitHub Skill"
-                  Command="{Binding ImportGitHubCommand}" />
-          <TextBlock Text="{Binding StatusText}"
-                     TextWrapping="Wrap" />
+    <Style Selector="Border.skill-list-pane">
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,0,1,0" />
+    </Style>
 
-          <TextBlock Text="Selected Skill"
-                     FontSize="20"
-                     FontWeight="SemiBold" />
-          <StackPanel Spacing="8">
-            <TextBlock Text="Skill id" />
-            <TextBox Text="{Binding SelectedSkill.SkillId}"
-                     IsReadOnly="True" />
-            <TextBlock Text="Description" />
-            <TextBox Text="{Binding SelectedSkill.Description}"
-                     IsReadOnly="True"
-                     TextWrapping="Wrap" />
-            <TextBlock Text="Version" />
-            <TextBox Text="{Binding SelectedSkill.Version}"
-                     IsReadOnly="True" />
-            <TextBlock Text="Author" />
-            <TextBox Text="{Binding SelectedSkill.Author}"
-                     IsReadOnly="True" />
-            <TextBlock Text="Source" />
-            <TextBox Text="{Binding SelectedSkill.Source}"
-                     IsReadOnly="True" />
-            <TextBlock Text="Resolved commit" />
-            <TextBox Text="{Binding SelectedSkill.ResolvedCommitSha}"
-                     IsReadOnly="True" />
-            <TextBlock Text="Installed folder" />
-            <TextBox Text="{Binding SelectedSkill.RootPath}"
-                     IsReadOnly="True" />
-            <TextBlock Text="Metadata" />
-            <TextBox Text="{Binding SelectedSkill.MetadataText}"
-                     IsReadOnly="True"
-                     AcceptsReturn="True"
-                     MinHeight="80"
-                     TextWrapping="Wrap" />
-            <TextBlock Text="Warnings" />
-            <TextBox Text="{Binding SelectedSkill.WarningsText}"
-                     IsReadOnly="True"
-                     AcceptsReturn="True"
-                     MinHeight="80"
-                     TextWrapping="Wrap" />
-          </StackPanel>
-        </StackPanel>
-      </ScrollViewer>
-    </Border>
-  </Grid>
+    <Style Selector="Border.skill-pane-header">
+      <Setter Property="Padding" Value="28,24,28,18" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+
+    <Style Selector="Border.skill-list-body">
+      <Setter Property="Padding" Value="18" />
+    </Style>
+
+    <Style Selector="Border.skill-detail-body">
+      <Setter Property="Padding" Value="28,24" />
+    </Style>
+
+    <Style Selector="Border.skill-actions">
+      <Setter Property="Padding" Value="18" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,1,0,0" />
+    </Style>
+
+    <Style Selector="Border.skill-card">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+
+    <Style Selector="TextBlock.skill-title">
+      <Setter Property="FontSize" Value="26" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    </Style>
+
+    <Style Selector="TextBlock.skill-caption">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="TextBlock.skill-field-label">
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+      <Setter Property="Margin" Value="0,0,0,4" />
+    </Style>
+
+    <Style Selector="TextBlock.skill-field-help">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="ListBox.skill-list">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+    </Style>
+
+    <Style Selector="ListBox.skill-list ListBoxItem">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="14,12" />
+      <Setter Property="Margin" Value="0,0,0,8" />
+    </Style>
+
+    <Style Selector="ListBox.skill-list ListBoxItem:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+    </Style>
+
+    <Style Selector="ListBox.skill-list ListBoxItem:selected">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+
+    <Style Selector="Button.skill-open-action">
+      <Setter Property="Width" Value="32" />
+      <Setter Property="MinWidth" Value="32" />
+      <Setter Property="Height" Value="36" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="FontSize" Value="18" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Button.skill-open-action:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+  </UserControl.Styles>
+
+  <Border Classes="skill-shell">
+    <Grid x:Name="SkillAdaptiveLayout"
+          ColumnDefinitions="320,*"
+          ColumnSpacing="4">
+      <Border x:Name="SkillListPane"
+              Classes="skill-pane skill-list-pane"
+              IsVisible="{Binding ShowListPane}">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <Border Grid.Row="0"
+                  Classes="skill-pane-header">
+            <StackPanel Spacing="8">
+              <TextBlock Classes="skill-title"
+                         Text="Agent Skills" />
+              <TextBlock Classes="skill-caption"
+                         Text="Install skill folders, then enable them per Agent Profile." />
+            </StackPanel>
+          </Border>
+
+          <Border Grid.Row="1"
+                  Classes="skill-list-body">
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+              <ListBox Classes="skill-list"
+                       ItemsSource="{Binding Skills}"
+                       SelectedItem="{Binding SelectedSkill, Mode=TwoWay}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:InstalledSkillItemViewModel">
+                    <Grid ColumnDefinitions="*,Auto"
+                          ColumnSpacing="10">
+                      <TextBlock Text="{Binding DisplayName}"
+                                 FontWeight="SemiBold"
+                                 TextTrimming="CharacterEllipsis"
+                                 VerticalAlignment="Center" />
+                      <Button Grid.Column="1"
+                              Classes="skill-open-action"
+                              Content=">"
+                              Command="{Binding $parent[UserControl].DataContext.OpenSkillDetailCommand}"
+                              CommandParameter="{Binding}"
+                              ToolTip.Tip="Open skill details" />
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </ScrollViewer>
+          </Border>
+
+          <Border Grid.Row="2"
+                  Classes="skill-actions">
+            <Grid ColumnDefinitions="*,*"
+                  ColumnSpacing="10">
+              <Button Grid.Column="0"
+                      Classes="secondary-action danger-action"
+                      Content="Delete Skill"
+                      Command="{Binding DeleteSelectedSkillCommand}"
+                      HorizontalAlignment="Stretch" />
+              <Button Grid.Column="1"
+                      Classes="primary-action"
+                      Content="New Skill"
+                      Command="{Binding NewSkillCommand}"
+                      HorizontalAlignment="Stretch" />
+            </Grid>
+          </Border>
+        </Grid>
+      </Border>
+
+      <Border x:Name="SkillDetailPane"
+              Grid.Column="1"
+              Classes="skill-pane"
+              IsVisible="{Binding ShowDetailPane}">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <Border Grid.Row="0"
+                  Classes="skill-pane-header">
+            <StackPanel Spacing="8">
+              <TextBlock Classes="skill-title"
+                         Text="Skill Install and Details" />
+              <TextBlock Classes="skill-caption"
+                         Text="Import skills from GitHub or a local folder. Select a skill to inspect its installed metadata." />
+            </StackPanel>
+          </Border>
+
+          <ScrollViewer Grid.Row="1"
+                        HorizontalScrollBarVisibility="Disabled"
+                        VerticalScrollBarVisibility="Auto">
+            <Border Classes="skill-detail-body">
+              <StackPanel Spacing="18">
+                <Border Classes="skill-card">
+                  <StackPanel Spacing="14">
+                    <StackPanel Spacing="4">
+                      <TextBlock Classes="skill-field-label"
+                                 Text="Install From GitHub" />
+                      <TextBlock Classes="skill-field-help"
+                                 Text="Paste a GitHub tree/blob/raw URL that points at a skill folder or SKILL.md." />
+                    </StackPanel>
+                    <TextBox Text="{Binding GithubUrl, Mode=TwoWay}"
+                             PlaceholderText="https://github.com/owner/repo/tree/main/skills/my-skill" />
+                    <WrapPanel Orientation="Horizontal">
+                      <Button Content="Import GitHub Skill"
+                              Margin="0,0,10,10"
+                              Command="{Binding ImportGitHubCommand}" />
+                      <Button Content="Import Local Folder"
+                              Margin="0,0,10,10"
+                              Click="OnAddLocalFolderClick" />
+                    </WrapPanel>
+                    <TextBlock Classes="skill-caption"
+                               Text="{Binding StatusText}"
+                               TextWrapping="Wrap" />
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="skill-card"
+                        IsVisible="{Binding HasSelectedSkill}">
+                  <StackPanel Spacing="14">
+                    <StackPanel Spacing="4">
+                      <TextBlock Classes="skill-field-label"
+                                 Text="Selected Skill" />
+                      <TextBlock Classes="skill-field-help"
+                                 Text="Installed skill metadata is read-only." />
+                    </StackPanel>
+
+                    <StackPanel Spacing="8">
+                      <TextBlock Classes="skill-field-label" Text="Skill id" />
+                      <TextBox Text="{Binding SelectedSkill.SkillId}"
+                               IsReadOnly="True" />
+                      <TextBlock Classes="skill-field-label" Text="Description" />
+                      <TextBox Text="{Binding SelectedSkill.Description}"
+                               IsReadOnly="True"
+                               AcceptsReturn="True"
+                               MinHeight="90"
+                               TextWrapping="Wrap" />
+                      <TextBlock Classes="skill-field-label" Text="Version" />
+                      <TextBox Text="{Binding SelectedSkill.Version}"
+                               IsReadOnly="True" />
+                      <TextBlock Classes="skill-field-label" Text="Author" />
+                      <TextBox Text="{Binding SelectedSkill.Author}"
+                               IsReadOnly="True" />
+                      <TextBlock Classes="skill-field-label" Text="Source" />
+                      <TextBox Text="{Binding SelectedSkill.Source}"
+                               IsReadOnly="True" />
+                      <TextBlock Classes="skill-field-label" Text="Resolved commit" />
+                      <TextBox Text="{Binding SelectedSkill.ResolvedCommitSha}"
+                               IsReadOnly="True" />
+                      <TextBlock Classes="skill-field-label" Text="Installed folder" />
+                      <TextBox Text="{Binding SelectedSkill.RootPath}"
+                               IsReadOnly="True" />
+                      <TextBlock Classes="skill-field-label" Text="Metadata" />
+                      <TextBox Text="{Binding SelectedSkill.MetadataText}"
+                               IsReadOnly="True"
+                               AcceptsReturn="True"
+                               MinHeight="80"
+                               TextWrapping="Wrap" />
+                      <TextBlock Classes="skill-field-label" Text="Warnings" />
+                      <TextBox Text="{Binding SelectedSkill.WarningsText}"
+                               IsReadOnly="True"
+                               AcceptsReturn="True"
+                               MinHeight="80"
+                               TextWrapping="Wrap" />
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </Border>
+          </ScrollViewer>
+
+          <Border Grid.Row="2"
+                  Classes="skill-actions">
+            <Grid ColumnDefinitions="*,Auto"
+                  ColumnSpacing="12">
+              <TextBlock Grid.Column="0"
+                         Classes="skill-caption"
+                         Text="{Binding StatusText}"
+                         TextWrapping="Wrap"
+                         VerticalAlignment="Center" />
+              <Button Grid.Column="1"
+                      Classes="secondary-action compact-action"
+                      Content="Back"
+                      Command="{Binding BackToSkillListCommand}"
+                      IsVisible="{Binding IsCompactLayout}" />
+            </Grid>
+          </Border>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
 </UserControl>

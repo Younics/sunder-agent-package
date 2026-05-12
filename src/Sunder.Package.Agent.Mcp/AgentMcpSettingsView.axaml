@@ -7,111 +7,299 @@
              x:Class="Sunder.Package.Agent.Mcp.AgentMcpSettingsView"
              x:DataType="vm:AgentMcpSettingsViewModel"
              mc:Ignorable="d">
-  <Grid ColumnDefinitions="Auto,*"
-        ColumnSpacing="18">
-    <Border Padding="12">
-      <DockPanel LastChildFill="True">
-        <StackPanel DockPanel.Dock="Bottom"
-                    Spacing="10">
-          <Button Content="New MCP Server"
-                  Command="{Binding CreateServerCommand}"
-                  HorizontalAlignment="Stretch" />
-          <Button Content="Delete MCP Server"
-                  Command="{Binding DeleteCommand}"
-                  HorizontalAlignment="Stretch" />
-        </StackPanel>
+  <UserControl.Styles>
+    <Style Selector="Border.mcp-shell">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+      <Setter Property="ClipToBounds" Value="True" />
+    </Style>
 
-        <StackPanel Spacing="10">
-          <TextBlock Text="Configured MCP Servers"
-                     FontSize="20"
-                     FontWeight="SemiBold" />
-          <TextBlock Text="Create one server at a time, then paste the bare local or remote MCP object into the editor."
-                     TextWrapping="Wrap" />
-          <ListBox ItemsSource="{Binding Servers}"
-                   SelectedItem="{Binding SelectedServer, Mode=TwoWay}">
-            <ListBox.ItemTemplate>
-              <DataTemplate x:DataType="vm:ConfiguredMcpServerRecord">
-                <StackPanel Spacing="2">
-                  <TextBlock Text="{Binding DisplayName}" />
-                  <TextBlock Text="{Binding Name}"
-                             Opacity="0.75"
-                             FontSize="12" />
-                </StackPanel>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
-        </StackPanel>
-      </DockPanel>
-    </Border>
+    <Style Selector="Border.mcp-pane">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+    </Style>
 
-    <Border Grid.Column="1"
-            Padding="12"
-            MinWidth="0"
-            ClipToBounds="True">
-      <Grid RowDefinitions="Auto,Auto,Auto,*,Auto"
-             RowSpacing="10">
-        <TextBlock Text="MCP Server Editor"
-                   FontSize="18"
-                   FontWeight="SemiBold" />
+    <Style Selector="Border.mcp-list-pane">
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,0,1,0" />
+    </Style>
 
-        <StackPanel Grid.Row="1"
-                    Spacing="6">
-          <TextBlock Text="Machine name" />
-          <TextBox Text="{Binding Name, Mode=TwoWay}"
-                   PlaceholderText="context7" />
-          <TextBlock Text="Paste only the bare MCP server object. JSONC comments and trailing commas are accepted and will be reformatted on save."
-                     TextWrapping="Wrap"
-                     Opacity="0.8" />
-        </StackPanel>
+    <Style Selector="Border.mcp-pane-header">
+      <Setter Property="Padding" Value="28,24,28,18" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
 
-        <StackPanel Grid.Row="2"
-                    Orientation="Horizontal"
-                    Spacing="10">
-          <Button Content="Local Template"
-                  Command="{Binding LoadLocalTemplateCommand}" />
-          <Button Content="Remote Template"
-                  Command="{Binding LoadRemoteTemplateCommand}" />
-          <Button Content="Format"
-                  Command="{Binding FormatCommand}" />
-        </StackPanel>
+    <Style Selector="Border.mcp-list-body">
+      <Setter Property="Padding" Value="18" />
+    </Style>
 
-        <Border Grid.Row="3"
-                BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
-                BorderThickness="1"
-                CornerRadius="6"
-                Padding="6"
-                MinWidth="0"
-                MinHeight="0"
-                ClipToBounds="True">
-          <ae:TextEditor x:Name="ConfigEditor"
-                          IsReadOnly="False"
-                          ShowLineNumbers="True"
-                          HorizontalScrollBarVisibility="Auto"
-                          VerticalScrollBarVisibility="Auto"
-                          Background="{DynamicResource Sunder.Brush.Surface.Code}"
-                          Foreground="{DynamicResource Sunder.Brush.Foreground.Code}"
-                          FontFamily="Cascadia Code,Consolas,Menlo,Monospace"
-                          FontSize="13"
-                          MinWidth="0"
+    <Style Selector="Border.mcp-editor-body">
+      <Setter Property="Padding" Value="28,24" />
+    </Style>
+
+    <Style Selector="Border.mcp-actions">
+      <Setter Property="Padding" Value="18" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,1,0,0" />
+    </Style>
+
+    <Style Selector="Border.mcp-card">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+
+    <Style Selector="TextBlock.mcp-title">
+      <Setter Property="FontSize" Value="26" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    </Style>
+
+    <Style Selector="TextBlock.mcp-caption">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="TextBlock.mcp-field-label">
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+      <Setter Property="Margin" Value="0,0,0,4" />
+    </Style>
+
+    <Style Selector="TextBlock.mcp-field-help">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="ListBox.mcp-list">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+    </Style>
+
+    <Style Selector="ListBox.mcp-list ListBoxItem">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="14,12" />
+      <Setter Property="Margin" Value="0,0,0,8" />
+    </Style>
+
+    <Style Selector="ListBox.mcp-list ListBoxItem:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+    </Style>
+
+    <Style Selector="ListBox.mcp-list ListBoxItem:selected">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+
+    <Style Selector="Button.mcp-open-action">
+      <Setter Property="Width" Value="32" />
+      <Setter Property="MinWidth" Value="32" />
+      <Setter Property="Height" Value="36" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="FontSize" Value="18" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Button.mcp-open-action:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+  </UserControl.Styles>
+
+  <Border Classes="mcp-shell">
+    <Grid x:Name="McpAdaptiveLayout"
+          ColumnDefinitions="320,*"
+          ColumnSpacing="4">
+      <Border x:Name="McpListPane"
+              Classes="mcp-pane mcp-list-pane"
+              IsVisible="{Binding ShowListPane}">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <Border Grid.Row="0"
+                  Classes="mcp-pane-header">
+            <StackPanel Spacing="8">
+              <TextBlock Classes="mcp-title"
+                         Text="MCP Servers" />
+              <TextBlock Classes="mcp-caption"
+                         Text="Configure shared Model Context Protocol servers once, then enable them per agent profile." />
+            </StackPanel>
+          </Border>
+
+          <Border Grid.Row="1"
+                  Classes="mcp-list-body">
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
                           MinHeight="0"
-                          HorizontalAlignment="Stretch"
-                          VerticalAlignment="Stretch"
-                          WordWrap="False" />
-        </Border>
+                          VerticalScrollBarVisibility="Auto">
+              <ListBox Classes="mcp-list"
+                       ItemsSource="{Binding Servers}"
+                       SelectedItem="{Binding SelectedServer, Mode=TwoWay}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:ConfiguredMcpServerRecord">
+                    <Grid ColumnDefinitions="*,Auto"
+                          ColumnSpacing="10">
+                      <Grid RowDefinitions="Auto,Auto"
+                            RowSpacing="3"
+                            MinWidth="0">
+                        <TextBlock Text="{Binding DisplayName}"
+                                   FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Row="1"
+                                   Classes="mcp-field-help"
+                                   Text="{Binding Name}"
+                                   TextTrimming="CharacterEllipsis" />
+                      </Grid>
+                      <Button Grid.Column="1"
+                              Classes="mcp-open-action"
+                              Content=">"
+                              Command="{Binding $parent[UserControl].DataContext.OpenServerEditorCommand}"
+                              CommandParameter="{Binding}"
+                              ToolTip.Tip="Open server editor" />
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </ScrollViewer>
+          </Border>
 
-        <Grid Grid.Row="4"
-              ColumnDefinitions="Auto,*"
-              ColumnSpacing="10"
-              MinWidth="0">
-          <Button Content="Save MCP Server"
-                  Command="{Binding SaveCommand}" />
-          <TextBlock Grid.Column="1"
-                     Text="{Binding StatusText}"
-                     TextWrapping="Wrap"
-                     VerticalAlignment="Center"
-                     MinWidth="0" />
+          <Border Grid.Row="2"
+                  Classes="mcp-actions">
+            <Grid ColumnDefinitions="*,*"
+                  ColumnSpacing="10">
+              <Button Grid.Column="0"
+                      Classes="secondary-action danger-action"
+                      Content="Delete Server"
+                      Command="{Binding DeleteCommand}"
+                      HorizontalAlignment="Stretch" />
+              <Button Grid.Column="1"
+                      Classes="primary-action"
+                      Content="New Server"
+                      Command="{Binding CreateServerCommand}"
+                      HorizontalAlignment="Stretch" />
+            </Grid>
+          </Border>
         </Grid>
-      </Grid>
-    </Border>
-  </Grid>
+      </Border>
+
+      <Border x:Name="McpEditorPane"
+              Grid.Column="1"
+              Classes="mcp-pane"
+              IsVisible="{Binding ShowEditorPane}">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <Border Grid.Row="0"
+                  Classes="mcp-pane-header">
+            <StackPanel Spacing="8">
+              <TextBlock Classes="mcp-title"
+                         Text="MCP Server Editor" />
+              <TextBlock Classes="mcp-caption"
+                         Text="Paste the bare local or remote MCP object. JSONC comments and trailing commas are accepted and reformatted on save." />
+            </StackPanel>
+          </Border>
+
+          <ScrollViewer Grid.Row="1"
+                        MinHeight="0"
+                        HorizontalScrollBarVisibility="Disabled"
+                        VerticalScrollBarVisibility="Auto">
+            <Border Classes="mcp-editor-body">
+              <Grid RowDefinitions="Auto,Auto,Auto"
+                    RowSpacing="14">
+                <Border Classes="mcp-card">
+                  <StackPanel Spacing="6">
+                    <TextBlock Classes="mcp-field-label"
+                               Text="Machine name" />
+                    <TextBox Text="{Binding Name, Mode=TwoWay}"
+                             PlaceholderText="context7" />
+                    <TextBlock Classes="mcp-field-help"
+                               Text="Use a stable machine-readable name for profile assignments and runtime connection state." />
+                  </StackPanel>
+                </Border>
+
+                <Border Grid.Row="1"
+                        Classes="mcp-card">
+                  <StackPanel Spacing="10">
+                    <StackPanel Spacing="4">
+                      <TextBlock Classes="mcp-field-label"
+                                 Text="Editor tools" />
+                      <TextBlock Classes="mcp-field-help"
+                                 Text="Start from a local or remote template, then format before saving." />
+                    </StackPanel>
+                    <WrapPanel Orientation="Horizontal">
+                      <Button Content="Local Template"
+                              Margin="0,0,10,10"
+                              Command="{Binding LoadLocalTemplateCommand}" />
+                      <Button Content="Remote Template"
+                              Margin="0,0,10,10"
+                              Command="{Binding LoadRemoteTemplateCommand}" />
+                      <Button Content="Format"
+                              Margin="0,0,10,10"
+                              Command="{Binding FormatCommand}" />
+                    </WrapPanel>
+                  </StackPanel>
+                </Border>
+
+                <Border Grid.Row="2"
+                        BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
+                        BorderThickness="1"
+                        CornerRadius="{DynamicResource Sunder.Radius.Small}"
+                        Padding="6"
+                        MinWidth="0"
+                        MinHeight="240"
+                        ClipToBounds="True">
+                  <ae:TextEditor x:Name="ConfigEditor"
+                                 IsReadOnly="False"
+                                 ShowLineNumbers="True"
+                                 HorizontalScrollBarVisibility="Auto"
+                                 VerticalScrollBarVisibility="Auto"
+                                 Background="{DynamicResource Sunder.Brush.Surface.Code}"
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Code}"
+                                 FontFamily="Cascadia Code,Consolas,Menlo,Monospace"
+                                 FontSize="13"
+                                 MinWidth="0"
+                                 MinHeight="0"
+                                 HorizontalAlignment="Stretch"
+                                 VerticalAlignment="Stretch"
+                                 WordWrap="False" />
+                </Border>
+              </Grid>
+            </Border>
+          </ScrollViewer>
+
+          <Border Grid.Row="2"
+                  Classes="mcp-actions">
+            <Grid ColumnDefinitions="*,Auto,Auto"
+                  ColumnSpacing="12">
+              <TextBlock Grid.Column="0"
+                         Classes="mcp-caption"
+                         Text="{Binding StatusText}"
+                         TextWrapping="Wrap"
+                         VerticalAlignment="Center" />
+              <Button Grid.Column="1"
+                      Classes="secondary-action compact-action"
+                      Content="Back"
+                      Command="{Binding BackToServerListCommand}"
+                      IsVisible="{Binding IsCompactLayout}" />
+              <Button Grid.Column="2"
+                      Classes="primary-action"
+                      Content="Save Server"
+                      Command="{Binding SaveCommand}" />
+            </Grid>
+          </Border>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
 </UserControl>

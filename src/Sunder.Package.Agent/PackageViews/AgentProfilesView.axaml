@@ -420,6 +420,8 @@
                                          Text="{Binding Title}" />
                               <TextBlock Classes="profile-field-help"
                                          Text="{Binding Description}"
+                                         MaxLines="2"
+                                         TextTrimming="CharacterEllipsis"
                                          IsVisible="{Binding HasDescription}" />
                             </StackPanel>
                             <ItemsControl ItemsSource="{Binding Options}">
@@ -433,11 +435,9 @@
                                       </CheckBox>
                                       <TextBlock Classes="profile-field-help"
                                                  Text="{Binding Description}"
-                                                 Margin="24,0,0,0" />
-                                      <TextBlock Classes="profile-field-help"
-                                                 Text="{Binding StatusText}"
                                                  Margin="24,0,0,0"
-                                                 IsVisible="{Binding HasStatusText}" />
+                                                 MaxLines="2"
+                                                 TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
                                   </Border>
                                 </DataTemplate>
