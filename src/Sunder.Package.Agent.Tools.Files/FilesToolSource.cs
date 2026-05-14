@@ -233,7 +233,11 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
 
     private async Task<AgentToolResult> ReadAsync(IAgentExecutionTarget target, AgentExecutionTargetContext context, AgentToolRequest request, CancellationToken cancellationToken)
     {
-        var args = Deserialize<ReadArgs>(request.ArgumentsJson);
+        if (!TryParseReadArgs(request.ArgumentsJson, out var args, out var error))
+        {
+            return Error(request.ToolId, error!, "files-arguments-invalid");
+        }
+
         var result = await target.ReadFileAsync(context, new AgentFileReadRequest(args.Path, args.Offset, args.Limit), cancellationToken);
         var wasTruncated = false;
         var content = result.IsDirectory ? result.Content : FormatReadContent(result.Content, args.Offset, args.Limit, out wasTruncated);
@@ -242,14 +246,22 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
 
     private async Task<AgentToolResult> WriteAsync(IAgentExecutionTarget target, AgentExecutionTargetContext context, AgentToolRequest request, CancellationToken cancellationToken)
     {
-        var args = Deserialize<WriteArgs>(request.ArgumentsJson);
+        if (!TryParseWriteArgs(request.ArgumentsJson, out var args, out var error))
+        {
+            return Error(request.ToolId, error!, "files-arguments-invalid");
+        }
+
         var result = await target.WriteFileAsync(context, new AgentFileWriteRequest(args.Path, args.Content, Overwrite: true), cancellationToken);
         return new AgentToolResult(request.ToolId, result.Summary, Content: result.Summary, IsError: result.IsError, ErrorCode: result.ErrorCode, BackendId: BackendId(target));
     }
 
     private async Task<AgentToolResult> EditAsync(IAgentExecutionTarget target, AgentExecutionTargetContext context, AgentToolRequest request, CancellationToken cancellationToken)
     {
-        var args = Deserialize<EditArgs>(request.ArgumentsJson);
+        if (!TryParseEditArgs(request.ArgumentsJson, out var args, out var error))
+        {
+            return Error(request.ToolId, error!, "files-arguments-invalid");
+        }
+
         var current = await target.ReadFileAsync(context, new AgentFileReadRequest(args.Path), cancellationToken);
         var next = args.ReplaceAll
             ? current.Content.Replace(args.OldString, args.NewString, StringComparison.Ordinal)
@@ -265,7 +277,11 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
 
     private async Task<AgentToolResult> ApplyPatchAsync(IAgentExecutionTarget target, AgentExecutionTargetContext context, AgentToolRequest request, CancellationToken cancellationToken)
     {
-        var args = Deserialize<ApplyPatchArgs>(request.ArgumentsJson);
+        if (!TryParseApplyPatchArgs(request.ArgumentsJson, out var args, out var error))
+        {
+            return Error(request.ToolId, error!, "files-arguments-invalid");
+        }
+
         var operations = ParsePatch(args.PatchText);
         var summaries = new List<string>();
 
@@ -313,7 +329,11 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
 
     private async Task<AgentToolResult> GrepAsync(IAgentExecutionTarget target, AgentExecutionTargetContext context, AgentToolRequest request, CancellationToken cancellationToken)
     {
-        var args = Deserialize<GrepArgs>(request.ArgumentsJson);
+        if (!TryParseGrepArgs(request.ArgumentsJson, out var args, out var error))
+        {
+            return Error(request.ToolId, error!, "files-arguments-invalid");
+        }
+
         var pathArg = string.IsNullOrWhiteSpace(args.Path) ? "." : args.Path;
         var result = await ExecuteCommandAsync(target, context, BuildRgGrepCommand(args, pathArg), cancellationToken);
         if (IsCommandMissing(result, "rg"))
@@ -334,7 +354,11 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
 
     private async Task<AgentToolResult> GlobAsync(IAgentExecutionTarget target, AgentExecutionTargetContext context, AgentToolRequest request, CancellationToken cancellationToken)
     {
-        var args = Deserialize<GlobArgs>(request.ArgumentsJson);
+        if (!TryParseGlobArgs(request.ArgumentsJson, out var args, out var error))
+        {
+            return Error(request.ToolId, error!, "files-arguments-invalid");
+        }
+
         var pathArg = string.IsNullOrWhiteSpace(args.Path) ? "." : args.Path;
         var result = await ExecuteCommandAsync(target, context, BuildRgGlobCommand(args, pathArg), cancellationToken);
         var usedFallback = false;
@@ -371,22 +395,109 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
                                       && (string.Equals(target.Descriptor.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
                                           || string.Equals(target.Descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase)));
 
-    private static T Deserialize<T>(string json)
-        => JsonSerializer.Deserialize<T>(json, JsonOptions) ?? throw new InvalidOperationException("Tool arguments were empty or invalid.");
+    private static bool TryParseReadArgs(string argumentsJson, out ReadArgs args, out string? error)
+    {
+        args = new ReadArgs(string.Empty);
+        if (!TryParseArguments(argumentsJson, out var arguments, out error)
+            || !arguments!.TryReadRequiredString("path", out var path, out error)
+            || !arguments.TryReadOptionalInt32("offset", out var offset, out error)
+            || !arguments.TryReadOptionalInt32("limit", out var limit, out error))
+        {
+            error = PrefixArgumentError("read", error);
+            return false;
+        }
+
+        args = new ReadArgs(path!, offset, limit);
+        return true;
+    }
+
+    private static bool TryParseWriteArgs(string argumentsJson, out WriteArgs args, out string? error)
+    {
+        args = new WriteArgs(string.Empty, string.Empty);
+        if (!TryParseArguments(argumentsJson, out var arguments, out error)
+            || !arguments!.TryReadRequiredString("path", out var path, out error)
+            || !arguments.TryReadRequiredString("content", out var content, out error))
+        {
+            error = PrefixArgumentError("write", error);
+            return false;
+        }
+
+        args = new WriteArgs(path!, content!);
+        return true;
+    }
+
+    private static bool TryParseEditArgs(string argumentsJson, out EditArgs args, out string? error)
+    {
+        args = new EditArgs(string.Empty, string.Empty, string.Empty);
+        if (!TryParseArguments(argumentsJson, out var arguments, out error)
+            || !arguments!.TryReadRequiredString("path", out var path, out error)
+            || !arguments.TryReadRequiredString("oldString", out var oldString, out error)
+            || !arguments.TryReadRequiredString("newString", out var newString, out error)
+            || !arguments.TryReadOptionalBoolean("replaceAll", out var replaceAll, out error))
+        {
+            error = PrefixArgumentError("edit", error);
+            return false;
+        }
+
+        args = new EditArgs(path!, oldString!, newString!, replaceAll ?? false);
+        return true;
+    }
+
+    private static bool TryParseApplyPatchArgs(string argumentsJson, out ApplyPatchArgs args, out string? error)
+    {
+        args = new ApplyPatchArgs(string.Empty);
+        if (!TryParseArguments(argumentsJson, out var arguments, out error)
+            || !arguments!.TryReadRequiredString("patchText", out var patchText, out error))
+        {
+            error = PrefixArgumentError("apply_patch", error);
+            return false;
+        }
+
+        args = new ApplyPatchArgs(patchText!);
+        return true;
+    }
+
+    private static bool TryParseGrepArgs(string argumentsJson, out GrepArgs args, out string? error)
+    {
+        args = new GrepArgs(string.Empty);
+        if (!TryParseArguments(argumentsJson, out var arguments, out error)
+            || !arguments!.TryReadRequiredString("pattern", out var pattern, out error)
+            || !arguments.TryReadOptionalString("path", out var path, out error)
+            || !arguments.TryReadOptionalString("include", out var include, out error))
+        {
+            error = PrefixArgumentError("grep", error);
+            return false;
+        }
+
+        args = new GrepArgs(pattern!, path, include);
+        return true;
+    }
+
+    private static bool TryParseGlobArgs(string argumentsJson, out GlobArgs args, out string? error)
+    {
+        args = new GlobArgs(string.Empty);
+        if (!TryParseArguments(argumentsJson, out var arguments, out error)
+            || !arguments!.TryReadRequiredString("pattern", out var pattern, out error)
+            || !arguments.TryReadOptionalString("path", out var path, out error))
+        {
+            error = PrefixArgumentError("glob", error);
+            return false;
+        }
+
+        args = new GlobArgs(pattern!, path);
+        return true;
+    }
+
+    private static bool TryParseArguments(string argumentsJson, out AgentToolArgumentObject? arguments, out string? error)
+        => AgentToolArgumentObject.TryParse(argumentsJson, out arguments, out error);
+
+    private static string PrefixArgumentError(string toolName, string? error)
+        => $"Invalid {toolName} arguments: {error ?? "arguments were empty or invalid."}";
 
     private static string? ExtractPath(string argumentsJson)
     {
-        try
-        {
-            using var document = JsonDocument.Parse(argumentsJson);
-            return document.RootElement.TryGetProperty("path", out var path) && path.ValueKind == JsonValueKind.String
-                ? path.GetString()
-                : null;
-        }
-        catch
-        {
-            return null;
-        }
+        return AgentToolArgumentObject.TryParse(argumentsJson, out var arguments, out _)
+               && arguments!.TryReadOptionalString("path", out var path, out _) ? path : null;
     }
 
     private static string? ResolvePermissionPath(string toolId, string argumentsJson)
@@ -431,7 +542,11 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
         IReadOnlyList<PatchOperation> operations;
         try
         {
-            var args = Deserialize<ApplyPatchArgs>(argumentsJson);
+            if (!TryParseApplyPatchArgs(argumentsJson, out var args, out _))
+            {
+                return FilePermissionScope.Unknown();
+            }
+
             operations = ParsePatch(args.PatchText);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

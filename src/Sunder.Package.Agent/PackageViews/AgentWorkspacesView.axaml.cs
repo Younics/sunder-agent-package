@@ -1,7 +1,10 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Abstractions;
 
@@ -27,10 +30,11 @@ public partial class AgentWorkspacesView : UserControl
         AgentWorkspaceService workspaceService,
         AgentExecutionTargetService targetService,
         IPackageExtensionCatalog extensionCatalog,
-        AgentExecutionTargetWarmupService warmupService)
+        AgentExecutionTargetWarmupService warmupService,
+        IPackageSettingsNavigationService? settingsNavigationService = null)
         : this()
     {
-        _viewModel = new AgentWorkspacesViewModel(workspaceService, targetService, extensionCatalog, warmupService);
+        _viewModel = new AgentWorkspacesViewModel(workspaceService, targetService, extensionCatalog, warmupService, settingsNavigationService);
         DataContext = _viewModel;
     }
 
@@ -124,5 +128,39 @@ public partial class AgentWorkspacesView : UserControl
         {
             item.SecondaryValue = folder.Path.LocalPath;
         }
+    }
+
+    private async void OnEditorActionClick(object? sender, RoutedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is AgentEditorActionViewModel action)
+        {
+            var viewModel = _viewModel ?? DataContext as AgentWorkspacesViewModel;
+            if (viewModel is not null)
+            {
+                await viewModel.ExecuteEditorActionAsync(action);
+            }
+        }
+    }
+
+    private void OnWorkspaceItemTapped(object? sender, TappedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is not AgentWorkspaceRecord workspace)
+        {
+            return;
+        }
+
+        var viewModel = _viewModel ?? DataContext as AgentWorkspacesViewModel;
+        viewModel?.ActivateWorkspace(workspace);
+        if (viewModel?.IsCompactLayout == true)
+        {
+            FocusWorkspaceDisplayName();
+        }
+    }
+
+    private void FocusWorkspaceDisplayName()
+    {
+        Dispatcher.UIThread.Post(
+            () => WorkspaceDisplayNameTextBox.Focus(),
+            DispatcherPriority.Background);
     }
 }

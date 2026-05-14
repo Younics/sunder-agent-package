@@ -209,9 +209,21 @@ internal sealed class AgentBehaviorLoopHost(
     }
 
     public AgentTurnRecord UpsertAssistantTurn(AgentTurnRecord? assistantTurn, string content)
-        => assistantTurn is null
-            ? _sessionService.AppendTextTurn(_session.SessionId, AgentMessageRole.Assistant, content)
+    {
+        if (assistantTurn is null)
+        {
+            return _sessionService.AppendTextTurn(_session.SessionId, AgentMessageRole.Assistant, content);
+        }
+
+        return string.Equals(RenderTextContent(assistantTurn), content, StringComparison.Ordinal)
+            ? assistantTurn
             : _sessionService.UpdateTextTurn(assistantTurn.TurnId, content);
+    }
+
+    private static string RenderTextContent(AgentTurnRecord turn)
+        => string.Join("\n\n", turn.Items
+            .Where(item => item.Kind == AgentTurnItemKind.Text && !string.IsNullOrWhiteSpace(item.TextContent))
+            .Select(item => item.TextContent!.Trim()));
 
     public ValueTask PublishLifecycleEventAsync(
         AgentLifecycleEventKind kind,
@@ -386,28 +398,8 @@ internal sealed class AgentBehaviorLoopHost(
 
         if (toolResult.IsError)
         {
-            if (IsRecoverableToolExecutionError(toolResult))
-            {
-                SaveCheckpoint(AgentRunStatus.Running, $"Tool '{toolCall.ToolId}' returned an error result. Continuing provider execution.");
-                return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: toolResult);
-            }
-
-            var toolFailureContent = string.IsNullOrWhiteSpace(toolResult.Content)
-                ? $"### Tool execution failed\n\n{toolResult.Summary}"
-                : toolResult.Content;
-            var failedTurn = UpsertAssistantTurn(assistantTurn, toolFailureContent);
-            var failedCheckpoint = SaveCheckpoint(
-                string.Equals(toolResult.ErrorCode, "permission-ask", StringComparison.OrdinalIgnoreCase)
-                    ? AgentRunStatus.WaitingForApproval
-                    : AgentRunStatus.Failed,
-                toolResult.ErrorCode ?? $"Tool '{toolCall.ToolId}' failed.");
-            await PublishLifecycleEventAsync(
-                AgentLifecycleEventKind.RunFailed,
-                AgentRunStatus.Failed,
-                triggerTurn: failedTurn,
-                checkpoint: failedCheckpoint,
-                cancellationToken: cancellationToken);
-            return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Failed, failedCheckpoint, toolResult);
+            SaveCheckpoint(AgentRunStatus.Running, $"Tool '{toolCall.ToolId}' returned an error result. Continuing provider execution.");
+            return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: toolResult);
         }
 
         SaveCheckpoint(AgentRunStatus.Running, $"Tool '{toolCall.ToolId}' completed. Continuing provider execution.");
@@ -453,26 +445,9 @@ internal sealed class AgentBehaviorLoopHost(
             return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: toolResult);
         }
 
-        if (IsRecoverableToolExecutionError(toolResult))
-        {
-            SaveCheckpoint(AgentRunStatus.Running, $"Tool '{pending.ToolId}' returned an error result. Continuing provider execution.");
-            return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: toolResult);
-        }
-
-        var failedCheckpoint = SaveCheckpoint(AgentRunStatus.Failed, toolResult.Summary);
-        await PublishLifecycleEventAsync(
-            AgentLifecycleEventKind.RunFailed,
-            AgentRunStatus.Failed,
-            triggerTurn: toolResultTurn,
-            checkpoint: failedCheckpoint,
-            cancellationToken: CancellationToken.None);
-        return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Failed, failedCheckpoint, toolResult);
+        SaveCheckpoint(AgentRunStatus.Running, $"Tool '{pending.ToolId}' returned an error result. Continuing provider execution.");
+        return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: toolResult);
     }
-
-    private static bool IsRecoverableToolExecutionError(AgentToolResult toolResult)
-        => string.Equals(toolResult.ErrorCode, AgentToolResultErrorCodes.ShellNonZeroExit, StringComparison.OrdinalIgnoreCase)
-           || string.Equals(toolResult.ErrorCode, AgentToolResultErrorCodes.ShellTimeout, StringComparison.OrdinalIgnoreCase)
-           || string.Equals(toolResult.ErrorCode, AgentToolResultErrorCodes.SubagentRunFailed, StringComparison.OrdinalIgnoreCase);
 
     private AgentTurnRecord AppendToolResult(string callId, string toolId, string? argumentsJson, AgentToolResult toolResult)
         => _sessionService.AppendToolResultTurn(

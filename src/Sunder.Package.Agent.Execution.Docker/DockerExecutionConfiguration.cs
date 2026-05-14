@@ -7,26 +7,13 @@ public static class DockerExecutionConfiguration
     public static PackageConfigurationSchema Schema { get; } = new(
         "sunder.package.agent.execution.docker",
         "Sunder Agent Execution Docker",
-        "Configure the Docker container used by Docker-backed execution workspaces.",
+        "Configure Docker images and defaults for Docker-backed execution workspaces.",
         [
             new PackageConfigurationSection(
                 "docker",
-                "Docker Target",
-                "The first Docker execution target uses one configured container id or name.",
+                "Docker Execution",
+                "Docker image management is available in the package settings view.",
                 [
-                    new PackageConfigurationField(
-                        "docker.container",
-                        "Container id or name",
-                        PackageConfigurationFieldKind.Text,
-                        Description: "Existing running container used for shell and file operations.",
-                        Placeholder: "my-container"),
-                    new PackageConfigurationField(
-                        "docker.defaultWorkingDirectory",
-                        "Default working directory",
-                        PackageConfigurationFieldKind.Text,
-                        Description: "Working directory inside the container when the workspace does not specify one.",
-                        DefaultValue: "/workspace",
-                        Placeholder: "/workspace"),
                     new PackageConfigurationField(
                         "docker.timeoutSeconds.default",
                         "Default shell timeout",

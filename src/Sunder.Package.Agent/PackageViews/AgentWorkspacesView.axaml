@@ -45,6 +45,21 @@
       <Setter Property="BorderThickness" Value="0,1,0,0" />
     </Style>
 
+    <Style Selector="Border.workspace-status-message">
+      <Setter Property="Background" Value="#2B251C" />
+      <Setter Property="BorderBrush" Value="#6F5735" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="12,10" />
+      <Setter Property="Margin" Value="0,0,0,12" />
+    </Style>
+
+    <Style Selector="TextBlock.workspace-status-message">
+      <Setter Property="Foreground" Value="#B8925E" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+
     <Style Selector="TextBlock.workspace-title">
       <Setter Property="FontSize" Value="26" />
       <Setter Property="FontWeight" Value="SemiBold" />
@@ -68,6 +83,10 @@
       <Setter Property="FontSize" Value="12" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
       <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="TextBlock.field-help.warning-text">
+      <Setter Property="Foreground" Value="#B8925E" />
     </Style>
 
     <Style Selector="ListBox.workspace-list">
@@ -127,12 +146,31 @@
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
     </Style>
 
+    <Style Selector="Button.workspace-add-action">
+      <Setter Property="Width" Value="36" />
+      <Setter Property="MinWidth" Value="36" />
+      <Setter Property="Height" Value="34" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="FontSize" Value="22" />
+      <Setter Property="FontWeight" Value="Regular" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
     <Style Selector="Border.editor-card">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
       <Setter Property="Padding" Value="16" />
+    </Style>
+
+    <Style Selector="Border.editor-empty-state">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="12" />
     </Style>
 
     <Style Selector="Border.default-icon">
@@ -157,6 +195,39 @@
       <Setter Property="Padding" Value="0" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Button.field-icon-action">
+      <Setter Property="Width" Value="32" />
+      <Setter Property="MinWidth" Value="32" />
+      <Setter Property="Height" Value="30" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+      <Setter Property="FontSize" Value="17" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Button.field-icon-action:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    </Style>
+
+    <Style Selector="Button.warning-action">
+      <Setter Property="Background" Value="#2B251C" />
+      <Setter Property="BorderBrush" Value="#6F5735" />
+      <Setter Property="Foreground" Value="#B8925E" />
+    </Style>
+
+    <Style Selector="Button.warning-action:pointerover">
+      <Setter Property="Background" Value="#32291E" />
+      <Setter Property="BorderBrush" Value="#80643D" />
+      <Setter Property="Foreground" Value="#C09A64" />
     </Style>
 
     <Style Selector="ListBox.path-list">
@@ -187,15 +258,27 @@
       <Border x:Name="WorkspaceListPane"
               Classes="workspace-pane workspace-list-pane"
               IsVisible="{Binding ShowListPane}">
-        <Grid RowDefinitions="Auto,*,Auto">
+        <Grid RowDefinitions="Auto,*">
           <Border Grid.Row="0"
                   Classes="workspace-pane-header">
-            <StackPanel Spacing="8">
-              <TextBlock Classes="workspace-title"
-                         Text="Workspaces" />
+            <Grid ColumnDefinitions="*,Auto"
+                  RowDefinitions="Auto,Auto"
+                  ColumnSpacing="12"
+                  RowSpacing="8">
+              <TextBlock Grid.Column="0"
+                         Classes="workspace-title"
+                         Text="Workspaces"
+                         VerticalAlignment="Center" />
+               <Button Grid.Column="1"
+                       Classes="secondary-action compact-action workspace-add-action"
+                       Content="+"
+                       Command="{Binding CreateWorkspaceCommand}"
+                       ToolTip.Tip="New workspace" />
               <TextBlock Classes="workspace-caption"
+                         Grid.Row="1"
+                         Grid.ColumnSpan="2"
                          Text="Workspaces bind sessions to an execution environment" />
-            </StackPanel>
+            </Grid>
           </Border>
 
           <Border Grid.Row="1"
@@ -207,51 +290,22 @@
                        SelectedItem="{Binding SelectedWorkspace, Mode=TwoWay}">
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="m:AgentWorkspaceRecord">
-                    <Grid ColumnDefinitions="*,1,Auto"
-                          ColumnSpacing="10">
-                      <Grid RowDefinitions="Auto,Auto"
-                            RowSpacing="3"
-                            MinWidth="0">
-                        <TextBlock Text="{Binding DisplayName}"
-                                   FontWeight="SemiBold"
-                                   TextTrimming="CharacterEllipsis" />
-                         <TextBlock Grid.Row="1"
-                                    Text="{Binding Description}"
-                                    Classes="workspace-list-meta"
-                                    TextTrimming="CharacterEllipsis" />
-                      </Grid>
-                      <Border Grid.Column="1"
-                              Background="{DynamicResource Sunder.Brush.Border.Subtle}"
-                              Margin="2,-2,0,-2" />
-                      <Button Grid.Column="2"
-                              Classes="workspace-open-action"
-                              Content="›"
-                              Command="{Binding $parent[UserControl].DataContext.OpenWorkspaceEditorCommand}"
-                              CommandParameter="{Binding}"
-                              ToolTip.Tip="Open workspace" />
+                    <Grid RowDefinitions="Auto,Auto"
+                          RowSpacing="3"
+                          MinWidth="0"
+                          Tapped="OnWorkspaceItemTapped">
+                      <TextBlock Text="{Binding DisplayName}"
+                                 FontWeight="SemiBold"
+                                 TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Row="1"
+                                 Text="{Binding Description}"
+                                 Classes="workspace-list-meta"
+                                 TextTrimming="CharacterEllipsis" />
                     </Grid>
                   </DataTemplate>
                 </ListBox.ItemTemplate>
               </ListBox>
             </ScrollViewer>
-          </Border>
-
-          <Border Grid.Row="2"
-                  Classes="workspace-actions">
-            <Grid ColumnDefinitions="*,*"
-                  ColumnSpacing="10">
-              <Button Grid.Column="0"
-                      Classes="secondary-action danger-action"
-                      Content="Delete Workspace"
-                      Command="{Binding DeleteWorkspaceCommand}"
-                      IsEnabled="{Binding CanDeleteSelected}"
-                      HorizontalAlignment="Stretch" />
-              <Button Grid.Column="1"
-                      Classes="primary-action"
-                      Content="New Workspace"
-                      Command="{Binding CreateWorkspaceCommand}"
-                      HorizontalAlignment="Stretch" />
-            </Grid>
           </Border>
         </Grid>
       </Border>
@@ -281,7 +335,8 @@
                 <StackPanel Spacing="5">
                   <TextBlock Classes="field-label"
                              Text="Display name" />
-                  <TextBox Text="{Binding DisplayName, Mode=TwoWay}"
+                  <TextBox x:Name="WorkspaceDisplayNameTextBox"
+                           Text="{Binding DisplayName, Mode=TwoWay}"
                            PlaceholderText="Workspace name" />
                 </StackPanel>
 
@@ -301,14 +356,27 @@
                             HorizontalAlignment="Stretch">
                     <ComboBox.ItemTemplate>
                       <DataTemplate x:DataType="vm:ExecutionTargetOption">
-                        <StackPanel Spacing="2">
+                        <Grid RowDefinitions="Auto,Auto"
+                              RowSpacing="3"
+                              MinWidth="0">
                           <TextBlock Text="{Binding DisplayName}" />
-                          <TextBlock Text="{Binding Description}"
+                          <TextBlock Grid.Row="1"
+                                     Text="{Binding Description}"
                                      Classes="field-help" />
-                        </StackPanel>
+                        </Grid>
                       </DataTemplate>
                     </ComboBox.ItemTemplate>
                   </ComboBox>
+                </StackPanel>
+
+                <StackPanel Spacing="5"
+                            IsVisible="{Binding HasNoExecutionTargetChoices}">
+                  <TextBlock Classes="field-label"
+                             Text="Execution target" />
+                  <Border Classes="editor-empty-state">
+                    <TextBlock Classes="field-help"
+                               Text="No execution packages are installed. Install an execution package to configure shell/file-backed tools. This workspace can still be used for chat." />
+                  </Border>
                 </StackPanel>
 
                 <ItemsControl ItemsSource="{Binding EditorSections}">
@@ -345,14 +413,62 @@
                                             x:DataType="vm:AgentEditorSelectFieldViewModel">
                                 <StackPanel Spacing="5"
                                             Margin="0,0,0,12">
-                                  <TextBlock Classes="field-label"
-                                             Text="{Binding Label}" />
+                                  <Grid ColumnDefinitions="*,Auto"
+                                        ColumnSpacing="8">
+                                    <TextBlock Classes="field-label"
+                                               Text="{Binding Label}"
+                                               VerticalAlignment="Center" />
+                                    <ItemsControl Grid.Column="1"
+                                                  ItemsSource="{Binding IconActions}"
+                                                  IsVisible="{Binding HasIconActions}"
+                                                  HorizontalAlignment="Right">
+                                      <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                          <WrapPanel Orientation="Horizontal" />
+                                        </ItemsPanelTemplate>
+                                      </ItemsControl.ItemsPanel>
+                                      <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:AgentEditorActionViewModel">
+                                          <Button Classes="field-icon-action"
+                                                  Content="{Binding Content}"
+                                                  ToolTip.Tip="{Binding Label}"
+                                                  Click="OnEditorActionClick" />
+                                        </DataTemplate>
+                                      </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                  </Grid>
                                   <TextBlock Classes="field-help"
-                                             Text="{Binding Description}"
-                                             IsVisible="{Binding HasDescription}" />
+                                              Text="{Binding Description}"
+                                              IsVisible="{Binding HasDescription}" />
+                                  <Grid ColumnDefinitions="*,Auto"
+                                        ColumnSpacing="12"
+                                        IsVisible="{Binding HasNoOptions}">
+                                    <TextBlock Classes="field-help warning-text"
+                                               Text="{Binding Description}"
+                                               VerticalAlignment="Top" />
+                                    <ItemsControl Grid.Column="1"
+                                                  ItemsSource="{Binding TextActions}"
+                                                  IsVisible="{Binding ShowEmptyStateActions}"
+                                                  HorizontalAlignment="Right"
+                                                  VerticalAlignment="Top">
+                                      <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                          <WrapPanel Orientation="Horizontal" />
+                                        </ItemsPanelTemplate>
+                                      </ItemsControl.ItemsPanel>
+                                      <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:AgentEditorActionViewModel">
+                                          <Button Classes="secondary-action compact-action warning-action"
+                                                  Content="{Binding Label}"
+                                                  Click="OnEditorActionClick" />
+                                        </DataTemplate>
+                                      </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                  </Grid>
                                   <ComboBox ItemsSource="{Binding Options}"
                                             SelectedItem="{Binding SelectedOption, Mode=TwoWay}"
-                                            HorizontalAlignment="Stretch">
+                                            HorizontalAlignment="Stretch"
+                                            IsVisible="{Binding HasOptions}">
                                     <ComboBox.ItemTemplate>
                                       <DataTemplate x:DataType="vm:AgentEditorOptionViewModel">
                                         <StackPanel Spacing="2">
@@ -377,11 +493,6 @@
                                                Text="{Binding Description}"
                                                IsVisible="{Binding HasDescription}" />
                                   </StackPanel>
-
-                                  <Button Classes="secondary-action compact-action"
-                                          Content="{Binding AddItemLabel}"
-                                          HorizontalAlignment="Left"
-                                          Click="OnAddEditorPathItemClick" />
 
                                   <ListBox Classes="path-list"
                                            ItemsSource="{Binding Items}"
@@ -431,16 +542,27 @@
                                     </ListBox.ItemTemplate>
                                   </ListBox>
 
-                                  <WrapPanel Orientation="Horizontal">
-                                    <Button Classes="secondary-action compact-action"
-                                            Content="Set Selected As Default"
-                                            Margin="0,0,8,8"
+                                  <Grid ColumnDefinitions="Auto,*,Auto,Auto"
+                                        ColumnSpacing="8">
+                                    <Button Grid.Column="0"
+                                            Classes="secondary-action compact-action"
+                                            Content="Set as Default"
+                                            IsEnabled="{Binding HasSelectedItem}"
                                             Click="OnSetSelectedEditorPathItemAsDefaultClick" />
-                                    <Button Classes="secondary-action compact-action danger-action"
-                                            Content="Delete Selected"
-                                            Margin="0,0,8,8"
+                                    <Button Grid.Column="2"
+                                            Classes="secondary-action compact-action danger-action path-icon-action"
+                                            Content="-"
+                                            HorizontalAlignment="Right"
+                                            IsEnabled="{Binding HasSelectedItem}"
+                                            ToolTip.Tip="Delete selected"
                                             Click="OnDeleteSelectedEditorPathItemClick" />
-                                  </WrapPanel>
+                                    <Button Grid.Column="3"
+                                            Classes="secondary-action compact-action path-icon-action"
+                                            Content="+"
+                                            HorizontalAlignment="Right"
+                                            ToolTip.Tip="{Binding AddItemLabel}"
+                                            Click="OnAddEditorPathItemClick" />
+                                  </Grid>
                                 </StackPanel>
                               </DataTemplate>
                             </ItemsControl.DataTemplates>
@@ -456,21 +578,31 @@
 
           <Border Grid.Row="2"
                   Classes="workspace-actions">
-            <Grid ColumnDefinitions="*,Auto,Auto"
-                  ColumnSpacing="12">
-              <TextBlock Grid.Column="0"
-                         Classes="workspace-caption"
-                         Text="{Binding StatusText}"
-                         VerticalAlignment="Center" />
-              <Button Grid.Column="1"
-                      Classes="secondary-action compact-action"
-                      Content="Back"
-                      Command="{Binding BackToWorkspaceListCommand}"
-                      IsVisible="{Binding IsCompactLayout}" />
-              <Button Grid.Column="2"
-                      Classes="primary-action"
-                      Content="Save"
-                      Command="{Binding SaveWorkspaceCommand}" />
+            <Grid RowDefinitions="Auto,Auto">
+              <Border Grid.Row="0"
+                      Classes="workspace-status-message"
+                      IsVisible="{Binding HasStatusText}">
+                <TextBlock Classes="workspace-status-message"
+                           Text="{Binding StatusText}" />
+              </Border>
+
+              <Grid Grid.Row="1"
+                    ColumnDefinitions="Auto,*,Auto,Auto"
+                    ColumnSpacing="12">
+                <Button Grid.Column="0"
+                        Classes="secondary-action compact-action danger-action"
+                        Content="Delete Workspace"
+                        Command="{Binding DeleteWorkspaceCommand}" />
+                <Button Grid.Column="2"
+                        Classes="secondary-action compact-action"
+                        Content="Back"
+                        Command="{Binding BackToWorkspaceListCommand}"
+                        IsVisible="{Binding IsCompactLayout}" />
+                <Button Grid.Column="3"
+                        Classes="primary-action"
+                        Content="Save"
+                        Command="{Binding SaveWorkspaceCommand}" />
+              </Grid>
             </Grid>
           </Border>
         </Grid>

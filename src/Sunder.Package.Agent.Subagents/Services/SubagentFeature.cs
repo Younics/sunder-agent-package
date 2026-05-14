@@ -14,6 +14,8 @@ public sealed class SubagentFeature(
     IPackageExtensionCatalog extensionCatalog) : IAgentProfileSelectableCapabilityProvider, IAgentProfileSelectableCapabilityChangeNotifier, IAgentToolSource, IAgentSystemPromptContributor, IAgentToolPresentationResolver
 {
     private const int MaxBatchDelegationCount = 3;
+    private const int MaxSingleParentResultContentLength = 24_000;
+    private const int MaxDelegatedParentResultContentLength = 32_000;
     private const string SourceDisplayName = "Subagents";
 
     private readonly SubagentService _subagentService = subagentService;
@@ -139,10 +141,10 @@ public sealed class SubagentFeature(
     {
         if (string.Equals(request.ToolId, SubagentConstants.DelegateTasksToolId, StringComparison.OrdinalIgnoreCase))
         {
-            var batchArgs = ParseDelegateTasksArgs(request.ArgumentsJson);
+            var parsed = TryParseDelegateTasksArgs(request.ArgumentsJson, out var batchArgs, out var error);
             return new AgentToolPresentation(
-                HeaderText: $"Delegated {batchArgs.Tasks?.Count ?? 0} task(s)",
-                DetailMarkdown: BuildDelegateTasksDetailMarkdown(batchArgs),
+                HeaderText: parsed ? $"Delegated {batchArgs.Tasks?.Count ?? 0} task(s)" : request.ResultSummary,
+                DetailMarkdown: parsed ? BuildDelegateTasksDetailMarkdown(batchArgs) : BuildRawArgumentsMarkdown(request.ArgumentsJson, error),
                 OutputText: request.TextContent?.Trim());
         }
 
@@ -151,15 +153,15 @@ public sealed class SubagentFeature(
             return null;
         }
 
-        var args = ParseTaskArgs(request.ArgumentsJson);
+        var parsedTaskArgs = TryParseTaskArgs(request.ArgumentsJson, out var args, out var taskError);
         var payload = ParseTaskPayload(request.StructuredPayloadJson);
-        var argumentSubagentName = ResolveSubagentDisplayName(args.SubagentType);
+        var argumentSubagentName = parsedTaskArgs ? ResolveSubagentDisplayName(args.SubagentType) : null;
         var subagentName = FirstNonBlank(payload.SubagentName, argumentSubagentName, args.SubagentType, "subagent")!;
         var sessionTitle = FirstNonBlank(payload.ChildSessionTitle, args.Description, "Subagent session")!;
         var header = $"{FormatSubagentLabel(subagentName)} · {sessionTitle}";
         return new AgentToolPresentation(
             HeaderText: header,
-            DetailMarkdown: BuildTaskDetailMarkdown(args, payload, argumentSubagentName),
+            DetailMarkdown: parsedTaskArgs ? BuildTaskDetailMarkdown(args, payload, argumentSubagentName) : BuildRawArgumentsMarkdown(request.ArgumentsJson, taskError),
             OutputText: request.TextContent?.Trim());
     }
 
@@ -179,7 +181,11 @@ public sealed class SubagentFeature(
             return Error(request.ToolId, $"Subagent tool '{request.ToolId}' is not supported.", "subagent-tool-unsupported");
         }
 
-        var args = ParseTaskArgs(request.ArgumentsJson);
+        if (!TryParseTaskArgs(request.ArgumentsJson, out var args, out var error))
+        {
+            return Error(request.ToolId, error!, "task-arguments-invalid");
+        }
+
         return await ExecuteSingleTaskAsync(context, SubagentConstants.TaskToolId, args, cancellationToken);
     }
 
@@ -228,7 +234,11 @@ public sealed class SubagentFeature(
             return Error(SubagentConstants.DelegateTasksToolId, "Delegate tasks is only available to profiles using orchestrated behavior.", "task-loop-disabled");
         }
 
-        var args = ParseDelegateTasksArgs(request.ArgumentsJson);
+        if (!TryParseDelegateTasksArgs(request.ArgumentsJson, out var args, out var error))
+        {
+            return Error(SubagentConstants.DelegateTasksToolId, error!, "task-arguments-invalid");
+        }
+
         if (args.Tasks is not { Count: > 0 })
         {
             return Error(SubagentConstants.DelegateTasksToolId, "Delegate tasks requires at least one task.", "task-arguments-invalid");
@@ -375,7 +385,7 @@ public sealed class SubagentFeature(
             return new AgentToolResult(
                 resultToolId,
                 result.Summary,
-                Content: result.Content ?? result.Summary,
+                Content: TruncateParentResultContent(result.Content ?? result.Summary, MaxSingleParentResultContentLength),
                 StructuredPayloadJson: childSessionPayload,
                 IsError: true,
                 ErrorCode: AgentToolResultErrorCodes.SubagentRunFailed,
@@ -386,7 +396,7 @@ public sealed class SubagentFeature(
         return new AgentToolResult(
             resultToolId,
             $"Subagent '{subagent.DisplayName}' completed.",
-            Content: content,
+            Content: TruncateParentResultContent(content, MaxSingleParentResultContentLength),
             StructuredPayloadJson: childSessionPayload,
             BackendId: result.SessionId.ToString("N"));
     }
@@ -643,6 +653,12 @@ public sealed class SubagentFeature(
         var builder = new StringBuilder();
         foreach (var result in results)
         {
+            if (builder.Length >= MaxDelegatedParentResultContentLength)
+            {
+                AppendParentResultTruncationNotice(builder);
+                break;
+            }
+
             var payload = ParseTaskPayload(result.StructuredPayloadJson);
             var subagentName = FirstNonBlank(payload.SubagentName, "subagent")!;
             var taskId = payload.ChildSessionId?.ToString("N") ?? result.BackendId ?? "unknown";
@@ -653,12 +669,37 @@ public sealed class SubagentFeature(
                 .Append("\" status=\"")
                 .Append(result.IsError ? "failed" : "completed")
                 .AppendLine("\">");
-            builder.AppendLine(string.IsNullOrWhiteSpace(result.Content) ? result.Summary : result.Content!.Trim());
+            var content = string.IsNullOrWhiteSpace(result.Content) ? result.Summary : result.Content!.Trim();
+            builder.AppendLine(TruncateParentResultContent(content, MaxSingleParentResultContentLength));
             builder.AppendLine("</task_result>");
             builder.AppendLine();
+
+            if (builder.Length > MaxDelegatedParentResultContentLength)
+            {
+                builder.Length = MaxDelegatedParentResultContentLength;
+                AppendParentResultTruncationNotice(builder);
+                break;
+            }
         }
 
         return builder.ToString().Trim();
+    }
+
+    private static string TruncateParentResultContent(string content, int maxLength)
+    {
+        if (content.Length <= maxLength)
+        {
+            return content;
+        }
+
+        return content[..maxLength].TrimEnd()
+               + "\n\n[Subagent output truncated in the parent transcript. Open the sub-session for the full result.]";
+    }
+
+    private static void AppendParentResultTruncationNotice(StringBuilder builder)
+    {
+        builder.AppendLine()
+            .AppendLine("[Additional delegated subagent output truncated in the parent transcript. Open the sub-sessions for full results.]");
     }
 
     private static string EscapeXmlAttribute(string value)
@@ -743,28 +784,85 @@ public sealed class SubagentFeature(
             ? subagentName
             : $"{subagentName} subagent";
 
-    private static TaskArgs ParseTaskArgs(string argumentsJson)
+    private static bool TryParseTaskArgs(string argumentsJson, out TaskArgs args, out string? error)
     {
-        try
+        args = new TaskArgs();
+        if (!AgentToolArgumentObject.TryParse(argumentsJson, out var arguments, out error)
+            || !TryReadTaskArgs(arguments!, out args, out error))
         {
-            return JsonSerializer.Deserialize<TaskArgs>(argumentsJson, new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? new TaskArgs();
+            error = $"Invalid task arguments: {error ?? "arguments were empty or invalid."}";
+            return false;
         }
-        catch
-        {
-            return new TaskArgs();
-        }
+
+        return true;
     }
 
-    private static DelegateTasksArgs ParseDelegateTasksArgs(string argumentsJson)
+    private static bool TryParseDelegateTasksArgs(string argumentsJson, out DelegateTasksArgs args, out string? error)
     {
-        try
+        args = new DelegateTasksArgs();
+        if (!AgentToolArgumentObject.TryParse(argumentsJson, out var arguments, out error)
+            || !arguments!.TryReadObjectArray("tasks", allowSingleObject: true, out var taskElements, out error))
         {
-            return JsonSerializer.Deserialize<DelegateTasksArgs>(argumentsJson, new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? new DelegateTasksArgs();
+            error = $"Invalid delegate_tasks arguments: {error ?? "arguments were empty or invalid."}";
+            return false;
         }
-        catch
+
+        var tasks = new List<TaskArgs>();
+        foreach (var taskElement in taskElements)
         {
-            return new DelegateTasksArgs();
+            var taskArguments = AgentToolArgumentObject.TryParse(taskElement.GetRawText(), out var parsedTask, out error)
+                ? parsedTask!
+                : null;
+            if (taskArguments is null || !TryReadTaskArgs(taskArguments, out var taskArgs, out error))
+            {
+                error = $"Invalid delegate_tasks arguments: {error ?? "task arguments were empty or invalid."}";
+                return false;
+            }
+
+            tasks.Add(taskArgs);
         }
+
+        args = new DelegateTasksArgs { Tasks = tasks };
+        return true;
+    }
+
+    private static bool TryReadTaskArgs(AgentToolArgumentObject arguments, out TaskArgs args, out string? error)
+    {
+        args = new TaskArgs();
+        if (!arguments.TryReadOptionalString("description", out var description, out error)
+            || !arguments.TryReadOptionalString("prompt", out var prompt, out error)
+            || !arguments.TryReadOptionalString("subagent_type", out var subagentType, out error)
+            || !arguments.TryReadOptionalString("task_id", out var taskId, out error)
+            || !arguments.TryReadOptionalString("command", out var command, out error))
+        {
+            return false;
+        }
+
+        args = new TaskArgs
+        {
+            Description = description,
+            Prompt = prompt,
+            SubagentType = subagentType,
+            TaskId = taskId,
+            Command = command,
+        };
+        return true;
+    }
+
+    private static string BuildRawArgumentsMarkdown(string argumentsJson, string? error)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("**Arguments**");
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            builder.AppendLine(error.Trim());
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("```json");
+        builder.AppendLine(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson.Trim());
+        builder.AppendLine("```");
+        return builder.ToString().Trim();
     }
 
     private sealed class DelegateTasksArgs

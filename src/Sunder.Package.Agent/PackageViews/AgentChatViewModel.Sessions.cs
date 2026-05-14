@@ -334,7 +334,21 @@ public sealed partial class AgentChatViewModel
 
     private void ApplySessionChanged(Guid sessionId)
     {
-        ReconcileSessions(ListMainSessions());
+        var selectedSessionId = SelectedSession?.SessionId;
+        var displayedSessionId = DisplayedSession?.SessionId;
+        var changedSession = _sessionService.GetSession(sessionId);
+        if (changedSession is null)
+        {
+            RemoveMainSession(sessionId);
+            return;
+        }
+
+        if (changedSession.ParentSessionId is null)
+        {
+            ApplyMainSessionChanged(changedSession);
+            RestoreReconciledSessionSelection(selectedSessionId, selectedSessionId is not null && FindSessionItem(selectedSessionId.Value) is not null);
+            RestoreReconciledDisplayedSession(displayedSessionId, displayedSessionId is not null && FindSessionItem(displayedSessionId.Value) is not null);
+        }
 
         var isSelectedSession = SelectedSession?.SessionId == sessionId;
         var isDisplayedSession = DisplayedSession?.SessionId == sessionId;
@@ -344,7 +358,78 @@ public sealed partial class AgentChatViewModel
         }
 
         UpdateSessionState(sessionId, markUnread: !isSelectedSession && !isDisplayedSession);
-        RefreshVisibleChildSessionLinks();
+        RefreshVisibleChildSessionLinksIfRelevant(changedSession);
+    }
+
+    private void ApplyMainSessionChanged(AgentSessionRecord session)
+    {
+        var existingIndex = FindSessionIndex(session.SessionId);
+        if (existingIndex < 0)
+        {
+            Sessions.Insert(FindSortedSessionTargetIndex(session), CreateSessionItem(session));
+            RefreshSetupState();
+            return;
+        }
+
+        Sessions[existingIndex].UpdateSession(session);
+        Sessions[existingIndex].ApplyCheckpoint(_sessionService.GetLatestCheckpoint(session.SessionId), markUnread: false);
+
+        var targetIndex = FindSortedSessionTargetIndex(session);
+        if (targetIndex != existingIndex)
+        {
+            Sessions.Move(existingIndex, targetIndex);
+        }
+    }
+
+    private void RemoveMainSession(Guid sessionId)
+    {
+        var index = FindSessionIndex(sessionId);
+        if (index < 0)
+        {
+            return;
+        }
+
+        Sessions.RemoveAt(index);
+        if (SelectedSession?.SessionId == sessionId)
+        {
+            SelectedSession = Sessions.FirstOrDefault();
+        }
+
+        if (DisplayedSession?.SessionId == sessionId)
+        {
+            SetDisplayedSession(SelectedSession);
+        }
+
+        RefreshSetupState();
+    }
+
+    private int FindSortedSessionTargetIndex(AgentSessionRecord session)
+    {
+        var targetIndex = 0;
+        foreach (var item in Sessions)
+        {
+            if (item.SessionId == session.SessionId)
+            {
+                continue;
+            }
+
+            if (CompareSessionOrder(session, item.Session) < 0)
+            {
+                break;
+            }
+
+            targetIndex++;
+        }
+
+        return targetIndex;
+    }
+
+    private static int CompareSessionOrder(AgentSessionRecord left, AgentSessionRecord right)
+    {
+        var updatedComparison = right.UpdatedAtUtc.CompareTo(left.UpdatedAtUtc);
+        return updatedComparison != 0
+            ? updatedComparison
+            : right.CreatedAtUtc.CompareTo(left.CreatedAtUtc);
     }
 
     private bool IsInSelectedSessionTree(Guid sessionId)
@@ -362,6 +447,25 @@ public sealed partial class AgentChatViewModel
                && (changedSession.SessionId == selectedRootId
                    || changedSession.ParentSessionId == selectedRootId
                    || changedSession.RootSessionId == selectedRootId);
+    }
+
+    private void RefreshVisibleChildSessionLinksIfRelevant(AgentSessionRecord changedSession)
+    {
+        if (_toolRowsByCallId.Count == 0
+            || changedSession.ParentSessionId is null
+            || DisplayedSession is null)
+        {
+            return;
+        }
+
+        var displayedRootId = DisplayedSession.Session.RootSessionId ?? DisplayedSession.SessionId;
+        var changedRootId = changedSession.RootSessionId ?? changedSession.ParentSessionId;
+        if (changedSession.ParentSessionId != DisplayedSession.SessionId && changedRootId != displayedRootId)
+        {
+            return;
+        }
+
+        RefreshVisibleChildSessionLinks();
     }
 
     private void SyncSelectedSessionState(Guid sessionId)

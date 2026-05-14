@@ -7,6 +7,13 @@ public enum AgentEditorFieldKind
     PathList = 2,
 }
 
+public enum AgentEditorActionKind
+{
+    OpenPackageSettings = 0,
+    RefreshEditor = 1,
+    RefreshField = 2,
+}
+
 public sealed record AgentEditorSection(
     string SectionId,
     string Title,
@@ -32,6 +39,8 @@ public sealed record AgentEditorField(
     public bool UseSecondaryFolderPicker { get; init; }
 
     public string? DefaultNewSecondaryItemValue { get; init; }
+
+    public IReadOnlyList<AgentEditorAction>? Actions { get; init; }
 }
 
 public sealed record AgentEditorOption(string Value, string Label, string? Description = null);
@@ -40,6 +49,13 @@ public sealed record AgentEditorListItem(string ItemId, string Value, bool IsDef
 {
     public string? SecondaryValue { get; init; }
 }
+
+public sealed record AgentEditorAction(
+    string ActionId,
+    string Label,
+    AgentEditorActionKind Kind,
+    string? PackageId = null,
+    IReadOnlyDictionary<string, string?>? Parameters = null);
 
 public sealed record AgentEditorFieldValue(
     string? Value = null,

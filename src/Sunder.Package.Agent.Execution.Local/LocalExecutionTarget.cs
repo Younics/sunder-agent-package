@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Text;
 using System.Text.RegularExpressions;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -181,8 +182,8 @@ public sealed class LocalExecutionTarget(IPackageContext packageContext, LocalEx
             return new AgentShellCommandResult(127, ex.Message, TimedOut: false, WorkingDirectory: workingDirectory);
         }
 
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        var stdoutTask = ReadToEndBoundedAsync(process.StandardOutput, MaxOutputLength, cancellationToken);
+        var stderrTask = ReadToEndBoundedAsync(process.StandardError, MaxOutputLength, cancellationToken);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
@@ -202,9 +203,16 @@ public sealed class LocalExecutionTarget(IPackageContext packageContext, LocalEx
             throw;
         }
 
-        var output = StripAnsiEscapeSequences(string.Concat(await stdoutTask, await stderrTask));
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+        var output = StripAnsiEscapeSequences(string.Concat(stdout.Content, stderr.Content));
         var truncatedOutput = TruncateOutput(output, out var wasTruncated);
-        return new AgentShellCommandResult(process.ExitCode, truncatedOutput, TimedOut: false, WorkingDirectory: workingDirectory, WasTruncated: wasTruncated);
+        return new AgentShellCommandResult(
+            process.ExitCode,
+            truncatedOutput,
+            TimedOut: false,
+            WorkingDirectory: workingDirectory,
+            WasTruncated: stdout.WasTruncated || stderr.WasTruncated || wasTruncated);
     }
 
     public async ValueTask<AgentFileReadResult> ReadFileAsync(
@@ -349,8 +357,39 @@ public sealed class LocalExecutionTarget(IPackageContext packageContext, LocalEx
             : output;
     }
 
+    private static async Task<BoundedProcessOutput> ReadToEndBoundedAsync(StreamReader reader, int maxLength, CancellationToken cancellationToken)
+    {
+        var buffer = new char[4096];
+        var builder = new StringBuilder(capacity: Math.Min(maxLength, buffer.Length));
+        var wasTruncated = false;
+
+        while (true)
+        {
+            var read = await reader.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            var remaining = maxLength - builder.Length;
+            if (remaining > 0)
+            {
+                builder.Append(buffer, 0, Math.Min(read, remaining));
+            }
+
+            if (read > remaining)
+            {
+                wasTruncated = true;
+            }
+        }
+
+        return new BoundedProcessOutput(builder.ToString(), wasTruncated);
+    }
+
     private static string StripAnsiEscapeSequences(string output)
         => string.IsNullOrEmpty(output) ? output : AnsiEscapeRegex.Replace(output, string.Empty);
+
+    private sealed record BoundedProcessOutput(string Content, bool WasTruncated);
 
     private static ProcessStartInfo BuildShellStartInfo(LocalShellDefinition shell, string command, string workingDirectory)
     {

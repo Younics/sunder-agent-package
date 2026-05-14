@@ -170,7 +170,7 @@ public sealed class AgentPermissionResumeCoordinator(
             pending.CallId,
             pending.ToolId ?? string.Empty,
             pending.ArgumentsJson,
-            $"Tool '{pending.ToolId}' was not executed because permission was denied.",
+            $"Permission denied: tool '{pending.ToolId}' was not executed.",
             "Permission request denied.",
             structuredPayloadJson: null,
             sourcesJson: null,

@@ -271,7 +271,12 @@ public sealed class AgentRunCoordinatorTests
     [Theory]
     [InlineData(AgentToolResultErrorCodes.ShellNonZeroExit)]
     [InlineData(AgentToolResultErrorCodes.ShellTimeout)]
-    public async Task QueueUserMessageAsync_ContinuesProviderAfterRecoverableShellError(string errorCode)
+    [InlineData(AgentToolResultErrorCodes.ToolExecutionException)]
+    [InlineData("path-not-found")]
+    [InlineData("tool-internal-error")]
+    [InlineData("web-fetch-http")]
+    [InlineData("web-search-http")]
+    public async Task QueueUserMessageAsync_ContinuesProviderAfterToolErrorResult(string errorCode)
     {
         const string toolId = "shell";
 
@@ -316,23 +321,24 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task QueueUserMessageAsync_FailsProviderLoopAfterUnrecoverableToolError()
+    public async Task QueueUserMessageAsync_ContinuesProviderAfterToolThrows()
     {
         const string toolId = "broken_tool";
 
-        var provider = new ScriptedProvider((_, requestIndex) => requestIndex switch
+        var provider = new ScriptedProvider((request, requestIndex) => requestIndex switch
         {
             1 => ToolRequest("call-1", toolId, "{}"),
+            2 => AssertErroredToolResultAndComplete(request, toolId, "call-1", AgentToolResultErrorCodes.ToolExecutionException, "boom"),
             _ => throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}.")
         });
-        var tool = new ErrorResultTool(toolId, "tool-internal-error");
+        var tool = new ThrowingTool(toolId, "boom");
         using var runtime = AgentTestRuntime.Create(provider, tool);
         var sessionId = await runtime.CreateSessionAsync(toolId);
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(sessionId, runtime.CurrentProfileId, "Use the broken tool.", runtime.CurrentWorkspaceId);
 
-        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
-        Assert.Single(provider.Requests);
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(2, provider.Requests.Count);
         Assert.Equal(1, tool.ExecutionCount);
     }
 
@@ -4163,7 +4169,8 @@ public sealed class AgentRunCoordinatorTests
             && turn.Items.Any(item => item.Kind == AgentTurnItemKind.ToolResult
                                       && item.ToolId == toolId
                                       && item.CallId == callId
-                                      && item.IsError));
+                                      && item.TextContent is not null
+                                      && item.TextContent.Contains("Permission denied", StringComparison.OrdinalIgnoreCase)));
         AssertNoUnpairedToolItems(request);
 
         return Complete("A calm poem after the denied tool call.");
@@ -4185,7 +4192,7 @@ public sealed class AgentRunCoordinatorTests
                                       && item.TextContent.Contains(expectedContent, StringComparison.Ordinal)));
         AssertNoUnpairedToolItems(request);
 
-        return Complete("Interpreted the shell error and continued.");
+        return Complete("Interpreted the tool error and continued.");
     }
 
     private static AgentProviderStreamEvent AssertDuplicateReuseAndComplete(AgentProviderRequest request, string toolId)
@@ -4989,6 +4996,33 @@ public sealed class AgentRunCoordinatorTests
                 Content: content,
                 IsError: true,
                 ErrorCode: errorCode));
+        }
+    }
+
+    private sealed class ThrowingTool(string toolId, string message) : IAgentTool
+    {
+        private int _executionCount;
+
+        public int ExecutionCount => Volatile.Read(ref _executionCount);
+
+        public AgentToolDescriptor Descriptor { get; } = new(
+            toolId,
+            "Throwing Tool",
+            "Throws deterministic tool exceptions.",
+            IsReadOnly: true,
+            RequiresNetwork: false,
+            ArgumentsJsonSchema: "{\"type\":\"object\"}");
+
+        public ValueTask<AgentToolReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentToolReadiness(Descriptor.ToolId, AgentToolReadinessStatus.Ready, "Ready."));
+
+        public ValueTask<AgentToolResult> ExecuteAsync(
+            AgentToolExecutionContext context,
+            AgentToolRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _executionCount);
+            throw new InvalidOperationException(message);
         }
     }
 

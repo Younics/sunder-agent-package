@@ -16,6 +16,8 @@ public sealed class DockerExecutionTarget(
     private const int DefaultTimeoutSeconds = 300;
     private const int MaxOutputLength = 51200;
 
+    internal static Func<IReadOnlyList<string>, int, CancellationToken, string?, Task<DockerProcessResult>>? RunDockerOverride { get; set; }
+
     public AgentExecutionTargetDescriptor Descriptor { get; } = new(
         "docker",
         "docker",
@@ -55,6 +57,14 @@ public sealed class DockerExecutionTarget(
             if (config.AllowedRoots.Count == 0)
             {
                 return new AgentExecutionTargetReadiness(Descriptor.TargetKind, Descriptor.TargetId, AgentExecutionTargetReadinessStatus.NeedsConfiguration, "Configure at least one Docker allowed root before using Docker execution.");
+            }
+
+            var imageReadiness = await new DockerImageCatalogService(packageContext)
+                .GetReadinessAsync(config.ImageReference, cancellationToken)
+                .ConfigureAwait(false);
+            if (!imageReadiness.IsReady)
+            {
+                return new AgentExecutionTargetReadiness(Descriptor.TargetKind, Descriptor.TargetId, AgentExecutionTargetReadinessStatus.Failed, imageReadiness.Message);
             }
 
             using var lease = await AcquireContainerAsync(context, config, cancellationToken);
@@ -178,10 +188,9 @@ public sealed class DockerExecutionTarget(
         var config = configService.GetConfig(context.Binding.BindingId);
         using var lease = await AcquireContainerAsync(context, config, cancellationToken);
         var path = ResolvePath(config, request.Path, context.AllowOutsideConfiguredScope);
-        var base64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(request.Content));
         var overwriteGuard = request.Overwrite ? string.Empty : $"if [ -e {Quote(path)} ]; then exit 73; fi && ";
-        var command = $"{overwriteGuard}mkdir -p $(dirname {Quote(path)}) && printf %s {Quote(base64)} | base64 -d > {Quote(path)}";
-        var result = await RunDockerAsync(["exec", lease.ContainerName, ResolveShellPath(config), "-c", command], ResolveDefaultTimeoutSeconds(), cancellationToken);
+        var command = $"{overwriteGuard}mkdir -p {Quote(GetDirectoryName(path))} && cat > {Quote(path)}";
+        var result = await RunDockerAsync(["exec", "-i", lease.ContainerName, ResolveShellPath(config), "-c", command], ResolveDefaultTimeoutSeconds(), cancellationToken, request.Content);
         if (result.ExitCode == 73)
         {
             return new AgentFileMutationResult(path, "File already exists.", IsError: true, ErrorCode: "file-exists");
@@ -244,15 +253,25 @@ public sealed class DockerExecutionTarget(
             if (string.Equals(existing.Signature, signature, StringComparison.Ordinal))
             {
                 var start = await RunDockerAsync(["start", container], ResolveDefaultTimeoutSeconds(), cancellationToken);
-                return start.ExitCode == 0 ? container : null;
+                if (start.ExitCode == 0)
+                {
+                    return container;
+                }
+
+                throw new InvalidOperationException(FormatDockerContainerStartFailure(container, start.Output));
             }
 
             await RunDockerAsync(["rm", "-f", container], ResolveDefaultTimeoutSeconds(), cancellationToken);
         }
 
-        var image = config.ImageReference ?? DockerExecutionWorkspaceConfigService.DefaultImageReference;
+        if (string.IsNullOrWhiteSpace(config.ImageReference))
+        {
+            throw new InvalidOperationException("Configure a Docker image before using Docker execution.");
+        }
+
+        var image = config.ImageReference;
         var root = ResolveDefaultBaseDirectory(config);
-        var args = new List<string> { "run", "-d", "--name", container, "--label", $"sunder.resources.signature={signature}", "-w", root };
+        var args = new List<string> { "run", "--pull", "never", "-d", "--name", container, "--label", $"sunder.resources.signature={signature}", "-w", root };
         AddNonInteractiveEnvironment(args);
         foreach (var mount in mounts)
         {
@@ -267,7 +286,26 @@ public sealed class DockerExecutionTarget(
         args.Add("-f");
         args.Add("/dev/null");
         var run = await RunDockerAsync(args, ResolveDefaultTimeoutSeconds(), cancellationToken);
-        return run.ExitCode == 0 ? container : null;
+        if (run.ExitCode == 0)
+        {
+            return container;
+        }
+
+        throw new InvalidOperationException(FormatDockerContainerRunFailure(container, image, run.Output));
+    }
+
+    private static string FormatDockerContainerStartFailure(string containerName, string output)
+        => AppendDockerOutput($"Docker container '{containerName}' failed to start.", output);
+
+    private static string FormatDockerContainerRunFailure(string containerName, string imageReference, string output)
+        => AppendDockerOutput($"Docker container '{containerName}' failed to start from image '{imageReference}'.", output);
+
+    private static string AppendDockerOutput(string message, string output)
+    {
+        var trimmed = output.Trim();
+        return string.IsNullOrWhiteSpace(trimmed)
+            ? message
+            : $"{message} {trimmed}";
     }
 
     private async Task StopContainerAsync(string containerName, CancellationToken cancellationToken)
@@ -316,7 +354,7 @@ public sealed class DockerExecutionTarget(
 
     private static string ResolveContainerName(DockerExecutionWorkspaceConfig config, string bindingId)
         => string.IsNullOrWhiteSpace(config.ContainerName)
-            ? DockerExecutionWorkspaceConfigService.BuildContainerName(bindingId)
+            ? DockerExecutionWorkspaceConfigService.DefaultContainerName
             : config.ContainerName;
 
     private static string ResolveShellPath(DockerExecutionWorkspaceConfig config)
@@ -417,20 +455,20 @@ public sealed class DockerExecutionTarget(
 
     private static string Quote(string value) => "'" + value.Replace("'", "'\\''") + "'";
 
-    private static async Task<DockerProcessResult> RunDockerAsync(IReadOnlyList<string> args, int timeoutSeconds, CancellationToken cancellationToken)
+    private static string GetDirectoryName(string path)
     {
-        var startInfo = new ProcessStartInfo
+        var index = path.LastIndexOf('/');
+        return index <= 0 ? "/" : path[..index];
+    }
+
+    private static async Task<DockerProcessResult> RunDockerAsync(IReadOnlyList<string> args, int timeoutSeconds, CancellationToken cancellationToken, string? standardInput = null)
+    {
+        if (RunDockerOverride is { } overrideRunner)
         {
-            FileName = "docker",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-        foreach (var arg in args)
-        {
-            startInfo.ArgumentList.Add(arg);
+            return await overrideRunner(args, timeoutSeconds, cancellationToken, standardInput);
         }
+
+        var startInfo = CreateDockerStartInfo(args, standardInput);
 
         using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         try
@@ -439,16 +477,18 @@ public sealed class DockerExecutionTarget(
         }
         catch (Exception ex)
         {
-            return new DockerProcessResult(127, $"Failed to start Docker CLI: {ex.Message}", TimedOut: false, WasTruncated: false);
+            return new DockerProcessResult(127, $"Failed to start Docker CLI: {FormatDockerStartError(ex)}", TimedOut: false, WasTruncated: false);
         }
 
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        var stdoutTask = ReadToEndBoundedAsync(process.StandardOutput, MaxOutputLength, cancellationToken);
+        var stderrTask = ReadToEndBoundedAsync(process.StandardError, MaxOutputLength, cancellationToken);
+        var stdinTask = WriteStandardInputAsync(process, standardInput, cancellationToken);
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         try
         {
             await process.WaitForExitAsync(timeoutCts.Token);
+            await stdinTask;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -461,10 +501,68 @@ public sealed class DockerExecutionTarget(
             throw;
         }
 
-        var output = string.Concat(await stdoutTask, await stderrTask);
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+        var output = string.Concat(stdout.Content, stderr.Content);
         var truncatedOutput = TruncateOutput(output, out var wasTruncated);
-        return new DockerProcessResult(process.ExitCode, truncatedOutput, TimedOut: false, wasTruncated);
+        return new DockerProcessResult(process.ExitCode, truncatedOutput, TimedOut: false, stdout.WasTruncated || stderr.WasTruncated || wasTruncated);
     }
+
+    internal static ProcessStartInfo CreateDockerStartInfo(IReadOnlyList<string> args, string? standardInput)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "docker",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = standardInput is not null,
+            CreateNoWindow = true,
+        };
+        if (standardInput is not null)
+        {
+            startInfo.StandardInputEncoding = Encoding.UTF8;
+        }
+
+        foreach (var arg in args)
+        {
+            startInfo.ArgumentList.Add(arg);
+        }
+
+        return startInfo;
+    }
+
+    private static async Task WriteStandardInputAsync(Process process, string? standardInput, CancellationToken cancellationToken)
+    {
+        if (standardInput is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await process.StandardInput.WriteAsync(standardInput.AsMemory(), cancellationToken);
+            await process.StandardInput.FlushAsync(cancellationToken);
+        }
+        catch (Exception ex) when ((ex is IOException or InvalidOperationException) && !cancellationToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            try
+            {
+                process.StandardInput.Close();
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static string FormatDockerStartError(Exception exception)
+        => exception.Message.Contains("filename or extension is too long", StringComparison.OrdinalIgnoreCase)
+            ? "the generated command line was too long. File content should be streamed through stdin instead of passed as a Docker CLI argument."
+            : exception.Message;
 
     private static string TruncateOutput(string output, out bool wasTruncated)
     {
@@ -472,6 +570,35 @@ public sealed class DockerExecutionTarget(
         return wasTruncated
             ? output[..MaxOutputLength] + Environment.NewLine + "[output truncated]"
             : output;
+    }
+
+    private static async Task<BoundedProcessOutput> ReadToEndBoundedAsync(StreamReader reader, int maxLength, CancellationToken cancellationToken)
+    {
+        var buffer = new char[4096];
+        var builder = new StringBuilder(capacity: Math.Min(maxLength, buffer.Length));
+        var wasTruncated = false;
+
+        while (true)
+        {
+            var read = await reader.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            var remaining = maxLength - builder.Length;
+            if (remaining > 0)
+            {
+                builder.Append(buffer, 0, Math.Min(read, remaining));
+            }
+
+            if (read > remaining)
+            {
+                wasTruncated = true;
+            }
+        }
+
+        return new BoundedProcessOutput(builder.ToString(), wasTruncated);
     }
 
     private static void TryKill(Process process)
@@ -488,5 +615,7 @@ public sealed class DockerExecutionTarget(
         }
     }
 
-    private sealed record DockerProcessResult(int ExitCode, string Output, bool TimedOut, bool WasTruncated);
+    internal sealed record DockerProcessResult(int ExitCode, string Output, bool TimedOut, bool WasTruncated);
+
+    private sealed record BoundedProcessOutput(string Content, bool WasTruncated);
 }

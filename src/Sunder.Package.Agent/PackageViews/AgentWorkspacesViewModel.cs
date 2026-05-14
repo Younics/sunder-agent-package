@@ -18,6 +18,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private readonly IPackageExtensionCatalogMonitor? _extensionCatalogMonitor;
     private readonly IPackageExtensionCatalogChangeNotifier? _extensionCatalogChangeNotifier;
     private readonly AgentExecutionTargetWarmupService? _warmupService;
+    private readonly IPackageSettingsNavigationService? _settingsNavigationService;
     private bool _suppressSelectionHandlers;
     private bool _disposed;
 
@@ -25,11 +26,13 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         AgentWorkspaceService workspaceService,
         AgentExecutionTargetService targetService,
         IPackageExtensionCatalog extensionCatalog,
-        AgentExecutionTargetWarmupService? warmupService = null)
+        AgentExecutionTargetWarmupService? warmupService = null,
+        IPackageSettingsNavigationService? settingsNavigationService = null)
     {
         _workspaceService = workspaceService;
         _targetService = targetService;
         _extensionCatalog = extensionCatalog;
+        _settingsNavigationService = settingsNavigationService;
         _extensionCatalogMonitor = extensionCatalog as IPackageExtensionCatalogMonitor;
         if (_extensionCatalogMonitor is not null)
         {
@@ -51,6 +54,8 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     public ObservableCollection<ExecutionTargetOption> ExecutionTargets { get; } = [];
 
     public bool HasExecutionTargetChoices => ExecutionTargets.Any(target => !target.IsUnconfigured);
+
+    public bool HasNoExecutionTargetChoices => !HasExecutionTargetChoices;
 
     public bool HasSelectedWorkspace => SelectedWorkspace is not null;
 
@@ -87,15 +92,15 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     public ObservableCollection<AgentEditorSectionViewModel> EditorSections { get; } = [];
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasStatusText))]
     private string _statusText = string.Empty;
 
-    public bool CanDeleteSelected => SelectedWorkspace is not null;
+    public bool HasStatusText => !string.IsNullOrWhiteSpace(StatusText);
 
     partial void OnSelectedWorkspaceChanged(AgentWorkspaceRecord? value)
     {
         DeleteWorkspaceCommand.NotifyCanExecuteChanged();
         SaveWorkspaceCommand.NotifyCanExecuteChanged();
-        OnPropertyChanged(nameof(CanDeleteSelected));
         OnPropertyChanged(nameof(HasSelectedWorkspace));
 
         if (_suppressSelectionHandlers)
@@ -104,6 +109,10 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         }
 
         LoadWorkspace(value);
+        if (IsCompactLayout && value is not null)
+        {
+            IsEditorActive = true;
+        }
     }
 
     public void Dispose()
@@ -127,6 +136,15 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     partial void OnIsCompactLayoutChanged(bool value)
     {
+        if (value && !IsEditorActive)
+        {
+            SelectedWorkspace = null;
+        }
+        else if (!value && SelectedWorkspace is null)
+        {
+            SelectedWorkspace = Workspaces.FirstOrDefault();
+        }
+
         OnPropertyChanged(nameof(ShowWideLayout));
         OnPropertyChanged(nameof(ShowCompactList));
         OnPropertyChanged(nameof(ShowCompactEditor));
@@ -161,7 +179,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             var workspace = _workspaceService.CreateWorkspace("New Workspace");
             ReloadWorkspaces(workspace.WorkspaceId);
             IsEditorActive = true;
-            StatusText = "Workspace created.";
+            StatusText = string.Empty;
         }
         catch (Exception ex)
         {
@@ -179,6 +197,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
         try
         {
+            var savedWorkspaceId = SelectedWorkspace.WorkspaceId;
             var editorSaveResult = await SaveEditorSectionsAsync();
             if (!editorSaveResult.Success)
             {
@@ -202,7 +221,14 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
                 }
             }
 
-            ReloadWorkspaces(SelectedWorkspace.WorkspaceId);
+            var shouldClearSelection = IsCompactLayout;
+            ReloadWorkspaceList(savedWorkspaceId);
+            if (shouldClearSelection)
+            {
+                SelectedWorkspace = null;
+            }
+
+            IsEditorActive = false;
             StatusText = warmupResult?.Status == AgentExecutionTargetWarmupStatus.Failed
                 ? $"Workspace saved, but execution target is not ready: {warmupResult.Message}"
                 : warmupResult?.Status == AgentExecutionTargetWarmupStatus.Ready
@@ -225,8 +251,18 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
         try
         {
+            var shouldClearSelection = IsCompactLayout;
             _workspaceService.DeleteWorkspace(SelectedWorkspace.WorkspaceId);
-            ReloadWorkspaces(selectWorkspaceId: null);
+            if (shouldClearSelection)
+            {
+                ReloadWorkspaceList(selectWorkspaceId: null);
+                SelectedWorkspace = null;
+            }
+            else
+            {
+                ReloadWorkspaces(selectWorkspaceId: null);
+            }
+
             IsEditorActive = false;
             StatusText = "Workspace deleted.";
         }
@@ -242,14 +278,66 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     [RelayCommand]
     private void BackToWorkspaceList()
-        => IsEditorActive = false;
+    {
+        if (IsCompactLayout)
+        {
+            SelectedWorkspace = null;
+        }
+
+        IsEditorActive = false;
+    }
+
+    public async Task ExecuteEditorActionAsync(AgentEditorActionViewModel action)
+    {
+        try
+        {
+            switch (action.Kind)
+            {
+                case AgentEditorActionKind.OpenPackageSettings:
+                    if (_settingsNavigationService is null || string.IsNullOrWhiteSpace(action.PackageId))
+                    {
+                        StatusText = "Package settings cannot be opened from this host.";
+                        return;
+                    }
+
+                    StatusText = await _settingsNavigationService.OpenPackageSettingsAsync(action.PackageId, action.Parameters)
+                        ? "Opened package settings."
+                        : "Package settings could not be opened.";
+                    break;
+                case AgentEditorActionKind.RefreshEditor:
+                    await RefreshEditorSectionsAsync();
+                    StatusText = "Workspace editor refreshed.";
+                    break;
+                case AgentEditorActionKind.RefreshField:
+                    await RefreshEditorFieldAsync(action.Field);
+                    StatusText = "Workspace editor field refreshed.";
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+    }
 
     [RelayCommand]
     private void OpenWorkspaceEditor(AgentWorkspaceRecord workspace)
     {
-        SelectedWorkspace = workspace;
-        LoadWorkspace(workspace);
+        ActivateWorkspace(workspace);
         IsEditorActive = true;
+    }
+
+    public void ActivateWorkspace(AgentWorkspaceRecord workspace)
+    {
+        if (!string.Equals(SelectedWorkspace?.WorkspaceId, workspace.WorkspaceId, StringComparison.OrdinalIgnoreCase))
+        {
+            SelectedWorkspace = workspace;
+        }
+
+        if (IsCompactLayout)
+        {
+            IsEditorActive = true;
+        }
     }
 
     private void ReloadTargets(string? preferredTargetId = null)
@@ -270,6 +358,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         }
 
         OnPropertyChanged(nameof(HasExecutionTargetChoices));
+        OnPropertyChanged(nameof(HasNoExecutionTargetChoices));
     }
 
     private void OnExtensionCatalogChanged(object? sender, EventArgs e)
@@ -305,6 +394,12 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     private void ReloadWorkspaces(string? selectWorkspaceId)
     {
+        ReloadWorkspaceList(selectWorkspaceId);
+        LoadWorkspace(SelectedWorkspace);
+    }
+
+    private void ReloadWorkspaceList(string? selectWorkspaceId)
+    {
         var workspaces = _workspaceService.ListWorkspaces();
         Workspaces.Clear();
         foreach (var workspace in workspaces)
@@ -322,8 +417,6 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         {
             _suppressSelectionHandlers = false;
         }
-
-        LoadWorkspace(SelectedWorkspace);
     }
 
     private void LoadWorkspace(AgentWorkspaceRecord? workspace)
@@ -334,7 +427,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             ? null
             : _workspaceService.ListBindings(workspace.WorkspaceId)
                 .FirstOrDefault(item => string.Equals(item.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase));
-        SelectedExecutionTarget = ResolveTargetOption(binding?.ContributionId);
+        SetSelectionSilently(() => SelectedExecutionTarget = ResolveTargetOption(binding?.ContributionId));
         _ = RefreshEditorSectionsAsync();
     }
 
@@ -372,6 +465,26 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         {
             StatusText = ex.Message;
         }
+    }
+
+    private async Task RefreshEditorFieldAsync(AgentEditorFieldViewModel field)
+    {
+        var context = BuildEditorContext();
+        if (context is null || !field.Section.Contributor.CanEdit(context))
+        {
+            return;
+        }
+
+        var sections = await field.Section.Contributor.GetSectionsAsync(context);
+        var refreshedSection = sections.FirstOrDefault(section => string.Equals(section.SectionId, field.Section.SectionId, StringComparison.OrdinalIgnoreCase));
+        var refreshedField = refreshedSection?.Fields.FirstOrDefault(candidate => string.Equals(candidate.FieldId, field.FieldId, StringComparison.OrdinalIgnoreCase));
+        if (refreshedField is null)
+        {
+            await RefreshEditorSectionsAsync();
+            return;
+        }
+
+        field.ApplyField(refreshedField);
     }
 
     private AgentWorkspaceEditorContext? BuildEditorContext()
@@ -432,21 +545,22 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
 public sealed class AgentEditorSectionViewModel : ObservableObject
 {
-    private readonly IAgentWorkspaceEditorContributor _contributor;
-    private readonly AgentWorkspaceEditorContext _context;
-
     public AgentEditorSectionViewModel(
         IAgentWorkspaceEditorContributor contributor,
         AgentWorkspaceEditorContext context,
         AgentEditorSection section)
     {
-        _contributor = contributor;
-        _context = context;
+        Contributor = contributor;
+        Context = context;
         SectionId = section.SectionId;
         Title = section.Title;
         Description = section.Description ?? string.Empty;
         Fields = new ObservableCollection<AgentEditorFieldViewModel>(section.Fields.Select(CreateField));
     }
+
+    internal IAgentWorkspaceEditorContributor Contributor { get; }
+
+    internal AgentWorkspaceEditorContext Context { get; }
 
     public string SectionId { get; }
 
@@ -459,35 +573,109 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
     public ObservableCollection<AgentEditorFieldViewModel> Fields { get; }
 
     public ValueTask<AgentEditorSaveResult> SaveAsync()
-        => _contributor.SaveSectionAsync(
-            _context,
+        => Contributor.SaveSectionAsync(
+            Context,
             new AgentEditorSaveRequest(
                 SectionId,
                 Fields.ToDictionary(field => field.FieldId, field => field.ToValue(), StringComparer.OrdinalIgnoreCase)));
 
-    private static AgentEditorFieldViewModel CreateField(AgentEditorField field)
+    private AgentEditorFieldViewModel CreateField(AgentEditorField field)
         => field.Kind switch
         {
-            AgentEditorFieldKind.Select => new AgentEditorSelectFieldViewModel(field),
-            AgentEditorFieldKind.PathList => new AgentEditorPathListFieldViewModel(field),
-            _ => new AgentEditorTextFieldViewModel(field),
+            AgentEditorFieldKind.Select => new AgentEditorSelectFieldViewModel(this, field),
+            AgentEditorFieldKind.PathList => new AgentEditorPathListFieldViewModel(this, field),
+            _ => new AgentEditorTextFieldViewModel(this, field),
         };
 }
 
-public abstract partial class AgentEditorFieldViewModel(AgentEditorField field) : ObservableObject
+public abstract partial class AgentEditorFieldViewModel : ObservableObject
 {
-    public string FieldId { get; } = field.FieldId;
+    protected AgentEditorFieldViewModel(AgentEditorSectionViewModel section, AgentEditorField field)
+    {
+        Section = section;
+        FieldId = field.FieldId;
+        Label = field.Label;
+        Description = field.Description ?? string.Empty;
+        ReplaceActions(field.Actions);
+    }
 
-    public string Label { get; } = field.Label;
+    public AgentEditorSectionViewModel Section { get; }
 
-    public string Description { get; } = field.Description ?? string.Empty;
+    public string FieldId { get; }
+
+    public string Label { get; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasDescription))]
+    private string _description = string.Empty;
 
     public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
+
+    public ObservableCollection<AgentEditorActionViewModel> Actions { get; } = [];
+
+    public ObservableCollection<AgentEditorActionViewModel> IconActions { get; } = [];
+
+    public ObservableCollection<AgentEditorActionViewModel> TextActions { get; } = [];
+
+    public bool HasActions => Actions.Count > 0;
+
+    public bool HasIconActions => IconActions.Count > 0;
+
+    public bool HasTextActions => TextActions.Count > 0;
+
+    internal virtual void ApplyField(AgentEditorField field)
+    {
+        Description = field.Description ?? string.Empty;
+        ReplaceActions(field.Actions);
+    }
+
+    private void ReplaceActions(IReadOnlyList<AgentEditorAction>? actions)
+    {
+        Actions.Clear();
+        IconActions.Clear();
+        TextActions.Clear();
+        foreach (var action in actions ?? [])
+        {
+            var viewModel = new AgentEditorActionViewModel(this, action);
+            Actions.Add(viewModel);
+            if (viewModel.IsIconAction)
+            {
+                IconActions.Add(viewModel);
+            }
+            else
+            {
+                TextActions.Add(viewModel);
+            }
+        }
+
+        OnPropertyChanged(nameof(HasActions));
+        OnPropertyChanged(nameof(HasIconActions));
+        OnPropertyChanged(nameof(HasTextActions));
+    }
 
     public abstract AgentEditorFieldValue ToValue();
 }
 
-public sealed partial class AgentEditorTextFieldViewModel(AgentEditorField field) : AgentEditorFieldViewModel(field)
+public sealed class AgentEditorActionViewModel(AgentEditorFieldViewModel field, AgentEditorAction action)
+{
+    public AgentEditorFieldViewModel Field { get; } = field;
+
+    public string ActionId { get; } = action.ActionId;
+
+    public string Label { get; } = action.Label;
+
+    public AgentEditorActionKind Kind { get; } = action.Kind;
+
+    public bool IsIconAction => Kind == AgentEditorActionKind.RefreshField;
+
+    public string Content => IsIconAction ? "↻" : Label;
+
+    public string? PackageId { get; } = action.PackageId;
+
+    public IReadOnlyDictionary<string, string?>? Parameters { get; } = action.Parameters;
+}
+
+public sealed partial class AgentEditorTextFieldViewModel(AgentEditorSectionViewModel section, AgentEditorField field) : AgentEditorFieldViewModel(section, field)
 {
     [ObservableProperty]
     private string _value = field.Value ?? string.Empty;
@@ -497,27 +685,53 @@ public sealed partial class AgentEditorTextFieldViewModel(AgentEditorField field
 
 public sealed partial class AgentEditorSelectFieldViewModel : AgentEditorFieldViewModel
 {
-    public AgentEditorSelectFieldViewModel(AgentEditorField field)
-        : base(field)
+    public AgentEditorSelectFieldViewModel(AgentEditorSectionViewModel section, AgentEditorField field)
+        : base(section, field)
     {
-        Options = new ObservableCollection<AgentEditorOptionViewModel>((field.Options ?? [])
-            .Select(option => new AgentEditorOptionViewModel(option.Value, option.Label, option.Description ?? string.Empty)));
-        SelectedOption = Options.FirstOrDefault(option => string.Equals(option.Value, field.Value, StringComparison.OrdinalIgnoreCase))
-                         ?? Options.FirstOrDefault();
+        ReplaceOptions(field.Options, field.Value, previousValue: null);
     }
 
-    public ObservableCollection<AgentEditorOptionViewModel> Options { get; }
+    public ObservableCollection<AgentEditorOptionViewModel> Options { get; } = [];
+
+    public bool HasOptions => Options.Count > 0;
+
+    public bool HasNoOptions => !HasOptions;
+
+    public bool ShowEmptyStateActions => HasNoOptions && HasTextActions;
 
     [ObservableProperty]
     private AgentEditorOptionViewModel? _selectedOption;
+
+    internal override void ApplyField(AgentEditorField field)
+    {
+        var previousValue = SelectedOption?.Value;
+        base.ApplyField(field);
+        ReplaceOptions(field.Options, field.Value, previousValue);
+    }
+
+    private void ReplaceOptions(IReadOnlyList<AgentEditorOption>? options, string? preferredValue, string? previousValue)
+    {
+        Options.Clear();
+        foreach (var option in options ?? [])
+        {
+            Options.Add(new AgentEditorOptionViewModel(option.Value, option.Label, option.Description ?? string.Empty));
+        }
+
+        SelectedOption = Options.FirstOrDefault(option => string.Equals(option.Value, previousValue, StringComparison.OrdinalIgnoreCase))
+                         ?? Options.FirstOrDefault(option => string.Equals(option.Value, preferredValue, StringComparison.OrdinalIgnoreCase))
+                         ?? Options.FirstOrDefault();
+        OnPropertyChanged(nameof(HasOptions));
+        OnPropertyChanged(nameof(HasNoOptions));
+        OnPropertyChanged(nameof(ShowEmptyStateActions));
+    }
 
     public override AgentEditorFieldValue ToValue() => new(SelectedOption?.Value);
 }
 
 public sealed partial class AgentEditorPathListFieldViewModel : AgentEditorFieldViewModel
 {
-    public AgentEditorPathListFieldViewModel(AgentEditorField field)
-        : base(field)
+    public AgentEditorPathListFieldViewModel(AgentEditorSectionViewModel section, AgentEditorField field)
+        : base(section, field)
     {
         AddItemLabel = string.IsNullOrWhiteSpace(field.AddItemLabel) ? "Add" : field.AddItemLabel;
         UseFolderPicker = field.UseFolderPicker;
@@ -528,7 +742,6 @@ public sealed partial class AgentEditorPathListFieldViewModel : AgentEditorField
         DefaultNewSecondaryItemValue = string.IsNullOrWhiteSpace(field.DefaultNewSecondaryItemValue) ? string.Empty : field.DefaultNewSecondaryItemValue;
         Items = new ObservableCollection<AgentEditorPathListItemViewModel>((field.Items ?? [])
             .Select(item => CreateItem(item.Value, item.IsDefault, item.SecondaryValue)));
-        SelectedItem = Items.FirstOrDefault(item => item.IsDefault) ?? Items.FirstOrDefault();
     }
 
     public string AddItemLabel { get; }
@@ -550,7 +763,10 @@ public sealed partial class AgentEditorPathListFieldViewModel : AgentEditorField
     public ObservableCollection<AgentEditorPathListItemViewModel> Items { get; }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSelectedItem))]
     private AgentEditorPathListItemViewModel? _selectedItem;
+
+    public bool HasSelectedItem => SelectedItem is not null;
 
     public void AddItem(string value)
     {

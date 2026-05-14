@@ -8,8 +8,10 @@ namespace Sunder.Package.Agent.Provider.OpenAI;
 
 public sealed partial class OpenAiSettingsViewModel : ObservableObject
 {
+    private static readonly TimeSpan AuthorizationTimeout = TimeSpan.FromMinutes(5);
     private readonly IPackageContext _packageContext;
     private readonly CodexConnectedAuthStrategy _codexConnectedAuthStrategy;
+    private CancellationTokenSource? _authorizationCts;
 
     public OpenAiSettingsViewModel(
         IPackageContext packageContext,
@@ -22,6 +24,10 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
 
     public bool HasStoredApiKey => !string.IsNullOrWhiteSpace(_packageContext.Secrets.GetSecret("auth.apiKey"));
 
+    public bool CanAuthorize => !IsBusy;
+
+    public bool CanCancelAuthorization => IsAuthorizing;
+
     [ObservableProperty]
     private string? _apiKeyValue;
 
@@ -32,7 +38,14 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
     private bool _isBusy;
 
     [ObservableProperty]
+    private bool _isAuthorizing;
+
+    [ObservableProperty]
     private bool _canDisconnect;
+
+    partial void OnIsBusyChanged(bool value) => OnPropertyChanged(nameof(CanAuthorize));
+
+    partial void OnIsAuthorizingChanged(bool value) => OnPropertyChanged(nameof(CanCancelAuthorization));
 
     [RelayCommand]
     private async Task SaveAsync()
@@ -56,13 +69,26 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task AuthorizeAsync()
     {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        var authorizationCts = new CancellationTokenSource(AuthorizationTimeout);
+        _authorizationCts = authorizationCts;
         IsBusy = true;
+        IsAuthorizing = true;
+        StatusText = "Opened auth.openai.com in your browser. Complete sign-in there, or cancel and retry if you closed the page.";
         try
         {
             await SaveStateAsync();
-            await _codexConnectedAuthStrategy.EnsureAuthenticatedAsync(cancellationToken: default);
+            await _codexConnectedAuthStrategy.EnsureAuthenticatedAsync(authorizationCts.Token);
             StatusText = "Authorization succeeded. ChatGPT Plus/Pro session is ready.";
             await RefreshStatusAsync();
+        }
+        catch (OperationCanceledException) when (authorizationCts.IsCancellationRequested)
+        {
+            StatusText = "Authorization was cancelled or timed out. Click Authorize to try again.";
         }
         catch (Exception ex)
         {
@@ -70,7 +96,32 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
         }
         finally
         {
+            if (ReferenceEquals(_authorizationCts, authorizationCts))
+            {
+                _authorizationCts = null;
+            }
+
+            authorizationCts.Dispose();
+            IsAuthorizing = false;
             IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private void CancelAuthorization()
+    {
+        if (!IsAuthorizing)
+        {
+            return;
+        }
+
+        StatusText = "Cancelling browser authorization...";
+        try
+        {
+            _authorizationCts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
         }
     }
 

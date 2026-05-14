@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -10,8 +9,6 @@ namespace Sunder.Package.Agent.Tools.Shell;
 public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
     : IAgentToolSource, IAgentPermissionAwareToolSource, IAgentPermissionSurface, IAgentToolPresentationResolver
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
-
     private static readonly AgentToolDescriptor Descriptor = new(
         "shell",
         "Shell Command",
@@ -42,19 +39,12 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
             return null;
         }
 
-        ShellArgs? args = null;
-        try
-        {
-            args = JsonSerializer.Deserialize<ShellArgs>(request.ArgumentsJson, JsonOptions);
-        }
-        catch
-        {
-        }
+        var parsed = TryParseShellArgs(request.ArgumentsJson, out var args, out var error);
 
-        var command = args?.Command;
+        var command = parsed ? args.Command : null;
         return new AgentToolPresentation(
             HeaderText: request.ResultSummary ?? CompactCommand(command),
-            DetailMarkdown: BuildShellDetailMarkdown(args, request.ArgumentsJson),
+            DetailMarkdown: parsed ? BuildShellDetailMarkdown(args) : BuildRawArgumentsMarkdown(request.ArgumentsJson, error),
             OutputText: request.TextContent);
     }
 
@@ -120,8 +110,11 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
             return Error(request.ToolId, "The selected workspace is not bound to an installed execution target.", "shell-target-required");
         }
 
-        var args = JsonSerializer.Deserialize<ShellArgs>(request.ArgumentsJson, JsonOptions)
-            ?? throw new InvalidOperationException("Shell arguments were empty or invalid.");
+        if (!TryParseShellArgs(request.ArgumentsJson, out var args, out var error))
+        {
+            return Error(request.ToolId, error!, "shell-arguments-invalid");
+        }
+
         var result = await target.ExecuteShellAsync(
             new AgentExecutionTargetContext(context.SessionId, context.ProfileId, context.Workspace, context.ExecutionBinding, context.AllowOutsideConfiguredScope),
             new AgentShellCommandRequest(args.Command, args.WorkingDirectory, args.TimeoutSeconds),
@@ -147,12 +140,9 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
     {
         cancellationToken.ThrowIfCancellationRequested();
         string? command = null;
-        try
+        if (TryParseShellArgs(request.ArgumentsJson, out var args, out _))
         {
-            command = JsonSerializer.Deserialize<ShellArgs>(request.ArgumentsJson, JsonOptions)?.Command;
-        }
-        catch
-        {
+            command = args.Command;
         }
 
         return ValueTask.FromResult<AgentPermissionRequest?>(new AgentPermissionRequest(
@@ -207,13 +197,24 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
             : normalized;
     }
 
-    private static string BuildShellDetailMarkdown(ShellArgs? args, string argumentsJson)
+    private static bool TryParseShellArgs(string argumentsJson, out ShellArgs args, out string? error)
     {
-        if (args is null || string.IsNullOrWhiteSpace(args.Command))
+        args = new ShellArgs(string.Empty);
+        if (!AgentToolArgumentObject.TryParse(argumentsJson, out var arguments, out error)
+            || !arguments!.TryReadRequiredString("command", out var command, out error)
+            || !arguments.TryReadOptionalString("workingDirectory", out var workingDirectory, out error)
+            || !arguments.TryReadOptionalInt32("timeoutSeconds", out var timeoutSeconds, out error))
         {
-            return BuildFencedMarkdown("Arguments", "json", argumentsJson);
+            error = $"Invalid shell arguments: {error ?? "arguments were empty or invalid."}";
+            return false;
         }
 
+        args = new ShellArgs(command!, workingDirectory, timeoutSeconds);
+        return true;
+    }
+
+    private static string BuildShellDetailMarkdown(ShellArgs args)
+    {
         var builder = new StringBuilder();
         builder.AppendLine("**Command**");
         builder.AppendLine("```sh");
@@ -234,6 +235,22 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
             }
         }
 
+        return builder.ToString().Trim();
+    }
+
+    private static string BuildRawArgumentsMarkdown(string argumentsJson, string? error)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("**Arguments**");
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            builder.AppendLine(error.Trim());
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("```json");
+        builder.AppendLine(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson.Trim());
+        builder.AppendLine("```");
         return builder.ToString().Trim();
     }
 

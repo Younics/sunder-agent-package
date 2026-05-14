@@ -3,9 +3,12 @@ using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-public sealed class DockerExecutionWorkspaceEditorContributor(DockerExecutionWorkspaceConfigService configService)
+public sealed class DockerExecutionWorkspaceEditorContributor(
+    DockerExecutionWorkspaceConfigService configService,
+    DockerImageCatalogService imageCatalogService)
     : IAgentWorkspaceEditorContributor
 {
+    private const string PackageId = "sunder.package.agent.execution.docker";
     private const string TargetId = "docker";
     private const string SectionId = "docker-execution-settings";
     private const string ImageFieldId = "image";
@@ -17,25 +20,53 @@ public sealed class DockerExecutionWorkspaceEditorContributor(DockerExecutionWor
     public bool CanEdit(AgentWorkspaceEditorContext context)
         => string.Equals(context.TargetId, TargetId, StringComparison.OrdinalIgnoreCase);
 
-    public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
+    public async ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
         AgentWorkspaceEditorContext context,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
         var config = configService.GetConfig(context.ConfigurationId);
+        var images = await imageCatalogService.RefreshImagesAsync(cancellationToken);
+        var imageOptions = images
+            .Where(image => image.Status == DockerImageStatus.Ready)
+            .Select(image => new AgentEditorOption(image.ImageReference, image.ImageReference))
+            .ToArray();
+        var imageActions = new List<AgentEditorAction>
+        {
+            new(
+                "refresh-docker-images",
+                "Refresh Images",
+                AgentEditorActionKind.RefreshField),
+        };
+        if (imageOptions.Length == 0)
+        {
+            imageActions.Add(new AgentEditorAction(
+                "open-docker-execution-settings",
+                "Open Settings",
+                AgentEditorActionKind.OpenPackageSettings,
+                PackageId));
+        }
+
         IReadOnlyList<AgentEditorSection> sections =
         [
             new AgentEditorSection(
                 SectionId,
                 "Docker Execution Settings",
-                "Docker creates or reuses a workspace container from this image. Each container root can mount a generated or custom host folder.",
+                "Docker creates or reuses a workspace container from a configured image. Pull images in Docker Execution settings before using them here.",
                 [
                     new AgentEditorField(
                         ImageFieldId,
-                        "Docker image:version",
-                        AgentEditorFieldKind.Text,
-                        Value: config.ImageReference),
+                        "Docker image",
+                        AgentEditorFieldKind.Select,
+                        imageOptions.Length == 0
+                            ? "Pull at least one configured image in Docker Execution settings."
+                            : "Choose a ready Docker image configured in Docker Execution settings.",
+                        Value: config.ImageReference,
+                        Options: imageOptions)
+                    {
+                        Actions = imageActions,
+                    },
                     new AgentEditorField(
                         ShellPathFieldId,
                         "Shell path inside container",
@@ -65,10 +96,10 @@ public sealed class DockerExecutionWorkspaceEditorContributor(DockerExecutionWor
                 ]),
         ];
 
-        return ValueTask.FromResult(sections);
+        return sections;
     }
 
-    public ValueTask<AgentEditorSaveResult> SaveSectionAsync(
+    public async ValueTask<AgentEditorSaveResult> SaveSectionAsync(
         AgentWorkspaceEditorContext context,
         AgentEditorSaveRequest request,
         CancellationToken cancellationToken = default)
@@ -77,7 +108,7 @@ public sealed class DockerExecutionWorkspaceEditorContributor(DockerExecutionWor
 
         if (!string.Equals(request.SectionId, SectionId, StringComparison.OrdinalIgnoreCase))
         {
-            return ValueTask.FromResult(AgentEditorSaveResult.Failed("Unknown Docker execution settings section."));
+            return AgentEditorSaveResult.Failed("Unknown Docker execution settings section.");
         }
 
         var image = request.Fields.TryGetValue(ImageFieldId, out var imageValue)
@@ -85,7 +116,22 @@ public sealed class DockerExecutionWorkspaceEditorContributor(DockerExecutionWor
             : null;
         if (string.IsNullOrWhiteSpace(image))
         {
-            return ValueTask.FromResult(AgentEditorSaveResult.Failed("Docker image cannot be empty."));
+            return AgentEditorSaveResult.Failed("Pull at least one configured Docker image in Docker Execution settings before saving this workspace.");
+        }
+
+        try
+        {
+            image = DockerImageCatalogService.NormalizeImageReference(image);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return AgentEditorSaveResult.Failed(ex.Message);
+        }
+
+        var imageReadiness = await imageCatalogService.GetReadinessAsync(image, cancellationToken);
+        if (!imageReadiness.IsReady)
+        {
+            return AgentEditorSaveResult.Failed(imageReadiness.Message);
         }
 
         var roots = request.Fields.TryGetValue(RootsFieldId, out var rootsValue)
@@ -117,17 +163,17 @@ public sealed class DockerExecutionWorkspaceEditorContributor(DockerExecutionWor
             var normalizedRoots = normalizedMounts.Select(root => root.Value).ToArray();
             if (normalizedRoots.Length == 0)
             {
-                return ValueTask.FromResult(AgentEditorSaveResult.Failed("Configure at least one Docker allowed root."));
+                return AgentEditorSaveResult.Failed("Configure at least one Docker allowed root.");
             }
 
             var defaultRoot = normalizedMounts.FirstOrDefault(root => root.IsDefault)?.Value ?? normalizedRoots[0];
             var hostRoots = normalizedMounts.ToDictionary(root => root.Value, root => root.SecondaryValue ?? string.Empty, StringComparer.Ordinal);
             configService.SaveConfig(context.ConfigurationId, new DockerExecutionWorkspaceConfig(image, normalizedRoots, defaultRoot, null, shellPath, hostRoots));
-            return ValueTask.FromResult(AgentEditorSaveResult.Ok("Docker execution settings saved."));
+            return AgentEditorSaveResult.Ok("Docker execution settings saved.");
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
-            return ValueTask.FromResult(AgentEditorSaveResult.Failed(ex.Message));
+            return AgentEditorSaveResult.Failed(ex.Message);
         }
     }
 }

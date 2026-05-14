@@ -1,0 +1,123 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Sunder.Package.Agent.Execution.Docker"
+             x:Class="Sunder.Package.Agent.Execution.Docker.DockerExecutionSettingsView"
+             x:DataType="vm:DockerExecutionSettingsViewModel">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="0,0,0,8"
+                Spacing="16">
+      <Border Classes="card-surface">
+        <StackPanel Spacing="12">
+          <StackPanel Spacing="6">
+            <TextBlock Classes="section-title"
+                       Text="Docker Images" />
+            <TextBlock Classes="caption"
+                       Text="Manage Docker images that workspaces can use. Add an image, pull it here, then select it from a workspace's Docker image list."
+                       TextWrapping="Wrap" />
+          </StackPanel>
+
+          <Grid ColumnDefinitions="*,Auto"
+                ColumnSpacing="10">
+            <TextBox Text="{Binding NewImageReference, Mode=TwoWay}"
+                     PlaceholderText="agent0ai/agent-zero:latest" />
+            <Button Grid.Column="1"
+                    Classes="secondary-action"
+                    Content="Add Image"
+                    Command="{Binding AddImageCommand}" />
+          </Grid>
+
+          <ListBox ItemsSource="{Binding Images}"
+                   SelectedItem="{Binding SelectedImage, Mode=TwoWay}"
+                   MinHeight="180"
+                   IsVisible="{Binding HasImages}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:DockerImageRowViewModel">
+                <Grid ColumnDefinitions="*,Auto"
+                      RowDefinitions="Auto,Auto,Auto"
+                      ColumnSpacing="12"
+                      RowSpacing="4"
+                      Margin="0,6">
+                  <TextBlock Text="{Binding ImageReference}"
+                             FontWeight="SemiBold"
+                             TextWrapping="Wrap" />
+                  <Border Grid.Column="1"
+                          Padding="8,3"
+                          CornerRadius="8"
+                          Background="{DynamicResource Sunder.Brush.Info.Soft}">
+                    <TextBlock Text="{Binding StatusText}"
+                               FontSize="12"
+                               Foreground="{DynamicResource Sunder.Brush.Accent}" />
+                  </Border>
+                  <TextBlock Grid.Row="1"
+                             Grid.ColumnSpan="2"
+                             Classes="caption"
+                             Text="{Binding DateText}"
+                             TextWrapping="Wrap"
+                             IsVisible="{Binding HasDateText}" />
+                  <TextBlock Grid.Row="2"
+                             Grid.ColumnSpan="2"
+                             Classes="caption"
+                             Text="{Binding ErrorMessage}"
+                             TextWrapping="Wrap"
+                             IsVisible="{Binding HasErrorMessage}" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+
+          <TextBlock Classes="caption"
+                     Text="No Docker images are configured. Add one above before assigning Docker execution to a workspace."
+                     TextWrapping="Wrap"
+                     IsVisible="{Binding !HasImages}" />
+
+          <WrapPanel Orientation="Horizontal">
+            <Button Classes="primary-action compact-action"
+                    Content="Pull Selected"
+                    Margin="0,0,8,8"
+                    Command="{Binding PullSelectedImageCommand}" />
+            <Button Classes="secondary-action compact-action"
+                    Content="Refresh Selected"
+                    Margin="0,0,8,8"
+                    Command="{Binding RefreshSelectedImageCommand}" />
+            <Button Classes="secondary-action compact-action"
+                    Content="Refresh All"
+                    Margin="0,0,8,8"
+                    Command="{Binding RefreshAllImagesCommand}" />
+            <Button Classes="secondary-action compact-action danger-action"
+                    Content="Delete Selected"
+                    Margin="0,0,8,8"
+                    Command="{Binding DeleteSelectedImageCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card-surface">
+        <StackPanel Spacing="12">
+          <StackPanel Spacing="6">
+            <TextBlock Classes="section-title"
+                       Text="Execution" />
+            <TextBlock Classes="caption"
+                       Text="Default timeout used by Docker shell, process, and file commands."
+                       TextWrapping="Wrap" />
+          </StackPanel>
+          <TextBox Text="{Binding TimeoutSeconds, Mode=TwoWay}"
+                   PlaceholderText="300" />
+          <Button Classes="primary-action"
+                  Content="Save Settings"
+                  HorizontalAlignment="Left"
+                  Command="{Binding SaveSettingsCommand}" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card-surface">
+        <StackPanel Spacing="8">
+          <TextBlock Classes="section-title"
+                     Text="Status" />
+          <TextBlock Classes="muted"
+                     Text="{Binding StatusText}"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

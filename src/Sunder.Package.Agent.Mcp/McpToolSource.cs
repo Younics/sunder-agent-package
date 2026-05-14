@@ -191,6 +191,16 @@ public sealed class McpToolSource(
                 ErrorCode: "mcp-tool-not-found");
         }
 
+        if (!TryDeserializeArguments(request.ArgumentsJson, out var arguments, out var argumentError))
+        {
+            return new AgentToolResult(
+                request.ToolId,
+                argumentError!,
+                Content: $"### MCP tool failed\n\n{argumentError}",
+                IsError: true,
+                ErrorCode: "mcp-arguments-invalid");
+        }
+
         try
         {
             var effectiveTimeoutMilliseconds = McpTimeoutResolver.ResolveEffectiveTimeoutMilliseconds(server.TimeoutMilliseconds);
@@ -214,7 +224,7 @@ public sealed class McpToolSource(
             var rawToolName = request.ToolId[(server.Name.Length + 1)..];
             var result = await client.CallToolAsync(
                 rawToolName,
-                DeserializeArguments(request.ArgumentsJson),
+                arguments,
                 progress: null,
                 options: null,
                 cancellationToken: cancellationToken);
@@ -303,8 +313,16 @@ public sealed class McpToolSource(
     private static string? SerializeSchema(object? schema)
         => schema is null ? null : JsonSerializer.Serialize(schema);
 
-    private static IReadOnlyDictionary<string, object?> DeserializeArguments(string argumentsJson)
-        => string.IsNullOrWhiteSpace(argumentsJson)
-            ? new Dictionary<string, object?>()
-            : JsonSerializer.Deserialize<Dictionary<string, object?>>(argumentsJson) ?? new Dictionary<string, object?>();
+    private static bool TryDeserializeArguments(string argumentsJson, out IReadOnlyDictionary<string, object?> arguments, out string? error)
+    {
+        arguments = new Dictionary<string, object?>();
+        if (!AgentToolArgumentObject.TryParse(argumentsJson, out var parsedArguments, out error))
+        {
+            error = $"Invalid MCP tool arguments: {error ?? "arguments were empty or invalid."}";
+            return false;
+        }
+
+        arguments = parsedArguments!.ToDictionary();
+        return true;
+    }
 }

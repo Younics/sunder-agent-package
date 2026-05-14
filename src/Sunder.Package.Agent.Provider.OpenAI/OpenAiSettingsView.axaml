@@ -19,7 +19,12 @@
                       Spacing="10">
             <Button Content="Authorize"
                     Command="{Binding AuthorizeCommand}"
-                    IsEnabled="{Binding !IsBusy}" />
+                    IsEnabled="{Binding CanAuthorize}" />
+            <Button Classes="secondary-action"
+                    Content="Cancel authorization"
+                    Command="{Binding CancelAuthorizationCommand}"
+                    IsEnabled="{Binding CanCancelAuthorization}"
+                    IsVisible="{Binding IsAuthorizing}" />
             <Button Classes="secondary-action"
                      Content="Disconnect"
                      Command="{Binding DisconnectCommand}"

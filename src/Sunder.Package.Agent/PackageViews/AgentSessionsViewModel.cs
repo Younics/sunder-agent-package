@@ -181,7 +181,92 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
     }
 
     private void OnSessionChanged(Guid sessionId)
-        => RunOnUiThread(() => ReloadSessions(SelectedSession?.SessionId ?? sessionId));
+        => RunOnUiThread(() => ApplySessionChanged(sessionId));
+
+    private void ApplySessionChanged(Guid sessionId)
+    {
+        var session = _sessionService.GetSession(sessionId);
+        if (session is null || session.ParentSessionId is not null)
+        {
+            RemoveSession(sessionId);
+            return;
+        }
+
+        var checkpoint = _sessionService.GetLatestCheckpoint(session.SessionId);
+        var existingIndex = FindSessionIndex(session.SessionId);
+        if (existingIndex < 0)
+        {
+            Sessions.Insert(FindSortedSessionTargetIndex(session), new AgentSessionListEntryViewModel(session, checkpoint));
+            OnPropertyChanged(nameof(HasNoSessions));
+            StatusText = $"{Sessions.Count} session(s).";
+            return;
+        }
+
+        var item = Sessions[existingIndex];
+        item.UpdateSession(session);
+        item.ApplyCheckpoint(checkpoint);
+
+        var targetIndex = FindSortedSessionTargetIndex(session);
+        if (targetIndex != existingIndex)
+        {
+            Sessions.Move(existingIndex, targetIndex);
+        }
+
+        if (SelectedSession?.SessionId == sessionId)
+        {
+            LoadSession(SelectedSession);
+        }
+
+        StatusText = Sessions.Count == 0 ? "No sessions yet." : $"{Sessions.Count} session(s).";
+    }
+
+    private void RemoveSession(Guid sessionId)
+    {
+        var index = FindSessionIndex(sessionId);
+        if (index < 0)
+        {
+            return;
+        }
+
+        Sessions.RemoveAt(index);
+        OnPropertyChanged(nameof(HasNoSessions));
+        if (SelectedSession?.SessionId == sessionId)
+        {
+            SelectedSession = Sessions.FirstOrDefault();
+        }
+
+        LoadSession(SelectedSession);
+        StatusText = Sessions.Count == 0 ? "No sessions yet." : $"{Sessions.Count} session(s).";
+    }
+
+    private int FindSortedSessionTargetIndex(AgentSessionRecord session)
+    {
+        var targetIndex = 0;
+        foreach (var item in Sessions)
+        {
+            if (item.SessionId == session.SessionId)
+            {
+                continue;
+            }
+
+            if (CompareSessionOrder(session, item.Session) < 0)
+            {
+                break;
+            }
+
+            targetIndex++;
+        }
+
+        return targetIndex;
+    }
+
+    private static int CompareSessionOrder(AgentSessionRecord left, AgentSessionRecord right)
+    {
+        var updatedComparison = right.UpdatedAtUtc.CompareTo(left.UpdatedAtUtc);
+        return updatedComparison != 0
+            ? updatedComparison
+            : right.CreatedAtUtc.CompareTo(left.CreatedAtUtc);
+    }
 
     private void ReloadSessions(Guid? selectSessionId)
     {

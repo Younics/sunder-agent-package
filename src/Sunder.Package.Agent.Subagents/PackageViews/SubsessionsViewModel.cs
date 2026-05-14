@@ -908,6 +908,8 @@ public sealed partial class SubsessionListItemViewModel : ObservableObject
 
     public Guid SessionId => _session.SessionId;
 
+    public AgentSessionRecord Session => _session;
+
     public string Title => _session.Title;
 
     [ObservableProperty]
@@ -938,6 +940,8 @@ public sealed partial class SubsessionListItemViewModel : ObservableObject
         {
             Subtitle = subtitle;
         }
+
+        OnPropertyChanged(nameof(Session));
     }
 
     public void ApplyCheckpoint(AgentRunCheckpointRecord? checkpoint)

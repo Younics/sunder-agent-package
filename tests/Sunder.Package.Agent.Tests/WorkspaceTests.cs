@@ -311,6 +311,140 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
+    public void DockerExecutionWorkspaceConfigService_GetConfig_UsesAgentZeroDefaults()
+    {
+        using var scope = TestScope.Create();
+        var configService = new DockerExecutionWorkspaceConfigService(scope.Context);
+
+        var config = configService.GetConfig("workspace:primary-execution-target");
+
+        Assert.Equal("agent0ai/agent-zero:latest", config.ImageReference);
+        Assert.Equal("sunder-agent", config.ContainerName);
+        Assert.Equal(["/workspace"], config.AllowedRoots);
+        Assert.Equal("/workspace", config.DefaultWorkingDirectory);
+        Assert.Equal("/bin/sh", config.ShellPath);
+    }
+
+    [Fact]
+    public void DockerImageCatalogService_SeedsDefaultOnlyUntilUserDeletesIt()
+    {
+        using var scope = TestScope.Create();
+        var imageCatalog = new DockerImageCatalogService(scope.Context);
+
+        var images = imageCatalog.ListImages();
+        Assert.Single(images);
+        Assert.Equal("agent0ai/agent-zero:latest", images[0].ImageReference);
+
+        imageCatalog.DeleteImage("agent0ai/agent-zero:latest");
+
+        Assert.Empty(imageCatalog.ListImages());
+        Assert.Empty(new DockerImageCatalogService(scope.Context).ListImages());
+        Assert.Null(new DockerExecutionWorkspaceConfigService(scope.Context, imageCatalog).GetConfig("workspace:primary-execution-target").ImageReference);
+    }
+
+    [Fact]
+    public async Task DockerImageCatalogService_PullImage_ReportsProgressAndMarksReady()
+    {
+        using var scope = TestScope.Create();
+        var originalRunner = DockerImageCatalogService.RunDockerOverride;
+        var calls = new List<IReadOnlyList<string>>();
+        var progressLines = new List<string>();
+        DockerImageCatalogService.RunDockerOverride = (args, _, _, progress) =>
+        {
+            calls.Add(args.ToArray());
+            if (args.Count >= 2 && string.Equals(args[0], "pull", StringComparison.Ordinal))
+            {
+                progress?.Report("pulling layer");
+            }
+
+            return Task.FromResult(new DockerImageCatalogService.DockerImageProcessResult(0, "ok", TimedOut: false, WasTruncated: false));
+        };
+        try
+        {
+            var imageCatalog = new DockerImageCatalogService(scope.Context);
+
+            var result = await imageCatalog.PullImageAsync("custom:latest", new DelegateProgress(progressLines.Add));
+
+            Assert.True(result.Success, result.Message);
+            Assert.Equal(DockerImageStatus.Ready, imageCatalog.ListImages().Single(image => image.ImageReference == "custom:latest").Status);
+            Assert.Contains(progressLines, line => line.Contains("pulling layer", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(calls, args => args.SequenceEqual(["pull", "custom:latest"]));
+            Assert.Contains(calls, args => args.SequenceEqual(["image", "inspect", "custom:latest"]));
+        }
+        finally
+        {
+            DockerImageCatalogService.RunDockerOverride = originalRunner;
+        }
+    }
+
+    [Fact]
+    public async Task DockerExecutionTarget_WriteFileAsync_StreamsContentThroughStdin()
+    {
+        using var scope = TestScope.Create();
+        using var lifecycle = new DockerContainerLifecycleService();
+        var dockerCalls = new List<(IReadOnlyList<string> Args, string? StandardInput)>();
+        var originalRunner = DockerExecutionTarget.RunDockerOverride;
+        DockerExecutionTarget.RunDockerOverride = (args, _, _, standardInput) =>
+        {
+            dockerCalls.Add((args.ToArray(), standardInput));
+            var exitCode = args.Count > 0 && string.Equals(args[0], "inspect", StringComparison.Ordinal) ? 1 : 0;
+            return Task.FromResult(new DockerExecutionTarget.DockerProcessResult(exitCode, string.Empty, TimedOut: false, WasTruncated: false));
+        };
+        try
+        {
+            var configService = new DockerExecutionWorkspaceConfigService(scope.Context);
+            var target = new DockerExecutionTarget(scope.Context, configService, lifecycle);
+            var workspace = CreateWorkspace();
+            var binding = CreateBinding(workspace.WorkspaceId, "docker");
+            configService.SaveConfig(
+                binding.BindingId,
+                new DockerExecutionWorkspaceConfig("test-image:latest", ["/workspace"], "/workspace", "sunder-agent-test", "/bin/sh"));
+            var content = string.Join("\n", Enumerable.Range(0, 5000).Select(index => $"line-{index}"));
+            var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
+
+            var result = await target.WriteFileAsync(
+                new AgentExecutionTargetContext(null, null, workspace, binding),
+                new AgentFileWriteRequest("app/page.tsx", content));
+
+            Assert.False(result.IsError, result.Summary);
+            var execCall = dockerCalls.Last(call => call.Args.Count > 0 && string.Equals(call.Args[0], "exec", StringComparison.Ordinal));
+            Assert.Equal("-i", execCall.Args[1]);
+            Assert.DoesNotContain("-w", execCall.Args);
+            var commandLine = string.Join(" ", execCall.Args);
+            Assert.DoesNotContain(content, commandLine, StringComparison.Ordinal);
+            Assert.DoesNotContain(base64, commandLine, StringComparison.Ordinal);
+            Assert.Equal(content, execCall.StandardInput);
+        }
+        finally
+        {
+            DockerExecutionTarget.RunDockerOverride = originalRunner;
+        }
+    }
+
+    [Fact]
+    public void DockerExecutionTarget_CreateDockerStartInfo_OnlySetsInputEncodingWhenInputIsRedirected()
+    {
+        var runStartInfo = DockerExecutionTarget.CreateDockerStartInfo(["run", "image"], standardInput: null);
+        var writeStartInfo = DockerExecutionTarget.CreateDockerStartInfo(["exec", "-i", "container"], standardInput: "content");
+
+        Assert.False(runStartInfo.RedirectStandardInput);
+        Assert.Null(runStartInfo.StandardInputEncoding);
+        Assert.True(writeStartInfo.RedirectStandardInput);
+        Assert.NotNull(writeStartInfo.StandardInputEncoding);
+    }
+
+    [Fact]
+    public void DockerExecutionConfiguration_Schema_ExposesDockerTimeout()
+    {
+        var field = DockerExecutionConfiguration.Schema.Sections
+            .SelectMany(section => section.Fields)
+            .Single(field => field.Key == "docker.timeoutSeconds.default");
+
+        Assert.Equal("300", field.DefaultValue);
+        Assert.Equal("300", field.Placeholder);
+    }
+
+    [Fact]
     public void DockerExecutionWorkspaceConfigService_SaveConfig_CreatesPackageFileRootsAndShellPath()
     {
         using var scope = TestScope.Create();
@@ -382,6 +516,242 @@ public sealed class WorkspaceTests
                 "/workspace",
                 null,
                 "/bin/sh")));
+    }
+
+    [Fact]
+    public async Task DockerExecutionWorkspaceEditorContributor_UsesOnlyReadyImagesAsSelectOptions()
+    {
+        using var scope = TestScope.Create();
+        var originalRunner = DockerImageCatalogService.RunDockerOverride;
+        DockerImageCatalogService.RunDockerOverride = (args, _, _, _) =>
+        {
+            var image = args.Count >= 3 ? args[2] : string.Empty;
+            var exitCode = string.Equals(image, "custom:latest", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+            return Task.FromResult(new DockerImageCatalogService.DockerImageProcessResult(exitCode, string.Empty, TimedOut: false, WasTruncated: false));
+        };
+        try
+        {
+            var imageCatalog = new DockerImageCatalogService(scope.Context);
+            imageCatalog.AddImage("custom:latest");
+            var configService = new DockerExecutionWorkspaceConfigService(scope.Context, imageCatalog);
+            var contributor = new DockerExecutionWorkspaceEditorContributor(configService, imageCatalog);
+            var workspace = CreateWorkspace();
+            var bindingId = AgentWorkspaceService.BuildPrimaryBindingId(workspace.WorkspaceId);
+            configService.SaveConfig(
+                bindingId,
+                new DockerExecutionWorkspaceConfig("custom:latest", ["/workspace"], "/workspace", null, "/bin/sh"));
+
+            var sections = await contributor.GetSectionsAsync(new AgentWorkspaceEditorContext(workspace, "docker", bindingId));
+
+            var imageField = sections.Single().Fields.Single(field => field.FieldId == "image");
+            Assert.Equal(AgentEditorFieldKind.Select, imageField.Kind);
+            Assert.Equal("custom:latest", imageField.Value);
+            var option = Assert.Single(imageField.Options!);
+            Assert.Equal("custom:latest", option.Value);
+            Assert.Equal("custom:latest", option.Label);
+            Assert.Null(option.Description);
+            Assert.Contains(imageField.Actions!, action => action.Kind == AgentEditorActionKind.RefreshField
+                                                         && action.ActionId == "refresh-docker-images");
+            Assert.DoesNotContain(imageField.Actions!, action => action.Kind == AgentEditorActionKind.OpenPackageSettings);
+        }
+        finally
+        {
+            DockerImageCatalogService.RunDockerOverride = originalRunner;
+        }
+    }
+
+    [Fact]
+    public async Task DockerExecutionWorkspaceEditorContributor_AddsSettingsActionWhenNoReadyImagesExist()
+    {
+        using var scope = TestScope.Create();
+        var originalRunner = DockerImageCatalogService.RunDockerOverride;
+        DockerImageCatalogService.RunDockerOverride = (_, _, _, _) =>
+            Task.FromResult(new DockerImageCatalogService.DockerImageProcessResult(1, "No such image", TimedOut: false, WasTruncated: false));
+        try
+        {
+            var imageCatalog = new DockerImageCatalogService(scope.Context);
+            var configService = new DockerExecutionWorkspaceConfigService(scope.Context, imageCatalog);
+            var contributor = new DockerExecutionWorkspaceEditorContributor(configService, imageCatalog);
+            var workspace = CreateWorkspace();
+
+            var sections = await contributor.GetSectionsAsync(new AgentWorkspaceEditorContext(workspace, "docker", AgentWorkspaceService.BuildPrimaryBindingId(workspace.WorkspaceId)));
+
+            var imageField = sections.Single().Fields.Single(field => field.FieldId == "image");
+            Assert.Empty(imageField.Options!);
+            Assert.Contains("Pull at least one", imageField.Description, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(imageField.Actions!, action => action.Kind == AgentEditorActionKind.OpenPackageSettings
+                                                         && action.PackageId == "sunder.package.agent.execution.docker"
+                                                         && action.Label == "Open Settings");
+            Assert.Contains(imageField.Actions!, action => action.Kind == AgentEditorActionKind.RefreshField
+                                                         && action.ActionId == "refresh-docker-images");
+        }
+        finally
+        {
+            DockerImageCatalogService.RunDockerOverride = originalRunner;
+        }
+    }
+
+    [Fact]
+    public async Task DockerExecutionWorkspaceEditorContributor_SaveRejectsUnconfiguredImage()
+    {
+        using var scope = TestScope.Create();
+        var imageCatalog = new DockerImageCatalogService(scope.Context);
+        var configService = new DockerExecutionWorkspaceConfigService(scope.Context, imageCatalog);
+        var contributor = new DockerExecutionWorkspaceEditorContributor(configService, imageCatalog);
+        var workspace = CreateWorkspace();
+
+        var result = await contributor.SaveSectionAsync(
+            new AgentWorkspaceEditorContext(workspace, "docker", AgentWorkspaceService.BuildPrimaryBindingId(workspace.WorkspaceId)),
+            new AgentEditorSaveRequest(
+                "docker-execution-settings",
+                new Dictionary<string, AgentEditorFieldValue>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["image"] = new("missing:latest"),
+                    ["shell-path"] = new("/bin/sh"),
+                    ["allowed-roots"] = new(Items:
+                    [
+                        new AgentEditorListItem("0", "/workspace", true)
+                        {
+                            SecondaryValue = Path.Combine(scope.RootPath, "docker-workspace"),
+                        },
+                    ]),
+                }));
+
+        Assert.False(result.Success);
+        Assert.Contains("not configured", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DockerExecutionWorkspaceEditorContributor_SaveRejectsConfiguredUnreadyImage()
+    {
+        using var scope = TestScope.Create();
+        var originalRunner = DockerImageCatalogService.RunDockerOverride;
+        DockerImageCatalogService.RunDockerOverride = (_, _, _, _) =>
+            Task.FromResult(new DockerImageCatalogService.DockerImageProcessResult(1, "No such image", TimedOut: false, WasTruncated: false));
+        try
+        {
+            var imageCatalog = new DockerImageCatalogService(scope.Context);
+            imageCatalog.AddImage("custom:latest");
+            var configService = new DockerExecutionWorkspaceConfigService(scope.Context, imageCatalog);
+            var contributor = new DockerExecutionWorkspaceEditorContributor(configService, imageCatalog);
+            var workspace = CreateWorkspace();
+
+            var result = await contributor.SaveSectionAsync(
+                new AgentWorkspaceEditorContext(workspace, "docker", AgentWorkspaceService.BuildPrimaryBindingId(workspace.WorkspaceId)),
+                new AgentEditorSaveRequest(
+                    "docker-execution-settings",
+                    new Dictionary<string, AgentEditorFieldValue>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["image"] = new("custom:latest"),
+                        ["shell-path"] = new("/bin/sh"),
+                        ["allowed-roots"] = new(Items:
+                        [
+                            new AgentEditorListItem("0", "/workspace", true)
+                            {
+                                SecondaryValue = Path.Combine(scope.RootPath, "docker-workspace"),
+                            },
+                        ]),
+                    }));
+
+            Assert.False(result.Success);
+            Assert.Contains("not ready", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Pull it", result.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            DockerImageCatalogService.RunDockerOverride = originalRunner;
+        }
+    }
+
+    [Fact]
+    public async Task DockerExecutionTarget_GetReadinessAsync_StopsBeforeContainerWhenImageIsNotReady()
+    {
+        using var scope = TestScope.Create();
+        using var lifecycle = new DockerContainerLifecycleService();
+        var originalImageRunner = DockerImageCatalogService.RunDockerOverride;
+        var originalTargetRunner = DockerExecutionTarget.RunDockerOverride;
+        var targetCallCount = 0;
+        DockerImageCatalogService.RunDockerOverride = (args, _, _, _) =>
+        {
+            Assert.Equal(["image", "inspect", "custom:latest"], args);
+            return Task.FromResult(new DockerImageCatalogService.DockerImageProcessResult(1, "No such image", TimedOut: false, WasTruncated: false));
+        };
+        DockerExecutionTarget.RunDockerOverride = (args, _, _, _) =>
+        {
+            targetCallCount++;
+            return Task.FromResult(new DockerExecutionTarget.DockerProcessResult(0, string.Empty, TimedOut: false, WasTruncated: false));
+        };
+        try
+        {
+            var imageCatalog = new DockerImageCatalogService(scope.Context);
+            imageCatalog.AddImage("custom:latest");
+            var configService = new DockerExecutionWorkspaceConfigService(scope.Context, imageCatalog);
+            var target = new DockerExecutionTarget(scope.Context, configService, lifecycle);
+            var workspace = CreateWorkspace();
+            var binding = CreateBinding(workspace.WorkspaceId, "docker");
+            configService.SaveConfig(binding.BindingId, new DockerExecutionWorkspaceConfig("custom:latest", ["/workspace"], "/workspace", "sunder-agent-test", "/bin/sh"));
+
+            var readiness = await target.GetReadinessAsync(new AgentExecutionTargetContext(null, null, workspace, binding));
+
+            Assert.Equal(AgentExecutionTargetReadinessStatus.Failed, readiness.Status);
+            Assert.Contains("Pull it", readiness.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, targetCallCount);
+        }
+        finally
+        {
+            DockerImageCatalogService.RunDockerOverride = originalImageRunner;
+            DockerExecutionTarget.RunDockerOverride = originalTargetRunner;
+        }
+    }
+
+    [Fact]
+    public async Task DockerExecutionTarget_GetReadinessAsync_ReportsDockerRunOutput()
+    {
+        using var scope = TestScope.Create();
+        using var lifecycle = new DockerContainerLifecycleService();
+        var originalImageRunner = DockerImageCatalogService.RunDockerOverride;
+        var originalTargetRunner = DockerExecutionTarget.RunDockerOverride;
+        var runArgs = Array.Empty<string>();
+        DockerImageCatalogService.RunDockerOverride = (_, _, _, _) =>
+            Task.FromResult(new DockerImageCatalogService.DockerImageProcessResult(0, string.Empty, TimedOut: false, WasTruncated: false));
+        DockerExecutionTarget.RunDockerOverride = (args, _, _, _) =>
+        {
+            if (args.Count > 0 && string.Equals(args[0], "inspect", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new DockerExecutionTarget.DockerProcessResult(1, string.Empty, TimedOut: false, WasTruncated: false));
+            }
+
+            if (args.Count > 0 && string.Equals(args[0], "run", StringComparison.Ordinal))
+            {
+                runArgs = args.ToArray();
+                return Task.FromResult(new DockerExecutionTarget.DockerProcessResult(1, "No such image: custom:latest", TimedOut: false, WasTruncated: false));
+            }
+
+            return Task.FromResult(new DockerExecutionTarget.DockerProcessResult(0, string.Empty, TimedOut: false, WasTruncated: false));
+        };
+        try
+        {
+            var imageCatalog = new DockerImageCatalogService(scope.Context);
+            imageCatalog.AddImage("custom:latest");
+            var configService = new DockerExecutionWorkspaceConfigService(scope.Context, imageCatalog);
+            var target = new DockerExecutionTarget(scope.Context, configService, lifecycle);
+            var workspace = CreateWorkspace();
+            var binding = CreateBinding(workspace.WorkspaceId, "docker");
+            configService.SaveConfig(binding.BindingId, new DockerExecutionWorkspaceConfig("custom:latest", ["/workspace"], "/workspace", "sunder-agent-test", "/bin/sh"));
+
+            var readiness = await target.GetReadinessAsync(new AgentExecutionTargetContext(null, null, workspace, binding));
+
+            Assert.Equal(AgentExecutionTargetReadinessStatus.Failed, readiness.Status);
+            Assert.Contains("failed to start from image 'custom:latest'", readiness.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("No such image", readiness.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("--pull", runArgs);
+            Assert.Contains("never", runArgs);
+        }
+        finally
+        {
+            DockerImageCatalogService.RunDockerOverride = originalImageRunner;
+            DockerExecutionTarget.RunDockerOverride = originalTargetRunner;
+        }
     }
 
     [Fact]
@@ -504,12 +874,14 @@ public sealed class WorkspaceTests
 
         viewModel.CreateWorkspaceCommand.Execute(null);
         Assert.False(viewModel.HasExecutionTargetChoices);
+        Assert.True(viewModel.HasNoExecutionTargetChoices);
 
         var target = new CountingExecutionTarget("docker");
         catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target);
 
         await WaitUntilAsync(() => viewModel.ExecutionTargets.Any(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase)));
         Assert.True(viewModel.HasExecutionTargetChoices);
+        Assert.False(viewModel.HasNoExecutionTargetChoices);
     }
 
     [Fact]
@@ -532,6 +904,364 @@ public sealed class WorkspaceTests
         catalog.AddExtension(PackageExtensionPoints.WorkspaceEditorContributors, new TestWorkspaceEditorContributor("docker"));
 
         await WaitUntilAsync(() => viewModel.EditorSections.Any(section => string.Equals(section.SectionId, "test-editor", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [Fact]
+    public async Task AgentWorkspacesViewModel_LoadWorkspace_RefreshesEditorSectionsOnce()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var catalog = new TestExtensionCatalog();
+        var target = new CountingExecutionTarget("docker");
+        var contributor = new CountingWorkspaceEditorContributor("docker");
+        catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target);
+        catalog.AddExtension(PackageExtensionPoints.WorkspaceEditorContributors, contributor);
+        var workspaceService = new AgentWorkspaceService(store);
+        var executionTargetService = new AgentExecutionTargetService(catalog);
+        var workspace = workspaceService.CreateWorkspace("Docker Workspace");
+        workspaceService.SavePrimaryExecutionBinding(workspace.WorkspaceId, target.Descriptor.TargetId);
+
+        using var viewModel = new AgentWorkspacesViewModel(workspaceService, executionTargetService, catalog);
+
+        await WaitUntilAsync(() => viewModel.EditorSections.Count == 1);
+        Assert.Equal(1, contributor.GetSectionsCallCount);
+    }
+
+    [Fact]
+    public async Task AgentWorkspacesViewModel_SaveWorkspace_DoesNotRefreshEditorSectionsAndReturnsToList()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var catalog = new TestExtensionCatalog();
+        var target = new CountingExecutionTarget("docker");
+        var contributor = new CountingWorkspaceEditorContributor("docker");
+        catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target);
+        catalog.AddExtension(PackageExtensionPoints.WorkspaceEditorContributors, contributor);
+        var workspaceService = new AgentWorkspaceService(store);
+        var executionTargetService = new AgentExecutionTargetService(catalog);
+        using var viewModel = new AgentWorkspacesViewModel(workspaceService, executionTargetService, catalog)
+        {
+            IsCompactLayout = true,
+        };
+
+        viewModel.CreateWorkspaceCommand.Execute(null);
+        viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase));
+        await WaitUntilAsync(() => viewModel.EditorSections.Count == 1);
+        var getSectionsCallCount = contributor.GetSectionsCallCount;
+        viewModel.DisplayName = "Saved Docker Workspace";
+        var savedWorkspaceId = viewModel.SelectedWorkspace!.WorkspaceId;
+
+        await viewModel.SaveWorkspaceCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.Empty(viewModel.EditorSections);
+        Assert.Equal(getSectionsCallCount, contributor.GetSectionsCallCount);
+        Assert.Equal(1, contributor.SaveSectionCallCount);
+        Assert.Null(viewModel.SelectedWorkspace);
+        Assert.False(viewModel.HasSelectedWorkspace);
+        Assert.False(viewModel.SaveWorkspaceCommand.CanExecute(null));
+        Assert.Contains(viewModel.Workspaces, workspace => workspace.WorkspaceId == savedWorkspaceId
+                                                        && workspace.DisplayName == "Saved Docker Workspace");
+        Assert.Equal("Workspace saved.", viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task AgentWorkspacesViewModel_SaveWorkspace_FailedEditorSaveKeepsEditorOpen()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var catalog = new TestExtensionCatalog();
+        var target = new CountingExecutionTarget("docker");
+        var contributor = new CountingWorkspaceEditorContributor("docker", AgentEditorSaveResult.Failed("Editor save failed."));
+        catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target);
+        catalog.AddExtension(PackageExtensionPoints.WorkspaceEditorContributors, contributor);
+        var workspaceService = new AgentWorkspaceService(store);
+        var executionTargetService = new AgentExecutionTargetService(catalog);
+        using var viewModel = new AgentWorkspacesViewModel(workspaceService, executionTargetService, catalog)
+        {
+            IsCompactLayout = true,
+        };
+
+        viewModel.CreateWorkspaceCommand.Execute(null);
+        viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase));
+        await WaitUntilAsync(() => viewModel.EditorSections.Count == 1);
+
+        await viewModel.SaveWorkspaceCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.IsEditorActive);
+        Assert.Equal("Editor save failed.", viewModel.StatusText);
+        Assert.Single(viewModel.EditorSections);
+        Assert.Equal(1, contributor.SaveSectionCallCount);
+    }
+
+    [Fact]
+    public void AgentWorkspacesViewModel_CreateWorkspace_CompactLayout_OpensEditor()
+    {
+        using var scope = TestScope.Create();
+        var services = CreateWorkspaceViewServices(scope.Context);
+        using var viewModel = new AgentWorkspacesViewModel(services.WorkspaceService, services.ExecutionTargetService, services.Catalog)
+        {
+            IsCompactLayout = true,
+        };
+
+        viewModel.CreateWorkspaceCommand.Execute(null);
+
+        Assert.True(viewModel.IsEditorActive);
+        Assert.True(viewModel.ShowCompactEditor);
+        Assert.False(viewModel.ShowCompactList);
+        Assert.Equal("New Workspace", viewModel.SelectedWorkspace?.DisplayName);
+        Assert.Empty(viewModel.StatusText);
+        Assert.False(viewModel.HasStatusText);
+    }
+
+    [Fact]
+    public void AgentWorkspacesViewModel_CompactLayout_ClearsDefaultWorkspaceSelection()
+    {
+        using var scope = TestScope.Create();
+        var services = CreateWorkspaceViewServices(scope.Context);
+        var workspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
+        using var viewModel = new AgentWorkspacesViewModel(services.WorkspaceService, services.ExecutionTargetService, services.Catalog);
+        Assert.Equal(workspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+
+        viewModel.IsCompactLayout = true;
+
+        Assert.Null(viewModel.SelectedWorkspace);
+        Assert.False(viewModel.HasSelectedWorkspace);
+        Assert.False(viewModel.IsEditorActive);
+        Assert.True(viewModel.ShowCompactList);
+        Assert.False(viewModel.ShowCompactEditor);
+    }
+
+    [Fact]
+    public void AgentWorkspacesViewModel_WideLayout_SelectsFirstWorkspace_WhenCompactHadNoSelection()
+    {
+        using var scope = TestScope.Create();
+        var services = CreateWorkspaceViewServices(scope.Context);
+        var workspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
+        using var viewModel = new AgentWorkspacesViewModel(services.WorkspaceService, services.ExecutionTargetService, services.Catalog)
+        {
+            IsCompactLayout = true,
+        };
+        Assert.Null(viewModel.SelectedWorkspace);
+
+        viewModel.IsCompactLayout = false;
+
+        Assert.Equal(workspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+        Assert.True(viewModel.ShowListPane);
+        Assert.True(viewModel.ShowEditorPane);
+    }
+
+    [Fact]
+    public void AgentWorkspacesViewModel_ActivateWorkspace_CompactLayout_OpensSelectedWorkspaceEditor()
+    {
+        using var scope = TestScope.Create();
+        var services = CreateWorkspaceViewServices(scope.Context);
+        var workspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
+        using var viewModel = new AgentWorkspacesViewModel(services.WorkspaceService, services.ExecutionTargetService, services.Catalog)
+        {
+            IsCompactLayout = true,
+        };
+        Assert.False(viewModel.IsEditorActive);
+
+        viewModel.ActivateWorkspace(viewModel.Workspaces.Single(item => item.WorkspaceId == workspace.WorkspaceId));
+
+        Assert.True(viewModel.IsEditorActive);
+        Assert.Equal(workspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+        Assert.True(viewModel.ShowCompactEditor);
+
+        viewModel.BackToWorkspaceListCommand.Execute(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.Null(viewModel.SelectedWorkspace);
+        Assert.True(viewModel.ShowCompactList);
+        Assert.False(viewModel.ShowCompactEditor);
+
+        viewModel.ActivateWorkspace(viewModel.Workspaces.Single(item => item.WorkspaceId == workspace.WorkspaceId));
+
+        Assert.True(viewModel.IsEditorActive);
+        Assert.Equal(workspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+    }
+
+    [Fact]
+    public void AgentWorkspacesViewModel_ActivateWorkspace_WideLayout_KeepsSplitPanesVisible()
+    {
+        using var scope = TestScope.Create();
+        var services = CreateWorkspaceViewServices(scope.Context);
+        var firstWorkspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
+        var secondWorkspace = services.WorkspaceService.CreateWorkspace("Beta Workspace");
+        using var viewModel = new AgentWorkspacesViewModel(services.WorkspaceService, services.ExecutionTargetService, services.Catalog);
+        Assert.Equal(firstWorkspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+
+        viewModel.ActivateWorkspace(viewModel.Workspaces.Single(item => item.WorkspaceId == secondWorkspace.WorkspaceId));
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.True(viewModel.ShowListPane);
+        Assert.True(viewModel.ShowEditorPane);
+        Assert.Equal(secondWorkspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+    }
+
+    [Fact]
+    public void AgentWorkspacesViewModel_DeleteWorkspace_CompactLayout_ReturnsToList()
+    {
+        using var scope = TestScope.Create();
+        var services = CreateWorkspaceViewServices(scope.Context);
+        var firstWorkspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
+        var secondWorkspace = services.WorkspaceService.CreateWorkspace("Beta Workspace");
+        using var viewModel = new AgentWorkspacesViewModel(services.WorkspaceService, services.ExecutionTargetService, services.Catalog)
+        {
+            IsCompactLayout = true,
+        };
+        viewModel.SelectedWorkspace = viewModel.Workspaces.Single(item => item.WorkspaceId == secondWorkspace.WorkspaceId);
+        Assert.True(viewModel.IsEditorActive);
+
+        viewModel.DeleteWorkspaceCommand.Execute(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.True(viewModel.ShowCompactList);
+        Assert.False(viewModel.ShowCompactEditor);
+        Assert.Single(viewModel.Workspaces);
+        Assert.Null(viewModel.SelectedWorkspace);
+        Assert.Contains(viewModel.Workspaces, workspace => workspace.WorkspaceId == firstWorkspace.WorkspaceId);
+        Assert.Null(services.WorkspaceService.GetWorkspace(secondWorkspace.WorkspaceId));
+    }
+
+    [Fact]
+    public void AgentWorkspacesViewModel_DeleteWorkspace_WideLayout_SelectsFirstRemainingWorkspace()
+    {
+        using var scope = TestScope.Create();
+        var services = CreateWorkspaceViewServices(scope.Context);
+        var firstWorkspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
+        var secondWorkspace = services.WorkspaceService.CreateWorkspace("Beta Workspace");
+        using var viewModel = new AgentWorkspacesViewModel(services.WorkspaceService, services.ExecutionTargetService, services.Catalog);
+        viewModel.SelectedWorkspace = viewModel.Workspaces.Single(item => item.WorkspaceId == secondWorkspace.WorkspaceId);
+
+        viewModel.DeleteWorkspaceCommand.Execute(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.True(viewModel.ShowListPane);
+        Assert.True(viewModel.ShowEditorPane);
+        Assert.Single(viewModel.Workspaces);
+        Assert.Equal(firstWorkspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+        Assert.Null(services.WorkspaceService.GetWorkspace(secondWorkspace.WorkspaceId));
+    }
+
+    [Fact]
+    public void AgentEditorPathListFieldViewModel_PreservesDefaultWithoutInitialSelection()
+    {
+        var section = CreateEditorSectionViewModel(new AgentEditorField(
+            "allowed-roots",
+            "Allowed roots",
+            AgentEditorFieldKind.PathList,
+            Items:
+            [
+                new AgentEditorListItem("0", "/workspace", IsDefault: true),
+                new AgentEditorListItem("1", "/tmp"),
+            ]));
+
+        var field = Assert.IsType<AgentEditorPathListFieldViewModel>(Assert.Single(section.Fields));
+
+        Assert.Null(field.SelectedItem);
+        Assert.False(field.HasSelectedItem);
+        Assert.True(field.Items[0].IsDefault);
+        Assert.False(field.Items[1].IsDefault);
+    }
+
+    [Fact]
+    public void AgentEditorPathListFieldViewModel_AddDefaultItem_SelectsNewUserItem()
+    {
+        var section = CreateEditorSectionViewModel(new AgentEditorField(
+            "allowed-roots",
+            "Allowed roots",
+            AgentEditorFieldKind.PathList,
+            Items:
+            [
+                new AgentEditorListItem("0", "/workspace", IsDefault: true),
+            ],
+            DefaultNewItemValue: "/workspace"));
+        var field = Assert.IsType<AgentEditorPathListFieldViewModel>(Assert.Single(section.Fields));
+
+        field.AddDefaultItem();
+
+        Assert.NotNull(field.SelectedItem);
+        Assert.True(field.HasSelectedItem);
+        Assert.Equal("/workspace2", field.SelectedItem!.Value);
+        Assert.True(field.Items[0].IsDefault);
+        Assert.False(field.SelectedItem.IsDefault);
+    }
+
+    [Fact]
+    public async Task AgentWorkspacesViewModel_RefreshField_UpdatesDockerImageSelectOnly()
+    {
+        using var scope = TestScope.Create();
+        var originalRunner = DockerImageCatalogService.RunDockerOverride;
+        var readyImages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        DockerImageCatalogService.RunDockerOverride = (args, _, _, _) =>
+        {
+            var image = args.Count >= 3
+                        && string.Equals(args[0], "image", StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(args[1], "inspect", StringComparison.OrdinalIgnoreCase)
+                ? args[2]
+                : string.Empty;
+            return Task.FromResult(new DockerImageCatalogService.DockerImageProcessResult(
+                readyImages.Contains(image) ? 0 : 1,
+                readyImages.Contains(image) ? "[]" : "No such image",
+                TimedOut: false,
+                WasTruncated: false));
+        };
+        try
+        {
+            var imageCatalog = new DockerImageCatalogService(scope.Context);
+            imageCatalog.SaveImages(
+            [
+                new DockerImageDefinition("first:latest", DockerImageStatus.NotPulled, null, null),
+                new DockerImageDefinition("second:latest", DockerImageStatus.NotPulled, null, null),
+            ]);
+            var configService = new DockerExecutionWorkspaceConfigService(scope.Context, imageCatalog);
+            var contributor = new DockerExecutionWorkspaceEditorContributor(configService, imageCatalog);
+            var store = new AgentLocalStore(scope.Context);
+            var catalog = new TestExtensionCatalog();
+            catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, new CountingExecutionTarget("docker"));
+            catalog.AddExtension(PackageExtensionPoints.WorkspaceEditorContributors, contributor);
+            var workspaceService = new AgentWorkspaceService(store);
+            var executionTargetService = new AgentExecutionTargetService(catalog);
+            using var viewModel = new AgentWorkspacesViewModel(workspaceService, executionTargetService, catalog);
+
+            viewModel.CreateWorkspaceCommand.Execute(null);
+            viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase));
+            await WaitUntilAsync(() => viewModel.EditorSections.Any(section => string.Equals(section.SectionId, "docker-execution-settings", StringComparison.OrdinalIgnoreCase)));
+
+            var section = viewModel.EditorSections.Single(section => string.Equals(section.SectionId, "docker-execution-settings", StringComparison.OrdinalIgnoreCase));
+            var imageField = Assert.IsType<AgentEditorSelectFieldViewModel>(section.Fields.Single(field => field.FieldId == "image"));
+            var shellField = Assert.IsType<AgentEditorTextFieldViewModel>(section.Fields.Single(field => field.FieldId == "shell-path"));
+            shellField.Value = "/custom/sh";
+            var refreshAction = Assert.Single(imageField.IconActions);
+            Assert.Equal(AgentEditorActionKind.RefreshField, refreshAction.Kind);
+            Assert.Equal("↻", refreshAction.Content);
+            Assert.Empty(imageField.Options);
+            Assert.False(imageField.HasOptions);
+            Assert.True(imageField.HasNoOptions);
+            Assert.True(imageField.ShowEmptyStateActions);
+            Assert.Contains(imageField.TextActions, action => action.Kind == AgentEditorActionKind.OpenPackageSettings);
+
+            readyImages.Add("second:latest");
+            await viewModel.ExecuteEditorActionAsync(refreshAction);
+
+            Assert.Same(section, viewModel.EditorSections.Single(item => string.Equals(item.SectionId, "docker-execution-settings", StringComparison.OrdinalIgnoreCase)));
+            Assert.Equal("/custom/sh", shellField.Value);
+            var option = Assert.Single(imageField.Options);
+            Assert.Equal("second:latest", option.Value);
+            Assert.Equal("second:latest", imageField.SelectedOption?.Value);
+            Assert.True(imageField.HasOptions);
+            Assert.False(imageField.HasNoOptions);
+            Assert.False(imageField.ShowEmptyStateActions);
+            Assert.Single(imageField.IconActions);
+            Assert.Empty(imageField.TextActions);
+            Assert.Contains("Choose a ready", imageField.Description, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            DockerImageCatalogService.RunDockerOverride = originalRunner;
+        }
     }
 
     [Fact]
@@ -650,6 +1380,78 @@ public sealed class WorkspaceTests
         Assert.Equal("files.search", permission!.ActionId);
         Assert.Equal(AgentPermissionBoundaryIds.ConfiguredScope, permission.BoundaryId);
         Assert.Equal(".", permission.Path);
+    }
+
+    [Fact]
+    public async Task FilesToolSource_Edit_AcceptsStringReplaceAll()
+    {
+        var catalog = new TestExtensionCatalog();
+        var target = new MutableFileExecutionTarget("hello hello");
+        catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target);
+        var source = new FilesToolSource(catalog);
+        var workspace = CreateWorkspace();
+        var binding = CreateBinding(workspace.WorkspaceId);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding),
+            new AgentToolRequest("edit", "{\"path\":\"notes.txt\",\"oldString\":\"hello\",\"newString\":\"bye\",\"replaceAll\":\"true\"}"));
+
+        Assert.False(result.IsError, result.Content);
+        Assert.Equal("bye bye", target.Content);
+    }
+
+    [Fact]
+    public async Task FilesToolSource_Edit_InvalidReplaceAll_ReturnsToolError()
+    {
+        var catalog = new TestExtensionCatalog();
+        var target = new MutableFileExecutionTarget("hello");
+        catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target);
+        var source = new FilesToolSource(catalog);
+        var workspace = CreateWorkspace();
+        var binding = CreateBinding(workspace.WorkspaceId);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding),
+            new AgentToolRequest("edit", "{\"path\":\"notes.txt\",\"oldString\":\"hello\",\"newString\":\"bye\",\"replaceAll\":\"maybe\"}"));
+
+        Assert.True(result.IsError);
+        Assert.Equal("files-arguments-invalid", result.ErrorCode);
+        Assert.Contains("replaceAll", result.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FilesToolSource_Read_AcceptsStringOffsetAndLimit()
+    {
+        var catalog = new TestExtensionCatalog();
+        catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, new MutableFileExecutionTarget("one\ntwo\nthree"));
+        var source = new FilesToolSource(catalog);
+        var workspace = CreateWorkspace();
+        var binding = CreateBinding(workspace.WorkspaceId);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding),
+            new AgentToolRequest("read", "{\"path\":\"notes.txt\",\"offset\":\"2\",\"limit\":\"1\"}"));
+
+        Assert.False(result.IsError, result.Content);
+        Assert.Contains("2: two", result.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("3: three", result.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ShellToolSource_AcceptsStringTimeoutSeconds()
+    {
+        var catalog = new TestExtensionCatalog();
+        catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, new ScriptedExecutionTarget("local", "local", [new AgentShellCommandResult(0, "ok")]));
+        var source = new ShellToolSource(catalog);
+        var workspace = CreateWorkspace();
+        var binding = CreateBinding(workspace.WorkspaceId);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding),
+            new AgentToolRequest("shell", "{\"command\":\"echo ok\",\"timeoutSeconds\":\"30\"}"));
+
+        Assert.False(result.IsError, result.Content);
+        Assert.Equal("ok", result.Content);
     }
 
     [Theory]
@@ -1263,6 +2065,15 @@ public sealed class WorkspaceTests
         return new AgentWorkspaceRecord("local-test", "Local Test", null, now, now);
     }
 
+    private static AgentEditorSectionViewModel CreateEditorSectionViewModel(params AgentEditorField[] fields)
+    {
+        var workspace = CreateWorkspace();
+        return new AgentEditorSectionViewModel(
+            new TestWorkspaceEditorContributor("docker"),
+            new AgentWorkspaceEditorContext(workspace, "docker", CreateBinding(workspace.WorkspaceId, "docker").BindingId),
+            new AgentEditorSection("test-section", "Test Section", null, fields));
+    }
+
     private static IReadOnlyList<string> GetTableColumns(string databasePath, string tableName)
     {
         using var connection = new SqliteConnection($"Data Source={databasePath}");
@@ -1423,6 +2234,11 @@ public sealed class WorkspaceTests
             => ValueTask.FromResult(new AgentToolResult(request.ToolId, "Executed.", Content: "Executed."));
     }
 
+    private sealed class DelegateProgress(Action<string> report) : IProgress<string>
+    {
+        public void Report(string value) => report(value);
+    }
+
     private sealed class TestScope : IDisposable
     {
         private TestScope(string rootPath)
@@ -1515,6 +2331,37 @@ public sealed class WorkspaceTests
             => throw new NotSupportedException();
     }
 
+    private sealed class MutableFileExecutionTarget(string content) : IAgentExecutionTarget
+    {
+        public AgentExecutionTargetDescriptor Descriptor { get; } = new("local", "local", "Mutable File Target", null, SupportsShell: true, SupportsFiles: true, SupportsSearch: true);
+
+        public string Content { get; private set; } = content;
+
+        public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(AgentExecutionTargetContext context, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentExecutionTargetReadiness("local", "local", AgentExecutionTargetReadinessStatus.Ready, "Ready."));
+
+        public ValueTask<AgentExecutionShellDescriptor> GetShellAsync(AgentExecutionTargetContext context, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentExecutionShellDescriptor("sh", "POSIX sh", "/bin/sh", AgentShellSyntaxKinds.PosixSh, "Run POSIX shell commands."));
+
+        public ValueTask<AgentResolvedResource> ResolveFileResourceAsync(AgentExecutionTargetContext context, string path, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentResolvedResource("file", path, path, AgentPermissionBoundaryIds.ConfiguredScope, true));
+
+        public ValueTask<AgentShellCommandResult> ExecuteShellAsync(AgentExecutionTargetContext context, AgentShellCommandRequest request, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<AgentFileReadResult> ReadFileAsync(AgentExecutionTargetContext context, AgentFileReadRequest request, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentFileReadResult(request.Path, Content));
+
+        public ValueTask<AgentFileMutationResult> WriteFileAsync(AgentExecutionTargetContext context, AgentFileWriteRequest request, CancellationToken cancellationToken = default)
+        {
+            Content = request.Content;
+            return ValueTask.FromResult(new AgentFileMutationResult(request.Path, $"Wrote {request.Content.Length} character(s)."));
+        }
+
+        public ValueTask<AgentFileMutationResult> DeleteFileAsync(AgentExecutionTargetContext context, AgentFileDeleteRequest request, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+    }
+
     private sealed class TestWorkspaceEditorContributor(string targetId) : IAgentWorkspaceEditorContributor
     {
         public string ContributorId => "test-workspace-editor";
@@ -1535,6 +2382,41 @@ public sealed class WorkspaceTests
             AgentEditorSaveRequest request,
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult(AgentEditorSaveResult.Ok("Saved."));
+    }
+
+    private sealed class CountingWorkspaceEditorContributor(string targetId, AgentEditorSaveResult? saveResult = null) : IAgentWorkspaceEditorContributor
+    {
+        private int _getSectionsCallCount;
+        private int _saveSectionCallCount;
+
+        public string ContributorId => "counting-workspace-editor";
+
+        public int GetSectionsCallCount => Volatile.Read(ref _getSectionsCallCount);
+
+        public int SaveSectionCallCount => Volatile.Read(ref _saveSectionCallCount);
+
+        public bool CanEdit(AgentWorkspaceEditorContext context)
+            => string.Equals(context.TargetId, targetId, StringComparison.OrdinalIgnoreCase);
+
+        public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
+            AgentWorkspaceEditorContext context,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _getSectionsCallCount);
+            return ValueTask.FromResult<IReadOnlyList<AgentEditorSection>>(
+            [
+                new AgentEditorSection("counting-editor", "Counting Editor", null, []),
+            ]);
+        }
+
+        public ValueTask<AgentEditorSaveResult> SaveSectionAsync(
+            AgentWorkspaceEditorContext context,
+            AgentEditorSaveRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _saveSectionCallCount);
+            return ValueTask.FromResult(saveResult ?? AgentEditorSaveResult.Ok("Saved."));
+        }
     }
 
     private sealed class ScriptedExecutionTarget(string targetKind, string targetId, IEnumerable<AgentShellCommandResult> results) : IAgentExecutionTarget

@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -13,8 +12,6 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
     private const int MaxSkillToolChars = 60000;
     private const int DefaultReadLimit = 2000;
     private const int MaxReadLimit = 5000;
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
-
     private static readonly AgentToolActivationRequirement ActivationRequirement = new(
         SkillConstants.CapabilityKind,
         SkillConstants.PackageId);
@@ -233,7 +230,11 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
         AgentToolRequest request,
         CancellationToken cancellationToken)
     {
-        var args = Deserialize<SkillArgs>(request.ArgumentsJson);
+        if (!TryParseSkillArgs(request.ArgumentsJson, out var args, out var error))
+        {
+            return Error(request.ToolId, error!, "skills-arguments-invalid");
+        }
+
         var skill = ResolveEnabledSkill(profile, args.Name);
         if (skill is null)
         {
@@ -258,7 +259,11 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
         AgentToolRequest request,
         CancellationToken cancellationToken)
     {
-        var args = Deserialize<SkillResourceArgs>(request.ArgumentsJson);
+        if (!TryParseSkillResourceArgs(request.ArgumentsJson, out var args, out var error))
+        {
+            return Error(request.ToolId, error!, "skills-arguments-invalid");
+        }
+
         var skill = ResolveEnabledSkill(profile, args.Skill);
         if (skill is null)
         {
@@ -451,8 +456,36 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
         return buffer.Take(read).Any(value => value == 0);
     }
 
-    private static T Deserialize<T>(string json)
-        => JsonSerializer.Deserialize<T>(json, JsonOptions) ?? throw new InvalidOperationException("Tool arguments were empty or invalid.");
+    private static bool TryParseSkillArgs(string argumentsJson, out SkillArgs args, out string? error)
+    {
+        args = new SkillArgs(string.Empty);
+        if (!AgentToolArgumentObject.TryParse(argumentsJson, out var arguments, out error)
+            || !arguments!.TryReadRequiredString("name", out var name, out error))
+        {
+            error = $"Invalid skill arguments: {error ?? "arguments were empty or invalid."}";
+            return false;
+        }
+
+        args = new SkillArgs(name!);
+        return true;
+    }
+
+    private static bool TryParseSkillResourceArgs(string argumentsJson, out SkillResourceArgs args, out string? error)
+    {
+        args = new SkillResourceArgs(string.Empty);
+        if (!AgentToolArgumentObject.TryParse(argumentsJson, out var arguments, out error)
+            || !arguments!.TryReadRequiredString("skill", out var skill, out error)
+            || !arguments.TryReadOptionalString("path", out var path, out error)
+            || !arguments.TryReadOptionalInt32("offset", out var offset, out error)
+            || !arguments.TryReadOptionalInt32("limit", out var limit, out error))
+        {
+            error = $"Invalid skill_resource arguments: {error ?? "arguments were empty or invalid."}";
+            return false;
+        }
+
+        args = new SkillResourceArgs(skill!, path, offset, limit);
+        return true;
+    }
 
     private static bool IsSkillTool(string toolId)
         => string.Equals(toolId, SkillConstants.SkillToolId, StringComparison.OrdinalIgnoreCase)

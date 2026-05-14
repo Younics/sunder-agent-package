@@ -194,6 +194,8 @@ public sealed partial class AgentLocalStore
             CREATE INDEX IF NOT EXISTS IX_AgentWorkspaceBindings_WorkspaceId_Role ON AgentWorkspaceBindings (WorkspaceId, Role);
             CREATE INDEX IF NOT EXISTS IX_AgentTurns_SessionId_CreatedAtUtc ON AgentTurns (SessionId, CreatedAtUtc);
             CREATE INDEX IF NOT EXISTS IX_AgentTurnItems_TurnId_SequenceNumber ON AgentTurnItems (TurnId, SequenceNumber);
+            CREATE INDEX IF NOT EXISTS IX_AgentRunCheckpoints_SessionId_CreatedAtUtc ON AgentRunCheckpoints (SessionId, CreatedAtUtc);
+            CREATE INDEX IF NOT EXISTS IX_AgentRunCheckpoints_SessionId_RunRevision ON AgentRunCheckpoints (SessionId, RunRevision);
             CREATE INDEX IF NOT EXISTS IX_AgentSessionPermissionApprovals_SessionId ON AgentSessionPermissionApprovals (SessionId);
             CREATE INDEX IF NOT EXISTS IX_AgentPendingPermissionRequests_SessionId ON AgentPendingPermissionRequests (SessionId);
             """;
@@ -323,7 +325,11 @@ public sealed partial class AgentLocalStore
         command.ExecuteNonQuery();
 
         using var indexCommand = connection.CreateCommand();
-        indexCommand.CommandText = "CREATE INDEX IF NOT EXISTS IX_AgentSessions_RootSessionId ON AgentSessions (RootSessionId);";
+        indexCommand.CommandText = """
+            CREATE INDEX IF NOT EXISTS IX_AgentSessions_RootSessionId ON AgentSessions (RootSessionId);
+            CREATE INDEX IF NOT EXISTS IX_AgentSessions_ParentSessionId_UpdatedAtUtc ON AgentSessions (ParentSessionId, UpdatedAtUtc);
+            CREATE INDEX IF NOT EXISTS IX_AgentSessions_ProfileId ON AgentSessions (ProfileId);
+            """;
         indexCommand.ExecuteNonQuery();
     }
 

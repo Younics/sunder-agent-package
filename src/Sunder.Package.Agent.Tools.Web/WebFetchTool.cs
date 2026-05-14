@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Tools.Web.Services;
@@ -7,11 +6,6 @@ namespace Sunder.Package.Agent.Tools.Web;
 
 public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAgentToolPresentationResolver
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-    };
-
     private readonly WebFetchService _fetchService = fetchService;
 
     public AgentToolDescriptor Descriptor { get; } = new(
@@ -56,11 +50,11 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
             return null;
         }
 
-        var args = WebToolPresentation.TryDeserialize<WebFetchArguments>(request.ArgumentsJson);
+        var parsed = TryParseArguments(request.ArgumentsJson, out var args, out var error);
         return new AgentToolPresentation(
-            HeaderText: request.ResultSummary ?? args?.Url,
-            DetailMarkdown: args is null
-                ? WebToolPresentation.BuildUnavailableRequestMarkdown()
+            HeaderText: request.ResultSummary ?? (parsed ? args.Url : null),
+            DetailMarkdown: !parsed
+                ? WebToolPresentation.BuildRawRequestMarkdown(request.ArgumentsJson, error)
                 : WebToolPresentation.BuildRequestMarkdown(
                     ("URL", args.Url),
                     ("Format", string.IsNullOrWhiteSpace(args.Format) ? "markdown" : args.Format),
@@ -79,22 +73,17 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
         AgentToolRequest request,
         CancellationToken cancellationToken = default)
     {
-        WebFetchArguments? arguments;
-        try
-        {
-            arguments = JsonSerializer.Deserialize<WebFetchArguments>(request.ArgumentsJson, JsonOptions);
-        }
-        catch (Exception ex)
+        if (!TryParseArguments(request.ArgumentsJson, out var arguments, out var error))
         {
             return new AgentToolResult(
                 Descriptor.ToolId,
-                $"Failed to parse web_fetch arguments: {ex.Message}",
-                Content: $"### Web fetch failed\n\n{ex.Message}",
+                error!,
+                Content: $"### Web fetch failed\n\n{error}",
                 IsError: true,
                 ErrorCode: "web-fetch-args");
         }
 
-        if (arguments is null || string.IsNullOrWhiteSpace(arguments.Url))
+        if (string.IsNullOrWhiteSpace(arguments.Url))
         {
             return new AgentToolResult(
                 Descriptor.ToolId,
@@ -151,6 +140,22 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
                 IsError: true,
                 ErrorCode: "web-fetch-http");
         }
+    }
+
+    private static bool TryParseArguments(string argumentsJson, out WebFetchArguments arguments, out string? error)
+    {
+        arguments = new WebFetchArguments(string.Empty);
+        if (!AgentToolArgumentObject.TryParse(argumentsJson, out var parsedArguments, out error)
+            || !parsedArguments!.TryReadRequiredString("url", out var url, out error)
+            || !parsedArguments.TryReadOptionalString("format", out var format, out error)
+            || !parsedArguments.TryReadOptionalInt32("timeoutSeconds", out var timeoutSeconds, out error))
+        {
+            error = $"Invalid web_fetch arguments: {error ?? "arguments were empty or invalid."}";
+            return false;
+        }
+
+        arguments = new WebFetchArguments(url!, format, timeoutSeconds);
+        return true;
     }
 
     private sealed record WebFetchArguments(string Url, string? Format = null, int? TimeoutSeconds = null);

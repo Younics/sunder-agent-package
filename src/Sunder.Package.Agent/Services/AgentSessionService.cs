@@ -136,7 +136,6 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
     {
         var turn = _store.UpdateTextTurn(turnId, content);
         NotifyTurnChanged(turn.SessionId, turn);
-        NotifySessionChanged(turn.SessionId);
         return turn;
     }
 

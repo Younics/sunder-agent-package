@@ -14,6 +14,7 @@ public sealed class DefaultAgentBehaviorLoop(AgentSystemPromptComposer promptCom
     public const string LoopId = AgentBehaviorLoopIds.Default;
 
     private const int MaxHistoricalTurnsWithInstructionContext = 16;
+    private static readonly TimeSpan AssistantStreamFlushInterval = TimeSpan.FromMilliseconds(150);
 
     public AgentBehaviorLoopDescriptor Descriptor { get; } = new(
         LoopId,
@@ -108,6 +109,7 @@ public sealed class DefaultAgentBehaviorLoop(AgentSystemPromptComposer promptCom
                 excludedTurnId: null,
                 cancellationToken);
             var contentBuilder = new StringBuilder();
+            var lastAssistantFlushElapsed = TimeSpan.MinValue;
             var observedToolBoundaryVersion = toolInvoker.ToolBoundaryVersion;
             AgentBehaviorLoopResult? interruptedResult = null;
             var streamAttempt = 0;
@@ -138,6 +140,7 @@ public sealed class DefaultAgentBehaviorLoop(AgentSystemPromptComposer promptCom
                     }
 
                     contentBuilder.Clear();
+                    lastAssistantFlushElapsed = TimeSpan.MinValue;
                     observedToolBoundaryVersion = toolInvoker.ToolBoundaryVersion;
                     promptMessages = await BuildPromptMessagesAsync(
                         host.ListTurns(),
@@ -173,6 +176,7 @@ public sealed class DefaultAgentBehaviorLoop(AgentSystemPromptComposer promptCom
                         observedToolBoundaryVersion = toolInvoker.ToolBoundaryVersion;
                         assistantTurn = null;
                         contentBuilder.Clear();
+                        lastAssistantFlushElapsed = TimeSpan.MinValue;
                     }
 
                     if (toolInvoker.TerminalResult is not null)
@@ -183,7 +187,11 @@ public sealed class DefaultAgentBehaviorLoop(AgentSystemPromptComposer promptCom
                     if (!string.IsNullOrEmpty(streamUpdate.Text))
                     {
                         contentBuilder.Append(streamUpdate.Text);
-                        assistantTurn = host.UpsertAssistantTurn(assistantTurn, contentBuilder.ToString());
+                        if (ShouldFlushAssistantStream(assistantTurn, loopStopwatch.Elapsed, lastAssistantFlushElapsed))
+                        {
+                            assistantTurn = host.UpsertAssistantTurn(assistantTurn, contentBuilder.ToString());
+                            lastAssistantFlushElapsed = loopStopwatch.Elapsed;
+                        }
                     }
                 }
             }, cancellationToken);
@@ -195,6 +203,11 @@ public sealed class DefaultAgentBehaviorLoop(AgentSystemPromptComposer promptCom
 
             if (toolInvoker.TerminalResult is not null)
             {
+                if (assistantTurn is not null && contentBuilder.Length > 0)
+                {
+                    assistantTurn = host.UpsertAssistantTurn(assistantTurn, contentBuilder.ToString());
+                }
+
                 host.LogEvent(AgentLogLevel.Information, "behavior.loop.suspended", toolInvoker.TerminalResult.CompletionKind.ToString(), loopStopwatch.ElapsedMilliseconds);
                 return toolInvoker.TerminalResult;
             }
@@ -372,6 +385,11 @@ public sealed class DefaultAgentBehaviorLoop(AgentSystemPromptComposer promptCom
     private static bool ShouldAllowMultipleToolCalls(AgentBehaviorLoopContext context)
         => context.RunCapabilities.SupportsMultipleToolCalls
            && string.Equals(context.Profile.BehaviorLoopId, "orchestrated", StringComparison.OrdinalIgnoreCase);
+
+    private static bool ShouldFlushAssistantStream(AgentTurnRecord? assistantTurn, TimeSpan elapsed, TimeSpan lastFlushElapsed)
+        => assistantTurn is null
+           || lastFlushElapsed == TimeSpan.MinValue
+           || elapsed - lastFlushElapsed >= AssistantStreamFlushInterval;
 
     private static ReasoningOptions? BuildReasoningOptions(AgentModelVariantDescriptor? variant)
         => variant?.ReasoningEffort is null
@@ -567,10 +585,7 @@ public sealed class DefaultAgentBehaviorLoop(AgentSystemPromptComposer promptCom
                     break;
 
                 case AgentTurnItemKind.ToolResult when !string.IsNullOrWhiteSpace(item.CallId):
-                    contents.Add(new FunctionResultContent(item.CallId, BuildToolResultContent(item))
-                    {
-                        Exception = item.IsError ? new InvalidOperationException(item.ErrorCode ?? item.ResultSummary ?? "Tool call failed.") : null,
-                    });
+                    contents.Add(new FunctionResultContent(item.CallId, BuildToolResultContent(item)));
                     break;
 
                 case AgentTurnItemKind.Attachment:

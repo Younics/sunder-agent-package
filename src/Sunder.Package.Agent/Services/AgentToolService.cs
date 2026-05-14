@@ -145,21 +145,37 @@ public sealed class AgentToolService(
     {
         var effectiveProfileId = string.IsNullOrWhiteSpace(profileId) ? null : profileId;
         var context = new AgentToolExecutionContext(sessionId, effectiveProfileId, workspace, ResolveExecutionBinding(workspace), allowOutsideConfiguredScope, runId, runRevision, userTurnId, toolCallId);
-        var source = await ResolveSourceAsync(toolId, context, cancellationToken);
-        if (source is null)
+        try
+        {
+            var source = await ResolveSourceAsync(toolId, context, cancellationToken);
+            if (source is null)
+            {
+                return new AgentToolResult(
+                    toolId,
+                    $"Tool '{toolId}' is not installed.",
+                    Content: $"### Tool unavailable\n\nTool '{toolId}' is not installed.",
+                    IsError: true,
+                    ErrorCode: "tool-not-found");
+            }
+
+            return await source.ExecuteAsync(
+                context,
+                new AgentToolRequest(toolId, argumentsJson),
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
         {
             return new AgentToolResult(
                 toolId,
-                $"Tool '{toolId}' is not installed.",
-                Content: $"### Tool unavailable\n\nTool '{toolId}' is not installed.",
+                $"Tool '{toolId}' failed: {ex.Message}",
+                Content: $"### Tool execution failed\n\n{ex.Message}",
                 IsError: true,
-                ErrorCode: "tool-not-found");
+                ErrorCode: AgentToolResultErrorCodes.ToolExecutionException);
         }
-
-        return await source.ExecuteAsync(
-            context,
-            new AgentToolRequest(toolId, argumentsJson),
-            cancellationToken);
     }
 
     public async Task<AgentPermissionRequest?> BuildPermissionRequestAsync(

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Tools.Web.Services;
@@ -7,11 +6,6 @@ namespace Sunder.Package.Agent.Tools.Web;
 
 public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBackend, WebToolsSettingsService settingsService) : IAgentTool, IAgentToolPresentationResolver
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-    };
-
     private readonly Backends.ExaWebSearchBackend _exaWebSearchBackend = exaWebSearchBackend;
     private readonly WebToolsSettingsService _settingsService = settingsService;
 
@@ -52,11 +46,11 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
             return null;
         }
 
-        var args = WebToolPresentation.TryDeserialize<WebSearchArguments>(request.ArgumentsJson);
+        var parsed = TryParseArguments(request.ArgumentsJson, out var args, out var error);
         return new AgentToolPresentation(
-            HeaderText: request.ResultSummary ?? args?.Query,
-            DetailMarkdown: args is null
-                ? WebToolPresentation.BuildUnavailableRequestMarkdown()
+            HeaderText: request.ResultSummary ?? (parsed ? args.Query : null),
+            DetailMarkdown: !parsed
+                ? WebToolPresentation.BuildRawRequestMarkdown(request.ArgumentsJson, error)
                 : WebToolPresentation.BuildRequestMarkdown(
                     ("Query", args.Query),
                     ("Max results", args.MaxResults?.ToString())),
@@ -74,22 +68,17 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
         AgentToolRequest request,
         CancellationToken cancellationToken = default)
     {
-        WebSearchArguments? arguments;
-        try
-        {
-            arguments = JsonSerializer.Deserialize<WebSearchArguments>(request.ArgumentsJson, JsonOptions);
-        }
-        catch (Exception ex)
+        if (!TryParseArguments(request.ArgumentsJson, out var arguments, out var error))
         {
             return new AgentToolResult(
                 Descriptor.ToolId,
-                $"Failed to parse web_search arguments: {ex.Message}",
-                Content: $"### Web search failed\n\n{ex.Message}",
+                error!,
+                Content: $"### Web search failed\n\n{error}",
                 IsError: true,
                 ErrorCode: "web-search-args");
         }
 
-        if (arguments is null || string.IsNullOrWhiteSpace(arguments.Query))
+        if (string.IsNullOrWhiteSpace(arguments.Query))
         {
             return new AgentToolResult(
                 Descriptor.ToolId,
@@ -135,6 +124,21 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
                 IsError: true,
                 ErrorCode: "web-search-http");
         }
+    }
+
+    private static bool TryParseArguments(string argumentsJson, out WebSearchArguments arguments, out string? error)
+    {
+        arguments = new WebSearchArguments(string.Empty);
+        if (!AgentToolArgumentObject.TryParse(argumentsJson, out var parsedArguments, out error)
+            || !parsedArguments!.TryReadRequiredString("query", out var query, out error)
+            || !parsedArguments.TryReadOptionalInt32("maxResults", out var maxResults, out error))
+        {
+            error = $"Invalid web_search arguments: {error ?? "arguments were empty or invalid."}";
+            return false;
+        }
+
+        arguments = new WebSearchArguments(query!, maxResults);
+        return true;
     }
 
     private sealed record WebSearchArguments(string Query, int? MaxResults = null);

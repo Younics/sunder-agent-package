@@ -5,20 +5,22 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packageContext)
+public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packageContext, DockerImageCatalogService? imageCatalogService = null)
 {
-    internal const string DefaultImageReference = "mcr.microsoft.com/dotnet/sdk:10.0";
+    internal const string DefaultImageReference = "agent0ai/agent-zero:latest";
+    internal const string DefaultContainerName = "sunder-agent";
     internal const string DefaultContainerRoot = "/workspace";
     internal const string DefaultShellPath = "/bin/sh";
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private readonly DockerImageCatalogService _imageCatalogService = imageCatalogService ?? new DockerImageCatalogService(packageContext);
 
     public DockerExecutionWorkspaceConfig GetConfig(string bindingId)
     {
         var json = packageContext.Storage.State.GetValue(BuildKey(bindingId));
         if (string.IsNullOrWhiteSpace(json))
         {
-            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(DefaultImageReference, [DefaultContainerRoot], DefaultContainerRoot, null, DefaultShellPath));
+            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(null, [DefaultContainerRoot], DefaultContainerRoot, null, DefaultShellPath));
         }
 
         try
@@ -28,7 +30,7 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
         }
         catch
         {
-            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(DefaultImageReference, [DefaultContainerRoot], DefaultContainerRoot, null, DefaultShellPath));
+            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(null, [DefaultContainerRoot], DefaultContainerRoot, null, DefaultShellPath));
         }
     }
 
@@ -73,7 +75,7 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
         }
     }
 
-    private static DockerExecutionWorkspaceConfig Normalize(string bindingId, DockerExecutionWorkspaceConfig config)
+    private DockerExecutionWorkspaceConfig Normalize(string bindingId, DockerExecutionWorkspaceConfig config)
     {
         var configuredRoots = config.AllowedRoots is { Count: > 0 }
             ? config.AllowedRoots
@@ -104,7 +106,7 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
         var hostRoots = NormalizeHostRoots(config.HostRoots, roots);
 
         return new DockerExecutionWorkspaceConfig(
-            string.IsNullOrWhiteSpace(config.ImageReference) ? DefaultImageReference : config.ImageReference.Trim(),
+            string.IsNullOrWhiteSpace(config.ImageReference) ? _imageCatalogService.GetDefaultImageReference() : DockerImageCatalogService.NormalizeImageReference(config.ImageReference),
             roots,
             defaultWorkingDirectory,
             ResolveContainerName(bindingId, config.ContainerName),
@@ -239,7 +241,7 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
             return configuredName.Trim();
         }
 
-        return BuildContainerName(bindingId);
+        return DefaultContainerName;
     }
 
     internal static string BuildContainerName(string bindingId)

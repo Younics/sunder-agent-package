@@ -246,7 +246,16 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
             try { listener.Stop(); } catch { }
         });
 
-        var context = await listener.GetContextAsync();
+        HttpListenerContext context;
+        try
+        {
+            context = await listener.GetContextAsync();
+        }
+        catch (Exception ex) when (cancellationToken.IsCancellationRequested
+                                   && ex is HttpListenerException or ObjectDisposedException or InvalidOperationException)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
         var returnedState = context.Request.QueryString["state"];
         var code = context.Request.QueryString["code"];
 

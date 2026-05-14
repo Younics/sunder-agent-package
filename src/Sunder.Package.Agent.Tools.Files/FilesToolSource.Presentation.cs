@@ -8,11 +8,11 @@ public sealed partial class FilesToolSource
 {
     private static AgentToolPresentation ResolveReadPresentation(AgentToolPresentationRequest request)
     {
-        var args = TryDeserializeArguments<ReadArgs>(request.ArgumentsJson);
+        var parsed = TryParseReadArgs(request.ArgumentsJson, out var args, out var error);
         return new AgentToolPresentation(
-            HeaderText: request.ResultSummary ?? args?.Path,
-            DetailMarkdown: args is null
-                ? BuildUnavailableRequestMarkdown()
+            HeaderText: request.ResultSummary ?? (parsed ? args.Path : null),
+            DetailMarkdown: !parsed
+                ? BuildRawRequestMarkdown(request.ArgumentsJson, error)
                 : BuildRequestMarkdown(
                     ("Path", args.Path),
                     ("Offset", args.Offset?.ToString()),
@@ -22,11 +22,11 @@ public sealed partial class FilesToolSource
 
     private static AgentToolPresentation ResolveWritePresentation(AgentToolPresentationRequest request)
     {
-        var args = TryDeserializeArguments<WriteArgs>(request.ArgumentsJson);
+        var parsed = TryParseWriteArgs(request.ArgumentsJson, out var args, out var error);
         return new AgentToolPresentation(
-            HeaderText: request.ResultSummary ?? args?.Path,
-            DetailMarkdown: args is null
-                ? BuildUnavailableRequestMarkdown()
+            HeaderText: request.ResultSummary ?? (parsed ? args.Path : null),
+            DetailMarkdown: !parsed
+                ? BuildRawRequestMarkdown(request.ArgumentsJson, error)
                 : BuildRequestMarkdown(
                     ("Path", args.Path),
                     ("Content", FormatTextStats(args.Content))),
@@ -35,11 +35,11 @@ public sealed partial class FilesToolSource
 
     private static AgentToolPresentation ResolveEditPresentation(AgentToolPresentationRequest request)
     {
-        var args = TryDeserializeArguments<EditArgs>(request.ArgumentsJson);
+        var parsed = TryParseEditArgs(request.ArgumentsJson, out var args, out var error);
         return new AgentToolPresentation(
-            HeaderText: request.ResultSummary ?? args?.Path,
-            DetailMarkdown: args is null
-                ? BuildUnavailableRequestMarkdown()
+            HeaderText: request.ResultSummary ?? (parsed ? args.Path : null),
+            DetailMarkdown: !parsed
+                ? BuildRawRequestMarkdown(request.ArgumentsJson, error)
                 : BuildRequestMarkdown(
                     ("Path", args.Path),
                     ("Old text", FormatTextStats(args.OldString)),
@@ -50,9 +50,9 @@ public sealed partial class FilesToolSource
 
     private static AgentToolPresentation ResolveGlobPresentation(AgentToolPresentationRequest request)
     {
-        var args = TryDeserializeArguments<GlobArgs>(request.ArgumentsJson);
-        var pattern = args?.Pattern;
-        var path = args?.Path;
+        var parsed = TryParseGlobArgs(request.ArgumentsJson, out var args, out var error);
+        var pattern = parsed ? args.Pattern : null;
+        var path = parsed ? args.Path : null;
         var header = string.IsNullOrWhiteSpace(path)
             ? pattern
             : string.IsNullOrWhiteSpace(pattern)
@@ -60,8 +60,8 @@ public sealed partial class FilesToolSource
                 : $"{pattern} in {path}";
         return new AgentToolPresentation(
             HeaderText: request.ResultSummary ?? header,
-            DetailMarkdown: args is null
-                ? BuildUnavailableRequestMarkdown()
+            DetailMarkdown: !parsed
+                ? BuildRawRequestMarkdown(request.ArgumentsJson, error)
                 : BuildRequestMarkdown(
                     ("Pattern", args.Pattern),
                     ("Path", string.IsNullOrWhiteSpace(args.Path) ? "." : args.Path)),
@@ -70,10 +70,10 @@ public sealed partial class FilesToolSource
 
     private static AgentToolPresentation ResolveGrepPresentation(AgentToolPresentationRequest request)
     {
-        var args = TryDeserializeArguments<GrepArgs>(request.ArgumentsJson);
-        var pattern = args?.Pattern;
-        var include = args?.Include;
-        var path = args?.Path;
+        var parsed = TryParseGrepArgs(request.ArgumentsJson, out var args, out var error);
+        var pattern = parsed ? args.Pattern : null;
+        var include = parsed ? args.Include : null;
+        var path = parsed ? args.Path : null;
         var qualifiers = new List<string>();
         if (!string.IsNullOrWhiteSpace(include))
         {
@@ -90,8 +90,8 @@ public sealed partial class FilesToolSource
             : $"{pattern} in {string.Join(" / ", qualifiers)}";
         return new AgentToolPresentation(
             HeaderText: request.ResultSummary ?? header,
-            DetailMarkdown: args is null
-                ? BuildUnavailableRequestMarkdown()
+            DetailMarkdown: !parsed
+                ? BuildRawRequestMarkdown(request.ArgumentsJson, error)
                 : BuildRequestMarkdown(
                     ("Pattern", args.Pattern),
                     ("Path", string.IsNullOrWhiteSpace(args.Path) ? "." : args.Path),
@@ -116,7 +116,7 @@ public sealed partial class FilesToolSource
         }
 
         var detail = string.IsNullOrWhiteSpace(patchText)
-            ? BuildUnavailableRequestMarkdown()
+            ? BuildRawRequestMarkdown(request.ArgumentsJson, "The `patchText` parameter is required.")
             : BuildFencedMarkdown("Patch", "diff", patchText);
         return new AgentToolPresentation(
             HeaderText: header,
@@ -134,20 +134,21 @@ public sealed partial class FilesToolSource
         return $"Applied {FormatCount(operations.Count, "patch operation")} to {FormatCount(fileCount, "file")}";
     }
 
-    private static T? TryDeserializeArguments<T>(string argumentsJson)
+    private static string BuildRawRequestMarkdown(string argumentsJson, string? error = null)
     {
-        try
+        var builder = new StringBuilder();
+        builder.AppendLine("**Request**");
+        if (!string.IsNullOrWhiteSpace(error))
         {
-            return JsonSerializer.Deserialize<T>(argumentsJson, JsonOptions);
+            builder.AppendLine(error.Trim());
+            builder.AppendLine();
         }
-        catch
-        {
-            return default;
-        }
-    }
 
-    private static string BuildUnavailableRequestMarkdown()
-        => "**Request**\nRequest details are unavailable.";
+        builder.AppendLine("```json");
+        builder.AppendLine(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson.Trim());
+        builder.AppendLine("```");
+        return builder.ToString().Trim();
+    }
 
     private static string BuildRequestMarkdown(params (string Label, string? Value)[] values)
     {
