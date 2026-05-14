@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Platform.Storage;
 
 namespace Sunder.Package.Agent.Skills.PackageViews;
@@ -36,6 +37,19 @@ public partial class SkillSettingsView : UserControl
         Grid.SetColumn(SkillDetailPane, useCompactLayout ? 0 : 1);
         Grid.SetColumnSpan(SkillListPane, useCompactLayout ? 2 : 1);
         Grid.SetColumnSpan(SkillDetailPane, useCompactLayout ? 2 : 1);
+    }
+
+    private void OnSkillItemTapped(object? sender, TappedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is not InstalledSkillItemViewModel skill)
+        {
+            return;
+        }
+
+        if (DataContext is SkillSettingsViewModel viewModel)
+        {
+            viewModel.ActivateSkill(skill);
+        }
     }
 
     private async void OnAddLocalFolderClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

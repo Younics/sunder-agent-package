@@ -91,27 +91,6 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
     </Style>
 
-    <Style Selector="Button.subsession-open-action">
-      <Setter Property="Width" Value="32" />
-      <Setter Property="MinWidth" Value="32" />
-      <Setter Property="Height" Value="36" />
-      <Setter Property="Padding" Value="0" />
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-      <Setter Property="FontSize" Value="20" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="HorizontalContentAlignment" Value="Center" />
-      <Setter Property="VerticalContentAlignment" Value="Center" />
-    </Style>
-
-    <Style Selector="Button.subsession-open-action:pointerover">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
-    </Style>
-
     <Style Selector="Border.message-avatar">
       <Setter Property="Width" Value="42" />
       <Setter Property="Height" Value="42" />
@@ -389,8 +368,9 @@
                          SelectedItem="{Binding SelectedSubsession, Mode=TwoWay}">
                   <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="vm:SubsessionListItemViewModel">
-                      <Grid ColumnDefinitions="*,Auto,Auto"
+                      <Grid ColumnDefinitions="*,Auto"
                             ColumnSpacing="10"
+                            Tapped="OnSubsessionItemTapped"
                             ToolTip.Tip="{Binding StatusText}">
                         <Grid RowDefinitions="Auto,Auto"
                               RowSpacing="3"
@@ -410,12 +390,6 @@
                                    FontSize="11"
                                    FontWeight="SemiBold"
                                    VerticalAlignment="Center" />
-                        <Button Grid.Column="2"
-                                Classes="subsession-open-action"
-                                Content=">"
-                                Command="{Binding $parent[UserControl].DataContext.OpenSubsessionCommand}"
-                                CommandParameter="{Binding}"
-                                ToolTip.Tip="Open transcript" />
                       </Grid>
                     </DataTemplate>
                   </ListBox.ItemTemplate>

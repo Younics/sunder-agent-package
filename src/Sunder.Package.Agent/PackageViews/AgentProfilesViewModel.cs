@@ -9,7 +9,10 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposable
 {
+    private static readonly TimeSpan SuccessStatusDisplayDuration = TimeSpan.FromSeconds(3);
+
     private readonly AgentProfileService _profileService;
+    private CancellationTokenSource? _successStatusClearCancellation;
     private bool _suppressSelectionHandlers;
     private bool _disposed;
     private int _profileLoadVersion;
@@ -122,7 +125,14 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     private bool _isBusy;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasStatusText))]
     private string _statusText = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsStatusSuccess))]
+    [NotifyPropertyChangedFor(nameof(IsStatusWarning))]
+    [NotifyPropertyChangedFor(nameof(IsStatusError))]
+    private AgentProfileStatusKind _statusKind = AgentProfileStatusKind.None;
 
     [ObservableProperty]
     private string _toolSelectionSummary = "No local tools are enabled for this profile.";
@@ -138,6 +148,14 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     public bool HasReasoningOptions => ReasoningOptions.Count > 0;
 
+    public bool HasStatusText => !string.IsNullOrWhiteSpace(StatusText);
+
+    public bool IsStatusSuccess => StatusKind == AgentProfileStatusKind.Success;
+
+    public bool IsStatusWarning => StatusKind == AgentProfileStatusKind.Warning;
+
+    public bool IsStatusError => StatusKind == AgentProfileStatusKind.Error;
+
     private async Task InitializeAsync()
     {
         try
@@ -147,7 +165,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         catch (Exception ex)
         {
             ClearEditor();
-            StatusText = ex.Message;
+            SetStatus(ex.Message, AgentProfileStatusKind.Error);
         }
     }
 
@@ -187,10 +205,23 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         }
 
         _ = LoadSelectedProfileAsync(value, ++_profileLoadVersion);
+        if (IsCompactLayout && value is not null)
+        {
+            IsEditorActive = true;
+        }
     }
 
     partial void OnIsCompactLayoutChanged(bool value)
     {
+        if (value && !IsEditorActive)
+        {
+            SelectedProfile = null;
+        }
+        else if (!value && SelectedProfile is null)
+        {
+            SelectedProfile = Profiles.FirstOrDefault();
+        }
+
         OnPropertyChanged(nameof(ShowWideLayout));
         OnPropertyChanged(nameof(ShowCompactList));
         OnPropertyChanged(nameof(ShowCompactEditor));
@@ -248,11 +279,11 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             var created = await _profileService.CreateProfileAsync("New Agent Profile");
             await ReloadProfilesAsync(created.ProfileId);
             IsEditorActive = true;
-            StatusText = $"Created profile '{created.DisplayName}'.";
+            ClearStatus();
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            SetStatus(ex.Message, AgentProfileStatusKind.Error);
         }
         finally
         {
@@ -287,12 +318,23 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
                 behaviorLoopSettingsJson: SelectedProfile.BehaviorLoopSettingsJson ?? string.Empty,
                 chatModelSettingsJson: BuildChatModelSettingsJson() ?? string.Empty);
 
+            var shouldClearSelection = IsCompactLayout;
             await ReloadProfilesAsync(profileId);
-            StatusText = "Profile saved.";
+            if (shouldClearSelection)
+            {
+                SelectedProfile = null;
+                ClearStatus();
+            }
+            else
+            {
+                SetStatus("Profile saved.", AgentProfileStatusKind.Success, autoClear: true);
+            }
+
+            IsEditorActive = false;
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            SetStatus(ex.Message, AgentProfileStatusKind.Error);
         }
         finally
         {
@@ -312,14 +354,24 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         try
         {
             var deletedName = SelectedProfile.DisplayName;
+            var shouldClearSelection = IsCompactLayout;
             _profileService.DeleteProfile(SelectedProfile.ProfileId);
             await ReloadProfilesAsync(selectProfileId: null);
+            if (shouldClearSelection)
+            {
+                SelectedProfile = null;
+                ClearStatus();
+            }
+            else
+            {
+                SetStatus($"Deleted profile '{deletedName}'.", AgentProfileStatusKind.Success, autoClear: true);
+            }
+
             IsEditorActive = false;
-            StatusText = $"Deleted profile '{deletedName}'.";
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            SetStatus(ex.Message, AgentProfileStatusKind.Error);
         }
         finally
         {
@@ -331,7 +383,14 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     [RelayCommand]
     private void BackToProfileList()
-        => IsEditorActive = false;
+    {
+        if (IsCompactLayout)
+        {
+            SelectedProfile = null;
+        }
+
+        IsEditorActive = false;
+    }
 
     [RelayCommand]
     private void OpenProfileEditor(AgentProfileRecord? profile)
@@ -341,8 +400,20 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             return;
         }
 
-        SelectedProfile = profile;
-        IsEditorActive = true;
+        ActivateProfile(profile);
+    }
+
+    public void ActivateProfile(AgentProfileRecord profile)
+    {
+        if (!string.Equals(SelectedProfile?.ProfileId, profile.ProfileId, StringComparison.OrdinalIgnoreCase))
+        {
+            SelectedProfile = profile;
+        }
+
+        if (IsCompactLayout)
+        {
+            IsEditorActive = true;
+        }
     }
 
     private async Task ReloadProfilesAsync(string? selectProfileId)
@@ -350,19 +421,38 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         BeginBusy();
         try
         {
-            Profiles.Clear();
-            foreach (var profile in _profileService.ListProfiles())
-            {
-                Profiles.Add(profile);
-            }
+            var currentProfileId = SelectedProfile?.ProfileId;
 
             SetSelectionSilently(() =>
-                SelectedProfile = Profiles.FirstOrDefault(profile => profile.ProfileId == selectProfileId) ?? Profiles.FirstOrDefault());
+            {
+                Profiles.Clear();
+                foreach (var profile in _profileService.ListProfiles())
+                {
+                    Profiles.Add(profile);
+                }
+
+                var selectedProfile = Profiles.FirstOrDefault(profile => profile.ProfileId == selectProfileId);
+                if (selectedProfile is null && (!IsCompactLayout || selectProfileId is not null))
+                {
+                    selectedProfile = Profiles.FirstOrDefault(profile => profile.ProfileId == currentProfileId)
+                                      ?? Profiles.FirstOrDefault();
+                }
+
+                SelectedProfile = selectedProfile;
+            });
 
             if (SelectedProfile is null)
             {
                 ClearEditor();
-                StatusText = "No profiles available.";
+                if (Profiles.Count == 0)
+                {
+                    SetStatus("No profiles available.", AgentProfileStatusKind.Warning);
+                }
+                else
+                {
+                    ClearStatus();
+                }
+
                 return;
             }
 
@@ -379,7 +469,15 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         if (profile is null)
         {
             ClearEditor();
-            StatusText = "No profiles available.";
+            if (Profiles.Count == 0)
+            {
+                SetStatus("No profiles available.", AgentProfileStatusKind.Warning);
+            }
+            else
+            {
+                ClearStatus();
+            }
+
             return;
         }
 
@@ -445,7 +543,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         {
             if (IsCurrentProfileLoad(version, profile.ProfileId))
             {
-                StatusText = ex.Message;
+                SetStatus(ex.Message, AgentProfileStatusKind.Error);
             }
         }
         finally
@@ -483,7 +581,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         {
             if (IsCurrentProfileLoad(version, profile.ProfileId))
             {
-                StatusText = ex.Message;
+                SetStatus(ex.Message, AgentProfileStatusKind.Error);
             }
         }
         finally
@@ -1014,6 +1112,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         }
 
         _disposed = true;
+        CancelSuccessStatusClear();
         _profileService.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
     }
 
@@ -1066,6 +1165,62 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     private bool IsCurrentEmbeddingLoad(int version, string? providerId)
         => version == _embeddingLoadVersion
            && string.Equals(SelectedEmbeddingProvider?.Id, providerId, StringComparison.OrdinalIgnoreCase);
+
+    private void ClearStatus()
+        => SetStatus(string.Empty, AgentProfileStatusKind.None);
+
+    private void SetStatus(string message, AgentProfileStatusKind kind, bool autoClear = false)
+    {
+        CancelSuccessStatusClear();
+        StatusKind = string.IsNullOrWhiteSpace(message) ? AgentProfileStatusKind.None : kind;
+        StatusText = message;
+        if (autoClear && StatusKind == AgentProfileStatusKind.Success)
+        {
+            ScheduleSuccessStatusClear(message);
+        }
+    }
+
+    private void ScheduleSuccessStatusClear(string message)
+    {
+        var cancellation = new CancellationTokenSource();
+        _successStatusClearCancellation = cancellation;
+        _ = ClearSuccessStatusAfterDelayAsync(message, cancellation);
+    }
+
+    private async Task ClearSuccessStatusAfterDelayAsync(string message, CancellationTokenSource cancellation)
+    {
+        try
+        {
+            await Task.Delay(SuccessStatusDisplayDuration, cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        RunOnUiThread(() =>
+        {
+            if (_successStatusClearCancellation == cancellation
+                && StatusKind == AgentProfileStatusKind.Success
+                && string.Equals(StatusText, message, StringComparison.Ordinal))
+            {
+                ClearStatus();
+            }
+        });
+    }
+
+    private void CancelSuccessStatusClear()
+    {
+        var cancellation = _successStatusClearCancellation;
+        if (cancellation is null)
+        {
+            return;
+        }
+
+        _successStatusClearCancellation = null;
+        cancellation.Cancel();
+        cancellation.Dispose();
+    }
 
     private static string FormatChatProviderStatus(AgentProviderReadiness? readiness, string prefix = "")
         => readiness is null
@@ -1125,6 +1280,14 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
                 modelId,
                 SettingsJson: null,
                 updatedAtUtc);
+}
+
+public enum AgentProfileStatusKind
+{
+    None = 0,
+    Success,
+    Warning,
+    Error,
 }
 
 public sealed record ProviderOption(string? Id, string Label);

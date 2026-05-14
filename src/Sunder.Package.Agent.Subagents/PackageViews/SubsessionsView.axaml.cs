@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Threading;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
@@ -53,6 +54,17 @@ public partial class SubsessionsView : UserControl
         Grid.SetColumn(SubsessionDetailPane, useCompactLayout ? 0 : 1);
         Grid.SetColumnSpan(SubsessionListPane, useCompactLayout ? 2 : 1);
         Grid.SetColumnSpan(SubsessionDetailPane, useCompactLayout ? 2 : 1);
+    }
+
+    private void OnSubsessionItemTapped(object? sender, TappedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is not SubsessionListItemViewModel subsession)
+        {
+            return;
+        }
+
+        var viewModel = _viewModel ?? DataContext as SubsessionsViewModel;
+        viewModel?.ActivateSubsession(subsession);
     }
 
     private void OnScrollViewerPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs change)

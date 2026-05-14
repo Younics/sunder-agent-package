@@ -99,25 +99,33 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
     </Style>
 
-    <Style Selector="Button.skill-open-action">
-      <Setter Property="Width" Value="32" />
-      <Setter Property="MinWidth" Value="32" />
-      <Setter Property="Height" Value="36" />
-      <Setter Property="Padding" Value="0" />
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-      <Setter Property="FontSize" Value="18" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="HorizontalContentAlignment" Value="Center" />
-      <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Style Selector="TextBlock.skill-status-message">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
-    <Style Selector="Button.skill-open-action:pointerover">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+    <Style Selector="TextBlock.skill-status-message.warning">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
+    </Style>
+
+    <Style Selector="TextBlock.skill-status-message.success">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Success}" />
+    </Style>
+
+    <Style Selector="TextBlock.skill-status-message.error">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Danger}" />
+    </Style>
+
+    <Style Selector="Button.skill-add-action">
+      <Setter Property="Width" Value="36" />
+      <Setter Property="MinWidth" Value="36" />
+      <Setter Property="Height" Value="34" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="FontSize" Value="22" />
+      <Setter Property="FontWeight" Value="Regular" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
   </UserControl.Styles>
 
@@ -128,15 +136,27 @@
       <Border x:Name="SkillListPane"
               Classes="skill-pane skill-list-pane"
               IsVisible="{Binding ShowListPane}">
-        <Grid RowDefinitions="Auto,*,Auto">
+        <Grid RowDefinitions="Auto,*">
           <Border Grid.Row="0"
                   Classes="skill-pane-header">
-            <StackPanel Spacing="8">
-              <TextBlock Classes="skill-title"
-                         Text="Agent Skills" />
-              <TextBlock Classes="skill-caption"
+            <Grid ColumnDefinitions="*,Auto"
+                  RowDefinitions="Auto,Auto"
+                  ColumnSpacing="12"
+                  RowSpacing="8">
+              <TextBlock Grid.Column="0"
+                         Classes="skill-title"
+                         Text="Agent Skills"
+                         VerticalAlignment="Center" />
+              <Button Grid.Column="1"
+                      Classes="secondary-action compact-action skill-add-action"
+                      Content="+"
+                      Command="{Binding NewSkillCommand}"
+                      ToolTip.Tip="New skill" />
+              <TextBlock Grid.Row="1"
+                         Grid.ColumnSpan="2"
+                         Classes="skill-caption"
                          Text="Install skill folders, then enable them per Agent Profile." />
-            </StackPanel>
+            </Grid>
           </Border>
 
           <Border Grid.Row="1"
@@ -148,18 +168,18 @@
                        SelectedItem="{Binding SelectedSkill, Mode=TwoWay}">
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:InstalledSkillItemViewModel">
-                    <Grid ColumnDefinitions="*,Auto"
-                          ColumnSpacing="10">
+                    <Grid RowDefinitions="Auto,Auto"
+                          RowSpacing="3"
+                          MinWidth="0"
+                          Tapped="OnSkillItemTapped">
                       <TextBlock Text="{Binding DisplayName}"
                                  FontWeight="SemiBold"
-                                 TextTrimming="CharacterEllipsis"
-                                 VerticalAlignment="Center" />
-                      <Button Grid.Column="1"
-                              Classes="skill-open-action"
-                              Content=">"
-                              Command="{Binding $parent[UserControl].DataContext.OpenSkillDetailCommand}"
-                              CommandParameter="{Binding}"
-                              ToolTip.Tip="Open skill details" />
+                                 TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Row="1"
+                                 Text="{Binding Description}"
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
+                                 FontSize="12"
+                                 TextTrimming="CharacterEllipsis" />
                     </Grid>
                   </DataTemplate>
                 </ListBox.ItemTemplate>
@@ -167,22 +187,6 @@
             </ScrollViewer>
           </Border>
 
-          <Border Grid.Row="2"
-                  Classes="skill-actions">
-            <Grid ColumnDefinitions="*,*"
-                  ColumnSpacing="10">
-              <Button Grid.Column="0"
-                      Classes="secondary-action danger-action"
-                      Content="Delete Skill"
-                      Command="{Binding DeleteSelectedSkillCommand}"
-                      HorizontalAlignment="Stretch" />
-              <Button Grid.Column="1"
-                      Classes="primary-action"
-                      Content="New Skill"
-                      Command="{Binding NewSkillCommand}"
-                      HorizontalAlignment="Stretch" />
-            </Grid>
-          </Border>
         </Grid>
       </Border>
 
@@ -224,9 +228,6 @@
                               Margin="0,0,10,10"
                               Click="OnAddLocalFolderClick" />
                     </WrapPanel>
-                    <TextBlock Classes="skill-caption"
-                               Text="{Binding StatusText}"
-                               TextWrapping="Wrap" />
                   </StackPanel>
                 </Border>
 
@@ -286,14 +287,21 @@
 
           <Border Grid.Row="2"
                   Classes="skill-actions">
-            <Grid ColumnDefinitions="*,Auto"
+            <Grid ColumnDefinitions="Auto,*,Auto"
                   ColumnSpacing="12">
-              <TextBlock Grid.Column="0"
-                         Classes="skill-caption"
+              <Button Grid.Column="0"
+                      Classes="secondary-action compact-action danger-action"
+                      Content="Delete Skill"
+                      Command="{Binding DeleteSelectedSkillCommand}" />
+              <TextBlock Grid.Column="1"
+                         Classes="skill-status-message"
+                         Classes.success="{Binding IsStatusSuccess}"
+                         Classes.warning="{Binding IsStatusWarning}"
+                         Classes.error="{Binding IsStatusError}"
                          Text="{Binding StatusText}"
                          TextWrapping="Wrap"
                          VerticalAlignment="Center" />
-              <Button Grid.Column="1"
+              <Button Grid.Column="2"
                       Classes="secondary-action compact-action"
                       Content="Back"
                       Command="{Binding BackToSkillListCommand}"

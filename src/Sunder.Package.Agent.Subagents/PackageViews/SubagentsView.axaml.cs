@@ -1,5 +1,8 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Threading;
+using Sunder.Package.Agent.Subagents.Models;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
 
@@ -40,5 +43,27 @@ public partial class SubagentsView : UserControl
         Grid.SetColumn(SubagentEditorPane, useCompactLayout ? 0 : 1);
         Grid.SetColumnSpan(SubagentListPane, useCompactLayout ? 2 : 1);
         Grid.SetColumnSpan(SubagentEditorPane, useCompactLayout ? 2 : 1);
+    }
+
+    private void OnSubagentItemTapped(object? sender, TappedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is not SubagentRecord subagent)
+        {
+            return;
+        }
+
+        var viewModel = _viewModel ?? DataContext as SubagentsViewModel;
+        viewModel?.ActivateSubagent(subagent);
+        if (viewModel?.IsCompactLayout == true)
+        {
+            FocusSubagentDisplayName();
+        }
+    }
+
+    private void FocusSubagentDisplayName()
+    {
+        Dispatcher.UIThread.Post(
+            () => SubagentDisplayNameTextBox.Focus(),
+            DispatcherPriority.Background);
     }
 }

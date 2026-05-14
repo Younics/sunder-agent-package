@@ -9,7 +9,10 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposable
 {
+    private static readonly TimeSpan SuccessStatusDisplayDuration = TimeSpan.FromSeconds(3);
+
     private readonly AgentSessionService _sessionService;
+    private CancellationTokenSource? _successStatusClearCancellation;
     private bool _suppressSelectionHandlers;
     private bool _disposed;
 
@@ -51,7 +54,14 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
     private string _title = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasStatusText))]
     private string _statusText = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsStatusSuccess))]
+    [NotifyPropertyChangedFor(nameof(IsStatusWarning))]
+    [NotifyPropertyChangedFor(nameof(IsStatusError))]
+    private AgentSessionStatusKind _statusKind = AgentSessionStatusKind.None;
 
     [ObservableProperty]
     private string _detailStateText = "No session selected.";
@@ -65,6 +75,14 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
     [ObservableProperty]
     private string _detailProfileText = string.Empty;
 
+    public bool HasStatusText => !string.IsNullOrWhiteSpace(StatusText);
+
+    public bool IsStatusSuccess => StatusKind == AgentSessionStatusKind.Success;
+
+    public bool IsStatusWarning => StatusKind == AgentSessionStatusKind.Warning;
+
+    public bool IsStatusError => StatusKind == AgentSessionStatusKind.Error;
+
     partial void OnSelectedSessionChanged(AgentSessionListEntryViewModel? value)
     {
         SaveSessionCommand.NotifyCanExecuteChanged();
@@ -77,10 +95,23 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
         }
 
         LoadSession(value);
+        if (IsCompactLayout && value is not null)
+        {
+            IsEditorActive = true;
+        }
     }
 
     partial void OnIsCompactLayoutChanged(bool value)
     {
+        if (value && !IsEditorActive)
+        {
+            SelectedSession = null;
+        }
+        else if (!value && SelectedSession is null)
+        {
+            SelectedSession = Sessions.FirstOrDefault();
+        }
+
         OnPropertyChanged(nameof(ShowWideLayout));
         OnPropertyChanged(nameof(ShowCompactList));
         OnPropertyChanged(nameof(ShowCompactEditor));
@@ -105,11 +136,11 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
             var session = _sessionService.CreateSession("New Session");
             ReloadSessions(session.SessionId);
             IsEditorActive = true;
-            StatusText = "Session created.";
+            ClearStatus();
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            SetStatus(ex.Message, AgentSessionStatusKind.Error);
         }
     }
 
@@ -131,12 +162,23 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
             };
 
             _sessionService.UpdateSession(updated);
+            var shouldClearSelection = IsCompactLayout;
             ReloadSessions(sessionId);
-            StatusText = "Session saved.";
+            if (shouldClearSelection)
+            {
+                SelectedSession = null;
+                ClearStatus();
+            }
+            else
+            {
+                SetStatus("Session saved.", AgentSessionStatusKind.Success, autoClear: true);
+            }
+
+            IsEditorActive = false;
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            SetStatus(ex.Message, AgentSessionStatusKind.Error);
         }
     }
 
@@ -151,14 +193,24 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
         try
         {
             var deletedTitle = SelectedSession.Title;
+            var shouldClearSelection = IsCompactLayout;
             _sessionService.DeleteSession(SelectedSession.SessionId);
             ReloadSessions(selectSessionId: null);
+            if (shouldClearSelection)
+            {
+                SelectedSession = null;
+                ClearStatus();
+            }
+            else
+            {
+                SetStatus($"Deleted session '{deletedTitle}'.", AgentSessionStatusKind.Success, autoClear: true);
+            }
+
             IsEditorActive = false;
-            StatusText = $"Deleted session '{deletedTitle}'.";
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            SetStatus(ex.Message, AgentSessionStatusKind.Error);
         }
     }
 
@@ -166,7 +218,14 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
 
     [RelayCommand]
     private void BackToSessionList()
-        => IsEditorActive = false;
+    {
+        if (IsCompactLayout)
+        {
+            SelectedSession = null;
+        }
+
+        IsEditorActive = false;
+    }
 
     [RelayCommand]
     private void OpenSessionEditor(AgentSessionListEntryViewModel? session)
@@ -176,8 +235,20 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
             return;
         }
 
-        SelectedSession = session;
-        IsEditorActive = true;
+        ActivateSession(session);
+    }
+
+    public void ActivateSession(AgentSessionListEntryViewModel session)
+    {
+        if (SelectedSession?.SessionId != session.SessionId)
+        {
+            SelectedSession = session;
+        }
+
+        if (IsCompactLayout)
+        {
+            IsEditorActive = true;
+        }
     }
 
     private void OnSessionChanged(Guid sessionId)
@@ -198,7 +269,7 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
         {
             Sessions.Insert(FindSortedSessionTargetIndex(session), new AgentSessionListEntryViewModel(session, checkpoint));
             OnPropertyChanged(nameof(HasNoSessions));
-            StatusText = $"{Sessions.Count} session(s).";
+            ClearStatus();
             return;
         }
 
@@ -217,7 +288,7 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
             LoadSession(SelectedSession);
         }
 
-        StatusText = Sessions.Count == 0 ? "No sessions yet." : $"{Sessions.Count} session(s).";
+        SetSessionListStatus();
     }
 
     private void RemoveSession(Guid sessionId)
@@ -228,15 +299,29 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
             return;
         }
 
-        Sessions.RemoveAt(index);
-        OnPropertyChanged(nameof(HasNoSessions));
-        if (SelectedSession?.SessionId == sessionId)
+        var wasSelected = SelectedSession?.SessionId == sessionId;
+        _suppressSelectionHandlers = true;
+        try
         {
-            SelectedSession = Sessions.FirstOrDefault();
+            Sessions.RemoveAt(index);
+            if (wasSelected)
+            {
+                SelectedSession = IsCompactLayout ? null : Sessions.FirstOrDefault();
+                if (IsCompactLayout)
+                {
+                    IsEditorActive = false;
+                }
+            }
+        }
+        finally
+        {
+            _suppressSelectionHandlers = false;
         }
 
+        OnPropertyChanged(nameof(HasNoSessions));
+
         LoadSession(SelectedSession);
-        StatusText = Sessions.Count == 0 ? "No sessions yet." : $"{Sessions.Count} session(s).";
+        SetSessionListStatus();
     }
 
     private int FindSortedSessionTargetIndex(AgentSessionRecord session)
@@ -276,15 +361,22 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
             .ThenByDescending(session => session.CreatedAtUtc)
             .ToArray();
 
-        ReconcileSessions(sessions);
-        OnPropertyChanged(nameof(HasNoSessions));
+        var currentSessionId = SelectedSession?.SessionId;
 
         _suppressSelectionHandlers = true;
         try
         {
-            SelectedSession = Sessions.FirstOrDefault(session => session.SessionId == selectSessionId)
-                ?? Sessions.FirstOrDefault(session => session.SessionId == SelectedSession?.SessionId)
-                ?? Sessions.FirstOrDefault();
+            ReconcileSessions(sessions);
+            OnPropertyChanged(nameof(HasNoSessions));
+
+            var selectedSession = Sessions.FirstOrDefault(session => session.SessionId == selectSessionId);
+            if (selectedSession is null && (!IsCompactLayout || selectSessionId is not null))
+            {
+                selectedSession = Sessions.FirstOrDefault(session => session.SessionId == currentSessionId)
+                                  ?? Sessions.FirstOrDefault();
+            }
+
+            SelectedSession = selectedSession;
         }
         finally
         {
@@ -292,7 +384,7 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
         }
 
         LoadSession(SelectedSession);
-        StatusText = Sessions.Count == 0 ? "No sessions yet." : $"{Sessions.Count} session(s).";
+        SetSessionListStatus();
     }
 
     private void ReconcileSessions(IReadOnlyList<AgentSessionRecord> sessions)
@@ -373,8 +465,84 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
         }
 
         _disposed = true;
+        CancelSuccessStatusClear();
         _sessionService.SessionChanged -= OnSessionChanged;
     }
+
+    private void ClearStatus()
+        => SetStatus(string.Empty, AgentSessionStatusKind.None);
+
+    private void SetSessionListStatus()
+    {
+        if (Sessions.Count == 0)
+        {
+            SetStatus("No sessions yet.", AgentSessionStatusKind.Warning);
+            return;
+        }
+
+        ClearStatus();
+    }
+
+    private void SetStatus(string message, AgentSessionStatusKind kind, bool autoClear = false)
+    {
+        CancelSuccessStatusClear();
+        StatusKind = string.IsNullOrWhiteSpace(message) ? AgentSessionStatusKind.None : kind;
+        StatusText = message;
+        if (autoClear && StatusKind == AgentSessionStatusKind.Success)
+        {
+            ScheduleSuccessStatusClear(message);
+        }
+    }
+
+    private void ScheduleSuccessStatusClear(string message)
+    {
+        var cancellation = new CancellationTokenSource();
+        _successStatusClearCancellation = cancellation;
+        _ = ClearSuccessStatusAfterDelayAsync(message, cancellation);
+    }
+
+    private async Task ClearSuccessStatusAfterDelayAsync(string message, CancellationTokenSource cancellation)
+    {
+        try
+        {
+            await Task.Delay(SuccessStatusDisplayDuration, cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        RunOnUiThread(() =>
+        {
+            if (_successStatusClearCancellation == cancellation
+                && StatusKind == AgentSessionStatusKind.Success
+                && string.Equals(StatusText, message, StringComparison.Ordinal))
+            {
+                ClearStatus();
+            }
+        });
+    }
+
+    private void CancelSuccessStatusClear()
+    {
+        var cancellation = _successStatusClearCancellation;
+        if (cancellation is null)
+        {
+            return;
+        }
+
+        _successStatusClearCancellation = null;
+        cancellation.Cancel();
+        cancellation.Dispose();
+    }
+}
+
+public enum AgentSessionStatusKind
+{
+    None = 0,
+    Success,
+    Warning,
+    Error,
 }
 
 public sealed partial class AgentSessionListEntryViewModel : ObservableObject

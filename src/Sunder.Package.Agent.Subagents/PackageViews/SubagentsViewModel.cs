@@ -14,9 +14,13 @@ namespace Sunder.Package.Agent.Subagents.PackageViews;
 
 public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 {
+    private static readonly TimeSpan SuccessStatusDisplayDuration = TimeSpan.FromSeconds(3);
+
     private readonly SubagentService _subagentService;
     private readonly IPackageExtensionCatalog? _extensionCatalog;
     private readonly AgentProfileSelectableCapabilityChangeObserver? _capabilityChangeObserver;
+    private CancellationTokenSource? _successStatusClearCancellation;
+    private bool _suppressSelectionHandlers;
     private bool _suppressChatProviderSelection;
     private bool _disposed;
     private string? _loadedCapabilitySubagentId;
@@ -84,9 +88,24 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     private SubagentReasoningOption? _selectedReasoningOption;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasStatusText))]
     private string _statusText = string.Empty;
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsStatusSuccess))]
+    [NotifyPropertyChangedFor(nameof(IsStatusWarning))]
+    [NotifyPropertyChangedFor(nameof(IsStatusError))]
+    private SubagentStatusKind _statusKind = SubagentStatusKind.None;
+
     public bool HasSelectedSubagent => SelectedSubagent is not null;
+
+    public bool HasStatusText => !string.IsNullOrWhiteSpace(StatusText);
+
+    public bool IsStatusSuccess => StatusKind == SubagentStatusKind.Success;
+
+    public bool IsStatusWarning => StatusKind == SubagentStatusKind.Warning;
+
+    public bool IsStatusError => StatusKind == SubagentStatusKind.Error;
 
     public bool CanSaveSelectedSubagent => SelectedSubagent is not null && !string.IsNullOrWhiteSpace(Description);
 
@@ -128,6 +147,15 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     partial void OnIsCompactLayoutChanged(bool value)
     {
+        if (value && !IsEditorActive)
+        {
+            SelectedSubagent = null;
+        }
+        else if (!value && SelectedSubagent is null)
+        {
+            SelectedSubagent = Subagents.FirstOrDefault();
+        }
+
         OnPropertyChanged(nameof(ShowWideLayout));
         OnPropertyChanged(nameof(ShowCompactList));
         OnPropertyChanged(nameof(ShowCompactEditor));
@@ -152,7 +180,16 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(DescriptionValidationText));
         SaveSubagentCommand.NotifyCanExecuteChanged();
         DeleteSubagentCommand.NotifyCanExecuteChanged();
+        if (_suppressSelectionHandlers)
+        {
+            return;
+        }
+
         _ = LoadSelectedSubagentAsync(value);
+        if (IsCompactLayout && value is not null)
+        {
+            IsEditorActive = true;
+        }
     }
 
     partial void OnDescriptionChanged(string value)
@@ -169,7 +206,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         var created = _subagentService.CreateSubagent("New Subagent");
         await ReloadAsync(created.SubagentId);
         IsEditorActive = true;
-        StatusText = $"Created subagent '{created.DisplayName}'.";
+        ClearStatus();
     }
 
     [RelayCommand(CanExecute = nameof(CanSaveSubagent))]
@@ -195,12 +232,23 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
                     .Distinct()
                     .ToArray(),
                 BuildChatModelSettingsJson());
+            var shouldClearSelection = IsCompactLayout;
             await ReloadAsync(saved.SubagentId);
-            StatusText = "Subagent saved.";
+            if (shouldClearSelection)
+            {
+                SelectedSubagent = null;
+                ClearStatus();
+            }
+            else
+            {
+                SetStatus("Subagent saved.", SubagentStatusKind.Success, autoClear: true);
+            }
+
+            IsEditorActive = false;
         }
         catch (InvalidOperationException ex)
         {
-            StatusText = ex.Message;
+            SetStatus(ex.Message, SubagentStatusKind.Error);
         }
     }
 
@@ -213,10 +261,20 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         }
 
         var deletedName = SelectedSubagent.DisplayName;
+        var shouldClearSelection = IsCompactLayout;
         _subagentService.DeleteSubagent(SelectedSubagent.SubagentId);
         await ReloadAsync(null);
+        if (shouldClearSelection)
+        {
+            SelectedSubagent = null;
+            ClearStatus();
+        }
+        else
+        {
+            SetStatus($"Deleted subagent '{deletedName}'.", SubagentStatusKind.Success, autoClear: true);
+        }
+
         IsEditorActive = false;
-        StatusText = $"Deleted subagent '{deletedName}'.";
     }
 
     private bool CanEditSubagent() => SelectedSubagent is not null;
@@ -225,7 +283,14 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     private void BackToSubagentList()
-        => IsEditorActive = false;
+    {
+        if (IsCompactLayout)
+        {
+            SelectedSubagent = null;
+        }
+
+        IsEditorActive = false;
+    }
 
     [RelayCommand]
     private void OpenSubagentEditor(SubagentRecord? subagent)
@@ -235,8 +300,20 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        SelectedSubagent = subagent;
-        IsEditorActive = true;
+        ActivateSubagent(subagent);
+    }
+
+    public void ActivateSubagent(SubagentRecord subagent)
+    {
+        if (!string.Equals(SelectedSubagent?.SubagentId, subagent.SubagentId, StringComparison.OrdinalIgnoreCase))
+        {
+            SelectedSubagent = subagent;
+        }
+
+        if (IsCompactLayout)
+        {
+            IsEditorActive = true;
+        }
     }
 
     public async Task InitializeAsync()
@@ -244,20 +321,31 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     private async Task ReloadAsync(string? selectedSubagentId)
     {
-        Subagents.Clear();
-        foreach (var subagent in _subagentService.ListSubagents())
+        var currentSubagentId = SelectedSubagent?.SubagentId;
+        SetSelectionSilently(() =>
         {
-            Subagents.Add(subagent);
-        }
+            Subagents.Clear();
+            foreach (var subagent in _subagentService.ListSubagents())
+            {
+                Subagents.Add(subagent);
+            }
 
-        SelectedSubagent = Subagents.FirstOrDefault(agent => string.Equals(agent.SubagentId, selectedSubagentId, StringComparison.OrdinalIgnoreCase))
-                           ?? Subagents.FirstOrDefault();
+            var selectedSubagent = Subagents.FirstOrDefault(agent => string.Equals(agent.SubagentId, selectedSubagentId, StringComparison.OrdinalIgnoreCase));
+            if (selectedSubagent is null && (!IsCompactLayout || selectedSubagentId is not null))
+            {
+                selectedSubagent = Subagents.FirstOrDefault(agent => string.Equals(agent.SubagentId, currentSubagentId, StringComparison.OrdinalIgnoreCase))
+                                   ?? Subagents.FirstOrDefault();
+            }
+
+            SelectedSubagent = selectedSubagent;
+        });
         if (SelectedSubagent is null)
         {
             ClearEditor();
+            return;
         }
 
-        await Task.CompletedTask;
+        await LoadSelectedSubagentAsync(SelectedSubagent);
     }
 
     private async Task LoadSelectedSubagentAsync(SubagentRecord? subagent)
@@ -642,7 +730,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         {
             if (SelectedSubagent is not null)
             {
-                StatusText = ex.Message;
+                SetStatus(ex.Message, SubagentStatusKind.Error);
             }
         }
     }
@@ -666,6 +754,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         }
 
         _disposed = true;
+        CancelSuccessStatusClear();
         if (_capabilityChangeObserver is not null)
         {
             _capabilityChangeObserver.Changed -= OnSelectableCapabilitiesChanged;
@@ -673,6 +762,83 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         }
     }
 
+    private void ClearStatus()
+        => SetStatus(string.Empty, SubagentStatusKind.None);
+
+    private void SetStatus(string message, SubagentStatusKind kind, bool autoClear = false)
+    {
+        CancelSuccessStatusClear();
+        StatusKind = string.IsNullOrWhiteSpace(message) ? SubagentStatusKind.None : kind;
+        StatusText = message;
+        if (autoClear && StatusKind == SubagentStatusKind.Success)
+        {
+            ScheduleSuccessStatusClear(message);
+        }
+    }
+
+    private void ScheduleSuccessStatusClear(string message)
+    {
+        var cancellation = new CancellationTokenSource();
+        _successStatusClearCancellation = cancellation;
+        _ = ClearSuccessStatusAfterDelayAsync(message, cancellation);
+    }
+
+    private async Task ClearSuccessStatusAfterDelayAsync(string message, CancellationTokenSource cancellation)
+    {
+        try
+        {
+            await Task.Delay(SuccessStatusDisplayDuration, cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        RunOnUiThread(() =>
+        {
+            if (_successStatusClearCancellation == cancellation
+                && StatusKind == SubagentStatusKind.Success
+                && string.Equals(StatusText, message, StringComparison.Ordinal))
+            {
+                ClearStatus();
+            }
+        });
+    }
+
+    private void CancelSuccessStatusClear()
+    {
+        var cancellation = _successStatusClearCancellation;
+        if (cancellation is null)
+        {
+            return;
+        }
+
+        _successStatusClearCancellation = null;
+        cancellation.Cancel();
+        cancellation.Dispose();
+    }
+
+    private void SetSelectionSilently(Action action)
+    {
+        _suppressSelectionHandlers = true;
+        try
+        {
+            action();
+        }
+        finally
+        {
+            _suppressSelectionHandlers = false;
+        }
+    }
+
+}
+
+public enum SubagentStatusKind
+{
+    None = 0,
+    Success,
+    Warning,
+    Error,
 }
 
 public sealed record SubagentCapabilityGroupViewModel(

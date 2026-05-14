@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using AvaloniaEdit.TextMate;
 using Sunder.Package.Agent.Mcp.Services;
 using TextMateSharp.Grammars;
@@ -89,6 +90,17 @@ public partial class AgentMcpSettingsView : UserControl
         Grid.SetColumn(McpEditorPane, useCompactLayout ? 0 : 1);
         Grid.SetColumnSpan(McpListPane, useCompactLayout ? 2 : 1);
         Grid.SetColumnSpan(McpEditorPane, useCompactLayout ? 2 : 1);
+    }
+
+    private void OnServerItemTapped(object? sender, TappedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is not ConfiguredMcpServerRecord server)
+        {
+            return;
+        }
+
+        var viewModel = _viewModel ?? DataContext as AgentMcpSettingsViewModel;
+        viewModel?.ActivateServer(server);
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)

@@ -1,15 +1,20 @@
 using System.Collections.ObjectModel;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Mcp.Services;
 
 namespace Sunder.Package.Agent.Mcp;
 
-public sealed partial class AgentMcpSettingsViewModel : ObservableObject
+public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDisposable
 {
+    private static readonly TimeSpan SuccessStatusDisplayDuration = TimeSpan.FromSeconds(3);
+
     private readonly McpServerCatalogService _serverCatalogService;
     private readonly McpClientConnectionManager _connectionManager;
+    private CancellationTokenSource? _successStatusClearCancellation;
     private bool _suppressSelectionHandlers;
+    private bool _disposed;
     private int _serverLoadVersion;
 
     public AgentMcpSettingsViewModel(
@@ -56,11 +61,23 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
     private string _statusText = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsStatusSuccess))]
+    [NotifyPropertyChangedFor(nameof(IsStatusWarning))]
+    [NotifyPropertyChangedFor(nameof(IsStatusError))]
+    private McpStatusKind _statusKind = McpStatusKind.None;
+
+    [ObservableProperty]
     private bool _isBusy;
+
+    public bool IsStatusSuccess => StatusKind == McpStatusKind.Success;
+
+    public bool IsStatusWarning => StatusKind == McpStatusKind.Warning;
+
+    public bool IsStatusError => StatusKind == McpStatusKind.Error;
 
     private async Task InitializeAsync()
     {
-        StatusText = "Loading MCP servers...";
+        SetStatus("Loading MCP servers...", McpStatusKind.None);
 
         try
         {
@@ -69,7 +86,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             ClearEditor();
-            StatusText = ex.Message;
+            SetStatus(ex.Message, McpStatusKind.Error);
         }
     }
 
@@ -90,6 +107,10 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
         }
 
         _ = LoadSelectedServerAsync(value, ++_serverLoadVersion);
+        if (IsCompactLayout)
+        {
+            IsEditorActive = true;
+        }
     }
 
     [RelayCommand]
@@ -99,12 +120,20 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
         Name = "mcp_server";
         EditorText = McpConfigurationDocument.CreateLocalTemplate();
         IsEditorActive = true;
-        StatusText = "Editing a new MCP server draft. Paste a bare MCP server object or start from a template.";
+        SetStatus("Editing a new MCP server draft. Paste a bare MCP server object or start from a template.", McpStatusKind.Warning);
     }
 
     [RelayCommand]
     private void BackToServerList()
-        => IsEditorActive = false;
+    {
+        if (IsCompactLayout)
+        {
+            SelectedServer = null;
+            ClearStatus();
+        }
+
+        IsEditorActive = false;
+    }
 
     [RelayCommand]
     private void OpenServerEditor(ConfiguredMcpServerRecord? server)
@@ -114,8 +143,20 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
             return;
         }
 
-        SelectedServer = server;
-        IsEditorActive = true;
+        ActivateServer(server);
+    }
+
+    public void ActivateServer(ConfiguredMcpServerRecord server)
+    {
+        if (!string.Equals(SelectedServer?.ServerId, server.ServerId, StringComparison.OrdinalIgnoreCase))
+        {
+            SelectedServer = server;
+        }
+
+        if (IsCompactLayout)
+        {
+            IsEditorActive = true;
+        }
     }
 
     [RelayCommand]
@@ -127,7 +168,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
         }
 
         EditorText = McpConfigurationDocument.CreateLocalTemplate();
-        StatusText = "Loaded local MCP template.";
+        SetStatus("Loaded local MCP template.", McpStatusKind.Success, autoClear: true);
     }
 
     [RelayCommand]
@@ -139,7 +180,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
         }
 
         EditorText = McpConfigurationDocument.CreateRemoteTemplate();
-        StatusText = "Loaded remote MCP template.";
+        SetStatus("Loaded remote MCP template.", McpStatusKind.Success, autoClear: true);
     }
 
     [RelayCommand]
@@ -151,11 +192,11 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
             var parsed = McpConfigurationDocument.Parse(SelectedServer?.ServerId ?? Guid.NewGuid().ToString("N"), normalizedName, EditorText, SelectedServer);
             Name = normalizedName;
             EditorText = McpConfigurationDocument.BuildEditorText(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
-            StatusText = "MCP configuration formatted.";
+            SetStatus("MCP configuration formatted.", McpStatusKind.Success, autoClear: true);
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            SetStatus(ex.Message, McpStatusKind.Error);
         }
     }
 
@@ -171,14 +212,27 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
             var parsed = McpConfigurationDocument.Parse(serverId, normalizedName, EditorText, existing);
             await _serverCatalogService.SaveServerAsync(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
             await _connectionManager.DisconnectServerAsync(serverId);
+            var shouldClearSelection = IsCompactLayout;
             await ReloadServersAsync(serverId);
-            StatusText = existing is null
-                ? $"Created MCP server '{parsed.Server.DisplayName}'."
-                : $"Saved MCP server '{parsed.Server.DisplayName}'.";
+            if (shouldClearSelection)
+            {
+                SelectedServer = null;
+                IsEditorActive = false;
+                ClearStatus();
+            }
+            else
+            {
+                SetStatus(
+                    existing is null
+                        ? $"Created MCP server '{parsed.Server.DisplayName}'."
+                        : $"Saved MCP server '{parsed.Server.DisplayName}'.",
+                    McpStatusKind.Success,
+                    autoClear: true);
+            }
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            SetStatus(ex.Message, McpStatusKind.Error);
         }
         finally
         {
@@ -196,17 +250,36 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
 
         var deletedName = SelectedServer.DisplayName;
         var serverId = SelectedServer.ServerId;
+        var shouldClearSelection = IsCompactLayout;
         await _serverCatalogService.DeleteServerAsync(SelectedServer.ServerId);
         await _connectionManager.DisconnectServerAsync(serverId);
         await ReloadServersAsync(selectServerId: null);
+        if (shouldClearSelection)
+        {
+            SelectedServer = null;
+            ClearStatus();
+        }
+        else
+        {
+            SetStatus($"Deleted MCP server '{deletedName}'.", McpStatusKind.Success, autoClear: true);
+        }
+
         IsEditorActive = false;
-        StatusText = $"Deleted MCP server '{deletedName}'.";
     }
 
     private bool CanDeleteServer() => SelectedServer is not null;
 
     partial void OnIsCompactLayoutChanged(bool value)
     {
+        if (value && !IsEditorActive)
+        {
+            SelectedServer = null;
+        }
+        else if (!value && SelectedServer is null)
+        {
+            SelectedServer = Servers.FirstOrDefault();
+        }
+
         OnPropertyChanged(nameof(ShowWideLayout));
         OnPropertyChanged(nameof(ShowCompactList));
         OnPropertyChanged(nameof(ShowCompactEditor));
@@ -236,13 +309,13 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
 
             Name = server.Name;
             EditorText = editorText;
-            StatusText = $"Editing MCP server '{server.DisplayName}'.";
+            SetStatus($"Editing MCP server '{server.DisplayName}'.", McpStatusKind.None);
         }
         catch (Exception ex)
         {
             if (version == _serverLoadVersion && SelectedServer?.ServerId == server.ServerId)
             {
-                StatusText = ex.Message;
+                SetStatus(ex.Message, McpStatusKind.Error);
             }
         }
         finally
@@ -253,17 +326,26 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
 
     private async Task ReloadServersAsync(string? selectServerId)
     {
-        Servers.Clear();
-        foreach (var server in await _serverCatalogService.ListServersAsync())
-        {
-            Servers.Add(server);
-        }
+        var currentServerId = SelectedServer?.ServerId;
+        var servers = await _serverCatalogService.ListServersAsync();
 
         _suppressSelectionHandlers = true;
         try
         {
-            SelectedServer = Servers.FirstOrDefault(server => server.ServerId == selectServerId)
-                ?? Servers.FirstOrDefault();
+            Servers.Clear();
+            foreach (var server in servers)
+            {
+                Servers.Add(server);
+            }
+
+            var selectedServer = Servers.FirstOrDefault(server => server.ServerId == selectServerId);
+            if (selectedServer is null && (!IsCompactLayout || selectServerId is not null))
+            {
+                selectedServer = Servers.FirstOrDefault(server => server.ServerId == currentServerId)
+                                 ?? Servers.FirstOrDefault();
+            }
+
+            SelectedServer = selectedServer;
         }
         finally
         {
@@ -288,11 +370,97 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject
         {
             Name = "mcp_server";
             EditorText = McpConfigurationDocument.CreateLocalTemplate();
-            StatusText = "No MCP servers configured yet. Paste a bare MCP server object or start from a template.";
+            SetStatus("No MCP servers configured yet. Paste a bare MCP server object or start from a template.", McpStatusKind.Warning);
             return;
         }
 
         Name = string.Empty;
         EditorText = string.Empty;
     }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        CancelSuccessStatusClear();
+    }
+
+    private void ClearStatus()
+        => SetStatus(string.Empty, McpStatusKind.None);
+
+    private void SetStatus(string message, McpStatusKind kind, bool autoClear = false)
+    {
+        CancelSuccessStatusClear();
+        StatusKind = string.IsNullOrWhiteSpace(message) ? McpStatusKind.None : kind;
+        StatusText = message;
+        if (autoClear && StatusKind == McpStatusKind.Success)
+        {
+            ScheduleSuccessStatusClear(message);
+        }
+    }
+
+    private void ScheduleSuccessStatusClear(string message)
+    {
+        var cancellation = new CancellationTokenSource();
+        _successStatusClearCancellation = cancellation;
+        _ = ClearSuccessStatusAfterDelayAsync(message, cancellation);
+    }
+
+    private async Task ClearSuccessStatusAfterDelayAsync(string message, CancellationTokenSource cancellation)
+    {
+        try
+        {
+            await Task.Delay(SuccessStatusDisplayDuration, cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        RunOnUiThread(() =>
+        {
+            if (_successStatusClearCancellation == cancellation
+                && StatusKind == McpStatusKind.Success
+                && string.Equals(StatusText, message, StringComparison.Ordinal))
+            {
+                ClearStatus();
+            }
+        });
+    }
+
+    private void CancelSuccessStatusClear()
+    {
+        var cancellation = _successStatusClearCancellation;
+        if (cancellation is null)
+        {
+            return;
+        }
+
+        _successStatusClearCancellation = null;
+        cancellation.Cancel();
+        cancellation.Dispose();
+    }
+
+    private static void RunOnUiThread(Action action)
+    {
+        if (Avalonia.Application.Current is null || Dispatcher.UIThread.CheckAccess())
+        {
+            action();
+            return;
+        }
+
+        Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
+    }
+}
+
+public enum McpStatusKind
+{
+    None = 0,
+    Success,
+    Warning,
+    Error,
 }

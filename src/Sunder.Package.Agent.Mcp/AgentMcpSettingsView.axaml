@@ -100,25 +100,33 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
     </Style>
 
-    <Style Selector="Button.mcp-open-action">
-      <Setter Property="Width" Value="32" />
-      <Setter Property="MinWidth" Value="32" />
-      <Setter Property="Height" Value="36" />
-      <Setter Property="Padding" Value="0" />
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-      <Setter Property="FontSize" Value="18" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="HorizontalContentAlignment" Value="Center" />
-      <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Style Selector="TextBlock.mcp-status-message">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
-    <Style Selector="Button.mcp-open-action:pointerover">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+    <Style Selector="TextBlock.mcp-status-message.warning">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
+    </Style>
+
+    <Style Selector="TextBlock.mcp-status-message.success">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Success}" />
+    </Style>
+
+    <Style Selector="TextBlock.mcp-status-message.error">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Danger}" />
+    </Style>
+
+    <Style Selector="Button.mcp-add-action">
+      <Setter Property="Width" Value="36" />
+      <Setter Property="MinWidth" Value="36" />
+      <Setter Property="Height" Value="34" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="FontSize" Value="22" />
+      <Setter Property="FontWeight" Value="Regular" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
   </UserControl.Styles>
 
@@ -129,15 +137,27 @@
       <Border x:Name="McpListPane"
               Classes="mcp-pane mcp-list-pane"
               IsVisible="{Binding ShowListPane}">
-        <Grid RowDefinitions="Auto,*,Auto">
+        <Grid RowDefinitions="Auto,*">
           <Border Grid.Row="0"
                   Classes="mcp-pane-header">
-            <StackPanel Spacing="8">
-              <TextBlock Classes="mcp-title"
-                         Text="MCP Servers" />
-              <TextBlock Classes="mcp-caption"
+            <Grid ColumnDefinitions="*,Auto"
+                  RowDefinitions="Auto,Auto"
+                  ColumnSpacing="12"
+                  RowSpacing="8">
+              <TextBlock Grid.Column="0"
+                         Classes="mcp-title"
+                         Text="MCP Servers"
+                         VerticalAlignment="Center" />
+              <Button Grid.Column="1"
+                      Classes="secondary-action compact-action mcp-add-action"
+                      Content="+"
+                      Command="{Binding CreateServerCommand}"
+                      ToolTip.Tip="New server" />
+              <TextBlock Grid.Row="1"
+                         Grid.ColumnSpan="2"
+                         Classes="mcp-caption"
                          Text="Configure shared Model Context Protocol servers once, then enable them per agent profile." />
-            </StackPanel>
+            </Grid>
           </Border>
 
           <Border Grid.Row="1"
@@ -150,47 +170,22 @@
                        SelectedItem="{Binding SelectedServer, Mode=TwoWay}">
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:ConfiguredMcpServerRecord">
-                    <Grid ColumnDefinitions="*,Auto"
-                          ColumnSpacing="10">
-                      <Grid RowDefinitions="Auto,Auto"
-                            RowSpacing="3"
-                            MinWidth="0">
-                        <TextBlock Text="{Binding DisplayName}"
-                                   FontWeight="SemiBold"
-                                   TextTrimming="CharacterEllipsis" />
-                        <TextBlock Grid.Row="1"
-                                   Classes="mcp-field-help"
-                                   Text="{Binding Name}"
-                                   TextTrimming="CharacterEllipsis" />
-                      </Grid>
-                      <Button Grid.Column="1"
-                              Classes="mcp-open-action"
-                              Content=">"
-                              Command="{Binding $parent[UserControl].DataContext.OpenServerEditorCommand}"
-                              CommandParameter="{Binding}"
-                              ToolTip.Tip="Open server editor" />
+                    <Grid RowDefinitions="Auto,Auto"
+                          RowSpacing="3"
+                          MinWidth="0"
+                          Tapped="OnServerItemTapped">
+                      <TextBlock Text="{Binding DisplayName}"
+                                 FontWeight="SemiBold"
+                                 TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Row="1"
+                                 Classes="mcp-field-help"
+                                 Text="{Binding Name}"
+                                 TextTrimming="CharacterEllipsis" />
                     </Grid>
                   </DataTemplate>
                 </ListBox.ItemTemplate>
               </ListBox>
             </ScrollViewer>
-          </Border>
-
-          <Border Grid.Row="2"
-                  Classes="mcp-actions">
-            <Grid ColumnDefinitions="*,*"
-                  ColumnSpacing="10">
-              <Button Grid.Column="0"
-                      Classes="secondary-action danger-action"
-                      Content="Delete Server"
-                      Command="{Binding DeleteCommand}"
-                      HorizontalAlignment="Stretch" />
-              <Button Grid.Column="1"
-                      Classes="primary-action"
-                      Content="New Server"
-                      Command="{Binding CreateServerCommand}"
-                      HorizontalAlignment="Stretch" />
-            </Grid>
           </Border>
         </Grid>
       </Border>
@@ -280,19 +275,26 @@
 
           <Border Grid.Row="2"
                   Classes="mcp-actions">
-            <Grid ColumnDefinitions="*,Auto,Auto"
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto"
                   ColumnSpacing="12">
-              <TextBlock Grid.Column="0"
-                         Classes="mcp-caption"
+              <Button Grid.Column="0"
+                      Classes="secondary-action compact-action danger-action"
+                      Content="Delete Server"
+                      Command="{Binding DeleteCommand}" />
+              <TextBlock Grid.Column="1"
+                         Classes="mcp-status-message"
+                         Classes.success="{Binding IsStatusSuccess}"
+                         Classes.warning="{Binding IsStatusWarning}"
+                         Classes.error="{Binding IsStatusError}"
                          Text="{Binding StatusText}"
                          TextWrapping="Wrap"
                          VerticalAlignment="Center" />
-              <Button Grid.Column="1"
+              <Button Grid.Column="2"
                       Classes="secondary-action compact-action"
                       Content="Back"
                       Command="{Binding BackToServerListCommand}"
                       IsVisible="{Binding IsCompactLayout}" />
-              <Button Grid.Column="2"
+              <Button Grid.Column="3"
                       Classes="primary-action"
                       Content="Save Server"
                       Command="{Binding SaveCommand}" />

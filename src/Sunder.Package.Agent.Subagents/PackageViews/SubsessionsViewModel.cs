@@ -124,10 +124,24 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         {
             LoadTranscript(value?.SessionId);
         }
+
+        if (IsCompactLayout && value is not null)
+        {
+            IsDetailActive = true;
+        }
     }
 
     partial void OnIsCompactLayoutChanged(bool value)
     {
+        if (value && !IsDetailActive)
+        {
+            SelectedSubsession = null;
+        }
+        else if (!value && SelectedSubsession is null)
+        {
+            SelectedSubsession = Subsessions.FirstOrDefault();
+        }
+
         OnPropertyChanged(nameof(ShowWideLayout));
         OnPropertyChanged(nameof(ShowCompactList));
         OnPropertyChanged(nameof(ShowCompactDetail));
@@ -176,7 +190,14 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     private void BackToSubsessionsList()
-        => IsDetailActive = false;
+    {
+        if (IsCompactLayout)
+        {
+            SelectedSubsession = null;
+        }
+
+        IsDetailActive = false;
+    }
 
     [RelayCommand]
     private void OpenSubsession(SubsessionListItemViewModel? subsession)
@@ -186,8 +207,20 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        SelectedSubsession = subsession;
-        IsDetailActive = true;
+        ActivateSubsession(subsession);
+    }
+
+    public void ActivateSubsession(SubsessionListItemViewModel subsession)
+    {
+        if (SelectedSubsession?.SessionId != subsession.SessionId)
+        {
+            SelectedSubsession = subsession;
+        }
+
+        if (IsCompactLayout)
+        {
+            IsDetailActive = true;
+        }
     }
 
     [RelayCommand]
@@ -299,8 +332,13 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         ReconcileSubsessions(runtime, subsessions);
 
         OnPropertyChanged(nameof(HasNoSubsessions));
-        SelectedSubsession = Subsessions.FirstOrDefault(session => session.SessionId == currentSelectionId)
-                             ?? Subsessions.FirstOrDefault();
+        var selectedSubsession = Subsessions.FirstOrDefault(session => session.SessionId == currentSelectionId);
+        if (selectedSubsession is null && (!IsCompactLayout || selectedSessionId is not null))
+        {
+            selectedSubsession = Subsessions.FirstOrDefault();
+        }
+
+        SelectedSubsession = selectedSubsession;
         OnPropertyChanged(nameof(IsSelectedSubsessionRunActive));
         StatusText = Subsessions.Count == 0
             ? "No sub-sessions have been created yet."

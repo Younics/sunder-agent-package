@@ -46,18 +46,36 @@
     </Style>
 
     <Style Selector="Border.workspace-status-message">
-      <Setter Property="Background" Value="#2B251C" />
-      <Setter Property="BorderBrush" Value="#6F5735" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Warning.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Warning}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
       <Setter Property="Padding" Value="12,10" />
       <Setter Property="Margin" Value="0,0,0,12" />
     </Style>
 
+    <Style Selector="Border.workspace-status-message.success">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Success.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Success}" />
+    </Style>
+
+    <Style Selector="Border.workspace-status-message.error">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Danger.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Danger}" />
+    </Style>
+
     <Style Selector="TextBlock.workspace-status-message">
-      <Setter Property="Foreground" Value="#B8925E" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
       <Setter Property="TextWrapping" Value="Wrap" />
       <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <Style Selector="TextBlock.workspace-status-message.success">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Success}" />
+    </Style>
+
+    <Style Selector="TextBlock.workspace-status-message.error">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Danger}" />
     </Style>
 
     <Style Selector="TextBlock.workspace-title">
@@ -581,8 +599,14 @@
             <Grid RowDefinitions="Auto,Auto">
               <Border Grid.Row="0"
                       Classes="workspace-status-message"
+                      Classes.success="{Binding IsStatusSuccess}"
+                      Classes.warning="{Binding IsStatusWarning}"
+                      Classes.error="{Binding IsStatusError}"
                       IsVisible="{Binding HasStatusText}">
                 <TextBlock Classes="workspace-status-message"
+                           Classes.success="{Binding IsStatusSuccess}"
+                           Classes.warning="{Binding IsStatusWarning}"
+                           Classes.error="{Binding IsStatusError}"
                            Text="{Binding StatusText}" />
               </Border>
 

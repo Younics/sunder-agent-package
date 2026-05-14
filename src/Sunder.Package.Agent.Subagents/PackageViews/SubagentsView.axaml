@@ -45,6 +45,39 @@
       <Setter Property="BorderThickness" Value="0,1,0,0" />
     </Style>
 
+    <Style Selector="Border.subagent-status-message">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Warning.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Warning}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="12" />
+      <Setter Property="Margin" Value="0,0,0,12" />
+    </Style>
+
+    <Style Selector="Border.subagent-status-message.success">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Success.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Success}" />
+    </Style>
+
+    <Style Selector="Border.subagent-status-message.error">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Danger.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Danger}" />
+    </Style>
+
+    <Style Selector="TextBlock.subagent-status-message">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="TextBlock.subagent-status-message.success">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Success}" />
+    </Style>
+
+    <Style Selector="TextBlock.subagent-status-message.error">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Danger}" />
+    </Style>
+
     <Style Selector="TextBlock.subagent-title">
       <Setter Property="FontSize" Value="26" />
       <Setter Property="FontWeight" Value="SemiBold" />
@@ -95,30 +128,15 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
     </Style>
 
-    <Style Selector="Button.subagent-open-action">
-      <Setter Property="Width" Value="32" />
-      <Setter Property="MinWidth" Value="32" />
-      <Setter Property="Height" Value="36" />
+    <Style Selector="Button.subagent-add-action">
+      <Setter Property="Width" Value="36" />
+      <Setter Property="MinWidth" Value="36" />
+      <Setter Property="Height" Value="34" />
       <Setter Property="Padding" Value="0" />
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-      <Setter Property="FontSize" Value="20" />
-      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="FontSize" Value="22" />
+      <Setter Property="FontWeight" Value="Regular" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
-    </Style>
-
-    <Style Selector="Button.subagent-open-action:pointerover">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
-    </Style>
-
-    <Style Selector="Button.subagent-open-action:pressed">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
     </Style>
 
     <Style Selector="Border.subagent-card">
@@ -142,15 +160,27 @@
       <Border x:Name="SubagentListPane"
               Classes="subagent-pane subagent-list-pane"
               IsVisible="{Binding ShowListPane}">
-        <Grid RowDefinitions="Auto,*,Auto">
+        <Grid RowDefinitions="Auto,*">
           <Border Grid.Row="0"
                   Classes="subagent-pane-header">
-            <StackPanel Spacing="8">
-              <TextBlock Classes="subagent-title"
-                         Text="Subagents" />
-              <TextBlock Classes="subagent-caption"
+            <Grid ColumnDefinitions="*,Auto"
+                  RowDefinitions="Auto,Auto"
+                  ColumnSpacing="12"
+                  RowSpacing="8">
+              <TextBlock Grid.Column="0"
+                         Classes="subagent-title"
+                         Text="Subagents"
+                         VerticalAlignment="Center" />
+              <Button Grid.Column="1"
+                      Classes="secondary-action compact-action subagent-add-action"
+                      Content="+"
+                      Command="{Binding CreateSubagentCommand}"
+                      ToolTip.Tip="New subagent" />
+              <TextBlock Grid.Row="1"
+                         Grid.ColumnSpan="2"
+                         Classes="subagent-caption"
                          Text="Create delegated specialists for orchestrated Agent Profiles." />
-            </StackPanel>
+            </Grid>
           </Border>
 
           <Border Grid.Row="1"
@@ -162,51 +192,23 @@
                        SelectedItem="{Binding SelectedSubagent, Mode=TwoWay}">
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="m:SubagentRecord">
-                    <Grid ColumnDefinitions="*,1,Auto"
-                          ColumnSpacing="10">
-                      <Grid RowDefinitions="Auto,Auto"
-                            RowSpacing="3"
-                            MinWidth="0">
-                        <TextBlock Text="{Binding DisplayName}"
-                                   FontWeight="SemiBold"
-                                   TextTrimming="CharacterEllipsis" />
-                        <TextBlock Grid.Row="1"
-                                   Text="{Binding DescriptionDisplay}"
-                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
-                                   FontSize="12"
-                                   TextTrimming="CharacterEllipsis" />
-                      </Grid>
-                      <Border Grid.Column="1"
-                              Background="{DynamicResource Sunder.Brush.Border.Subtle}"
-                              Margin="2,-2,0,-2" />
-                      <Button Grid.Column="2"
-                              Classes="subagent-open-action"
-                              Content=">"
-                              Command="{Binding $parent[UserControl].DataContext.OpenSubagentEditorCommand}"
-                              CommandParameter="{Binding}"
-                              ToolTip.Tip="Open subagent" />
+                    <Grid RowDefinitions="Auto,Auto"
+                          RowSpacing="3"
+                          MinWidth="0"
+                          Tapped="OnSubagentItemTapped">
+                      <TextBlock Text="{Binding DisplayName}"
+                                 FontWeight="SemiBold"
+                                 TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Row="1"
+                                 Text="{Binding DescriptionDisplay}"
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
+                                 FontSize="12"
+                                 TextTrimming="CharacterEllipsis" />
                     </Grid>
                   </DataTemplate>
                 </ListBox.ItemTemplate>
               </ListBox>
             </ScrollViewer>
-          </Border>
-
-          <Border Grid.Row="2"
-                  Classes="subagent-actions">
-            <Grid ColumnDefinitions="*,*"
-                  ColumnSpacing="10">
-              <Button Grid.Column="0"
-                      Classes="secondary-action danger-action"
-                      Content="Delete Subagent"
-                      Command="{Binding DeleteSubagentCommand}"
-                      HorizontalAlignment="Stretch" />
-              <Button Grid.Column="1"
-                      Classes="primary-action"
-                      Content="New Subagent"
-                      Command="{Binding CreateSubagentCommand}"
-                      HorizontalAlignment="Stretch" />
-            </Grid>
           </Border>
         </Grid>
       </Border>
@@ -237,7 +239,8 @@
                     <StackPanel Spacing="5">
                       <TextBlock Classes="subagent-field-label"
                                  Text="Display name" />
-                      <TextBox Text="{Binding DisplayName, Mode=TwoWay}"
+                      <TextBox x:Name="SubagentDisplayNameTextBox"
+                               Text="{Binding DisplayName, Mode=TwoWay}"
                                PlaceholderText="Subagent name" />
                     </StackPanel>
 
@@ -387,21 +390,37 @@
 
           <Border Grid.Row="2"
                   Classes="subagent-actions">
-            <Grid ColumnDefinitions="*,Auto,Auto"
-                  ColumnSpacing="12">
-              <TextBlock Grid.Column="0"
-                         Classes="subagent-caption"
-                         Text="{Binding StatusText}"
-                         VerticalAlignment="Center" />
-              <Button Grid.Column="1"
-                      Classes="secondary-action compact-action"
-                      Content="Back"
-                      Command="{Binding BackToSubagentListCommand}"
-                      IsVisible="{Binding IsCompactLayout}" />
-              <Button Grid.Column="2"
-                      Classes="primary-action"
-                      Content="Save"
-                      Command="{Binding SaveSubagentCommand}" />
+            <Grid RowDefinitions="Auto,Auto">
+              <Border Grid.Row="0"
+                      Classes="subagent-status-message"
+                      Classes.success="{Binding IsStatusSuccess}"
+                      Classes.warning="{Binding IsStatusWarning}"
+                      Classes.error="{Binding IsStatusError}"
+                      IsVisible="{Binding HasStatusText}">
+                <TextBlock Classes="subagent-status-message"
+                           Classes.success="{Binding IsStatusSuccess}"
+                           Classes.warning="{Binding IsStatusWarning}"
+                           Classes.error="{Binding IsStatusError}"
+                           Text="{Binding StatusText}" />
+              </Border>
+
+              <Grid Grid.Row="1"
+                    ColumnDefinitions="Auto,*,Auto,Auto"
+                    ColumnSpacing="12">
+                <Button Grid.Column="0"
+                        Classes="secondary-action compact-action danger-action"
+                        Content="Delete Subagent"
+                        Command="{Binding DeleteSubagentCommand}" />
+                <Button Grid.Column="2"
+                        Classes="secondary-action compact-action"
+                        Content="Back"
+                        Command="{Binding BackToSubagentListCommand}"
+                        IsVisible="{Binding IsCompactLayout}" />
+                <Button Grid.Column="3"
+                        Classes="primary-action"
+                        Content="Save"
+                        Command="{Binding SaveSubagentCommand}" />
+              </Grid>
             </Grid>
           </Border>
         </Grid>

@@ -12,6 +12,8 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDisposable
 {
+    private static readonly TimeSpan SuccessStatusDisplayDuration = TimeSpan.FromSeconds(3);
+
     private readonly AgentWorkspaceService _workspaceService;
     private readonly AgentExecutionTargetService _targetService;
     private readonly IPackageExtensionCatalog _extensionCatalog;
@@ -19,6 +21,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private readonly IPackageExtensionCatalogChangeNotifier? _extensionCatalogChangeNotifier;
     private readonly AgentExecutionTargetWarmupService? _warmupService;
     private readonly IPackageSettingsNavigationService? _settingsNavigationService;
+    private CancellationTokenSource? _successStatusClearCancellation;
     private bool _suppressSelectionHandlers;
     private bool _disposed;
 
@@ -95,7 +98,19 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     [NotifyPropertyChangedFor(nameof(HasStatusText))]
     private string _statusText = string.Empty;
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsStatusSuccess))]
+    [NotifyPropertyChangedFor(nameof(IsStatusWarning))]
+    [NotifyPropertyChangedFor(nameof(IsStatusError))]
+    private AgentWorkspaceStatusKind _statusKind = AgentWorkspaceStatusKind.None;
+
     public bool HasStatusText => !string.IsNullOrWhiteSpace(StatusText);
+
+    public bool IsStatusSuccess => StatusKind == AgentWorkspaceStatusKind.Success;
+
+    public bool IsStatusWarning => StatusKind == AgentWorkspaceStatusKind.Warning;
+
+    public bool IsStatusError => StatusKind == AgentWorkspaceStatusKind.Error;
 
     partial void OnSelectedWorkspaceChanged(AgentWorkspaceRecord? value)
     {
@@ -123,6 +138,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         }
 
         _disposed = true;
+        CancelSuccessStatusClear();
         if (_extensionCatalogMonitor is not null)
         {
             _extensionCatalogMonitor.Changed -= OnExtensionCatalogChanged;
@@ -179,11 +195,11 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             var workspace = _workspaceService.CreateWorkspace("New Workspace");
             ReloadWorkspaces(workspace.WorkspaceId);
             IsEditorActive = true;
-            StatusText = string.Empty;
+            ClearStatus();
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            SetStatus(ex.Message, AgentWorkspaceStatusKind.Error);
         }
     }
 
@@ -201,7 +217,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             var editorSaveResult = await SaveEditorSectionsAsync();
             if (!editorSaveResult.Success)
             {
-                StatusText = editorSaveResult.Message;
+                SetStatus(editorSaveResult.Message, AgentWorkspaceStatusKind.Error);
                 return;
             }
 
@@ -216,7 +232,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
                 _workspaceService.SavePrimaryExecutionBinding(SelectedWorkspace.WorkspaceId, SelectedExecutionTarget.TargetId!);
                 if (_warmupService is not null)
                 {
-                    StatusText = "Workspace saved. Preparing execution target...";
+                    SetStatus("Workspace saved. Preparing execution target...", AgentWorkspaceStatusKind.Warning);
                     warmupResult = await _warmupService.WarmWorkspaceAsync(SelectedWorkspace);
                 }
             }
@@ -226,18 +242,27 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             if (shouldClearSelection)
             {
                 SelectedWorkspace = null;
+                ClearStatus();
+            }
+            else
+            {
+                var statusText = warmupResult?.Status == AgentExecutionTargetWarmupStatus.Failed
+                    ? $"Workspace saved, but execution target is not ready: {warmupResult.Message}"
+                    : warmupResult?.Status == AgentExecutionTargetWarmupStatus.Ready
+                        ? "Workspace saved. Execution target is ready."
+                        : "Workspace saved.";
+                var statusKind = warmupResult?.Status == AgentExecutionTargetWarmupStatus.Failed
+                    ? AgentWorkspaceStatusKind.Warning
+                    : AgentWorkspaceStatusKind.Success;
+
+                SetStatus(statusText, statusKind, autoClear: statusKind == AgentWorkspaceStatusKind.Success);
             }
 
             IsEditorActive = false;
-            StatusText = warmupResult?.Status == AgentExecutionTargetWarmupStatus.Failed
-                ? $"Workspace saved, but execution target is not ready: {warmupResult.Message}"
-                : warmupResult?.Status == AgentExecutionTargetWarmupStatus.Ready
-                    ? "Workspace saved. Execution target is ready."
-                    : "Workspace saved.";
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            SetStatus(ex.Message, AgentWorkspaceStatusKind.Error);
         }
     }
 
@@ -264,11 +289,18 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             }
 
             IsEditorActive = false;
-            StatusText = "Workspace deleted.";
+            if (shouldClearSelection)
+            {
+                ClearStatus();
+            }
+            else
+            {
+                SetStatus("Workspace deleted.", AgentWorkspaceStatusKind.Success, autoClear: true);
+            }
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            SetStatus(ex.Message, AgentWorkspaceStatusKind.Error);
         }
     }
 
@@ -296,27 +328,33 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
                 case AgentEditorActionKind.OpenPackageSettings:
                     if (_settingsNavigationService is null || string.IsNullOrWhiteSpace(action.PackageId))
                     {
-                        StatusText = "Package settings cannot be opened from this host.";
+                        SetStatus("Package settings cannot be opened from this host.", AgentWorkspaceStatusKind.Warning);
                         return;
                     }
 
-                    StatusText = await _settingsNavigationService.OpenPackageSettingsAsync(action.PackageId, action.Parameters)
-                        ? "Opened package settings."
-                        : "Package settings could not be opened.";
+                    if (await _settingsNavigationService.OpenPackageSettingsAsync(action.PackageId, action.Parameters))
+                    {
+                        SetStatus("Opened package settings.", AgentWorkspaceStatusKind.Success, autoClear: true);
+                    }
+                    else
+                    {
+                        SetStatus("Package settings could not be opened.", AgentWorkspaceStatusKind.Warning);
+                    }
+
                     break;
                 case AgentEditorActionKind.RefreshEditor:
                     await RefreshEditorSectionsAsync();
-                    StatusText = "Workspace editor refreshed.";
+                    SetStatus("Workspace editor refreshed.", AgentWorkspaceStatusKind.Success, autoClear: true);
                     break;
                 case AgentEditorActionKind.RefreshField:
                     await RefreshEditorFieldAsync(action.Field);
-                    StatusText = "Workspace editor field refreshed.";
+                    SetStatus("Workspace editor field refreshed.", AgentWorkspaceStatusKind.Success, autoClear: true);
                     break;
             }
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            SetStatus(ex.Message, AgentWorkspaceStatusKind.Error);
         }
     }
 
@@ -401,15 +439,15 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private void ReloadWorkspaceList(string? selectWorkspaceId)
     {
         var workspaces = _workspaceService.ListWorkspaces();
-        Workspaces.Clear();
-        foreach (var workspace in workspaces)
-        {
-            Workspaces.Add(workspace);
-        }
-
         _suppressSelectionHandlers = true;
         try
         {
+            Workspaces.Clear();
+            foreach (var workspace in workspaces)
+            {
+                Workspaces.Add(workspace);
+            }
+
             SelectedWorkspace = Workspaces.FirstOrDefault(workspace => string.Equals(workspace.WorkspaceId, selectWorkspaceId, StringComparison.OrdinalIgnoreCase))
                 ?? Workspaces.FirstOrDefault();
         }
@@ -459,11 +497,11 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
                 }
             }
 
-            StatusText = string.Empty;
+            ClearStatus();
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            SetStatus(ex.Message, AgentWorkspaceStatusKind.Error);
         }
     }
 
@@ -529,6 +567,62 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
     }
 
+    private void ClearStatus()
+        => SetStatus(string.Empty, AgentWorkspaceStatusKind.None);
+
+    private void SetStatus(string message, AgentWorkspaceStatusKind kind, bool autoClear = false)
+    {
+        CancelSuccessStatusClear();
+        StatusKind = string.IsNullOrWhiteSpace(message) ? AgentWorkspaceStatusKind.None : kind;
+        StatusText = message;
+        if (autoClear && StatusKind == AgentWorkspaceStatusKind.Success)
+        {
+            ScheduleSuccessStatusClear(message);
+        }
+    }
+
+    private void ScheduleSuccessStatusClear(string message)
+    {
+        var cancellation = new CancellationTokenSource();
+        _successStatusClearCancellation = cancellation;
+        _ = ClearSuccessStatusAfterDelayAsync(message, cancellation);
+    }
+
+    private async Task ClearSuccessStatusAfterDelayAsync(string message, CancellationTokenSource cancellation)
+    {
+        try
+        {
+            await Task.Delay(SuccessStatusDisplayDuration, cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        RunOnUiThread(() =>
+        {
+            if (_successStatusClearCancellation == cancellation
+                && StatusKind == AgentWorkspaceStatusKind.Success
+                && string.Equals(StatusText, message, StringComparison.Ordinal))
+            {
+                ClearStatus();
+            }
+        });
+    }
+
+    private void CancelSuccessStatusClear()
+    {
+        var cancellation = _successStatusClearCancellation;
+        if (cancellation is null)
+        {
+            return;
+        }
+
+        _successStatusClearCancellation = null;
+        cancellation.Cancel();
+        cancellation.Dispose();
+    }
+
     private void SetSelectionSilently(Action action)
     {
         _suppressSelectionHandlers = true;
@@ -541,6 +635,14 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             _suppressSelectionHandlers = false;
         }
     }
+}
+
+public enum AgentWorkspaceStatusKind
+{
+    None = 0,
+    Success,
+    Warning,
+    Error,
 }
 
 public sealed class AgentEditorSectionViewModel : ObservableObject

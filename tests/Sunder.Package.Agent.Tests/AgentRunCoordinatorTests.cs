@@ -11,6 +11,8 @@ using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Services.BehaviorLoops;
+using Sunder.Package.Agent.Skills.PackageViews;
+using Sunder.Package.Agent.Skills.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Package.Agent.Subagents.PackageViews;
@@ -1724,6 +1726,364 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task AgentProfilesViewModel_CompactLayout_UsesRowActivationAndReturnsToList()
+    {
+        using var runtime = AgentTestRuntime.Create(new ScriptedProvider((_, _) => Complete("done")));
+        var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
+        using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        await WaitUntilAsync(() => viewModel.SelectedProfile?.ProfileId == profile.ProfileId);
+
+        viewModel.IsCompactLayout = true;
+
+        Assert.Null(viewModel.SelectedProfile);
+        Assert.False(viewModel.IsEditorActive);
+        Assert.True(viewModel.ShowCompactList);
+
+        viewModel.ActivateProfile(viewModel.Profiles.Single(item => item.ProfileId == profile.ProfileId));
+
+        Assert.True(viewModel.IsEditorActive);
+        Assert.Equal(profile.ProfileId, viewModel.SelectedProfile?.ProfileId);
+        Assert.True(viewModel.ShowCompactEditor);
+
+        viewModel.BackToProfileListCommand.Execute(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.Null(viewModel.SelectedProfile);
+        Assert.True(viewModel.ShowCompactList);
+
+        viewModel.IsCompactLayout = false;
+
+        Assert.Equal(profile.ProfileId, viewModel.SelectedProfile?.ProfileId);
+        Assert.True(viewModel.ShowListPane);
+        Assert.True(viewModel.ShowEditorPane);
+    }
+
+    [Fact]
+    public async Task AgentProfilesViewModel_SaveAndDelete_CompactLayout_ReturnToListAndClearSelection()
+    {
+        using var runtime = AgentTestRuntime.Create(new ScriptedProvider((_, _) => Complete("done")));
+        var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
+        using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        await WaitUntilAsync(() => viewModel.SelectedProfile?.ProfileId == profile.ProfileId);
+        viewModel.IsCompactLayout = true;
+        viewModel.ActivateProfile(viewModel.Profiles.Single(item => item.ProfileId == profile.ProfileId));
+        await WaitUntilAsync(() => viewModel.DisplayName == "Alpha Profile" && !viewModel.IsBusy);
+        viewModel.DisplayName = "Saved Profile";
+
+        await viewModel.SaveProfileCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.Null(viewModel.SelectedProfile);
+        Assert.Empty(viewModel.StatusText);
+        Assert.False(viewModel.HasStatusText);
+        Assert.Equal("Saved Profile", runtime.ProfileService.GetProfile(profile.ProfileId)?.DisplayName);
+
+        viewModel.ActivateProfile(viewModel.Profiles.Single(item => item.ProfileId == profile.ProfileId));
+        await WaitUntilAsync(() => viewModel.SelectedProfile?.ProfileId == profile.ProfileId && !viewModel.IsBusy);
+
+        await viewModel.DeleteProfileCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.Null(viewModel.SelectedProfile);
+        Assert.Empty(viewModel.Profiles);
+        Assert.Null(runtime.ProfileService.GetProfile(profile.ProfileId));
+    }
+
+    [Fact]
+    public async Task AgentProfilesViewModel_Save_WideLayout_KeepsEditorLoadedAndAutoClearsSuccess()
+    {
+        using var runtime = AgentTestRuntime.Create(new ScriptedProvider((_, _) => Complete("done")));
+        var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
+        using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        await WaitUntilAsync(() => viewModel.SelectedProfile?.ProfileId == profile.ProfileId);
+        viewModel.Profiles.CollectionChanged += (_, args) =>
+        {
+            if (args.Action == NotifyCollectionChangedAction.Reset)
+            {
+                viewModel.SelectedProfile = null;
+            }
+        };
+        viewModel.DisplayName = "Saved Profile";
+
+        await viewModel.SaveProfileCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.Equal(profile.ProfileId, viewModel.SelectedProfile?.ProfileId);
+        Assert.Equal("Saved Profile", viewModel.DisplayName);
+        Assert.Equal("Saved Profile", runtime.ProfileService.GetProfile(profile.ProfileId)?.DisplayName);
+        Assert.Equal("Profile saved.", viewModel.StatusText);
+        Assert.True(viewModel.HasStatusText);
+        Assert.True(viewModel.IsStatusSuccess);
+        Assert.False(viewModel.IsStatusWarning);
+        Assert.False(viewModel.IsStatusError);
+
+        await WaitUntilAsync(() => !viewModel.HasStatusText, TimeSpan.FromSeconds(4));
+
+        Assert.Empty(viewModel.StatusText);
+        Assert.Equal(AgentProfileStatusKind.None, viewModel.StatusKind);
+    }
+
+    [Fact]
+    public void AgentSessionsViewModel_CompactLayout_UsesRowActivationAndReturnsToList()
+    {
+        using var runtime = AgentTestRuntime.Create(new ScriptedProvider((_, _) => Complete("done")));
+        var session = runtime.SessionService.CreateSession("Alpha Session");
+        using var viewModel = new AgentSessionsViewModel(runtime.SessionService);
+        Assert.Equal(session.SessionId, viewModel.SelectedSession?.SessionId);
+
+        viewModel.IsCompactLayout = true;
+
+        Assert.Null(viewModel.SelectedSession);
+        Assert.False(viewModel.IsEditorActive);
+        Assert.True(viewModel.ShowCompactList);
+
+        viewModel.ActivateSession(viewModel.Sessions.Single(item => item.SessionId == session.SessionId));
+
+        Assert.True(viewModel.IsEditorActive);
+        Assert.Equal(session.SessionId, viewModel.SelectedSession?.SessionId);
+        Assert.True(viewModel.ShowCompactEditor);
+
+        viewModel.BackToSessionListCommand.Execute(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.Null(viewModel.SelectedSession);
+        Assert.True(viewModel.ShowCompactList);
+
+        viewModel.IsCompactLayout = false;
+
+        Assert.Equal(session.SessionId, viewModel.SelectedSession?.SessionId);
+        Assert.True(viewModel.ShowListPane);
+        Assert.True(viewModel.ShowEditorPane);
+    }
+
+    [Fact]
+    public void AgentSessionsViewModel_SaveAndDelete_CompactLayout_ReturnToListAndClearSelection()
+    {
+        using var runtime = AgentTestRuntime.Create(new ScriptedProvider((_, _) => Complete("done")));
+        var session = runtime.SessionService.CreateSession("Alpha Session");
+        using var viewModel = new AgentSessionsViewModel(runtime.SessionService)
+        {
+            IsCompactLayout = true,
+        };
+        viewModel.ActivateSession(viewModel.Sessions.Single(item => item.SessionId == session.SessionId));
+        viewModel.Title = "Saved Session";
+
+        viewModel.SaveSessionCommand.Execute(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.Null(viewModel.SelectedSession);
+        Assert.Empty(viewModel.StatusText);
+        Assert.False(viewModel.HasStatusText);
+        Assert.Equal("Saved Session", runtime.SessionService.GetSession(session.SessionId)?.Title);
+
+        viewModel.ActivateSession(viewModel.Sessions.Single(item => item.SessionId == session.SessionId));
+
+        viewModel.DeleteSessionCommand.Execute(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.Null(viewModel.SelectedSession);
+        Assert.Empty(viewModel.Sessions);
+        Assert.Null(runtime.SessionService.GetSession(session.SessionId));
+    }
+
+    [Fact]
+    public async Task AgentSessionsViewModel_Save_WideLayout_KeepsEditorLoadedAndAutoClearsSuccess()
+    {
+        using var runtime = AgentTestRuntime.Create(new ScriptedProvider((_, _) => Complete("done")));
+        var session = runtime.SessionService.CreateSession("Alpha Session");
+        using var viewModel = new AgentSessionsViewModel(runtime.SessionService);
+        Assert.Equal(session.SessionId, viewModel.SelectedSession?.SessionId);
+        viewModel.Title = "Saved Session";
+
+        viewModel.SaveSessionCommand.Execute(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.Equal(session.SessionId, viewModel.SelectedSession?.SessionId);
+        Assert.Equal("Saved Session", viewModel.Title);
+        Assert.Equal("Saved Session", runtime.SessionService.GetSession(session.SessionId)?.Title);
+        Assert.Equal("Session saved.", viewModel.StatusText);
+        Assert.True(viewModel.HasStatusText);
+        Assert.True(viewModel.IsStatusSuccess);
+        Assert.False(viewModel.IsStatusWarning);
+        Assert.False(viewModel.IsStatusError);
+
+        await WaitUntilAsync(() => !viewModel.HasStatusText, TimeSpan.FromSeconds(4));
+
+        Assert.Empty(viewModel.StatusText);
+        Assert.Equal(AgentSessionStatusKind.None, viewModel.StatusKind);
+    }
+
+    [Fact]
+    public async Task SubagentsViewModel_CompactLayout_UsesRowActivationAndReturnsToList()
+    {
+        var rootPath = Path.Combine(Path.GetTempPath(), "sunder-subagent-list-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var runtime = AgentTestRuntime.Create(new ScriptedProvider((_, _) => Complete("done")));
+            var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
+            var subagent = service.CreateSubagent("Alpha Subagent");
+            using var viewModel = new SubagentsViewModel(service, runtime.ExtensionCatalog)
+            {
+                IsCompactLayout = true,
+            };
+            await viewModel.InitializeAsync();
+
+            Assert.Null(viewModel.SelectedSubagent);
+            Assert.False(viewModel.IsEditorActive);
+            Assert.True(viewModel.ShowCompactList);
+
+            viewModel.ActivateSubagent(viewModel.Subagents.Single(item => item.SubagentId == subagent.SubagentId));
+
+            Assert.True(viewModel.IsEditorActive);
+            Assert.Equal(subagent.SubagentId, viewModel.SelectedSubagent?.SubagentId);
+            Assert.True(viewModel.ShowCompactEditor);
+
+            viewModel.BackToSubagentListCommand.Execute(null);
+
+            Assert.False(viewModel.IsEditorActive);
+            Assert.Null(viewModel.SelectedSubagent);
+            Assert.True(viewModel.ShowCompactList);
+
+            viewModel.IsCompactLayout = false;
+
+            Assert.Equal(subagent.SubagentId, viewModel.SelectedSubagent?.SubagentId);
+            Assert.True(viewModel.ShowListPane);
+            Assert.True(viewModel.ShowEditorPane);
+        }
+        finally
+        {
+            TryDeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public async Task SubagentsViewModel_SaveAndDelete_CompactLayout_ReturnToListAndClearSelection()
+    {
+        var rootPath = Path.Combine(Path.GetTempPath(), "sunder-subagent-list-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var runtime = AgentTestRuntime.Create(new ScriptedProvider((_, _) => Complete("done")));
+            var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
+            var subagent = service.CreateSubagent("Alpha Subagent");
+            using var viewModel = new SubagentsViewModel(service, runtime.ExtensionCatalog)
+            {
+                IsCompactLayout = true,
+            };
+            await viewModel.InitializeAsync();
+            viewModel.ActivateSubagent(viewModel.Subagents.Single(item => item.SubagentId == subagent.SubagentId));
+            viewModel.Description = "Handles focused tasks.";
+
+            await viewModel.SaveSubagentCommand.ExecuteAsync(null);
+
+            Assert.False(viewModel.IsEditorActive);
+            Assert.Null(viewModel.SelectedSubagent);
+            Assert.Empty(viewModel.StatusText);
+            Assert.False(viewModel.HasStatusText);
+            Assert.Equal("Handles focused tasks.", service.GetSubagent(subagent.SubagentId)?.Description);
+
+            viewModel.ActivateSubagent(viewModel.Subagents.Single(item => item.SubagentId == subagent.SubagentId));
+
+            await viewModel.DeleteSubagentCommand.ExecuteAsync(null);
+
+            Assert.False(viewModel.IsEditorActive);
+            Assert.Null(viewModel.SelectedSubagent);
+            Assert.Empty(viewModel.Subagents);
+            Assert.Null(service.GetSubagent(subagent.SubagentId));
+        }
+        finally
+        {
+            TryDeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public async Task SubagentsViewModel_Save_WideLayout_KeepsEditorLoadedAndAutoClearsSuccess()
+    {
+        var rootPath = Path.Combine(Path.GetTempPath(), "sunder-subagent-list-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var runtime = AgentTestRuntime.Create(new ScriptedProvider((_, _) => Complete("done")));
+            var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
+            var subagent = service.CreateSubagent("Alpha Subagent");
+            using var viewModel = new SubagentsViewModel(service, runtime.ExtensionCatalog);
+            await viewModel.InitializeAsync();
+            Assert.Equal(subagent.SubagentId, viewModel.SelectedSubagent?.SubagentId);
+            viewModel.Subagents.CollectionChanged += (_, args) =>
+            {
+                if (args.Action == NotifyCollectionChangedAction.Reset)
+                {
+                    viewModel.SelectedSubagent = null;
+                }
+            };
+            viewModel.Description = "Handles focused tasks.";
+
+            await viewModel.SaveSubagentCommand.ExecuteAsync(null);
+
+            Assert.False(viewModel.IsEditorActive);
+            Assert.Equal(subagent.SubagentId, viewModel.SelectedSubagent?.SubagentId);
+            Assert.Equal("Handles focused tasks.", viewModel.Description);
+            Assert.Equal("Handles focused tasks.", service.GetSubagent(subagent.SubagentId)?.Description);
+            Assert.Equal("Subagent saved.", viewModel.StatusText);
+            Assert.True(viewModel.HasStatusText);
+            Assert.True(viewModel.IsStatusSuccess);
+            Assert.False(viewModel.IsStatusWarning);
+            Assert.False(viewModel.IsStatusError);
+
+            await WaitUntilAsync(() => !viewModel.HasStatusText, TimeSpan.FromSeconds(4));
+
+            Assert.Empty(viewModel.StatusText);
+            Assert.Equal(SubagentStatusKind.None, viewModel.StatusKind);
+        }
+        finally
+        {
+            TryDeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public async Task SubsessionsViewModel_CompactLayout_UsesRowActivationAndReturnsToList()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(new ScriptedProvider((_, _) => Complete("done")), new TestTool(toolId));
+        var parentSessionId = await runtime.CreateSessionAsync(toolId);
+        var parentSession = runtime.SessionService.GetSession(parentSessionId)!;
+        var childSession = runtime.SessionService.CreateSession(
+            "Explore current repository state",
+            parentSessionId: parentSessionId,
+            rootSessionId: parentSession.RootSessionId ?? parentSession.SessionId,
+            profileId: runtime.CurrentProfileId,
+            agentKind: "subagent");
+        using var viewModel = new SubsessionsViewModel(runtime.ExtensionCatalog)
+        {
+            IsCompactLayout = true,
+        };
+        await viewModel.InitializeAsync();
+
+        Assert.Null(viewModel.SelectedSubsession);
+        Assert.False(viewModel.IsDetailActive);
+        Assert.True(viewModel.ShowCompactList);
+
+        viewModel.ActivateSubsession(viewModel.Subsessions.Single(item => item.SessionId == childSession.SessionId));
+
+        Assert.True(viewModel.IsDetailActive);
+        Assert.Equal(childSession.SessionId, viewModel.SelectedSubsession?.SessionId);
+        Assert.True(viewModel.ShowCompactDetail);
+
+        viewModel.BackToSubsessionsListCommand.Execute(null);
+
+        Assert.False(viewModel.IsDetailActive);
+        Assert.Null(viewModel.SelectedSubsession);
+        Assert.True(viewModel.ShowCompactList);
+
+        viewModel.IsCompactLayout = false;
+
+        Assert.Equal(childSession.SessionId, viewModel.SelectedSubsession?.SessionId);
+        Assert.True(viewModel.ShowListPane);
+        Assert.True(viewModel.ShowDetailPane);
+    }
+
+    [Fact]
     public async Task AgentSessionService_DeleteSession_RemovesAttachmentFilesForSessionTree()
     {
         const string toolId = "fetch_page";
@@ -2095,6 +2455,115 @@ public sealed class AgentRunCoordinatorTests
             {
                 // Test cleanup should not hide assertion failures.
             }
+        }
+    }
+
+    [Fact]
+    public async Task AgentMcpSettingsViewModel_CompactLayout_UsesRowActivationAndReturnsToList()
+    {
+        var rootPath = Path.Combine(Path.GetTempPath(), "sunder-mcp-settings-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var serverCatalogService = new McpServerCatalogService(new TestPackageContext(rootPath));
+            await serverCatalogService.SaveServerAsync(CreateMcpServer("local-mcp", "local_mcp", "Local MCP"), new Dictionary<string, string>(), new Dictionary<string, string>());
+            await using var connectionManager = new McpClientConnectionManager(NullLoggerFactory.Instance);
+            using var viewModel = new AgentMcpSettingsViewModel(serverCatalogService, connectionManager)
+            {
+                IsCompactLayout = true,
+            };
+
+            await WaitUntilAsync(() => viewModel.Servers.Count == 1);
+
+            Assert.Null(viewModel.SelectedServer);
+            Assert.False(viewModel.IsEditorActive);
+            Assert.True(viewModel.ShowCompactList);
+
+            viewModel.ActivateServer(viewModel.Servers.Single(server => server.ServerId == "local-mcp"));
+            await WaitUntilAsync(() => viewModel.Name == "local_mcp");
+
+            Assert.True(viewModel.IsEditorActive);
+            Assert.Equal("local-mcp", viewModel.SelectedServer?.ServerId);
+            Assert.True(viewModel.ShowCompactEditor);
+
+            viewModel.BackToServerListCommand.Execute(null);
+
+            Assert.False(viewModel.IsEditorActive);
+            Assert.Null(viewModel.SelectedServer);
+            Assert.True(viewModel.ShowCompactList);
+
+            viewModel.IsCompactLayout = false;
+
+            Assert.Equal("local-mcp", viewModel.SelectedServer?.ServerId);
+            Assert.True(viewModel.ShowListPane);
+            Assert.True(viewModel.ShowEditorPane);
+        }
+        finally
+        {
+            TryDeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public async Task AgentMcpSettingsViewModel_Save_CompactLayout_ReturnsToListAndClearSelection()
+    {
+        var rootPath = Path.Combine(Path.GetTempPath(), "sunder-mcp-settings-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var serverCatalogService = new McpServerCatalogService(new TestPackageContext(rootPath));
+            await serverCatalogService.SaveServerAsync(CreateMcpServer("local-mcp", "local_mcp", "Local MCP"), new Dictionary<string, string>(), new Dictionary<string, string>());
+            await using var connectionManager = new McpClientConnectionManager(NullLoggerFactory.Instance);
+            using var viewModel = new AgentMcpSettingsViewModel(serverCatalogService, connectionManager)
+            {
+                IsCompactLayout = true,
+            };
+            await WaitUntilAsync(() => viewModel.Servers.Count == 1);
+            viewModel.ActivateServer(viewModel.Servers.Single(server => server.ServerId == "local-mcp"));
+            await WaitUntilAsync(() => viewModel.Name == "local_mcp");
+
+            await viewModel.SaveCommand.ExecuteAsync(null);
+
+            Assert.False(viewModel.IsEditorActive);
+            Assert.Null(viewModel.SelectedServer);
+            Assert.Empty(viewModel.StatusText);
+            Assert.Contains(await serverCatalogService.ListServersAsync(), server => server.ServerId == "local-mcp");
+        }
+        finally
+        {
+            TryDeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public async Task AgentMcpSettingsViewModel_Save_WideLayout_KeepsEditorLoadedAndAutoClearsSuccess()
+    {
+        var rootPath = Path.Combine(Path.GetTempPath(), "sunder-mcp-settings-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var serverCatalogService = new McpServerCatalogService(new TestPackageContext(rootPath));
+            await serverCatalogService.SaveServerAsync(CreateMcpServer("local-mcp", "local_mcp", "Local MCP"), new Dictionary<string, string>(), new Dictionary<string, string>());
+            await using var connectionManager = new McpClientConnectionManager(NullLoggerFactory.Instance);
+            using var viewModel = new AgentMcpSettingsViewModel(serverCatalogService, connectionManager);
+
+            await WaitUntilAsync(() => viewModel.SelectedServer?.ServerId == "local-mcp" && viewModel.Name == "local_mcp");
+
+            await viewModel.SaveCommand.ExecuteAsync(null);
+
+            Assert.False(viewModel.IsEditorActive);
+            Assert.Equal("local-mcp", viewModel.SelectedServer?.ServerId);
+            Assert.Equal("local_mcp", viewModel.Name);
+            Assert.Contains("Saved MCP server", viewModel.StatusText, StringComparison.Ordinal);
+            Assert.True(viewModel.IsStatusSuccess);
+            Assert.False(viewModel.IsStatusWarning);
+            Assert.False(viewModel.IsStatusError);
+
+            await WaitUntilAsync(() => string.IsNullOrWhiteSpace(viewModel.StatusText), TimeSpan.FromSeconds(4));
+
+            Assert.Empty(viewModel.StatusText);
+            Assert.Equal(McpStatusKind.None, viewModel.StatusKind);
+        }
+        finally
+        {
+            TryDeleteDirectory(rootPath);
         }
     }
 
@@ -4264,13 +4733,42 @@ public sealed class AgentRunCoordinatorTests
             .Where(item => item.Kind == AgentTurnItemKind.Text && !string.IsNullOrWhiteSpace(item.TextContent))
             .Select(item => item.TextContent!.Trim()));
 
-    private static async Task WaitUntilAsync(Func<bool> condition)
+    private static ConfiguredMcpServerRecord CreateMcpServer(string serverId, string name, string displayName)
+        => new()
+        {
+            ServerId = serverId,
+            Name = name,
+            DisplayName = displayName,
+            Description = displayName + " tools.",
+            IsEnabled = true,
+            TransportType = ConfiguredMcpTransportType.Stdio,
+            CommandParts = ["node", "server.js"],
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+        };
+
+    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan? timeout = null)
     {
-        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var timeoutCts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(2));
         while (!condition())
         {
             timeoutCts.Token.ThrowIfCancellationRequested();
             await Task.Delay(10, timeoutCts.Token);
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch
+        {
+            // Test cleanup should not hide assertion failures.
         }
     }
 

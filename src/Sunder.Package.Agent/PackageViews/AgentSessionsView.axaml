@@ -44,6 +44,39 @@
       <Setter Property="BorderThickness" Value="0,1,0,0" />
     </Style>
 
+    <Style Selector="Border.session-status-message">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Warning.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Warning}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="12" />
+      <Setter Property="Margin" Value="0,0,0,12" />
+    </Style>
+
+    <Style Selector="Border.session-status-message.success">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Success.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Success}" />
+    </Style>
+
+    <Style Selector="Border.session-status-message.error">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Danger.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Danger}" />
+    </Style>
+
+    <Style Selector="TextBlock.session-status-message">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="TextBlock.session-status-message.success">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Success}" />
+    </Style>
+
+    <Style Selector="TextBlock.session-status-message.error">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Danger}" />
+    </Style>
+
     <Style Selector="TextBlock.session-title">
       <Setter Property="FontSize" Value="26" />
       <Setter Property="FontWeight" Value="SemiBold" />
@@ -94,25 +127,15 @@
       <Setter Property="FontSize" Value="12" />
     </Style>
 
-    <Style Selector="Button.session-open-action">
-      <Setter Property="Width" Value="32" />
-      <Setter Property="MinWidth" Value="32" />
-      <Setter Property="Height" Value="36" />
+    <Style Selector="Button.session-add-action">
+      <Setter Property="Width" Value="36" />
+      <Setter Property="MinWidth" Value="36" />
+      <Setter Property="Height" Value="34" />
       <Setter Property="Padding" Value="0" />
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-      <Setter Property="FontSize" Value="24" />
-      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="FontSize" Value="22" />
+      <Setter Property="FontWeight" Value="Regular" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
-    </Style>
-
-    <Style Selector="Button.session-open-action:pointerover">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
     </Style>
 
     <Style Selector="Border.session-card">
@@ -131,15 +154,27 @@
       <Border x:Name="SessionListPane"
               Classes="session-pane session-list-pane"
               IsVisible="{Binding ShowListPane}">
-        <Grid RowDefinitions="Auto,*,Auto">
+        <Grid RowDefinitions="Auto,*">
           <Border Grid.Row="0"
                   Classes="session-pane-header">
-            <StackPanel Spacing="8">
-              <TextBlock Classes="session-title"
-                         Text="Sessions" />
-              <TextBlock Classes="session-caption"
+            <Grid ColumnDefinitions="*,Auto"
+                  RowDefinitions="Auto,Auto"
+                  ColumnSpacing="12"
+                  RowSpacing="8">
+              <TextBlock Grid.Column="0"
+                         Classes="session-title"
+                         Text="Sessions"
+                         VerticalAlignment="Center" />
+              <Button Grid.Column="1"
+                      Classes="secondary-action compact-action session-add-action"
+                      Content="+"
+                      Command="{Binding CreateSessionCommand}"
+                      ToolTip.Tip="New session" />
+              <TextBlock Grid.Row="1"
+                         Grid.ColumnSpan="2"
+                         Classes="session-caption"
                          Text="Create and manage conversations independently from workspaces." />
-            </StackPanel>
+            </Grid>
           </Border>
 
           <Border Grid.Row="1"
@@ -156,55 +191,27 @@
                          SelectedItem="{Binding SelectedSession, Mode=TwoWay}">
                   <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="vm:AgentSessionListEntryViewModel">
-                      <Grid ColumnDefinitions="*,1,Auto"
-                            ColumnSpacing="10">
-                        <Grid RowDefinitions="Auto,Auto,Auto"
-                              RowSpacing="3"
-                              MinWidth="0">
-                          <TextBlock Text="{Binding Title}"
-                                     FontWeight="SemiBold"
-                                     TextTrimming="CharacterEllipsis" />
-                           <TextBlock Grid.Row="1"
-                                      Text="{Binding StatusBadgeText}"
-                                      Classes="session-list-meta"
-                                      TextTrimming="CharacterEllipsis" />
-                           <TextBlock Grid.Row="2"
-                                      Text="{Binding UpdatedText}"
-                                      Classes="session-list-meta"
-                                      TextTrimming="CharacterEllipsis" />
-                        </Grid>
-                        <Border Grid.Column="1"
-                                Background="{DynamicResource Sunder.Brush.Border.Subtle}"
-                                Margin="2,-2,0,-2" />
-                        <Button Grid.Column="2"
-                                Classes="session-open-action"
-                                Content="›"
-                                Command="{Binding $parent[UserControl].DataContext.OpenSessionEditorCommand}"
-                                CommandParameter="{Binding}"
-                                ToolTip.Tip="Open session" />
+                      <Grid RowDefinitions="Auto,Auto,Auto"
+                            RowSpacing="3"
+                            MinWidth="0"
+                            Tapped="OnSessionItemTapped">
+                        <TextBlock Text="{Binding Title}"
+                                   FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Row="1"
+                                   Text="{Binding StatusBadgeText}"
+                                   Classes="session-list-meta"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Row="2"
+                                   Text="{Binding UpdatedText}"
+                                   Classes="session-list-meta"
+                                   TextTrimming="CharacterEllipsis" />
                       </Grid>
                     </DataTemplate>
                   </ListBox.ItemTemplate>
                 </ListBox>
               </StackPanel>
             </ScrollViewer>
-          </Border>
-
-          <Border Grid.Row="2"
-                  Classes="session-actions">
-            <Grid ColumnDefinitions="*,*"
-                  ColumnSpacing="10">
-              <Button Grid.Column="0"
-                      Classes="secondary-action danger-action"
-                      Content="Delete Session"
-                      Command="{Binding DeleteSessionCommand}"
-                      HorizontalAlignment="Stretch" />
-              <Button Grid.Column="1"
-                      Classes="primary-action"
-                      Content="New Session"
-                      Command="{Binding CreateSessionCommand}"
-                      HorizontalAlignment="Stretch" />
-            </Grid>
           </Border>
         </Grid>
       </Border>
@@ -234,7 +241,8 @@
                     <StackPanel Spacing="5">
                       <TextBlock Classes="session-field-label"
                                  Text="Title" />
-                      <TextBox Text="{Binding Title, Mode=TwoWay}"
+                      <TextBox x:Name="SessionTitleTextBox"
+                               Text="{Binding Title, Mode=TwoWay}"
                                PlaceholderText="Session title" />
                     </StackPanel>
                   </StackPanel>
@@ -257,27 +265,43 @@
                                Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
                   </StackPanel>
                 </Border>
-
-                <TextBlock Text="{Binding StatusText}"
-                           Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
-                           TextWrapping="Wrap" />
               </StackPanel>
             </Border>
           </ScrollViewer>
 
           <Border Grid.Row="2"
                   Classes="session-actions">
-            <Grid ColumnDefinitions="*,Auto,Auto"
-                  ColumnSpacing="12">
-              <Button Grid.Column="1"
-                      Classes="secondary-action compact-action"
-                      Content="Back"
-                      Command="{Binding BackToSessionListCommand}"
-                      IsVisible="{Binding IsCompactLayout}" />
-              <Button Grid.Column="2"
-                      Classes="primary-action"
-                      Content="Save Session"
-                      Command="{Binding SaveSessionCommand}" />
+            <Grid RowDefinitions="Auto,Auto">
+              <Border Grid.Row="0"
+                      Classes="session-status-message"
+                      Classes.success="{Binding IsStatusSuccess}"
+                      Classes.warning="{Binding IsStatusWarning}"
+                      Classes.error="{Binding IsStatusError}"
+                      IsVisible="{Binding HasStatusText}">
+                <TextBlock Classes="session-status-message"
+                           Classes.success="{Binding IsStatusSuccess}"
+                           Classes.warning="{Binding IsStatusWarning}"
+                           Classes.error="{Binding IsStatusError}"
+                           Text="{Binding StatusText}" />
+              </Border>
+
+              <Grid Grid.Row="1"
+                    ColumnDefinitions="Auto,*,Auto,Auto"
+                    ColumnSpacing="12">
+                <Button Grid.Column="0"
+                        Classes="secondary-action compact-action danger-action"
+                        Content="Delete Session"
+                        Command="{Binding DeleteSessionCommand}" />
+                <Button Grid.Column="2"
+                        Classes="secondary-action compact-action"
+                        Content="Back"
+                        Command="{Binding BackToSessionListCommand}"
+                        IsVisible="{Binding IsCompactLayout}" />
+                <Button Grid.Column="3"
+                        Classes="primary-action"
+                        Content="Save"
+                        Command="{Binding SaveSessionCommand}" />
+              </Grid>
             </Grid>
           </Border>
         </Grid>

@@ -1,5 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Threading;
 using Sunder.Package.Agent.Services;
 
 namespace Sunder.Package.Agent.PackageViews;
@@ -40,5 +42,27 @@ public partial class AgentSessionsView : UserControl
         Grid.SetColumn(SessionEditorPane, useCompactLayout ? 0 : 1);
         Grid.SetColumnSpan(SessionListPane, useCompactLayout ? 2 : 1);
         Grid.SetColumnSpan(SessionEditorPane, useCompactLayout ? 2 : 1);
+    }
+
+    private void OnSessionItemTapped(object? sender, TappedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is not AgentSessionListEntryViewModel session)
+        {
+            return;
+        }
+
+        var viewModel = _viewModel ?? DataContext as AgentSessionsViewModel;
+        viewModel?.ActivateSession(session);
+        if (viewModel?.IsCompactLayout == true)
+        {
+            FocusSessionTitle();
+        }
+    }
+
+    private void FocusSessionTitle()
+    {
+        Dispatcher.UIThread.Post(
+            () => SessionTitleTextBox.Focus(),
+            DispatcherPriority.Background);
     }
 }

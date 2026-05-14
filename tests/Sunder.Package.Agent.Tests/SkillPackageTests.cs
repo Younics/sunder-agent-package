@@ -2,6 +2,7 @@ using System.Text;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Skills.PackageViews;
 using Sunder.Package.Agent.Skills.Services;
 using Sunder.Sdk.Abstractions;
 using Xunit;
@@ -133,6 +134,140 @@ public sealed class SkillPackageTests
     }
 
     [Fact]
+    public void SkillSettingsViewModel_CompactLayout_UsesRowActivationAndReturnsToList()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var context = new TestPackageContext(root);
+            var store = new SkillStore(context);
+            var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
+            InstallSkill(store, "docs-skill", "Docs Skill");
+            using var viewModel = new SkillSettingsViewModel(store, importer)
+            {
+                IsCompactLayout = true,
+            };
+
+            Assert.Null(viewModel.SelectedSkill);
+            Assert.False(viewModel.IsDetailActive);
+            Assert.True(viewModel.ShowCompactList);
+
+            viewModel.ActivateSkill(viewModel.Skills.Single(skill => skill.SkillId == "docs-skill"));
+
+            Assert.True(viewModel.IsDetailActive);
+            Assert.Equal("docs-skill", viewModel.SelectedSkill?.SkillId);
+            Assert.True(viewModel.ShowCompactDetail);
+
+            viewModel.BackToSkillListCommand.Execute(null);
+
+            Assert.False(viewModel.IsDetailActive);
+            Assert.Null(viewModel.SelectedSkill);
+            Assert.True(viewModel.ShowCompactList);
+
+            viewModel.IsCompactLayout = false;
+
+            Assert.Equal("docs-skill", viewModel.SelectedSkill?.SkillId);
+            Assert.True(viewModel.ShowListPane);
+            Assert.True(viewModel.ShowDetailPane);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public void SkillSettingsViewModel_Delete_CompactLayout_ReturnsToListAndClearSelection()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var context = new TestPackageContext(root);
+            var store = new SkillStore(context);
+            var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
+            InstallSkill(store, "docs-skill", "Docs Skill");
+            using var viewModel = new SkillSettingsViewModel(store, importer)
+            {
+                IsCompactLayout = true,
+            };
+            viewModel.ActivateSkill(viewModel.Skills.Single(skill => skill.SkillId == "docs-skill"));
+
+            viewModel.DeleteSelectedSkillCommand.Execute(null);
+
+            Assert.False(viewModel.IsDetailActive);
+            Assert.Null(viewModel.SelectedSkill);
+            Assert.Empty(viewModel.StatusText);
+            Assert.Empty(viewModel.Skills);
+            Assert.Null(store.GetSkill("docs-skill"));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SkillSettingsViewModel_ImportLocalFolder_WideLayout_KeepsDetailAndAutoClearsSuccess()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var source = CreateSkillSource(root, "docs-skill", "Docs Skill");
+            var context = new TestPackageContext(Path.Combine(root, "install"));
+            var store = new SkillStore(context);
+            var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
+            using var viewModel = new SkillSettingsViewModel(store, importer);
+
+            await viewModel.ImportLocalFolderAsync(source);
+
+            Assert.True(viewModel.IsDetailActive);
+            Assert.Equal("docs-skill", viewModel.SelectedSkill?.SkillId);
+            Assert.Equal("Imported local skill folder.", viewModel.StatusText);
+            Assert.True(viewModel.IsStatusSuccess);
+            Assert.False(viewModel.IsStatusWarning);
+            Assert.False(viewModel.IsStatusError);
+
+            await WaitUntilAsync(() => string.IsNullOrWhiteSpace(viewModel.StatusText), TimeSpan.FromSeconds(4));
+
+            Assert.Empty(viewModel.StatusText);
+            Assert.Equal(SkillStatusKind.None, viewModel.StatusKind);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SkillSettingsViewModel_ImportLocalFolder_CompactLayout_ReturnsToListAndClearSelection()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var source = CreateSkillSource(root, "docs-skill", "Docs Skill");
+            var context = new TestPackageContext(Path.Combine(root, "install"));
+            var store = new SkillStore(context);
+            var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
+            using var viewModel = new SkillSettingsViewModel(store, importer)
+            {
+                IsCompactLayout = true,
+            };
+            viewModel.NewSkillCommand.Execute(null);
+
+            await viewModel.ImportLocalFolderAsync(source);
+
+            Assert.False(viewModel.IsDetailActive);
+            Assert.Null(viewModel.SelectedSkill);
+            Assert.Empty(viewModel.StatusText);
+            Assert.Contains(viewModel.Skills, skill => skill.SkillId == "docs-skill");
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task SkillResourceTool_ReadsOnlyEnabledSkillResources()
     {
         var root = CreateTempRoot();
@@ -182,6 +317,70 @@ public sealed class SkillPackageTests
         var root = Path.Combine(Path.GetTempPath(), "sunder-skill-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         return root;
+    }
+
+    private static string CreateSkillSource(string root, string skillId, string displayName)
+    {
+        var source = Path.Combine(root, "source", skillId);
+        Directory.CreateDirectory(source);
+        File.WriteAllText(Path.Combine(source, "SKILL.md"), $$"""
+            ---
+            name: {{skillId}}
+            description: {{displayName}} resources.
+            ---
+            # {{displayName}}
+            """);
+        return source;
+    }
+
+    private static InstalledSkillRecord InstallSkill(SkillStore store, string skillId, string displayName)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var record = new InstalledSkillRecord(
+            skillId,
+            $"skills/{skillId}",
+            displayName,
+            displayName + " resources.",
+            "1.0.0",
+            "Sunder",
+            "local",
+            null,
+            null,
+            null,
+            "test-content",
+            now,
+            now,
+            new Dictionary<string, string>(),
+            []);
+        Directory.CreateDirectory(store.GetSkillRootPath(record));
+        File.WriteAllText(Path.Combine(store.GetSkillRootPath(record), "SKILL.md"), $"# {displayName}");
+        store.SaveSkill(record);
+        return record;
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan? timeout = null)
+    {
+        using var timeoutCts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(2));
+        while (!condition())
+        {
+            timeoutCts.Token.ThrowIfCancellationRequested();
+            await Task.Delay(10, timeoutCts.Token);
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch
+        {
+            // Test cleanup should not hide assertion failures.
+        }
     }
 
     private static IReadOnlyDictionary<string, string> DocsSkillFiles()

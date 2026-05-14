@@ -962,7 +962,50 @@ public sealed class WorkspaceTests
         Assert.False(viewModel.SaveWorkspaceCommand.CanExecute(null));
         Assert.Contains(viewModel.Workspaces, workspace => workspace.WorkspaceId == savedWorkspaceId
                                                         && workspace.DisplayName == "Saved Docker Workspace");
+        Assert.Empty(viewModel.StatusText);
+        Assert.False(viewModel.HasStatusText);
+    }
+
+    [Fact]
+    public async Task AgentWorkspacesViewModel_SaveWorkspace_WideLayout_KeepsEditorLoadedAndAutoClearsSuccess()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var catalog = new TestExtensionCatalog();
+        var target = new CountingExecutionTarget("docker");
+        var contributor = new CountingWorkspaceEditorContributor("docker");
+        catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target);
+        catalog.AddExtension(PackageExtensionPoints.WorkspaceEditorContributors, contributor);
+        var workspaceService = new AgentWorkspaceService(store);
+        var executionTargetService = new AgentExecutionTargetService(catalog);
+        using var viewModel = new AgentWorkspacesViewModel(workspaceService, executionTargetService, catalog);
+
+        viewModel.CreateWorkspaceCommand.Execute(null);
+        viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase));
+        await WaitUntilAsync(() => viewModel.EditorSections.Count == 1);
+        var getSectionsCallCount = contributor.GetSectionsCallCount;
+        var savedWorkspaceId = viewModel.SelectedWorkspace!.WorkspaceId;
+        viewModel.DisplayName = "Saved Docker Workspace";
+
+        await viewModel.SaveWorkspaceCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.Equal(savedWorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+        Assert.Equal("Saved Docker Workspace", viewModel.DisplayName);
+        Assert.Single(viewModel.EditorSections);
+        Assert.Equal(getSectionsCallCount, contributor.GetSectionsCallCount);
+        Assert.Equal(1, contributor.SaveSectionCallCount);
+        Assert.Equal("docker", viewModel.SelectedExecutionTarget?.TargetId);
         Assert.Equal("Workspace saved.", viewModel.StatusText);
+        Assert.True(viewModel.HasStatusText);
+        Assert.True(viewModel.IsStatusSuccess);
+        Assert.False(viewModel.IsStatusWarning);
+        Assert.False(viewModel.IsStatusError);
+
+        await WaitUntilAsync(() => !viewModel.HasStatusText, TimeSpan.FromSeconds(4));
+
+        Assert.Empty(viewModel.StatusText);
+        Assert.Equal(AgentWorkspaceStatusKind.None, viewModel.StatusKind);
     }
 
     [Fact]
@@ -2090,9 +2133,9 @@ public sealed class WorkspaceTests
         return columns;
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition)
+    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan? timeout = null)
     {
-        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var timeoutCts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(2));
         while (!condition())
         {
             timeoutCts.Token.ThrowIfCancellationRequested();
