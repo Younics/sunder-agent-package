@@ -155,7 +155,7 @@
               <TextBlock Grid.Row="1"
                          Grid.ColumnSpan="2"
                          Classes="skill-caption"
-                         Text="Install skill folders, then enable them per Agent Profile." />
+                         Text="Install skill folders, then enable them per Agent." />
             </Grid>
           </Border>
 

@@ -72,9 +72,6 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
     [ObservableProperty]
     private string _detailUpdatedText = string.Empty;
 
-    [ObservableProperty]
-    private string _detailProfileText = string.Empty;
-
     public bool HasStatusText => !string.IsNullOrWhiteSpace(StatusText);
 
     public bool IsStatusSuccess => StatusKind == AgentSessionStatusKind.Success;
@@ -288,7 +285,7 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
             LoadSession(SelectedSession);
         }
 
-        SetSessionListStatus();
+        ClearStatus();
     }
 
     private void RemoveSession(Guid sessionId)
@@ -321,7 +318,7 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
         OnPropertyChanged(nameof(HasNoSessions));
 
         LoadSession(SelectedSession);
-        SetSessionListStatus();
+        ClearStatus();
     }
 
     private int FindSortedSessionTargetIndex(AgentSessionRecord session)
@@ -384,7 +381,7 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
         }
 
         LoadSession(SelectedSession);
-        SetSessionListStatus();
+        ClearStatus();
     }
 
     private void ReconcileSessions(IReadOnlyList<AgentSessionRecord> sessions)
@@ -438,9 +435,6 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
         DetailStateText = session?.StatusText ?? "No session selected.";
         DetailCreatedText = session is null ? string.Empty : $"Created: {FormatTimestamp(session.Session.CreatedAtUtc)}";
         DetailUpdatedText = session is null ? string.Empty : $"Updated: {FormatTimestamp(session.Session.UpdatedAtUtc)}";
-        DetailProfileText = string.IsNullOrWhiteSpace(session?.Session.ProfileId)
-            ? "No profile bound yet."
-            : session.Session.ProfileId!;
     }
 
     private void RunOnUiThread(Action action)
@@ -471,17 +465,6 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
 
     private void ClearStatus()
         => SetStatus(string.Empty, AgentSessionStatusKind.None);
-
-    private void SetSessionListStatus()
-    {
-        if (Sessions.Count == 0)
-        {
-            SetStatus("No sessions yet.", AgentSessionStatusKind.Warning);
-            return;
-        }
-
-        ClearStatus();
-    }
 
     private void SetStatus(string message, AgentSessionStatusKind kind, bool autoClear = false)
     {

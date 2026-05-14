@@ -50,7 +50,10 @@ public sealed class OpenAiAgentProvider(
         [AgentAuthMode.ApiKey, AgentAuthMode.CodexConnected],
         SupportsStreaming: true,
         SupportsInterruptibleRuns: true
-    );
+    )
+    {
+        PackageId = packageContext.PackageId
+    };
 
     public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
     {

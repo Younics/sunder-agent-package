@@ -156,7 +156,7 @@
               <TextBlock Grid.Row="1"
                          Grid.ColumnSpan="2"
                          Classes="mcp-caption"
-                         Text="Configure shared Model Context Protocol servers once, then enable them per agent profile." />
+                         Text="Configure shared Model Context Protocol servers once, then enable them per agent." />
             </Grid>
           </Border>
 

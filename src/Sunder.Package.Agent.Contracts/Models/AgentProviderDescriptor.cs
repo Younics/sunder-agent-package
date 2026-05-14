@@ -5,4 +5,7 @@ public sealed record AgentProviderDescriptor(
     string DisplayName,
     IReadOnlyList<AgentAuthMode> SupportedAuthModes,
     bool SupportsStreaming,
-    bool SupportsInterruptibleRuns);
+    bool SupportsInterruptibleRuns)
+{
+    public string? PackageId { get; init; }
+}

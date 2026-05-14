@@ -21,7 +21,9 @@ public sealed partial class PackageModule : ISunderPackageModule
         services.AddSingleton<AgentSessionService>();
         services.AddSingleton<AgentAttachmentService>();
         services.AddSingleton<AgentRunAttachmentStore>();
-        services.AddSingleton<IAgentAttachmentContentStore>(provider => provider.GetRequiredService<AgentAttachmentService>());
+        services.AddSingleton<IAgentAttachmentContentStore>(provider =>
+            provider.GetRequiredService<AgentAttachmentService>()
+        );
         services.AddSingleton<AgentRuntimeCatalog>();
         services.AddSingleton<AgentChatSelectionStateService>();
         services.AddSingleton<InstalledPackageToolSource>();
@@ -42,36 +44,68 @@ public sealed partial class PackageModule : ISunderPackageModule
         services.AddSingleton<AgentPermissionResumeCoordinator>();
         services.AddSingleton<AgentUserMessageRunCoordinator>();
         services.AddSingleton<AgentRunCoordinator>();
-        services.AddSingleton<IAgentChildRunExecutor>(provider => provider.GetRequiredService<AgentRunCoordinator>());
+        services.AddSingleton<IAgentChildRunExecutor>(provider =>
+            provider.GetRequiredService<AgentRunCoordinator>()
+        );
     }
 
-    public void RegisterContributions(IPackageContributionRegistry registry, IServiceProvider services)
+    public void RegisterContributions(
+        IPackageContributionRegistry registry,
+        IServiceProvider services
+    )
     {
-        registry.RegisterExtension(PackageExtensionPoints.RuntimeCatalogs, services.GetRequiredService<AgentRuntimeCatalog>());
-        registry.RegisterExtension(PackageExtensionPoints.ChildRunExecutors, services.GetRequiredService<AgentRunCoordinator>());
-        registry.RegisterExtension(PackageExtensionPoints.AttachmentContentStores, services.GetRequiredService<AgentAttachmentService>());
-        registry.RegisterExtension(PackageExtensionPoints.SessionDataCleaners, services.GetRequiredService<AgentAttachmentService>());
-        registry.RegisterExtension(PackageExtensionPoints.BehaviorLoops, services.GetRequiredService<DefaultAgentBehaviorLoop>());
-        registry.RegisterPackageView<AgentChatView>(new PackageViewRegistration(
-            "sunder.package.agent.chat",
-            "Agent Chat",
-            "Assets/chat-icon.png",
-            defaultPlacement: PackageViewPlacement.Middle));
-        registry.RegisterPackageView<AgentSessionsView>(new PackageViewRegistration(
-            "sunder.package.agent.sessions",
-            "Sessions",
-            "Assets/session-icon.png",
-            defaultPlacement: PackageViewPlacement.LeftTop));
-        registry.RegisterPackageView<AgentProfilesView>(new PackageViewRegistration(
-            "sunder.package.agent.profiles",
-            "Agent Profiles",
-            "Assets/profile-icon.png",
-            defaultPlacement: PackageViewPlacement.RightTop));
-        registry.RegisterPackageView<AgentWorkspacesView>(new PackageViewRegistration(
-            "sunder.package.agent.workspaces",
-            "Workspaces",
-            "Assets/workspace-icon.png",
-            defaultPlacement: PackageViewPlacement.RightTop));
+        registry.RegisterExtension(
+            PackageExtensionPoints.RuntimeCatalogs,
+            services.GetRequiredService<AgentRuntimeCatalog>()
+        );
+        registry.RegisterExtension(
+            PackageExtensionPoints.ChildRunExecutors,
+            services.GetRequiredService<AgentRunCoordinator>()
+        );
+        registry.RegisterExtension(
+            PackageExtensionPoints.AttachmentContentStores,
+            services.GetRequiredService<AgentAttachmentService>()
+        );
+        registry.RegisterExtension(
+            PackageExtensionPoints.SessionDataCleaners,
+            services.GetRequiredService<AgentAttachmentService>()
+        );
+        registry.RegisterExtension(
+            PackageExtensionPoints.BehaviorLoops,
+            services.GetRequiredService<DefaultAgentBehaviorLoop>()
+        );
+        registry.RegisterPackageView<AgentChatView>(
+            new PackageViewRegistration(
+                "sunder.package.agent.chat",
+                "Agent Chat",
+                "Assets/chat-icon.png",
+                defaultPlacement: PackageViewPlacement.Middle
+            )
+        );
+        registry.RegisterPackageView<AgentSessionsView>(
+            new PackageViewRegistration(
+                "sunder.package.agent.sessions",
+                "Sessions",
+                "Assets/session-icon.png",
+                defaultPlacement: PackageViewPlacement.LeftTop
+            )
+        );
+        registry.RegisterPackageView<AgentProfilesView>(
+            new PackageViewRegistration(
+                "sunder.package.agent.profiles",
+                "Agents",
+                "Assets/profile-icon.png",
+                defaultPlacement: PackageViewPlacement.RightTop
+            )
+        );
+        registry.RegisterPackageView<AgentWorkspacesView>(
+            new PackageViewRegistration(
+                "sunder.package.agent.workspaces",
+                "Workspaces",
+                "Assets/workspace-icon.png",
+                defaultPlacement: PackageViewPlacement.RightTop
+            )
+        );
         registry.RegisterSettingsView<AgentPermissionsView>();
     }
 }

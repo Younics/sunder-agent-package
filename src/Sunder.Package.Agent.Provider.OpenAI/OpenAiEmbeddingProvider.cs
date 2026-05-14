@@ -8,7 +8,8 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
 public sealed class OpenAiEmbeddingProvider(
-    ApiKeyAuthStrategy apiKeyAuthStrategy) : IAgentEmbeddingProvider
+    ApiKeyAuthStrategy apiKeyAuthStrategy,
+    IPackageContext packageContext) : IAgentEmbeddingProvider
 {
     private static readonly IReadOnlyList<AgentEmbeddingModelDescriptor> Models =
     [
@@ -19,7 +20,10 @@ public sealed class OpenAiEmbeddingProvider(
     public AgentEmbeddingProviderDescriptor Descriptor { get; } = new(
         "openai",
         "OpenAI",
-        [AgentAuthMode.ApiKey]);
+        [AgentAuthMode.ApiKey])
+    {
+        PackageId = packageContext.PackageId
+    };
 
     public ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
     {

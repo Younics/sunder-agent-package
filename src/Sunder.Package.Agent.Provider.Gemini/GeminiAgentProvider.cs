@@ -20,7 +20,10 @@ public sealed class GeminiAgentProvider(IPackageContext packageContext) : IAgent
         [AgentAuthMode.ApiKey],
         SupportsStreaming: true,
         SupportsInterruptibleRuns: true
-    );
+    )
+    {
+        PackageId = packageContext.PackageId
+    };
 
     public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
     {

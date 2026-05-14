@@ -103,6 +103,10 @@
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
+    <Style Selector="TextBlock.profile-field-help.warning-text">
+      <Setter Property="Foreground" Value="#B8925E" />
+    </Style>
+
     <Style Selector="ListBox.profile-list">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
       <Setter Property="BorderThickness" Value="0" />
@@ -147,6 +151,47 @@
       <Setter Property="Padding" Value="16" />
     </Style>
 
+    <Style Selector="Border.profile-editor-empty-state">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="12" />
+    </Style>
+
+    <Style Selector="Button.profile-field-icon-action">
+      <Setter Property="Width" Value="32" />
+      <Setter Property="MinWidth" Value="32" />
+      <Setter Property="Height" Value="30" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+      <Setter Property="FontSize" Value="17" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Button.profile-field-icon-action:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    </Style>
+
+    <Style Selector="Button.warning-action">
+      <Setter Property="Background" Value="#2B251C" />
+      <Setter Property="BorderBrush" Value="#6F5735" />
+      <Setter Property="Foreground" Value="#B8925E" />
+    </Style>
+
+    <Style Selector="Button.warning-action:pointerover">
+      <Setter Property="Background" Value="#32291E" />
+      <Setter Property="BorderBrush" Value="#80643D" />
+      <Setter Property="Foreground" Value="#C09A64" />
+    </Style>
+
     <Style Selector="TextBox.profile-instructions">
       <Setter Property="MinHeight" Value="140" />
       <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
@@ -169,7 +214,7 @@
                   RowSpacing="8">
               <TextBlock Grid.Column="0"
                          Classes="profile-title"
-                         Text="Agent Profiles"
+                         Text="Agents"
                          VerticalAlignment="Center" />
               <Button Grid.Column="1"
                       Classes="secondary-action compact-action profile-add-action"
@@ -284,15 +329,27 @@
 
                 <Border Classes="profile-card">
                   <StackPanel Spacing="14">
-                    <StackPanel Spacing="4">
+                    <Grid ColumnDefinitions="*,Auto"
+                          ColumnSpacing="12">
                       <TextBlock Text="Chat Model"
                                  FontWeight="SemiBold"
-                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                      <TextBlock Classes="profile-caption"
-                                 Text="Select the provider, model, and optional reasoning mode used for chat completions." />
-                    </StackPanel>
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}"
+                                 VerticalAlignment="Center" />
+                      <Button Grid.Column="1"
+                              Classes="profile-field-icon-action"
+                              Content="↻"
+                              Command="{Binding ReloadProfileProvidersCommand}"
+                              ToolTip.Tip="Reload providers" />
+                    </Grid>
 
-                    <StackPanel Spacing="5">
+                    <Border Classes="profile-editor-empty-state"
+                            IsVisible="{Binding HasNoChatProviders}">
+                      <TextBlock Classes="profile-field-help"
+                                 Text="No chat providers are installed. Install a chat provider package to choose a chat model." />
+                    </Border>
+
+                    <StackPanel Spacing="5"
+                                IsVisible="{Binding ShowChatProviderPicker}">
                       <TextBlock Classes="profile-field-label"
                                  Text="Chat provider" />
                       <ComboBox ItemsSource="{Binding ChatProviders}"
@@ -304,11 +361,26 @@
                           </DataTemplate>
                         </ComboBox.ItemTemplate>
                       </ComboBox>
-                      <TextBlock Classes="profile-field-help"
-                                 Text="{Binding ChatProviderStatusText}" />
                     </StackPanel>
 
-                    <StackPanel Spacing="5">
+                    <Border Classes="profile-editor-empty-state"
+                            IsVisible="{Binding ShowChatProviderWarning}">
+                      <Grid ColumnDefinitions="*,Auto"
+                            ColumnSpacing="12">
+                        <TextBlock Classes="profile-field-help warning-text"
+                                   Text="{Binding ChatProviderWarningText}"
+                                   VerticalAlignment="Top" />
+                        <Button Grid.Column="1"
+                                Classes="secondary-action compact-action warning-action"
+                                Content="Settings"
+                                Command="{Binding OpenSelectedChatProviderSettingsCommand}"
+                                IsVisible="{Binding CanOpenChatProviderSettings}"
+                                VerticalAlignment="Top" />
+                      </Grid>
+                    </Border>
+
+                    <StackPanel Spacing="5"
+                                IsVisible="{Binding ShowChatModelSelection}">
                       <TextBlock Classes="profile-field-label"
                                  Text="Chat model" />
                       <ComboBox ItemsSource="{Binding ChatModels}"
@@ -323,7 +395,7 @@
                     </StackPanel>
 
                     <StackPanel Spacing="5"
-                                IsVisible="{Binding HasReasoningOptions}">
+                                IsVisible="{Binding ShowReasoningOptions}">
                       <TextBlock Classes="profile-field-label"
                                  Text="Reasoning" />
                       <ComboBox ItemsSource="{Binding ReasoningOptions}"
@@ -340,24 +412,34 @@
                           </DataTemplate>
                         </ComboBox.ItemTemplate>
                       </ComboBox>
-                      <TextBlock Classes="profile-field-help"
-                                 Text="Default preserves the provider's normal reasoning behavior." />
                     </StackPanel>
                   </StackPanel>
                 </Border>
 
                 <Border Classes="profile-card"
-                        IsVisible="{Binding CanConfigureEmbeddings}">
+                        IsVisible="{Binding ShowEmbeddingsSection}">
                   <StackPanel Spacing="14">
-                    <StackPanel Spacing="4">
+                    <Grid ColumnDefinitions="*,Auto"
+                          ColumnSpacing="12">
                       <TextBlock Text="Embeddings"
                                  FontWeight="SemiBold"
-                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                      <TextBlock Classes="profile-caption"
-                                 Text="Optional provider/model for embedding-based package features." />
-                    </StackPanel>
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}"
+                                 VerticalAlignment="Center" />
+                      <Button Grid.Column="1"
+                              Classes="profile-field-icon-action"
+                              Content="↻"
+                              Command="{Binding ReloadProfileProvidersCommand}"
+                              ToolTip.Tip="Reload providers" />
+                    </Grid>
 
-                    <StackPanel Spacing="5">
+                    <Border Classes="profile-editor-empty-state"
+                            IsVisible="{Binding ShowEmbeddingProviderEmptyState}">
+                      <TextBlock Classes="profile-field-help"
+                                 Text="No embedding providers are installed. Install an embedding provider package to enable embedding-based features." />
+                    </Border>
+
+                    <StackPanel Spacing="5"
+                                IsVisible="{Binding ShowEmbeddingProviderPicker}">
                       <TextBlock Classes="profile-field-label"
                                  Text="Embedding provider" />
                       <ComboBox ItemsSource="{Binding EmbeddingProviders}"
@@ -369,11 +451,26 @@
                           </DataTemplate>
                         </ComboBox.ItemTemplate>
                       </ComboBox>
-                      <TextBlock Classes="profile-field-help"
-                                 Text="{Binding EmbeddingProviderStatusText}" />
                     </StackPanel>
 
-                    <StackPanel Spacing="5">
+                    <Border Classes="profile-editor-empty-state"
+                            IsVisible="{Binding ShowEmbeddingProviderWarning}">
+                      <Grid ColumnDefinitions="*,Auto"
+                            ColumnSpacing="12">
+                        <TextBlock Classes="profile-field-help warning-text"
+                                   Text="{Binding EmbeddingProviderWarningText}"
+                                   VerticalAlignment="Top" />
+                        <Button Grid.Column="1"
+                                Classes="secondary-action compact-action warning-action"
+                                Content="Settings"
+                                Command="{Binding OpenSelectedEmbeddingProviderSettingsCommand}"
+                                IsVisible="{Binding CanOpenEmbeddingProviderSettings}"
+                                VerticalAlignment="Top" />
+                      </Grid>
+                    </Border>
+
+                    <StackPanel Spacing="5"
+                                IsVisible="{Binding ShowEmbeddingModelSelection}">
                       <TextBlock Classes="profile-field-label"
                                  Text="Embedding model" />
                       <ComboBox ItemsSource="{Binding EmbeddingModels}"

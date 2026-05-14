@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Services;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -12,6 +13,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     private static readonly TimeSpan SuccessStatusDisplayDuration = TimeSpan.FromSeconds(3);
 
     private readonly AgentProfileService _profileService;
+    private readonly IPackageSettingsNavigationService? _settingsNavigationService;
     private CancellationTokenSource? _successStatusClearCancellation;
     private bool _suppressSelectionHandlers;
     private bool _disposed;
@@ -20,11 +22,16 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     private int _embeddingLoadVersion;
     private int _busyOperationCount;
     private string? _loadedCapabilityProfileId;
-    private IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> _preservedSelectableCapabilityAssignments = [];
+    private IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> _preservedSelectableCapabilityAssignments =
+    [];
 
-    public AgentProfilesViewModel(AgentProfileService profileService)
+    public AgentProfilesViewModel(
+        AgentProfileService profileService,
+        IPackageSettingsNavigationService? settingsNavigationService = null
+    )
     {
         _profileService = profileService;
+        _settingsNavigationService = settingsNavigationService;
         _profileService.SelectableCapabilitiesChanged += OnSelectableCapabilitiesChanged;
         _ = InitializeAsync();
     }
@@ -49,7 +56,8 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     public ObservableCollection<ProfileCapabilityGroupViewModel> LocalToolGroups { get; } = [];
 
-    public ObservableCollection<ProfileCapabilityGroupViewModel> PackageCapabilityGroups { get; } = [];
+    public ObservableCollection<ProfileCapabilityGroupViewModel> PackageCapabilityGroups { get; } =
+        [];
 
     public ObservableCollection<ProfileCapabilityGroupViewModel> CapabilityGroups { get; } = [];
 
@@ -110,6 +118,21 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     private string _embeddingProviderStatusText = "Embeddings are disabled.";
 
     [ObservableProperty]
+    private bool _hasChatProviders;
+
+    [ObservableProperty]
+    private bool _hasChatProviderWarning;
+
+    [ObservableProperty]
+    private string _chatProviderWarningText = string.Empty;
+
+    [ObservableProperty]
+    private bool _hasEmbeddingProviderWarning;
+
+    [ObservableProperty]
+    private string _embeddingProviderWarningText = string.Empty;
+
+    [ObservableProperty]
     private bool _hasEmbeddingProviders;
 
     [ObservableProperty]
@@ -138,11 +161,49 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     private string _toolSelectionSummary = "No local tools are enabled for this profile.";
 
     [ObservableProperty]
-    private string _packageCapabilitySelectionSummary = "No package capabilities are enabled for this profile.";
+    private string _packageCapabilitySelectionSummary =
+        "No package capabilities are enabled for this profile.";
 
     public bool CanConfigureEmbeddings => HasEmbeddingProviders && HasEmbeddingConsumers;
 
-    public bool CanSelectEmbeddingModel => CanConfigureEmbeddings && SelectedEmbeddingProvider?.Id is not null && EmbeddingModels.Count > 0;
+    public bool CanSelectEmbeddingModel =>
+        CanConfigureEmbeddings
+        && !HasEmbeddingProviderWarning
+        && SelectedEmbeddingProvider?.Id is not null
+        && EmbeddingModels.Count > 0;
+
+    public bool HasNoChatProviders => !HasChatProviders;
+
+    public bool HasNoEmbeddingProviders => !HasEmbeddingProviders;
+
+    public bool ShowEmbeddingsSection => HasEmbeddingConsumers;
+
+    public bool ShowChatProviderPicker => HasChatProviders;
+
+    public bool ShowChatProviderWarning => HasChatProviderWarning;
+
+    public bool ShowChatModelSelection =>
+        HasChatProviders && !HasChatProviderWarning && SelectedChatProvider?.Id is not null;
+
+    public bool ShowReasoningOptions => ShowChatModelSelection && HasReasoningOptions;
+
+    public bool ShowEmbeddingProviderPicker => CanConfigureEmbeddings;
+
+    public bool ShowEmbeddingProviderEmptyState => HasEmbeddingConsumers && !HasEmbeddingProviders;
+
+    public bool ShowEmbeddingProviderWarning => HasEmbeddingProviderWarning;
+
+    public bool ShowEmbeddingModelSelection => CanSelectEmbeddingModel;
+
+    public bool CanOpenChatProviderSettings =>
+        ShowChatProviderWarning
+        && _settingsNavigationService is not null
+        && !string.IsNullOrWhiteSpace(SelectedChatProvider?.PackageId);
+
+    public bool CanOpenEmbeddingProviderSettings =>
+        ShowEmbeddingProviderWarning
+        && _settingsNavigationService is not null
+        && !string.IsNullOrWhiteSpace(SelectedEmbeddingProvider?.PackageId);
 
     public bool HasToolCallingConfiguration => HasLocalTools || HasPackageCapabilities;
 
@@ -175,23 +236,38 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         SaveProfileCommand.NotifyCanExecuteChanged();
     }
 
+    partial void OnHasChatProvidersChanged(bool value) => NotifyChatProviderStateChanged();
+
+    partial void OnHasChatProviderWarningChanged(bool value) => NotifyChatProviderStateChanged();
+
+    partial void OnHasEmbeddingProviderWarningChanged(bool value) =>
+        NotifyEmbeddingProviderStateChanged();
+
     partial void OnHasEmbeddingProvidersChanged(bool value)
     {
         OnPropertyChanged(nameof(CanConfigureEmbeddings));
         OnPropertyChanged(nameof(CanSelectEmbeddingModel));
+        OnPropertyChanged(nameof(HasNoEmbeddingProviders));
+        OnPropertyChanged(nameof(ShowEmbeddingProviderPicker));
+        OnPropertyChanged(nameof(ShowEmbeddingProviderEmptyState));
+        OnPropertyChanged(nameof(ShowEmbeddingModelSelection));
     }
 
     partial void OnHasEmbeddingConsumersChanged(bool value)
     {
         OnPropertyChanged(nameof(CanConfigureEmbeddings));
         OnPropertyChanged(nameof(CanSelectEmbeddingModel));
+        OnPropertyChanged(nameof(ShowEmbeddingsSection));
+        OnPropertyChanged(nameof(ShowEmbeddingProviderPicker));
+        OnPropertyChanged(nameof(ShowEmbeddingProviderEmptyState));
+        OnPropertyChanged(nameof(ShowEmbeddingModelSelection));
     }
 
-    partial void OnHasLocalToolsChanged(bool value)
-        => OnPropertyChanged(nameof(HasToolCallingConfiguration));
+    partial void OnHasLocalToolsChanged(bool value) =>
+        OnPropertyChanged(nameof(HasToolCallingConfiguration));
 
-    partial void OnHasPackageCapabilitiesChanged(bool value)
-        => OnPropertyChanged(nameof(HasToolCallingConfiguration));
+    partial void OnHasPackageCapabilitiesChanged(bool value) =>
+        OnPropertyChanged(nameof(HasToolCallingConfiguration));
 
     partial void OnSelectedProfileChanged(AgentProfileRecord? value)
     {
@@ -240,6 +316,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     partial void OnSelectedChatProviderChanged(ProviderOption? value)
     {
+        NotifyChatProviderStateChanged();
         if (_suppressSelectionHandlers || SelectedProfile is null)
         {
             return;
@@ -251,6 +328,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     partial void OnSelectedChatModelChanged(ModelOption? value)
     {
+        OnPropertyChanged(nameof(ShowReasoningOptions));
         if (_suppressSelectionHandlers || SelectedProfile is null)
         {
             return;
@@ -261,13 +339,21 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     partial void OnSelectedEmbeddingProviderChanged(ProviderOption? value)
     {
+        NotifyEmbeddingProviderStateChanged();
         if (_suppressSelectionHandlers || SelectedProfile is null)
         {
             return;
         }
 
-        var embeddingBinding = FindModelBinding(SelectedProfile, AgentModelCapabilityKinds.Embedding);
-        _ = RefreshEmbeddingProviderSelectionAsync(value?.Id, embeddingBinding?.ModelId, ++_embeddingLoadVersion);
+        var embeddingBinding = FindModelBinding(
+            SelectedProfile,
+            AgentModelCapabilityKinds.Embedding
+        );
+        _ = RefreshEmbeddingProviderSelectionAsync(
+            value?.Id,
+            embeddingBinding?.ModelId,
+            ++_embeddingLoadVersion
+        );
     }
 
     [RelayCommand]
@@ -276,7 +362,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         BeginBusy();
         try
         {
-            var created = await _profileService.CreateProfileAsync("New Agent Profile");
+            var created = await _profileService.CreateProfileAsync("New Agent");
             await ReloadProfilesAsync(created.ProfileId);
             IsEditorActive = true;
             ClearStatus();
@@ -316,7 +402,8 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
                 behaviorLoopId: SelectedBehaviorLoop?.LoopId ?? string.Empty,
                 behaviorLoopSourceId: SelectedBehaviorLoop?.SourceId ?? string.Empty,
                 behaviorLoopSettingsJson: SelectedProfile.BehaviorLoopSettingsJson ?? string.Empty,
-                chatModelSettingsJson: BuildChatModelSettingsJson() ?? string.Empty);
+                chatModelSettingsJson: BuildChatModelSettingsJson() ?? string.Empty
+            );
 
             var shouldClearSelection = IsCompactLayout;
             await ReloadProfilesAsync(profileId);
@@ -364,7 +451,11 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             }
             else
             {
-                SetStatus($"Deleted profile '{deletedName}'.", AgentProfileStatusKind.Success, autoClear: true);
+                SetStatus(
+                    $"Deleted profile '{deletedName}'.",
+                    AgentProfileStatusKind.Success,
+                    autoClear: true
+                );
             }
 
             IsEditorActive = false;
@@ -393,6 +484,44 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     }
 
     [RelayCommand]
+    private async Task ReloadProfileProvidersAsync()
+    {
+        if (SelectedProfile is null)
+        {
+            return;
+        }
+
+        BeginBusy();
+        try
+        {
+            await RefreshProviderSectionsAsync(
+                SelectedChatProvider?.Id,
+                SelectedChatModel?.Id,
+                SelectedReasoningOption?.VariantId,
+                SelectedEmbeddingProvider?.Id,
+                SelectedEmbeddingModel?.Id
+            );
+            ClearStatus();
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message, AgentProfileStatusKind.Error);
+        }
+        finally
+        {
+            EndBusy();
+        }
+    }
+
+    [RelayCommand]
+    private async Task OpenSelectedChatProviderSettingsAsync() =>
+        await OpenProviderSettingsAsync(SelectedChatProvider?.PackageId);
+
+    [RelayCommand]
+    private async Task OpenSelectedEmbeddingProviderSettingsAsync() =>
+        await OpenProviderSettingsAsync(SelectedEmbeddingProvider?.PackageId);
+
+    [RelayCommand]
     private void OpenProfileEditor(AgentProfileRecord? profile)
     {
         if (profile is null)
@@ -405,7 +534,13 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     public void ActivateProfile(AgentProfileRecord profile)
     {
-        if (!string.Equals(SelectedProfile?.ProfileId, profile.ProfileId, StringComparison.OrdinalIgnoreCase))
+        if (
+            !string.Equals(
+                SelectedProfile?.ProfileId,
+                profile.ProfileId,
+                StringComparison.OrdinalIgnoreCase
+            )
+        )
         {
             SelectedProfile = profile;
         }
@@ -431,11 +566,14 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
                     Profiles.Add(profile);
                 }
 
-                var selectedProfile = Profiles.FirstOrDefault(profile => profile.ProfileId == selectProfileId);
+                var selectedProfile = Profiles.FirstOrDefault(profile =>
+                    profile.ProfileId == selectProfileId
+                );
                 if (selectedProfile is null && (!IsCompactLayout || selectProfileId is not null))
                 {
-                    selectedProfile = Profiles.FirstOrDefault(profile => profile.ProfileId == currentProfileId)
-                                      ?? Profiles.FirstOrDefault();
+                    selectedProfile =
+                        Profiles.FirstOrDefault(profile => profile.ProfileId == currentProfileId)
+                        ?? Profiles.FirstOrDefault();
                 }
 
                 SelectedProfile = selectedProfile;
@@ -490,34 +628,21 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             var chatBinding = FindModelBinding(profile, AgentModelCapabilityKinds.Chat);
             var embeddingBinding = FindModelBinding(profile, AgentModelCapabilityKinds.Embedding);
 
-            var chatProviders = _profileService.ListChatProviders()
-                .Select(provider => new ProviderOption(provider.Descriptor.ProviderId, provider.Descriptor.DisplayName))
-                .ToArray();
-            var embeddingProviders = _profileService.ListEmbeddingProviders()
-                .Select(provider => new ProviderOption(provider.Descriptor.ProviderId, provider.Descriptor.DisplayName))
-                .ToArray();
-            var hasEmbeddingConsumers = _profileService.HasProfileCapabilityConsumers(AgentModelCapabilityKinds.Embedding);
-            var chatModelsTask = _profileService.ListChatModelsAsync(chatBinding?.ProviderId);
-            var chatReadinessTask = _profileService.GetChatProviderReadinessAsync(chatBinding?.ProviderId);
-            var embeddingModelsTask = _profileService.ListEmbeddingModelsAsync(embeddingBinding?.ProviderId);
-            var embeddingReadinessTask = _profileService.GetEmbeddingProviderReadinessAsync(embeddingBinding?.ProviderId);
             var localToolsTask = _profileService.ListInstalledLocalToolsAsync();
-            var packageCapabilitiesTask = _profileService.ListSelectableProfileCapabilitiesAsync(profile);
-            var behaviorLoops = _profileService.ListBehaviorLoops()
+            var packageCapabilitiesTask = _profileService.ListSelectableProfileCapabilitiesAsync(
+                profile
+            );
+            var behaviorLoops = _profileService
+                .ListBehaviorLoops()
                 .Select(loop => new BehaviorLoopOption(
                     loop.Descriptor.LoopId,
                     loop.Descriptor.SourceId,
                     loop.Descriptor.DisplayName,
-                    loop.Descriptor.Description))
+                    loop.Descriptor.Description
+                ))
                 .ToArray();
 
-            await Task.WhenAll(
-                chatModelsTask,
-                chatReadinessTask,
-                embeddingModelsTask,
-                embeddingReadinessTask,
-                localToolsTask,
-                packageCapabilitiesTask);
+            await Task.WhenAll(localToolsTask, packageCapabilitiesTask);
 
             if (!IsCurrentProfileLoad(version, profile.ProfileId))
             {
@@ -526,18 +651,19 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
             _chatLoadVersion++;
             _embeddingLoadVersion++;
-            HasEmbeddingConsumers = hasEmbeddingConsumers;
-
-            ApplyChatProviderSelection(chatProviders, chatBinding?.ProviderId, await chatModelsTask, chatBinding?.ModelId);
-            ApplyReasoningOptions(
-                SelectedChatModel?.Variants,
-                AgentChatModelSettingsJson.Parse(chatBinding?.SettingsJson).ReasoningVariantId);
-            ApplyEmbeddingProviderSelection(embeddingProviders, embeddingBinding?.ProviderId, await embeddingModelsTask, embeddingBinding?.ModelId);
-            ApplyBehaviorLoopSelection(behaviorLoops, profile.BehaviorLoopId, profile.BehaviorLoopSourceId);
+            await RefreshProviderSectionsAsync(
+                chatBinding?.ProviderId,
+                chatBinding?.ModelId,
+                AgentChatModelSettingsJson.Parse(chatBinding?.SettingsJson).ReasoningVariantId,
+                embeddingBinding?.ProviderId,
+                embeddingBinding?.ModelId
+            );
+            ApplyBehaviorLoopSelection(
+                behaviorLoops,
+                profile.BehaviorLoopId,
+                profile.BehaviorLoopSourceId
+            );
             ApplyCapabilityOptions(profile, await localToolsTask, await packageCapabilitiesTask);
-
-            ChatProviderStatusText = FormatChatProviderStatus(await chatReadinessTask, $"Editing profile '{profile.DisplayName}'. ");
-            EmbeddingProviderStatusText = FormatEmbeddingProviderStatus(await embeddingReadinessTask, embeddingBinding?.ProviderId);
         }
         catch (Exception ex)
         {
@@ -552,8 +678,8 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         }
     }
 
-    private void OnSelectableCapabilitiesChanged()
-        => RunOnUiThread(() => _ = RefreshSelectedProfileCapabilitiesAsync());
+    private void OnSelectableCapabilitiesChanged() =>
+        RunOnUiThread(() => _ = RefreshSelectedProfileCapabilitiesAsync());
 
     private async Task RefreshSelectedProfileCapabilitiesAsync()
     {
@@ -568,7 +694,9 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         try
         {
             var localToolsTask = _profileService.ListInstalledLocalToolsAsync();
-            var packageCapabilitiesTask = _profileService.ListSelectableProfileCapabilitiesAsync(profile);
+            var packageCapabilitiesTask = _profileService.ListSelectableProfileCapabilitiesAsync(
+                profile
+            );
             await Task.WhenAll(localToolsTask, packageCapabilitiesTask);
             if (!IsCurrentProfileLoad(version, profile.ProfileId))
             {
@@ -590,7 +718,93 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         }
     }
 
-    private async Task RefreshChatProviderSelectionAsync(string? providerId, string? selectedModelId, int version)
+    private async Task RefreshProviderSectionsAsync(
+        string? selectedChatProviderId,
+        string? selectedChatModelId,
+        string? selectedReasoningVariantId,
+        string? selectedEmbeddingProviderId,
+        string? selectedEmbeddingModelId
+    )
+    {
+        var chatProviders = _profileService
+            .ListChatProviders()
+            .Select(provider => new ProviderOption(
+                provider.Descriptor.ProviderId,
+                provider.Descriptor.DisplayName,
+                provider.Descriptor.PackageId
+            ))
+            .ToArray();
+        var embeddingProviders = _profileService
+            .ListEmbeddingProviders()
+            .Select(provider => new ProviderOption(
+                provider.Descriptor.ProviderId,
+                provider.Descriptor.DisplayName,
+                provider.Descriptor.PackageId
+            ))
+            .ToArray();
+        var hasEmbeddingConsumers = _profileService.HasProfileCapabilityConsumers(
+            AgentModelCapabilityKinds.Embedding
+        );
+        var effectiveChatProviderId = ResolveProviderId(
+            chatProviders,
+            selectedChatProviderId,
+            selectFirstProvider: true
+        );
+        var effectiveEmbeddingProviderId = ResolveProviderId(
+            embeddingProviders,
+            selectedEmbeddingProviderId,
+            selectFirstProvider: false
+        );
+
+        var chatModelsTask = _profileService.ListChatModelsAsync(effectiveChatProviderId);
+        var chatReadinessTask = _profileService.GetChatProviderReadinessAsync(
+            effectiveChatProviderId
+        );
+        var embeddingModelsTask = _profileService.ListEmbeddingModelsAsync(
+            effectiveEmbeddingProviderId
+        );
+        var embeddingReadinessTask = _profileService.GetEmbeddingProviderReadinessAsync(
+            effectiveEmbeddingProviderId
+        );
+
+        await Task.WhenAll(
+            chatModelsTask,
+            chatReadinessTask,
+            embeddingModelsTask,
+            embeddingReadinessTask
+        );
+
+        HasEmbeddingConsumers = hasEmbeddingConsumers;
+        ApplyChatProviderSelection(
+            chatProviders,
+            effectiveChatProviderId,
+            await chatModelsTask,
+            selectedChatModelId
+        );
+        ApplyReasoningOptions(SelectedChatModel?.Variants, selectedReasoningVariantId);
+        var chatReadiness = await chatReadinessTask;
+        ApplyChatProviderReadiness(chatReadiness);
+        ChatProviderStatusText = FormatChatProviderStatus(chatReadiness);
+
+        ApplyEmbeddingProviderSelection(
+            embeddingProviders,
+            effectiveEmbeddingProviderId,
+            await embeddingModelsTask,
+            selectedEmbeddingModelId
+        );
+        var embeddingReadiness = await embeddingReadinessTask;
+        ApplyEmbeddingProviderReadiness(embeddingReadiness, effectiveEmbeddingProviderId);
+        EmbeddingProviderStatusText = FormatEmbeddingProviderStatus(
+            embeddingReadiness,
+            effectiveEmbeddingProviderId
+        );
+    }
+
+    private async Task RefreshChatProviderSelectionAsync(
+        string? providerId,
+        string? selectedModelId,
+        int version
+    )
     {
         ChatModels.Clear();
         SelectedChatModel = null;
@@ -599,6 +813,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         if (string.IsNullOrWhiteSpace(providerId))
         {
             ChatProviderStatusText = "No chat provider selected.";
+            ApplyChatProviderReadiness(null);
             return;
         }
 
@@ -618,7 +833,9 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
             ApplyChatModels(await modelsTask, selectedModelId);
             ApplyReasoningOptions(SelectedChatModel?.Variants, selectedVariantId: null);
-            ChatProviderStatusText = FormatChatProviderStatus(await readinessTask);
+            var readiness = await readinessTask;
+            ApplyChatProviderReadiness(readiness);
+            ChatProviderStatusText = FormatChatProviderStatus(readiness);
         }
         catch (Exception ex)
         {
@@ -627,6 +844,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
                 ChatModels.Clear();
                 SelectedChatModel = null;
                 ChatProviderStatusText = $"Chat provider status: Failed - {ex.Message}";
+                SetChatProviderWarning($"Chat provider status could not be loaded: {ex.Message}");
             }
         }
         finally
@@ -635,7 +853,11 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         }
     }
 
-    private async Task RefreshEmbeddingProviderSelectionAsync(string? providerId, string? selectedModelId, int version)
+    private async Task RefreshEmbeddingProviderSelectionAsync(
+        string? providerId,
+        string? selectedModelId,
+        int version
+    )
     {
         EmbeddingModels.Clear();
         SelectedEmbeddingModel = null;
@@ -644,18 +866,21 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         if (!HasEmbeddingConsumers)
         {
             EmbeddingProviderStatusText = "No installed profile feature consumes embeddings.";
+            ApplyEmbeddingProviderReadiness(null, providerId);
             return;
         }
 
         if (!HasEmbeddingProviders)
         {
             EmbeddingProviderStatusText = "No embedding providers are installed.";
+            ApplyEmbeddingProviderReadiness(null, providerId);
             return;
         }
 
         if (string.IsNullOrWhiteSpace(providerId))
         {
             EmbeddingProviderStatusText = "Embeddings are disabled.";
+            ApplyEmbeddingProviderReadiness(null, providerId);
             return;
         }
 
@@ -674,7 +899,9 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             }
 
             ApplyEmbeddingModels(await modelsTask, selectedModelId);
-            EmbeddingProviderStatusText = FormatEmbeddingProviderStatus(await readinessTask, providerId);
+            var readiness = await readinessTask;
+            ApplyEmbeddingProviderReadiness(readiness, providerId);
+            EmbeddingProviderStatusText = FormatEmbeddingProviderStatus(readiness, providerId);
         }
         catch (Exception ex)
         {
@@ -683,6 +910,9 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
                 EmbeddingModels.Clear();
                 SelectedEmbeddingModel = null;
                 EmbeddingProviderStatusText = $"Embedding provider status: Failed - {ex.Message}";
+                SetEmbeddingProviderWarning(
+                    $"Embedding provider status could not be loaded: {ex.Message}"
+                );
                 OnPropertyChanged(nameof(CanSelectEmbeddingModel));
             }
         }
@@ -718,20 +948,25 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         SelectedBehaviorLoop = null;
         ChatProviderStatusText = "No chat provider selected.";
         EmbeddingProviderStatusText = "Embeddings are disabled.";
+        HasChatProviders = false;
+        ClearChatProviderWarning();
         HasEmbeddingProviders = false;
+        ClearEmbeddingProviderWarning();
         HasEmbeddingConsumers = false;
         HasLocalTools = false;
         HasPackageCapabilities = false;
         ToolSelectionSummary = "No local tools are enabled for this profile.";
         PackageCapabilitySelectionSummary = "No package capabilities are enabled for this profile.";
         OnPropertyChanged(nameof(HasReasoningOptions));
+        OnPropertyChanged(nameof(ShowReasoningOptions));
         OnPropertyChanged(nameof(CanSelectEmbeddingModel));
     }
 
     private void ApplyBehaviorLoopSelection(
         IReadOnlyList<BehaviorLoopOption> availableLoops,
         string? selectedLoopId,
-        string? selectedSourceId)
+        string? selectedSourceId
+    )
     {
         BehaviorLoops.Clear();
         foreach (var loop in availableLoops)
@@ -739,50 +974,96 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             BehaviorLoops.Add(loop);
         }
 
-        SetSelectionSilently(() =>
-            SelectedBehaviorLoop = BehaviorLoops.FirstOrDefault(option => IsBehaviorLoopMatch(option, selectedLoopId, selectedSourceId))
-                                   ?? BehaviorLoops.FirstOrDefault(option => string.Equals(option.LoopId, "default", StringComparison.OrdinalIgnoreCase))
-                                   ?? BehaviorLoops.FirstOrDefault());
+        SetSelectionSilently(
+            () =>
+                SelectedBehaviorLoop =
+                    BehaviorLoops.FirstOrDefault(option =>
+                        IsBehaviorLoopMatch(option, selectedLoopId, selectedSourceId)
+                    )
+                    ?? BehaviorLoops.FirstOrDefault(option =>
+                        string.Equals(option.LoopId, "default", StringComparison.OrdinalIgnoreCase)
+                    )
+                    ?? BehaviorLoops.FirstOrDefault()
+        );
     }
 
-    private static bool IsBehaviorLoopMatch(BehaviorLoopOption option, string? loopId, string? sourceId)
-        => !string.IsNullOrWhiteSpace(loopId)
-           && string.Equals(option.LoopId, loopId, StringComparison.OrdinalIgnoreCase)
-           && (string.IsNullOrWhiteSpace(sourceId)
-               || string.Equals(option.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
+    private static bool IsBehaviorLoopMatch(
+        BehaviorLoopOption option,
+        string? loopId,
+        string? sourceId
+    ) =>
+        !string.IsNullOrWhiteSpace(loopId)
+        && string.Equals(option.LoopId, loopId, StringComparison.OrdinalIgnoreCase)
+        && (
+            string.IsNullOrWhiteSpace(sourceId)
+            || string.Equals(option.SourceId, sourceId, StringComparison.OrdinalIgnoreCase)
+        );
 
     private void ApplyChatProviderSelection(
         IReadOnlyList<ProviderOption> availableProviders,
         string? selectedProviderId,
         IReadOnlyList<AgentModelDescriptor> availableModels,
-        string? selectedModelId)
+        string? selectedModelId
+    )
     {
+        HasChatProviders = availableProviders.Count > 0;
         ChatProviders.Clear();
         foreach (var provider in availableProviders)
         {
             ChatProviders.Add(provider);
         }
 
-        SetSelectionSilently(() =>
-            SelectedChatProvider = ChatProviders.FirstOrDefault(option => option.Id == selectedProviderId) ?? ChatProviders.FirstOrDefault());
+        if (!HasChatProviders)
+        {
+            SetSelectionSilently(() => SelectedChatProvider = null);
+            ApplyChatModels([], selectedModelId: null);
+            ClearChatProviderWarning();
+            ChatProviderStatusText = "No chat providers are installed.";
+            NotifyChatProviderStateChanged();
+            return;
+        }
+
+        SetSelectionSilently(
+            () =>
+                SelectedChatProvider =
+                    ChatProviders.FirstOrDefault(option => option.Id == selectedProviderId)
+                    ?? ChatProviders.FirstOrDefault()
+        );
         ApplyChatModels(availableModels, selectedModelId);
+        NotifyChatProviderStateChanged();
     }
 
-    private void ApplyChatModels(IReadOnlyList<AgentModelDescriptor> availableModels, string? selectedModelId)
+    private void ApplyChatModels(
+        IReadOnlyList<AgentModelDescriptor> availableModels,
+        string? selectedModelId
+    )
     {
         ChatModels.Clear();
-        foreach (var model in availableModels.Select(model => new ModelOption(model.ModelId, model.DisplayName, model.Variants)))
+        foreach (
+            var model in availableModels.Select(model => new ModelOption(
+                model.ModelId,
+                model.DisplayName,
+                model.Variants
+            ))
+        )
         {
             ChatModels.Add(model);
         }
 
-        SetSelectionSilently(() =>
-            SelectedChatModel = ChatModels.FirstOrDefault(option => option.Id == selectedModelId) ?? ChatModels.FirstOrDefault());
+        SetSelectionSilently(
+            () =>
+                SelectedChatModel =
+                    ChatModels.FirstOrDefault(option => option.Id == selectedModelId)
+                    ?? ChatModels.FirstOrDefault()
+        );
+        OnPropertyChanged(nameof(ShowChatModelSelection));
+        OnPropertyChanged(nameof(ShowReasoningOptions));
     }
 
     private void ApplyReasoningOptions(
         IReadOnlyList<AgentModelVariantDescriptor>? variants,
-        string? selectedVariantId)
+        string? selectedVariantId
+    )
     {
         ReasoningOptions.Clear();
         SetSelectionSilently(() => SelectedReasoningOption = null);
@@ -790,28 +1071,52 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         if (variants is null || variants.Count == 0)
         {
             OnPropertyChanged(nameof(HasReasoningOptions));
+            OnPropertyChanged(nameof(ShowReasoningOptions));
             return;
         }
 
-        ReasoningOptions.Add(new ModelReasoningOption(null, "Default", "Use the provider default reasoning behavior."));
-        foreach (var variant in variants.Where(variant => !string.IsNullOrWhiteSpace(variant.VariantId)))
+        ReasoningOptions.Add(
+            new ModelReasoningOption(
+                null,
+                "Default",
+                "Use the provider default reasoning behavior."
+            )
+        );
+        foreach (
+            var variant in variants.Where(variant => !string.IsNullOrWhiteSpace(variant.VariantId))
+        )
         {
-            ReasoningOptions.Add(new ModelReasoningOption(variant.VariantId, variant.DisplayName, variant.Description));
+            ReasoningOptions.Add(
+                new ModelReasoningOption(
+                    variant.VariantId,
+                    variant.DisplayName,
+                    variant.Description
+                )
+            );
         }
 
-        SetSelectionSilently(() =>
-            SelectedReasoningOption = ReasoningOptions.FirstOrDefault(option =>
-                                          !string.IsNullOrWhiteSpace(selectedVariantId)
-                                          && string.Equals(option.VariantId, selectedVariantId, StringComparison.OrdinalIgnoreCase))
-                                      ?? ReasoningOptions.FirstOrDefault());
+        SetSelectionSilently(
+            () =>
+                SelectedReasoningOption =
+                    ReasoningOptions.FirstOrDefault(option =>
+                        !string.IsNullOrWhiteSpace(selectedVariantId)
+                        && string.Equals(
+                            option.VariantId,
+                            selectedVariantId,
+                            StringComparison.OrdinalIgnoreCase
+                        )
+                    ) ?? ReasoningOptions.FirstOrDefault()
+        );
         OnPropertyChanged(nameof(HasReasoningOptions));
+        OnPropertyChanged(nameof(ShowReasoningOptions));
     }
 
     private void ApplyEmbeddingProviderSelection(
         IReadOnlyList<ProviderOption> availableProviders,
         string? selectedProviderId,
         IReadOnlyList<AgentEmbeddingModelDescriptor> availableModels,
-        string? selectedModelId)
+        string? selectedModelId
+    )
     {
         HasEmbeddingProviders = availableProviders.Count > 0;
 
@@ -826,14 +1131,18 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         if (!HasEmbeddingConsumers)
         {
             EmbeddingProviderStatusText = "No installed profile feature consumes embeddings.";
+            ClearEmbeddingProviderWarning();
             OnPropertyChanged(nameof(CanSelectEmbeddingModel));
+            OnPropertyChanged(nameof(ShowEmbeddingModelSelection));
             return;
         }
 
         if (!HasEmbeddingProviders)
         {
             EmbeddingProviderStatusText = "No embedding providers are installed.";
+            ClearEmbeddingProviderWarning();
             OnPropertyChanged(nameof(CanSelectEmbeddingModel));
+            OnPropertyChanged(nameof(ShowEmbeddingModelSelection));
             return;
         }
 
@@ -843,32 +1152,57 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             EmbeddingProviders.Add(provider);
         }
 
-        SetSelectionSilently(() =>
-            SelectedEmbeddingProvider = EmbeddingProviders.FirstOrDefault(option => option.Id == selectedProviderId) ?? EmbeddingProviders.FirstOrDefault());
+        SetSelectionSilently(
+            () =>
+                SelectedEmbeddingProvider =
+                    EmbeddingProviders.FirstOrDefault(option => option.Id == selectedProviderId)
+                    ?? EmbeddingProviders.FirstOrDefault()
+        );
         ApplyEmbeddingModels(availableModels, selectedModelId);
+        NotifyEmbeddingProviderStateChanged();
     }
 
-    private void ApplyEmbeddingModels(IReadOnlyList<AgentEmbeddingModelDescriptor> availableModels, string? selectedModelId)
+    private void ApplyEmbeddingModels(
+        IReadOnlyList<AgentEmbeddingModelDescriptor> availableModels,
+        string? selectedModelId
+    )
     {
         EmbeddingModels.Clear();
-        foreach (var model in availableModels.Select(model => new ModelOption(model.ModelId, model.DisplayName)))
+        foreach (
+            var model in availableModels.Select(model => new ModelOption(
+                model.ModelId,
+                model.DisplayName
+            ))
+        )
         {
             EmbeddingModels.Add(model);
         }
 
-        SetSelectionSilently(() =>
-            SelectedEmbeddingModel = EmbeddingModels.FirstOrDefault(option => option.Id == selectedModelId) ?? EmbeddingModels.FirstOrDefault());
+        SetSelectionSilently(
+            () =>
+                SelectedEmbeddingModel =
+                    EmbeddingModels.FirstOrDefault(option => option.Id == selectedModelId)
+                    ?? EmbeddingModels.FirstOrDefault()
+        );
         OnPropertyChanged(nameof(CanSelectEmbeddingModel));
+        OnPropertyChanged(nameof(ShowEmbeddingModelSelection));
     }
 
     private void ApplyCapabilityOptions(
         AgentProfileRecord profile,
         IReadOnlyList<AgentToolCatalogEntry> installedLocalTools,
-        IReadOnlyList<AgentProfileSelectableCapabilityDescriptor> packageCapabilities)
+        IReadOnlyList<AgentProfileSelectableCapabilityDescriptor> packageCapabilities
+    )
     {
         var assignments = GetEffectiveSelectableCapabilityAssignments(profile);
         var enabledToolAssignments = assignments
-            .Where(assignment => string.Equals(assignment.Kind, AgentProfileSelectableCapabilityKinds.Tool, StringComparison.OrdinalIgnoreCase))
+            .Where(assignment =>
+                string.Equals(
+                    assignment.Kind,
+                    AgentProfileSelectableCapabilityKinds.Tool,
+                    StringComparison.OrdinalIgnoreCase
+                )
+            )
             .ToArray();
         var localToolOptions = installedLocalTools
             .Select(item =>
@@ -886,7 +1220,8 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
                     group.Key,
                     group.Title,
                     group.Description,
-                    group.SortOrder);
+                    group.SortOrder
+                );
             })
             .ToArray();
         ReconcileCapabilityOptions(LocalTools, localToolOptions);
@@ -903,12 +1238,19 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
                     capability.DisplayName,
                     capability.Description,
                     capability.StatusText ?? string.Empty,
-                    capability.IsSelectable && IsCapabilityEnabled(assignments, capability.Kind, capability.CapabilityId, capability.SourceId),
+                    capability.IsSelectable
+                        && IsCapabilityEnabled(
+                            assignments,
+                            capability.Kind,
+                            capability.CapabilityId,
+                            capability.SourceId
+                        ),
                     capability.IsSelectable,
                     group.Key,
                     group.Title,
                     group.Description,
-                    group.SortOrder);
+                    group.SortOrder
+                );
             })
             .ToArray();
         ReconcileCapabilityOptions(PackageCapabilities, packageCapabilityOptions);
@@ -925,17 +1267,33 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         RefreshCapabilitySummaries();
     }
 
-    private IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> GetEffectiveSelectableCapabilityAssignments(AgentProfileRecord profile)
+    private IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> GetEffectiveSelectableCapabilityAssignments(
+        AgentProfileRecord profile
+    )
     {
-        var assignments = new List<AgentProfileSelectableCapabilityAssignmentRecord>(GetSelectableCapabilityAssignments(profile));
+        var assignments = new List<AgentProfileSelectableCapabilityAssignmentRecord>(
+            GetSelectableCapabilityAssignments(profile)
+        );
         if (string.Equals(_loadedCapabilityProfileId, profile.ProfileId, StringComparison.Ordinal))
         {
-            assignments.AddRange(LocalTools
-                .Where(tool => tool.IsEnabled && tool.CanSelect)
-                .Select(tool => new AgentProfileSelectableCapabilityAssignmentRecord(tool.Kind, tool.CapabilityId, tool.SourceId)));
-            assignments.AddRange(PackageCapabilities
-                .Where(capability => capability.IsEnabled && capability.CanSelect)
-                .Select(capability => new AgentProfileSelectableCapabilityAssignmentRecord(capability.Kind, capability.CapabilityId, capability.SourceId)));
+            assignments.AddRange(
+                LocalTools
+                    .Where(tool => tool.IsEnabled && tool.CanSelect)
+                    .Select(tool => new AgentProfileSelectableCapabilityAssignmentRecord(
+                        tool.Kind,
+                        tool.CapabilityId,
+                        tool.SourceId
+                    ))
+            );
+            assignments.AddRange(
+                PackageCapabilities
+                    .Where(capability => capability.IsEnabled && capability.CanSelect)
+                    .Select(capability => new AgentProfileSelectableCapabilityAssignmentRecord(
+                        capability.Kind,
+                        capability.CapabilityId,
+                        capability.SourceId
+                    ))
+            );
         }
 
         return assignments.Distinct().ToArray();
@@ -943,10 +1301,16 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     private void ReconcileCapabilityOptions(
         ObservableCollection<ProfileCapabilityOptionViewModel> target,
-        IEnumerable<ProfileCapabilityOptionViewModel> desiredItems)
+        IEnumerable<ProfileCapabilityOptionViewModel> desiredItems
+    )
     {
         target.Clear();
-        foreach (var item in desiredItems.OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase))
+        foreach (
+            var item in desiredItems.OrderBy(
+                item => item.DisplayName,
+                StringComparer.OrdinalIgnoreCase
+            )
+        )
         {
             item.SelectionChanged += OnCapabilitySelectionChanged;
             target.Add(item);
@@ -955,18 +1319,24 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     private static void ReconcileCapabilityGroups(
         ObservableCollection<ProfileCapabilityGroupViewModel> target,
-        IEnumerable<ProfileCapabilityOptionViewModel> options)
+        IEnumerable<ProfileCapabilityOptionViewModel> options
+    )
     {
         target.Clear();
-        foreach (var group in options
-                     .GroupBy(option => option.GroupKey, StringComparer.OrdinalIgnoreCase)
-                     .Select(group => new ProfileCapabilityGroupViewModel(
-                         group.First().GroupTitle,
-                         group.First().GroupDescription,
-                         group.First().GroupSortOrder,
-                         group.OrderBy(option => option.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray()))
-                     .OrderBy(group => group.SortOrder)
-                     .ThenBy(group => group.Title, StringComparer.OrdinalIgnoreCase))
+        foreach (
+            var group in options
+                .GroupBy(option => option.GroupKey, StringComparer.OrdinalIgnoreCase)
+                .Select(group => new ProfileCapabilityGroupViewModel(
+                    group.First().GroupTitle,
+                    group.First().GroupDescription,
+                    group.First().GroupSortOrder,
+                    group
+                        .OrderBy(option => option.DisplayName, StringComparer.OrdinalIgnoreCase)
+                        .ToArray()
+                ))
+                .OrderBy(group => group.SortOrder)
+                .ThenBy(group => group.Title, StringComparer.OrdinalIgnoreCase)
+        )
         {
             target.Add(group);
         }
@@ -979,16 +1349,25 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             descriptor.SourceDisplayName,
             HumanizeIdentifier(descriptor.SelectionGroupId),
             HumanizeIdentifier(descriptor.SourceId),
-            "Tools")!;
+            "Tools"
+        )!;
         var key = FirstNonEmpty(
             descriptor.SelectionGroupId,
             descriptor.SourceId,
             descriptor.SourceKind,
-            title)!;
-        return new CapabilityGroupInfo("tool:" + key, title, descriptor.SelectionGroupDescription, 10);
+            title
+        )!;
+        return new CapabilityGroupInfo(
+            "tool:" + key,
+            title,
+            descriptor.SelectionGroupDescription,
+            10
+        );
     }
 
-    private static CapabilityGroupInfo ResolvePackageCapabilityGroup(AgentProfileSelectableCapabilityDescriptor capability)
+    private static CapabilityGroupInfo ResolvePackageCapabilityGroup(
+        AgentProfileSelectableCapabilityDescriptor capability
+    )
     {
         var title = FirstNonEmpty(
             capability.GroupDisplayName,
@@ -996,21 +1375,19 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             HumanizeIdentifier(capability.GroupId),
             HumanizeIdentifier(capability.SourceId),
             HumanizeIdentifier(capability.Kind),
-            "Package Capabilities")!;
-        var key = FirstNonEmpty(
-            capability.GroupId,
-            capability.SourceId,
-            capability.Kind,
-            title)!;
+            "Package Capabilities"
+        )!;
+        var key = FirstNonEmpty(capability.GroupId, capability.SourceId, capability.Kind, title)!;
         return new CapabilityGroupInfo(
             "package:" + key,
             title,
             capability.GroupDescription,
-            capability.GroupSortOrder);
+            capability.GroupSortOrder
+        );
     }
 
-    private static string? FirstNonEmpty(params string?[] values)
-        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();
+    private static string? FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();
 
     private static string? HumanizeIdentifier(string? value)
     {
@@ -1019,49 +1396,98 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             return null;
         }
 
-        return string.Join(" ", value.Split(['-', '_', '.'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(part => string.IsNullOrEmpty(part) ? part : char.ToUpperInvariant(part[0]) + part[1..]));
+        return string.Join(
+            " ",
+            value
+                .Split(
+                    ['-', '_', '.'],
+                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries
+                )
+                .Select(part =>
+                    string.IsNullOrEmpty(part) ? part : char.ToUpperInvariant(part[0]) + part[1..]
+                )
+        );
     }
 
-    private static bool IsToolEnabled(IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> enabledToolAssignments, AgentToolDescriptor descriptor)
-        => enabledToolAssignments.Any(assignment => IsToolAssignmentMatch(assignment.CapabilityId, descriptor)
-                                                    && IsSourceAssignmentMatch(assignment.SourceId, descriptor));
+    private static bool IsToolEnabled(
+        IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> enabledToolAssignments,
+        AgentToolDescriptor descriptor
+    ) =>
+        enabledToolAssignments.Any(assignment =>
+            IsToolAssignmentMatch(assignment.CapabilityId, descriptor)
+            && IsSourceAssignmentMatch(assignment.SourceId, descriptor)
+        );
 
     private static bool IsCapabilityEnabled(
         IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> assignments,
         string kind,
         string capabilityId,
-        string? sourceId)
-        => assignments.Any(assignment => string.Equals(assignment.Kind, kind, StringComparison.OrdinalIgnoreCase)
-                                         && string.Equals(assignment.CapabilityId, capabilityId, StringComparison.OrdinalIgnoreCase)
-                                         && IsSelectableSourceAssignmentMatch(assignment.SourceId, sourceId));
+        string? sourceId
+    ) =>
+        assignments.Any(assignment =>
+            string.Equals(assignment.Kind, kind, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(
+                assignment.CapabilityId,
+                capabilityId,
+                StringComparison.OrdinalIgnoreCase
+            )
+            && IsSelectableSourceAssignmentMatch(assignment.SourceId, sourceId)
+        );
 
-    private bool IsRenderedCapabilityAssignment(AgentProfileSelectableCapabilityAssignmentRecord assignment)
-        => LocalTools.Any(item => IsCapabilityAssignmentMatch(assignment, item))
-           || PackageCapabilities.Any(item => IsCapabilityAssignmentMatch(assignment, item));
+    private bool IsRenderedCapabilityAssignment(
+        AgentProfileSelectableCapabilityAssignmentRecord assignment
+    ) =>
+        LocalTools.Any(item => IsCapabilityAssignmentMatch(assignment, item))
+        || PackageCapabilities.Any(item => IsCapabilityAssignmentMatch(assignment, item));
 
     private static bool IsCapabilityAssignmentMatch(
         AgentProfileSelectableCapabilityAssignmentRecord assignment,
-        ProfileCapabilityOptionViewModel item)
-        => string.Equals(assignment.Kind, item.Kind, StringComparison.OrdinalIgnoreCase)
-           && string.Equals(assignment.CapabilityId, item.CapabilityId, StringComparison.OrdinalIgnoreCase)
-           && (string.IsNullOrWhiteSpace(assignment.SourceId)
-               || IsSelectableSourceAssignmentMatch(assignment.SourceId, item.SourceId));
+        ProfileCapabilityOptionViewModel item
+    ) =>
+        string.Equals(assignment.Kind, item.Kind, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(
+            assignment.CapabilityId,
+            item.CapabilityId,
+            StringComparison.OrdinalIgnoreCase
+        )
+        && (
+            string.IsNullOrWhiteSpace(assignment.SourceId)
+            || IsSelectableSourceAssignmentMatch(assignment.SourceId, item.SourceId)
+        );
 
-    private static bool IsToolAssignmentMatch(string assignmentToolId, AgentToolDescriptor descriptor)
-        => string.Equals(assignmentToolId, descriptor.ToolId, StringComparison.OrdinalIgnoreCase)
-           || (descriptor.Aliases?.Any(alias => string.Equals(assignmentToolId, alias, StringComparison.OrdinalIgnoreCase)) ?? false);
+    private static bool IsToolAssignmentMatch(
+        string assignmentToolId,
+        AgentToolDescriptor descriptor
+    ) =>
+        string.Equals(assignmentToolId, descriptor.ToolId, StringComparison.OrdinalIgnoreCase)
+        || (
+            descriptor.Aliases?.Any(alias =>
+                string.Equals(assignmentToolId, alias, StringComparison.OrdinalIgnoreCase)
+            ) ?? false
+        );
 
-    private static bool IsSourceAssignmentMatch(string? assignmentSourceId, AgentToolDescriptor descriptor)
-        => string.IsNullOrWhiteSpace(assignmentSourceId)
-           || (!string.IsNullOrWhiteSpace(descriptor.SourceId)
-               && string.Equals(assignmentSourceId, descriptor.SourceId, StringComparison.OrdinalIgnoreCase));
+    private static bool IsSourceAssignmentMatch(
+        string? assignmentSourceId,
+        AgentToolDescriptor descriptor
+    ) =>
+        string.IsNullOrWhiteSpace(assignmentSourceId)
+        || (
+            !string.IsNullOrWhiteSpace(descriptor.SourceId)
+            && string.Equals(
+                assignmentSourceId,
+                descriptor.SourceId,
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
 
-    private static bool IsSelectableSourceAssignmentMatch(string? assignmentSourceId, string? sourceId)
-        => string.IsNullOrWhiteSpace(assignmentSourceId)
+    private static bool IsSelectableSourceAssignmentMatch(
+        string? assignmentSourceId,
+        string? sourceId
+    ) =>
+        string.IsNullOrWhiteSpace(assignmentSourceId)
             ? string.IsNullOrWhiteSpace(sourceId)
             : !string.IsNullOrWhiteSpace(sourceId)
-              && string.Equals(assignmentSourceId, sourceId, StringComparison.OrdinalIgnoreCase);
+                && string.Equals(assignmentSourceId, sourceId, StringComparison.OrdinalIgnoreCase);
 
     private void OnCapabilitySelectionChanged()
     {
@@ -1070,26 +1496,48 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     private void RefreshCapabilitySummaries()
     {
-        var enabledTools = LocalTools.Where(tool => tool.IsEnabled && tool.CanSelect).Select(tool => tool.DisplayName).ToArray();
-        ToolSelectionSummary = enabledTools.Length == 0
-            ? "No local tools are enabled for this profile."
-            : $"Enabled local tools: {string.Join(", ", enabledTools)}";
+        var enabledTools = LocalTools
+            .Where(tool => tool.IsEnabled && tool.CanSelect)
+            .Select(tool => tool.DisplayName)
+            .ToArray();
+        ToolSelectionSummary =
+            enabledTools.Length == 0
+                ? "No local tools are enabled for this profile."
+                : $"Enabled local tools: {string.Join(", ", enabledTools)}";
 
-        var enabledPackageCapabilities = PackageCapabilities.Where(capability => capability.IsEnabled && capability.CanSelect).Select(capability => capability.DisplayName).ToArray();
-        PackageCapabilitySelectionSummary = enabledPackageCapabilities.Length == 0
-            ? "No package capabilities are enabled for this profile."
-            : $"Enabled package capabilities: {string.Join(", ", enabledPackageCapabilities)}";
+        var enabledPackageCapabilities = PackageCapabilities
+            .Where(capability => capability.IsEnabled && capability.CanSelect)
+            .Select(capability => capability.DisplayName)
+            .ToArray();
+        PackageCapabilitySelectionSummary =
+            enabledPackageCapabilities.Length == 0
+                ? "No package capabilities are enabled for this profile."
+                : $"Enabled package capabilities: {string.Join(", ", enabledPackageCapabilities)}";
     }
 
     private IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> BuildSelectableCapabilityAssignments()
     {
-        var assignments = new List<AgentProfileSelectableCapabilityAssignmentRecord>(_preservedSelectableCapabilityAssignments);
-        assignments.AddRange(LocalTools
-            .Where(tool => tool.IsEnabled && tool.CanSelect)
-            .Select(tool => new AgentProfileSelectableCapabilityAssignmentRecord(tool.Kind, tool.CapabilityId, tool.SourceId)));
-        assignments.AddRange(PackageCapabilities
-            .Where(capability => capability.IsEnabled && capability.CanSelect)
-            .Select(capability => new AgentProfileSelectableCapabilityAssignmentRecord(capability.Kind, capability.CapabilityId, capability.SourceId)));
+        var assignments = new List<AgentProfileSelectableCapabilityAssignmentRecord>(
+            _preservedSelectableCapabilityAssignments
+        );
+        assignments.AddRange(
+            LocalTools
+                .Where(tool => tool.IsEnabled && tool.CanSelect)
+                .Select(tool => new AgentProfileSelectableCapabilityAssignmentRecord(
+                    tool.Kind,
+                    tool.CapabilityId,
+                    tool.SourceId
+                ))
+        );
+        assignments.AddRange(
+            PackageCapabilities
+                .Where(capability => capability.IsEnabled && capability.CanSelect)
+                .Select(capability => new AgentProfileSelectableCapabilityAssignmentRecord(
+                    capability.Kind,
+                    capability.CapabilityId,
+                    capability.SourceId
+                ))
+        );
         return assignments.Distinct().ToArray();
     }
 
@@ -1116,13 +1564,16 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         _profileService.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
     }
 
-    private string? BuildChatModelSettingsJson()
-        => !HasReasoningOptions || string.IsNullOrWhiteSpace(SelectedReasoningOption?.VariantId)
+    private string? BuildChatModelSettingsJson() =>
+        !HasReasoningOptions || string.IsNullOrWhiteSpace(SelectedReasoningOption?.VariantId)
             ? null
-            : AgentChatModelSettingsJson.Serialize(new AgentChatModelSettings(SelectedReasoningOption.VariantId));
+            : AgentChatModelSettingsJson.Serialize(
+                new AgentChatModelSettings(SelectedReasoningOption.VariantId)
+            );
 
-    private static IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> GetSelectableCapabilityAssignments(AgentProfileRecord profile)
-        => profile.SelectableCapabilityAssignments ?? [];
+    private static IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> GetSelectableCapabilityAssignments(
+        AgentProfileRecord profile
+    ) => profile.SelectableCapabilityAssignments ?? [];
 
     private void BeginBusy()
     {
@@ -1154,20 +1605,23 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         }
     }
 
-    private bool IsCurrentProfileLoad(int version, string profileId)
-        => version == _profileLoadVersion
-           && string.Equals(SelectedProfile?.ProfileId, profileId, StringComparison.Ordinal);
+    private bool IsCurrentProfileLoad(int version, string profileId) =>
+        version == _profileLoadVersion
+        && string.Equals(SelectedProfile?.ProfileId, profileId, StringComparison.Ordinal);
 
-    private bool IsCurrentChatLoad(int version, string? providerId)
-        => version == _chatLoadVersion
-           && string.Equals(SelectedChatProvider?.Id, providerId, StringComparison.OrdinalIgnoreCase);
+    private bool IsCurrentChatLoad(int version, string? providerId) =>
+        version == _chatLoadVersion
+        && string.Equals(SelectedChatProvider?.Id, providerId, StringComparison.OrdinalIgnoreCase);
 
-    private bool IsCurrentEmbeddingLoad(int version, string? providerId)
-        => version == _embeddingLoadVersion
-           && string.Equals(SelectedEmbeddingProvider?.Id, providerId, StringComparison.OrdinalIgnoreCase);
+    private bool IsCurrentEmbeddingLoad(int version, string? providerId) =>
+        version == _embeddingLoadVersion
+        && string.Equals(
+            SelectedEmbeddingProvider?.Id,
+            providerId,
+            StringComparison.OrdinalIgnoreCase
+        );
 
-    private void ClearStatus()
-        => SetStatus(string.Empty, AgentProfileStatusKind.None);
+    private void ClearStatus() => SetStatus(string.Empty, AgentProfileStatusKind.None);
 
     private void SetStatus(string message, AgentProfileStatusKind kind, bool autoClear = false)
     {
@@ -1187,7 +1641,10 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         _ = ClearSuccessStatusAfterDelayAsync(message, cancellation);
     }
 
-    private async Task ClearSuccessStatusAfterDelayAsync(string message, CancellationTokenSource cancellation)
+    private async Task ClearSuccessStatusAfterDelayAsync(
+        string message,
+        CancellationTokenSource cancellation
+    )
     {
         try
         {
@@ -1200,9 +1657,11 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
         RunOnUiThread(() =>
         {
-            if (_successStatusClearCancellation == cancellation
+            if (
+                _successStatusClearCancellation == cancellation
                 && StatusKind == AgentProfileStatusKind.Success
-                && string.Equals(StatusText, message, StringComparison.Ordinal))
+                && string.Equals(StatusText, message, StringComparison.Ordinal)
+            )
             {
                 ClearStatus();
             }
@@ -1222,12 +1681,146 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         cancellation.Dispose();
     }
 
-    private static string FormatChatProviderStatus(AgentProviderReadiness? readiness, string prefix = "")
-        => readiness is null
+    private async Task OpenProviderSettingsAsync(string? packageId)
+    {
+        if (_settingsNavigationService is null || string.IsNullOrWhiteSpace(packageId))
+        {
+            SetStatus(
+                "Package settings cannot be opened from this host.",
+                AgentProfileStatusKind.Warning
+            );
+            return;
+        }
+
+        try
+        {
+            if (!await _settingsNavigationService.OpenPackageSettingsAsync(packageId))
+            {
+                SetStatus("Package settings could not be opened.", AgentProfileStatusKind.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message, AgentProfileStatusKind.Error);
+        }
+    }
+
+    private void ApplyChatProviderReadiness(AgentProviderReadiness? readiness)
+    {
+        if (
+            !HasChatProviders
+            || SelectedChatProvider?.Id is null
+            || readiness is null
+            || readiness.Status == AgentProviderReadinessStatus.Ready
+        )
+        {
+            ClearChatProviderWarning();
+            return;
+        }
+
+        SetChatProviderWarning(readiness.Message);
+    }
+
+    private void ApplyEmbeddingProviderReadiness(
+        AgentEmbeddingProviderReadiness? readiness,
+        string? providerId
+    )
+    {
+        if (
+            !HasEmbeddingConsumers
+            || !HasEmbeddingProviders
+            || string.IsNullOrWhiteSpace(providerId)
+            || readiness is null
+            || readiness.Status == AgentProviderReadinessStatus.Ready
+        )
+        {
+            ClearEmbeddingProviderWarning();
+            return;
+        }
+
+        SetEmbeddingProviderWarning(readiness.Message);
+    }
+
+    private void SetChatProviderWarning(string message)
+    {
+        ChatProviderWarningText = message;
+        HasChatProviderWarning = true;
+        NotifyChatProviderStateChanged();
+    }
+
+    private void ClearChatProviderWarning()
+    {
+        ChatProviderWarningText = string.Empty;
+        HasChatProviderWarning = false;
+        NotifyChatProviderStateChanged();
+    }
+
+    private void SetEmbeddingProviderWarning(string message)
+    {
+        EmbeddingProviderWarningText = message;
+        HasEmbeddingProviderWarning = true;
+        NotifyEmbeddingProviderStateChanged();
+    }
+
+    private void ClearEmbeddingProviderWarning()
+    {
+        EmbeddingProviderWarningText = string.Empty;
+        HasEmbeddingProviderWarning = false;
+        NotifyEmbeddingProviderStateChanged();
+    }
+
+    private void NotifyChatProviderStateChanged()
+    {
+        OnPropertyChanged(nameof(HasNoChatProviders));
+        OnPropertyChanged(nameof(ShowChatProviderPicker));
+        OnPropertyChanged(nameof(ShowChatProviderWarning));
+        OnPropertyChanged(nameof(ShowChatModelSelection));
+        OnPropertyChanged(nameof(ShowReasoningOptions));
+        OnPropertyChanged(nameof(CanOpenChatProviderSettings));
+    }
+
+    private void NotifyEmbeddingProviderStateChanged()
+    {
+        OnPropertyChanged(nameof(CanSelectEmbeddingModel));
+        OnPropertyChanged(nameof(ShowEmbeddingProviderPicker));
+        OnPropertyChanged(nameof(ShowEmbeddingProviderEmptyState));
+        OnPropertyChanged(nameof(ShowEmbeddingProviderWarning));
+        OnPropertyChanged(nameof(ShowEmbeddingModelSelection));
+        OnPropertyChanged(nameof(CanOpenEmbeddingProviderSettings));
+    }
+
+    private static string? ResolveProviderId(
+        IReadOnlyList<ProviderOption> providers,
+        string? selectedProviderId,
+        bool selectFirstProvider
+    )
+    {
+        if (
+            !string.IsNullOrWhiteSpace(selectedProviderId)
+            && providers.Any(provider =>
+                string.Equals(provider.Id, selectedProviderId, StringComparison.OrdinalIgnoreCase)
+            )
+        )
+        {
+            return selectedProviderId;
+        }
+
+        return selectFirstProvider ? providers.FirstOrDefault()?.Id : null;
+    }
+
+    private static string FormatChatProviderStatus(
+        AgentProviderReadiness? readiness,
+        string prefix = ""
+    ) =>
+        readiness is null
             ? prefix + "No chat provider selected."
             : prefix + $"Chat provider status: {readiness.Status} - {readiness.Message}";
 
-    private string FormatEmbeddingProviderStatus(AgentEmbeddingProviderReadiness? readiness, string? providerId, string prefix = "")
+    private string FormatEmbeddingProviderStatus(
+        AgentEmbeddingProviderReadiness? readiness,
+        string? providerId,
+        string prefix = ""
+    )
     {
         if (!HasEmbeddingConsumers)
         {
@@ -1249,20 +1842,48 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             : prefix + $"Embedding provider status: {readiness.Status} - {readiness.Message}";
     }
 
-    private static AgentProfileModelBindingRecord? FindModelBinding(AgentProfileRecord profile, string capabilityKind)
+    private static AgentProfileModelBindingRecord? FindModelBinding(
+        AgentProfileRecord profile,
+        string capabilityKind
+    )
     {
         var binding = profile.ModelBindings?.FirstOrDefault(candidate =>
-            string.Equals(candidate.CapabilityKind, capabilityKind, StringComparison.OrdinalIgnoreCase));
+            string.Equals(
+                candidate.CapabilityKind,
+                capabilityKind,
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
         if (binding is not null)
         {
             return binding;
         }
 
-        return string.Equals(capabilityKind, AgentModelCapabilityKinds.Chat, StringComparison.OrdinalIgnoreCase)
-            ? BuildModelBindingFromProfileFields(profile.ProfileId, capabilityKind, profile.ChatProviderId, profile.ChatModelId, profile.UpdatedAtUtc)
-            : string.Equals(capabilityKind, AgentModelCapabilityKinds.Embedding, StringComparison.OrdinalIgnoreCase)
-                ? BuildModelBindingFromProfileFields(profile.ProfileId, capabilityKind, profile.EmbeddingProviderId, profile.EmbeddingModelId, profile.UpdatedAtUtc)
-                : null;
+        return string.Equals(
+                capabilityKind,
+                AgentModelCapabilityKinds.Chat,
+                StringComparison.OrdinalIgnoreCase
+            )
+                ? BuildModelBindingFromProfileFields(
+                    profile.ProfileId,
+                    capabilityKind,
+                    profile.ChatProviderId,
+                    profile.ChatModelId,
+                    profile.UpdatedAtUtc
+                )
+            : string.Equals(
+                capabilityKind,
+                AgentModelCapabilityKinds.Embedding,
+                StringComparison.OrdinalIgnoreCase
+            )
+                ? BuildModelBindingFromProfileFields(
+                    profile.ProfileId,
+                    capabilityKind,
+                    profile.EmbeddingProviderId,
+                    profile.EmbeddingModelId,
+                    profile.UpdatedAtUtc
+                )
+            : null;
     }
 
     private static AgentProfileModelBindingRecord? BuildModelBindingFromProfileFields(
@@ -1270,16 +1891,11 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         string capabilityKind,
         string? providerId,
         string? modelId,
-        DateTimeOffset updatedAtUtc)
-        => string.IsNullOrWhiteSpace(providerId) && string.IsNullOrWhiteSpace(modelId)
+        DateTimeOffset updatedAtUtc
+    ) =>
+        string.IsNullOrWhiteSpace(providerId) && string.IsNullOrWhiteSpace(modelId)
             ? null
-            : new(
-                profileId,
-                capabilityKind,
-                providerId,
-                modelId,
-                SettingsJson: null,
-                updatedAtUtc);
+            : new(profileId, capabilityKind, providerId, modelId, SettingsJson: null, updatedAtUtc);
 }
 
 public enum AgentProfileStatusKind
@@ -1290,27 +1906,46 @@ public enum AgentProfileStatusKind
     Error,
 }
 
-public sealed record ProviderOption(string? Id, string Label);
+public sealed record ProviderOption(string? Id, string Label, string? PackageId = null);
 
-public sealed record ModelOption(string? Id, string Label, IReadOnlyList<AgentModelVariantDescriptor>? Variants = null);
+public sealed record ModelOption(
+    string? Id,
+    string Label,
+    IReadOnlyList<AgentModelVariantDescriptor>? Variants = null
+);
 
-public sealed record ModelReasoningOption(string? VariantId, string Label, string? Description = null)
+public sealed record ModelReasoningOption(
+    string? VariantId,
+    string Label,
+    string? Description = null
+)
 {
     public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
 }
 
-public sealed record BehaviorLoopOption(string LoopId, string? SourceId, string Label, string Description);
+public sealed record BehaviorLoopOption(
+    string LoopId,
+    string? SourceId,
+    string Label,
+    string Description
+);
 
 public sealed record ProfileCapabilityGroupViewModel(
     string Title,
     string? Description,
     int SortOrder,
-    IReadOnlyList<ProfileCapabilityOptionViewModel> Options)
+    IReadOnlyList<ProfileCapabilityOptionViewModel> Options
+)
 {
     public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
 }
 
-internal sealed record CapabilityGroupInfo(string Key, string Title, string? Description, int SortOrder);
+internal sealed record CapabilityGroupInfo(
+    string Key,
+    string Title,
+    string? Description,
+    int SortOrder
+);
 
 public sealed partial class ProfileCapabilityOptionViewModel : ObservableObject
 {
@@ -1326,7 +1961,8 @@ public sealed partial class ProfileCapabilityOptionViewModel : ObservableObject
         string? groupKey = null,
         string? groupTitle = null,
         string? groupDescription = null,
-        int groupSortOrder = 0)
+        int groupSortOrder = 0
+    )
     {
         Kind = kind;
         CapabilityId = capabilityId;
@@ -1337,7 +1973,9 @@ public sealed partial class ProfileCapabilityOptionViewModel : ObservableObject
         CanSelect = canSelect;
         GroupKey = string.IsNullOrWhiteSpace(groupKey) ? kind : groupKey.Trim();
         GroupTitle = string.IsNullOrWhiteSpace(groupTitle) ? kind : groupTitle.Trim();
-        GroupDescription = string.IsNullOrWhiteSpace(groupDescription) ? null : groupDescription.Trim();
+        GroupDescription = string.IsNullOrWhiteSpace(groupDescription)
+            ? null
+            : groupDescription.Trim();
         GroupSortOrder = groupSortOrder;
         _isEnabled = canSelect && isEnabled;
     }

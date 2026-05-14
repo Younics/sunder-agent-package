@@ -256,10 +256,8 @@
                     <TextBlock Text="{Binding DetailStateText}"
                                TextWrapping="Wrap"
                                Foreground="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
-                    <TextBlock Text="{Binding DetailProfileText}"
-                               TextWrapping="Wrap"
-                               Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
                     <TextBlock Text="{Binding DetailCreatedText}"
+                               Margin="0,6,0,0"
                                Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
                     <TextBlock Text="{Binding DetailUpdatedText}"
                                Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />

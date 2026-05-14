@@ -15,7 +15,10 @@ public sealed class LMStudioEmbeddingProvider(IPackageContext packageContext) : 
     public AgentEmbeddingProviderDescriptor Descriptor { get; } = new(
         "lmstudio",
         "LM Studio",
-        []);
+        [])
+    {
+        PackageId = packageContext.PackageId
+    };
 
     public async ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
     {

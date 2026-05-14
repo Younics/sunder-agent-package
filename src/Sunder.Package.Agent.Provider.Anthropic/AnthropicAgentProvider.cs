@@ -20,7 +20,10 @@ public sealed class AnthropicAgentProvider(IPackageContext packageContext) : IAg
         [AgentAuthMode.ApiKey],
         SupportsStreaming: true,
         SupportsInterruptibleRuns: true
-    );
+    )
+    {
+        PackageId = packageContext.PackageId
+    };
 
     public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
     {

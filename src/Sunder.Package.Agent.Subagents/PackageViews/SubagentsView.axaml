@@ -103,6 +103,10 @@
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
+    <Style Selector="TextBlock.subagent-field-help.warning-text">
+      <Setter Property="Foreground" Value="#B8925E" />
+    </Style>
+
     <Style Selector="ListBox.subagent-list">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
       <Setter Property="BorderThickness" Value="0" />
@@ -147,6 +151,47 @@
       <Setter Property="Padding" Value="16" />
     </Style>
 
+    <Style Selector="Border.subagent-editor-empty-state">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="12" />
+    </Style>
+
+    <Style Selector="Button.subagent-field-icon-action">
+      <Setter Property="Width" Value="32" />
+      <Setter Property="MinWidth" Value="32" />
+      <Setter Property="Height" Value="30" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+      <Setter Property="FontSize" Value="17" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Button.subagent-field-icon-action:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    </Style>
+
+    <Style Selector="Button.warning-action">
+      <Setter Property="Background" Value="#2B251C" />
+      <Setter Property="BorderBrush" Value="#6F5735" />
+      <Setter Property="Foreground" Value="#B8925E" />
+    </Style>
+
+    <Style Selector="Button.warning-action:pointerover">
+      <Setter Property="Background" Value="#32291E" />
+      <Setter Property="BorderBrush" Value="#80643D" />
+      <Setter Property="Foreground" Value="#C09A64" />
+    </Style>
+
     <Style Selector="TextBox.subagent-instructions">
       <Setter Property="MinHeight" Value="140" />
       <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
@@ -179,7 +224,7 @@
               <TextBlock Grid.Row="1"
                          Grid.ColumnSpan="2"
                          Classes="subagent-caption"
-                         Text="Create delegated specialists for orchestrated Agent Profiles." />
+                         Text="Create delegated specialists for orchestrated Agents." />
             </Grid>
           </Border>
 
@@ -275,15 +320,27 @@
 
                 <Border Classes="subagent-card">
                   <StackPanel Spacing="14">
-                    <StackPanel Spacing="4">
+                    <Grid ColumnDefinitions="*,Auto"
+                          ColumnSpacing="12">
                       <TextBlock Text="Chat Model Override"
                                  FontWeight="SemiBold"
-                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                      <TextBlock Classes="subagent-caption"
-                                 Text="Optionally override the parent profile chat provider and model for this subagent." />
-                    </StackPanel>
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}"
+                                 VerticalAlignment="Center" />
+                      <Button Grid.Column="1"
+                              Classes="subagent-field-icon-action"
+                              Content="↻"
+                              Command="{Binding ReloadSubagentChatProvidersCommand}"
+                              ToolTip.Tip="Reload providers" />
+                    </Grid>
 
-                    <StackPanel Spacing="5">
+                    <Border Classes="subagent-editor-empty-state"
+                            IsVisible="{Binding HasNoChatProviderChoices}">
+                      <TextBlock Classes="subagent-field-help"
+                                 Text="No chat providers are installed. Install a chat provider package to configure subagent model overrides." />
+                    </Border>
+
+                    <StackPanel Spacing="5"
+                                IsVisible="{Binding ShowChatProviderPicker}">
                       <TextBlock Classes="subagent-field-label"
                                  Text="Chat provider override" />
                       <ComboBox ItemsSource="{Binding ChatProviders}"
@@ -298,7 +355,7 @@
                     </StackPanel>
 
                     <StackPanel Spacing="5"
-                                IsVisible="{Binding HasSelectedChatProvider}">
+                                IsVisible="{Binding ShowChatModelSelection}">
                       <TextBlock Classes="subagent-field-label"
                                  Text="Chat model override" />
                       <ComboBox ItemsSource="{Binding ChatModels}"
@@ -313,7 +370,7 @@
                     </StackPanel>
 
                     <StackPanel Spacing="5"
-                                IsVisible="{Binding HasReasoningOptions}">
+                                IsVisible="{Binding ShowReasoningOptions}">
                       <TextBlock Classes="subagent-field-label"
                                  Text="Reasoning" />
                       <ComboBox ItemsSource="{Binding ReasoningOptions}"
@@ -330,9 +387,23 @@
                           </DataTemplate>
                         </ComboBox.ItemTemplate>
                       </ComboBox>
-                      <TextBlock Classes="subagent-field-help"
-                                 Text="Default preserves the selected model's normal reasoning behavior." />
                     </StackPanel>
+
+                    <Border Classes="subagent-editor-empty-state"
+                            IsVisible="{Binding ShowChatProviderWarning}">
+                      <Grid ColumnDefinitions="*,Auto"
+                            ColumnSpacing="12">
+                        <TextBlock Classes="subagent-field-help warning-text"
+                                   Text="{Binding ChatProviderWarningText}"
+                                   VerticalAlignment="Top" />
+                        <Button Grid.Column="1"
+                                Classes="secondary-action compact-action warning-action"
+                                Content="Settings"
+                                Command="{Binding OpenSelectedChatProviderSettingsCommand}"
+                                IsVisible="{Binding CanOpenChatProviderSettings}"
+                                VerticalAlignment="Top" />
+                      </Grid>
+                    </Border>
                   </StackPanel>
                 </Border>
 

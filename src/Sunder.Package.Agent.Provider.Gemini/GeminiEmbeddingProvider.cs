@@ -17,7 +17,10 @@ public sealed class GeminiEmbeddingProvider(IPackageContext packageContext) : IA
     public AgentEmbeddingProviderDescriptor Descriptor { get; } = new(
         "gemini",
         "Google Gemini",
-        [AgentAuthMode.ApiKey]);
+        [AgentAuthMode.ApiKey])
+    {
+        PackageId = packageContext.PackageId
+    };
 
     public ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
     {

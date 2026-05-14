@@ -39,7 +39,9 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _activityQuietTimer;
     private readonly TimeSpan _activityQuietDelay;
     private readonly Dictionary<Guid, AgentTextTranscriptRowViewModel> _textRowsByTurnId = new();
-    private readonly Dictionary<string, AgentToolInvocationRowViewModel> _toolRowsByCallId = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, AgentToolInvocationRowViewModel> _toolRowsByCallId = new(
+        StringComparer.Ordinal
+    );
     private readonly HashSet<Guid> _loadedTurnIds = new();
     private AgentSessionListItemViewModel? _observedSelectedSession;
     private AgentActivityTranscriptRowViewModel? _activityRow;
@@ -65,7 +67,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         TimeSpan? activityQuietDelay = null,
         AgentExecutionTargetWarmupService? warmupService = null,
         IPackageShellViewService? shellViewService = null,
-        AgentAttachmentService? attachmentService = null)
+        AgentAttachmentService? attachmentService = null
+    )
     {
         _profileService = profileService;
         _workspaceService = workspaceService;
@@ -80,7 +83,10 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _activityQuietDelay = activityQuietDelay ?? DefaultActivityQuietDelay;
         _activityQuietTimer = new DispatcherTimer
         {
-            Interval = _activityQuietDelay <= TimeSpan.Zero ? TimeSpan.FromMilliseconds(1) : _activityQuietDelay,
+            Interval =
+                _activityQuietDelay <= TimeSpan.Zero
+                    ? TimeSpan.FromMilliseconds(1)
+                    : _activityQuietDelay,
         };
         _activityQuietTimer.Tick += OnActivityQuietTimerTick;
         PendingAttachments.CollectionChanged += OnPendingAttachmentsChanged;
@@ -102,19 +108,22 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<AgentTranscriptRowViewModel> Messages { get; } = [];
 
-    public ObservableCollection<AgentPendingPermissionRequestRecord> PendingPermissionRequests { get; } = [];
+    public ObservableCollection<AgentPendingPermissionRequestRecord> PendingPermissionRequests { get; } =
+        [];
 
     public event Action? TranscriptChanged;
 
     public bool IsSelectedSessionRunActive => SelectedSession?.IsRunActive == true;
 
-    public bool IsSelectedSessionRunInactive => SelectedSession is not null && !IsSelectedSessionRunActive;
+    public bool IsSelectedSessionRunInactive =>
+        SelectedSession is not null && !IsSelectedSessionRunActive;
 
     public bool IsDisplayedSessionRunActive => DisplayedSession?.IsRunActive == true;
 
     public bool IsComposerCollapsed => !IsComposerExpanded;
 
-    public bool CanUseChat => SelectedSession is not null && SelectedProfile is not null && SelectedWorkspace is not null;
+    public bool CanUseChat =>
+        SelectedSession is not null && SelectedProfile is not null && SelectedWorkspace is not null;
 
     public bool CannotUseChat => !CanUseChat;
 
@@ -136,7 +145,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
     public bool ShowExpandedComposer => CanUseChat && IsComposerExpanded;
 
-    public bool CanLoadOlderTranscriptRows => HasOlderTranscriptRows && !IsLoadingOlderTranscriptRows && DisplayedSession is not null;
+    public bool CanLoadOlderTranscriptRows =>
+        HasOlderTranscriptRows && !IsLoadingOlderTranscriptRows && DisplayedSession is not null;
 
     [ObservableProperty]
     private AgentWorkspaceRecord? _selectedWorkspace;
@@ -160,7 +170,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private string _setupTitle = "Create a workspace before chatting";
 
     [ObservableProperty]
-    private string _setupDescription = "Create an Agent Profile, select a workspace and session, then start chatting.";
+    private string _setupDescription =
+        "Create an Agent, select a workspace and session, then start chatting.";
 
     [ObservableProperty]
     private bool _isUnrestrictedModeEnabled;
@@ -180,11 +191,11 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _isLoadingOlderTranscriptRows;
 
-    partial void OnHasOlderTranscriptRowsChanged(bool value)
-        => OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
+    partial void OnHasOlderTranscriptRowsChanged(bool value) =>
+        OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
 
-    partial void OnIsLoadingOlderTranscriptRowsChanged(bool value)
-        => OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
+    partial void OnIsLoadingOlderTranscriptRowsChanged(bool value) =>
+        OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
 
     partial void OnSelectedWorkspaceChanged(AgentWorkspaceRecord? value)
     {
@@ -215,9 +226,12 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         }
 
         _permissionService.SetSessionUnrestrictedMode(SelectedSession.SessionId, value);
-        ApplySessionStatus(SelectedSession, value
-            ? "Unrestricted Mode is enabled for this session. Ask-style approvals are auto-approved, but hard constraints still apply."
-            : "Unrestricted Mode is disabled for this session.");
+        ApplySessionStatus(
+            SelectedSession,
+            value
+                ? "Unrestricted Mode is enabled for this session. Ask-style approvals are auto-approved, but hard constraints still apply."
+                : "Unrestricted Mode is disabled for this session."
+        );
     }
 
     partial void OnIsComposerExpandedChanged(bool value)
@@ -230,7 +244,10 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
     partial void OnDraftMessageChanged(string value)
     {
-        if (SelectedSession is not null && !string.Equals(SelectedSession.DraftMessage, value, StringComparison.Ordinal))
+        if (
+            SelectedSession is not null
+            && !string.Equals(SelectedSession.DraftMessage, value, StringComparison.Ordinal)
+        )
         {
             SelectedSession.DraftMessage = value;
         }
@@ -243,30 +260,56 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private async Task ApprovePermissionAsync(AgentPendingPermissionRequestRecord? request)
     {
         var selectedSession = SelectedSession;
-        if (selectedSession is null || request is null || string.IsNullOrWhiteSpace(request.RequestId))
+        if (
+            selectedSession is null
+            || request is null
+            || string.IsNullOrWhiteSpace(request.RequestId)
+        )
         {
             return;
         }
 
-        var checkpoint = await _runCoordinator.ApprovePendingPermissionAsync(request.SessionId, request.RequestId);
+        var checkpoint = await _runCoordinator.ApprovePendingPermissionAsync(
+            request.SessionId,
+            request.RequestId
+        );
         ReloadPendingPermissionRequests();
-        ApplySessionStatus(selectedSession, checkpoint?.Summary ?? "Permission request was no longer pending.");
+        ApplySessionStatus(
+            selectedSession,
+            checkpoint?.Summary ?? "Permission request was no longer pending."
+        );
         SyncSelectedSessionState(selectedSession.SessionId);
     }
 
     [RelayCommand]
-    private async Task ApprovePermissionForSessionAsync(AgentPendingPermissionRequestRecord? request)
+    private async Task ApprovePermissionForSessionAsync(
+        AgentPendingPermissionRequestRecord? request
+    )
     {
         var selectedSession = SelectedSession;
-        if (selectedSession is null || request is null || string.IsNullOrWhiteSpace(request.RequestId))
+        if (
+            selectedSession is null
+            || request is null
+            || string.IsNullOrWhiteSpace(request.RequestId)
+        )
         {
             return;
         }
 
-        _permissionService.SaveSessionApproval(request.SessionId, request.ActionId, request.BoundaryId);
-        var checkpoint = await _runCoordinator.ApprovePendingPermissionAsync(request.SessionId, request.RequestId);
+        _permissionService.SaveSessionApproval(
+            request.SessionId,
+            request.ActionId,
+            request.BoundaryId
+        );
+        var checkpoint = await _runCoordinator.ApprovePendingPermissionAsync(
+            request.SessionId,
+            request.RequestId
+        );
         ReloadPendingPermissionRequests();
-        ApplySessionStatus(selectedSession, checkpoint?.Summary ?? "Permission request was no longer pending.");
+        ApplySessionStatus(
+            selectedSession,
+            checkpoint?.Summary ?? "Permission request was no longer pending."
+        );
         SyncSelectedSessionState(selectedSession.SessionId);
     }
 
@@ -274,7 +317,11 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private void DenyPermission(AgentPendingPermissionRequestRecord? request)
     {
         var selectedSession = SelectedSession;
-        if (selectedSession is null || request is null || string.IsNullOrWhiteSpace(request.RequestId))
+        if (
+            selectedSession is null
+            || request is null
+            || string.IsNullOrWhiteSpace(request.RequestId)
+        )
         {
             return;
         }
@@ -297,8 +344,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         ClearPendingAttachments();
     }
 
-    private bool CanClearComposer()
-        => !string.IsNullOrEmpty(DraftMessage) || PendingAttachments.Count > 0;
+    private bool CanClearComposer() =>
+        !string.IsNullOrEmpty(DraftMessage) || PendingAttachments.Count > 0;
 
     [RelayCommand(CanExecute = nameof(CanSendMessage))]
     private async Task SendMessageAsync()
@@ -313,7 +360,10 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         var workspace = SelectedWorkspace;
         if (workspace is null)
         {
-            ApplySessionStatus(selectedSession, "Select a workspace before chatting. Sessions can stay open while you switch workspaces.");
+            ApplySessionStatus(
+                selectedSession,
+                "Select a workspace before chatting. Sessions can stay open while you switch workspaces."
+            );
             return;
         }
 
@@ -326,21 +376,30 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         var profile = SelectedProfile;
         if (profile is null)
         {
-            ApplySessionStatus(selectedSession, "Select or create an Agent Profile before chatting.");
+            ApplySessionStatus(selectedSession, "Select or create an Agent before chatting.");
             return;
         }
 
         var chatBinding = _profileService.GetChatBinding(profile.ProfileId);
-        if (string.IsNullOrWhiteSpace(chatBinding?.ProviderId) || string.IsNullOrWhiteSpace(chatBinding.ModelId))
+        if (
+            string.IsNullOrWhiteSpace(chatBinding?.ProviderId)
+            || string.IsNullOrWhiteSpace(chatBinding.ModelId)
+        )
         {
-            ApplySessionStatus(selectedSession, "The selected profile is missing a provider or model. Configure it in Agent Profiles before chatting.");
+            ApplySessionStatus(
+                selectedSession,
+                "The selected profile is missing a provider or model. Configure it in Agents before chatting."
+            );
             return;
         }
 
         var readiness = await _profileService.GetChatProviderReadinessAsync(chatBinding.ProviderId);
         if (readiness is null)
         {
-            ApplySessionStatus(selectedSession, "The selected provider is unavailable. Review package status and profile configuration before chatting.");
+            ApplySessionStatus(
+                selectedSession,
+                "The selected provider is unavailable. Review package status and profile configuration before chatting."
+            );
             return;
         }
 
@@ -351,7 +410,9 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         }
 
         var sessionId = selectedSession.SessionId;
-        var attachments = PendingAttachments.Select(attachment => attachment.UploadRequest).ToArray();
+        var attachments = PendingAttachments
+            .Select(attachment => attachment.UploadRequest)
+            .ToArray();
         selectedSession.DraftMessage = string.Empty;
         if (SelectedSession?.SessionId == sessionId)
         {
@@ -360,7 +421,13 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
         ClearPendingAttachments();
 
-        await _runCoordinator.QueueUserMessageAsync(sessionId, profile.ProfileId, message, workspace.WorkspaceId, attachments);
+        await _runCoordinator.QueueUserMessageAsync(
+            sessionId,
+            profile.ProfileId,
+            message,
+            workspace.WorkspaceId,
+            attachments
+        );
 
         if (SelectedSession?.SessionId == sessionId)
         {
@@ -373,8 +440,10 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         }
     }
 
-    private bool CanSendMessage()
-        => CanUseChat && IsSelectedSessionRunInactive && (!string.IsNullOrWhiteSpace(DraftMessage) || PendingAttachments.Count > 0);
+    private bool CanSendMessage() =>
+        CanUseChat
+        && IsSelectedSessionRunInactive
+        && (!string.IsNullOrWhiteSpace(DraftMessage) || PendingAttachments.Count > 0);
 
     [RelayCommand]
     private async Task StopRunAsync()
@@ -435,8 +504,13 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
     }
 
-    private void OnProfilesChanged(string profileId)
-        => RunOnUiThread(() => ReloadProfiles(SelectedProfile?.ProfileId ?? _selectionState?.GetSelectedProfileId()));
+    private void OnProfilesChanged(string profileId) =>
+        RunOnUiThread(
+            () =>
+                ReloadProfiles(
+                    SelectedProfile?.ProfileId ?? _selectionState?.GetSelectedProfileId()
+                )
+        );
 
     private void ReloadProfiles(string? selectProfileId)
     {
@@ -447,10 +521,15 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             Profiles.Add(profile);
         }
 
-        var desiredProfileId = selectProfileId
-            ?? SelectedProfile?.ProfileId;
-        SelectedProfile = Profiles.FirstOrDefault(profile => string.Equals(profile.ProfileId, desiredProfileId, StringComparison.OrdinalIgnoreCase))
-            ?? Profiles.FirstOrDefault();
+        var desiredProfileId = selectProfileId ?? SelectedProfile?.ProfileId;
+        SelectedProfile =
+            Profiles.FirstOrDefault(profile =>
+                string.Equals(
+                    profile.ProfileId,
+                    desiredProfileId,
+                    StringComparison.OrdinalIgnoreCase
+                )
+            ) ?? Profiles.FirstOrDefault();
         _selectionState?.SaveSelectedProfileId(SelectedProfile?.ProfileId);
         NotifyProfileStateChanged();
         CreateSessionCommand.NotifyCanExecuteChanged();
@@ -466,18 +545,27 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         {
             ReconcileWorkspaces(workspaces);
 
-            var desiredWorkspaceId = selectWorkspaceId
-                ?? previousSelectedWorkspaceId;
+            var desiredWorkspaceId = selectWorkspaceId ?? previousSelectedWorkspaceId;
 
-            SelectedWorkspace = Workspaces.FirstOrDefault(workspace => string.Equals(workspace.WorkspaceId, desiredWorkspaceId, StringComparison.OrdinalIgnoreCase))
-                ?? Workspaces.FirstOrDefault();
+            SelectedWorkspace =
+                Workspaces.FirstOrDefault(workspace =>
+                    string.Equals(
+                        workspace.WorkspaceId,
+                        desiredWorkspaceId,
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                ) ?? Workspaces.FirstOrDefault();
         }
         finally
         {
             _suppressWorkspaceSelection = false;
         }
 
-        var selectedWorkspaceChanged = !string.Equals(previousSelectedWorkspaceId, SelectedWorkspace?.WorkspaceId, StringComparison.OrdinalIgnoreCase);
+        var selectedWorkspaceChanged = !string.Equals(
+            previousSelectedWorkspaceId,
+            SelectedWorkspace?.WorkspaceId,
+            StringComparison.OrdinalIgnoreCase
+        );
         _selectionState?.SaveSelectedWorkspaceId(SelectedWorkspace?.WorkspaceId);
         NotifyWorkspaceStateChanged();
         CreateSessionCommand.NotifyCanExecuteChanged();
@@ -487,7 +575,9 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
     private void ReconcileWorkspaces(IReadOnlyList<AgentWorkspaceRecord> workspaces)
     {
-        var desiredWorkspaceIds = workspaces.Select(workspace => workspace.WorkspaceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var desiredWorkspaceIds = workspaces
+            .Select(workspace => workspace.WorkspaceId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         for (var index = Workspaces.Count - 1; index >= 0; index--)
         {
@@ -571,34 +661,38 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         if (Profiles.Count == 0)
         {
             return (
-                "Create an agent profile before chatting",
-                "Agent Profiles choose model settings, instructions, and runtime capabilities. Create one in Agent Profiles, then return here to chat.");
+                "Create an agent before chatting",
+                "Agents choose model settings, instructions, and runtime capabilities. Create one in Agents, then return here to chat."
+            );
         }
 
         if (Workspaces.Count == 0)
         {
             return (
                 "Create a workspace before chatting",
-                "Workspaces choose the execution environment used by sessions. Open Workspaces and create one to start chatting.");
+                "Workspaces choose the execution environment used by sessions. Open Workspaces and create one to start chatting."
+            );
         }
 
         if (SelectedWorkspace is null)
         {
             return (
                 "Select a workspace",
-                "Choose the workspace this session should run against. You can switch workspaces without changing sessions.");
+                "Choose the workspace this session should run against. You can switch workspaces without changing sessions."
+            );
         }
 
         return (
             "Create a session to start chatting",
-            "Create or select a session to begin a conversation with the selected agent profile.");
+            "Create or select a session to begin a conversation with the selected agent."
+        );
     }
 
     private string GetSetupStatusText()
     {
         if (Profiles.Count == 0)
         {
-            return "Create an Agent Profile before chatting.";
+            return "Create an Agent before chatting.";
         }
 
         if (Workspaces.Count == 0)
@@ -613,7 +707,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
         if (SelectedProfile is null)
         {
-            return "Select an Agent Profile before chatting.";
+            return "Select an Agent before chatting.";
         }
 
         return "Create a session to start chatting.";
@@ -623,7 +717,13 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     {
         for (var index = 0; index < Workspaces.Count; index++)
         {
-            if (string.Equals(Workspaces[index].WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase))
+            if (
+                string.Equals(
+                    Workspaces[index].WorkspaceId,
+                    workspaceId,
+                    StringComparison.OrdinalIgnoreCase
+                )
+            )
             {
                 return index;
             }
@@ -632,8 +732,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         return -1;
     }
 
-    private void OnWorkspacesChanged()
-        => RunOnUiThread(ApplyWorkspacesChanged);
+    private void OnWorkspacesChanged() => RunOnUiThread(ApplyWorkspacesChanged);
 
     private void ApplyWorkspacesChanged()
     {
@@ -649,5 +748,4 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             StatusText = statusText;
         }
     }
-
 }

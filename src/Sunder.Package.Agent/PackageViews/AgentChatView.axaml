@@ -846,7 +846,7 @@
             <StackPanel Grid.Column="1"
                         MinWidth="0">
               <TextBlock Classes="control-label"
-                         Text="Profile" />
+                         Text="Agent" />
               <ComboBox ItemsSource="{Binding Profiles}"
                         SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
                         IsEnabled="{Binding HasProfiles}"
@@ -925,7 +925,7 @@
                         Grid.Column="0"
                         MinWidth="0">
               <TextBlock Classes="control-label"
-                         Text="Profile" />
+                         Text="Agent" />
               <ComboBox ItemsSource="{Binding Profiles}"
                         SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
                         IsEnabled="{Binding HasProfiles}"

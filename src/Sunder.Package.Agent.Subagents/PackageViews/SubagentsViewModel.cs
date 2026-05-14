@@ -18,6 +18,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     private readonly SubagentService _subagentService;
     private readonly IPackageExtensionCatalog? _extensionCatalog;
+    private readonly IPackageSettingsNavigationService? _settingsNavigationService;
     private readonly AgentProfileSelectableCapabilityChangeObserver? _capabilityChangeObserver;
     private CancellationTokenSource? _successStatusClearCancellation;
     private bool _suppressSelectionHandlers;
@@ -25,10 +26,14 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     private bool _disposed;
     private string? _loadedCapabilitySubagentId;
 
-    public SubagentsViewModel(SubagentService subagentService, IPackageExtensionCatalog extensionCatalog)
+    public SubagentsViewModel(
+        SubagentService subagentService,
+        IPackageExtensionCatalog extensionCatalog,
+        IPackageSettingsNavigationService? settingsNavigationService = null)
     {
         _subagentService = subagentService;
         _extensionCatalog = extensionCatalog;
+        _settingsNavigationService = settingsNavigationService;
         if (_extensionCatalog is not null)
         {
             _capabilityChangeObserver = new AgentProfileSelectableCapabilityChangeObserver(_extensionCatalog);
@@ -88,6 +93,15 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     private SubagentReasoningOption? _selectedReasoningOption;
 
     [ObservableProperty]
+    private bool _hasChatProviderChoices;
+
+    [ObservableProperty]
+    private bool _hasChatProviderWarning;
+
+    [ObservableProperty]
+    private string _chatProviderWarningText = string.Empty;
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasStatusText))]
     private string _statusText = string.Empty;
 
@@ -119,6 +133,20 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     public bool HasReasoningOptions => HasSelectedChatProvider && ReasoningOptions.Count > 0;
 
+    public bool HasNoChatProviderChoices => !HasChatProviderChoices;
+
+    public bool ShowChatProviderPicker => HasChatProviderChoices;
+
+    public bool ShowChatProviderWarning => HasChatProviderWarning;
+
+    public bool ShowChatModelSelection => HasSelectedChatProvider && !HasChatProviderWarning;
+
+    public bool ShowReasoningOptions => ShowChatModelSelection && HasReasoningOptions;
+
+    public bool CanOpenChatProviderSettings => ShowChatProviderWarning
+                                               && _settingsNavigationService is not null
+                                               && !string.IsNullOrWhiteSpace(SelectedChatProvider?.PackageId);
+
     public SubagentsViewModel() : this(null!, null!)
     {
     }
@@ -127,6 +155,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     {
         OnPropertyChanged(nameof(HasSelectedChatProvider));
         OnPropertyChanged(nameof(HasReasoningOptions));
+        NotifyChatProviderStateChanged();
         if (_suppressChatProviderSelection)
         {
             return;
@@ -137,6 +166,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     partial void OnSelectedChatModelChanged(SubagentModelOption? value)
     {
+        OnPropertyChanged(nameof(ShowReasoningOptions));
         if (_suppressChatProviderSelection)
         {
             return;
@@ -144,6 +174,12 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
         ApplyReasoningOptions(value?.Variants, selectedVariantId: null);
     }
+
+    partial void OnHasChatProviderChoicesChanged(bool value)
+        => NotifyChatProviderStateChanged();
+
+    partial void OnHasChatProviderWarningChanged(bool value)
+        => NotifyChatProviderStateChanged();
 
     partial void OnIsCompactLayoutChanged(bool value)
     {
@@ -291,6 +327,32 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
         IsEditorActive = false;
     }
+
+    [RelayCommand]
+    private async Task ReloadSubagentChatProvidersAsync()
+    {
+        if (SelectedSubagent is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await LoadChatProvidersAsync(
+                SelectedChatProvider?.ProviderId,
+                SelectedChatModel?.ModelId,
+                BuildChatModelSettingsJson());
+            ClearStatus();
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message, SubagentStatusKind.Error);
+        }
+    }
+
+    [RelayCommand]
+    private async Task OpenSelectedChatProviderSettingsAsync()
+        => await OpenProviderSettingsAsync(SelectedChatProvider?.PackageId);
 
     [RelayCommand]
     private void OpenSubagentEditor(SubagentRecord? subagent)
@@ -448,6 +510,8 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         ChatProviders.Clear();
         ChatModels.Clear();
         ReasoningOptions.Clear();
+        HasChatProviderChoices = false;
+        ClearChatProviderWarning();
         _suppressChatProviderSelection = true;
         try
         {
@@ -462,6 +526,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
         OnPropertyChanged(nameof(HasSelectedChatProvider));
         OnPropertyChanged(nameof(HasReasoningOptions));
+        OnPropertyChanged(nameof(ShowReasoningOptions));
         CapabilityOptions.Clear();
         CapabilityGroups.Clear();
         _loadedCapabilitySubagentId = null;
@@ -487,13 +552,43 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     private async Task LoadChatProvidersAsync(string? selectedProviderId, string? selectedModelId, string? selectedSettingsJson)
     {
         ChatProviders.Clear();
+        IReadOnlyList<IAgentChatProvider> providers = _extensionCatalog is null
+            ? []
+            : _extensionCatalog.GetExtensions(PackageExtensionPoints.ChatProviders)
+                .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        HasChatProviderChoices = providers.Count > 0;
+
+        if (!HasChatProviderChoices)
+        {
+            _suppressChatProviderSelection = true;
+            try
+            {
+                SelectedChatProvider = null;
+                SelectedChatModel = null;
+                SelectedReasoningOption = null;
+            }
+            finally
+            {
+                _suppressChatProviderSelection = false;
+            }
+
+            ChatModels.Clear();
+            ReasoningOptions.Clear();
+            ClearChatProviderWarning();
+            NotifyChatProviderStateChanged();
+            return;
+        }
+
         ChatProviders.Add(new SubagentProviderOption(null, "Inherit parent chat model"));
         if (_extensionCatalog is not null)
         {
-            foreach (var provider in _extensionCatalog.GetExtensions(PackageExtensionPoints.ChatProviders)
-                         .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase))
+            foreach (var provider in providers)
             {
-                ChatProviders.Add(new SubagentProviderOption(provider.Descriptor.ProviderId, provider.Descriptor.DisplayName));
+                ChatProviders.Add(new SubagentProviderOption(
+                    provider.Descriptor.ProviderId,
+                    provider.Descriptor.DisplayName,
+                    provider.Descriptor.PackageId));
             }
         }
 
@@ -512,6 +607,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         ApplyReasoningOptions(
             SelectedChatModel?.Variants,
             AgentChatModelSettingsJson.Parse(selectedSettingsJson).ReasoningVariantId);
+        NotifyChatProviderStateChanged();
     }
 
     private async Task LoadChatModelsAsync(string? providerId, string? selectedModelId)
@@ -521,6 +617,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         ApplyReasoningOptions(null, selectedVariantId: null);
         if (_extensionCatalog is null || string.IsNullOrWhiteSpace(providerId))
         {
+            ClearChatProviderWarning();
             return;
         }
 
@@ -528,17 +625,30 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
             .FirstOrDefault(provider => string.Equals(provider.Descriptor.ProviderId, providerId, StringComparison.OrdinalIgnoreCase));
         if (provider is null)
         {
+            ClearChatProviderWarning();
             return;
         }
 
-        foreach (var model in (await provider.GetAvailableModelsAsync()).OrderBy(model => model.DisplayName, StringComparer.OrdinalIgnoreCase))
+        try
         {
-            ChatModels.Add(new SubagentModelOption(model.ModelId, model.DisplayName, model.Variants));
+            var models = await provider.GetAvailableModelsAsync();
+            var readiness = await provider.GetReadinessAsync();
+            ApplyChatProviderReadiness(readiness);
+
+            foreach (var model in models.OrderBy(model => model.DisplayName, StringComparer.OrdinalIgnoreCase))
+            {
+                ChatModels.Add(new SubagentModelOption(model.ModelId, model.DisplayName, model.Variants));
+            }
+        }
+        catch (Exception ex)
+        {
+            SetChatProviderWarning($"Chat provider status could not be loaded: {ex.Message}");
         }
 
         SelectedChatModel = ChatModels.FirstOrDefault(option => string.Equals(option.ModelId, selectedModelId, StringComparison.OrdinalIgnoreCase))
                             ?? ChatModels.FirstOrDefault();
         ApplyReasoningOptions(SelectedChatModel?.Variants, selectedVariantId: null);
+        NotifyChatProviderStateChanged();
     }
 
     private void ApplyReasoningOptions(IReadOnlyList<AgentModelVariantDescriptor>? variants, string? selectedVariantId)
@@ -549,6 +659,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         if (!HasSelectedChatProvider || variants is null || variants.Count == 0)
         {
             OnPropertyChanged(nameof(HasReasoningOptions));
+            OnPropertyChanged(nameof(ShowReasoningOptions));
             return;
         }
 
@@ -563,6 +674,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
                                       && string.Equals(option.VariantId, selectedVariantId, StringComparison.OrdinalIgnoreCase))
                                   ?? ReasoningOptions.FirstOrDefault();
         OnPropertyChanged(nameof(HasReasoningOptions));
+        OnPropertyChanged(nameof(ShowReasoningOptions));
     }
 
     private string? BuildChatModelSettingsJson()
@@ -818,6 +930,62 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         cancellation.Dispose();
     }
 
+    private async Task OpenProviderSettingsAsync(string? packageId)
+    {
+        if (_settingsNavigationService is null || string.IsNullOrWhiteSpace(packageId))
+        {
+            SetStatus("Package settings cannot be opened from this host.", SubagentStatusKind.Warning);
+            return;
+        }
+
+        try
+        {
+            if (!await _settingsNavigationService.OpenPackageSettingsAsync(packageId))
+            {
+                SetStatus("Package settings could not be opened.", SubagentStatusKind.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message, SubagentStatusKind.Error);
+        }
+    }
+
+    private void ApplyChatProviderReadiness(AgentProviderReadiness? readiness)
+    {
+        if (!HasChatProviderChoices || !HasSelectedChatProvider || readiness is null || readiness.Status == AgentProviderReadinessStatus.Ready)
+        {
+            ClearChatProviderWarning();
+            return;
+        }
+
+        SetChatProviderWarning(readiness.Message);
+    }
+
+    private void SetChatProviderWarning(string message)
+    {
+        ChatProviderWarningText = message;
+        HasChatProviderWarning = true;
+        NotifyChatProviderStateChanged();
+    }
+
+    private void ClearChatProviderWarning()
+    {
+        ChatProviderWarningText = string.Empty;
+        HasChatProviderWarning = false;
+        NotifyChatProviderStateChanged();
+    }
+
+    private void NotifyChatProviderStateChanged()
+    {
+        OnPropertyChanged(nameof(HasNoChatProviderChoices));
+        OnPropertyChanged(nameof(ShowChatProviderPicker));
+        OnPropertyChanged(nameof(ShowChatProviderWarning));
+        OnPropertyChanged(nameof(ShowChatModelSelection));
+        OnPropertyChanged(nameof(ShowReasoningOptions));
+        OnPropertyChanged(nameof(CanOpenChatProviderSettings));
+    }
+
     private void SetSelectionSilently(Action action)
     {
         _suppressSelectionHandlers = true;
@@ -886,7 +1054,7 @@ public sealed partial class SubagentCapabilityOptionViewModel(
     private bool _isEnabled = isEnabled;
 }
 
-public sealed record SubagentProviderOption(string? ProviderId, string Label);
+public sealed record SubagentProviderOption(string? ProviderId, string Label, string? PackageId = null);
 
 public sealed record SubagentModelOption(string ModelId, string Label, IReadOnlyList<AgentModelVariantDescriptor>? Variants = null);
 

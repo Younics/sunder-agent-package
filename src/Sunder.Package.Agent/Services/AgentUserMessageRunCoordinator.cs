@@ -16,7 +16,8 @@ public sealed class AgentUserMessageRunCoordinator(
     AgentRunEventLogger runEventLogger,
     AgentRunProviderResolver providerResolver,
     AgentBehaviorLoopHostFactory behaviorLoopHostFactory,
-    AgentBehaviorLoopResolver behaviorLoopResolver)
+    AgentBehaviorLoopResolver behaviorLoopResolver
+)
 {
     private readonly AgentSessionService _sessionService = sessionService;
     private readonly AgentProfileService _profileService = profileService;
@@ -26,20 +27,28 @@ public sealed class AgentUserMessageRunCoordinator(
     private readonly AgentActiveRunRegistry _activeRunRegistry = activeRunRegistry;
     private readonly AgentRunEventLogger _runEventLogger = runEventLogger;
     private readonly AgentRunProviderResolver _providerResolver = providerResolver;
-    private readonly AgentBehaviorLoopHostFactory _behaviorLoopHostFactory = behaviorLoopHostFactory;
+    private readonly AgentBehaviorLoopHostFactory _behaviorLoopHostFactory =
+        behaviorLoopHostFactory;
     private readonly AgentBehaviorLoopResolver _behaviorLoopResolver = behaviorLoopResolver;
 
-    public Task<AgentRunCheckpointRecord> QueueAsync(Guid sessionId, string profileId, string userMessage, string workspaceId)
-        => QueueAsync(sessionId, profileId, userMessage, workspaceId, []);
+    public Task<AgentRunCheckpointRecord> QueueAsync(
+        Guid sessionId,
+        string profileId,
+        string userMessage,
+        string workspaceId
+    ) => QueueAsync(sessionId, profileId, userMessage, workspaceId, []);
 
     public async Task<AgentRunCheckpointRecord> QueueAsync(
         Guid sessionId,
         string profileId,
         string userMessage,
         string workspaceId,
-        IReadOnlyList<AgentAttachmentUploadRequest> attachments)
+        IReadOnlyList<AgentAttachmentUploadRequest> attachments
+    )
     {
-        var session = _sessionService.GetSession(sessionId) ?? throw new InvalidOperationException($"Session '{sessionId}' was not found.");
+        var session =
+            _sessionService.GetSession(sessionId)
+            ?? throw new InvalidOperationException($"Session '{sessionId}' was not found.");
         var nextRevision = _sessionService.GetNextRunRevision(sessionId);
         var runId = Guid.NewGuid();
         var runStartedAtUtc = DateTimeOffset.UtcNow;
@@ -48,17 +57,33 @@ public sealed class AgentUserMessageRunCoordinator(
         var workspace = ResolveWorkspace(workspaceId);
         if (workspace is null)
         {
-            return _sessionService.SaveCheckpoint(sessionId, nextRevision, AgentRunStatus.Failed, "The selected workspace was not found.");
+            return _sessionService.SaveCheckpoint(
+                sessionId,
+                nextRevision,
+                AgentRunStatus.Failed,
+                "The selected workspace was not found."
+            );
         }
 
         var profile = ResolveProfile(profileId);
         if (profile is null)
         {
-            return _sessionService.SaveCheckpoint(sessionId, nextRevision, AgentRunStatus.Failed, "The selected agent profile was not found.");
+            return _sessionService.SaveCheckpoint(
+                sessionId,
+                nextRevision,
+                AgentRunStatus.Failed,
+                "The selected agent was not found."
+            );
         }
 
-        if (!string.Equals(session.ProfileId, profile.ProfileId, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(session.BehaviorLoopId, profile.BehaviorLoopId, StringComparison.OrdinalIgnoreCase))
+        if (
+            !string.Equals(session.ProfileId, profile.ProfileId, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(
+                session.BehaviorLoopId,
+                profile.BehaviorLoopId,
+                StringComparison.OrdinalIgnoreCase
+            )
+        )
         {
             session = session with
             {
@@ -87,9 +112,14 @@ public sealed class AgentUserMessageRunCoordinator(
                 ["provider.id"] = chatBinding?.ProviderId,
                 ["model.id"] = chatBinding?.ModelId,
                 ["workspace.id"] = workspace.WorkspaceId,
-            });
+            }
+        );
 
-        if (provider is null || chatBinding is null || string.IsNullOrWhiteSpace(chatBinding.ModelId))
+        if (
+            provider is null
+            || chatBinding is null
+            || string.IsNullOrWhiteSpace(chatBinding.ModelId)
+        )
         {
             _runEventLogger.LogRunEvent(
                 PackageLogLevel.Error,
@@ -98,12 +128,14 @@ public sealed class AgentUserMessageRunCoordinator(
                 nextRevision,
                 "run.failed",
                 "No installed provider matches this profile yet, or no model is selected.",
-                runStopwatch.ElapsedMilliseconds);
+                runStopwatch.ElapsedMilliseconds
+            );
             return _sessionService.SaveCheckpoint(
                 sessionId,
                 nextRevision,
                 AgentRunStatus.Failed,
-                "No installed provider matches this profile yet, or no model is selected.");
+                "No installed provider matches this profile yet, or no model is selected."
+            );
         }
 
         try
@@ -120,8 +152,11 @@ public sealed class AgentUserMessageRunCoordinator(
                 {
                     ["provider.id"] = provider.Descriptor.ProviderId,
                     ["model.id"] = chatBinding.ModelId,
-                });
-            var readiness = await provider.GetReadinessAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+            );
+            var readiness = await provider
+                .GetReadinessAsync(CancellationToken.None)
+                .ConfigureAwait(false);
             _runEventLogger.LogRunEvent(
                 PackageLogLevel.Debug,
                 sessionId,
@@ -134,14 +169,16 @@ public sealed class AgentUserMessageRunCoordinator(
                 {
                     ["provider.id"] = provider.Descriptor.ProviderId,
                     ["provider.readiness_status"] = readiness.Status,
-                });
+                }
+            );
             if (readiness.Status != AgentProviderReadinessStatus.Ready)
             {
                 return _sessionService.SaveCheckpoint(
                     sessionId,
                     nextRevision,
                     AgentRunStatus.Failed,
-                    readiness.Message);
+                    readiness.Message
+                );
             }
         }
         catch (OperationCanceledException)
@@ -158,12 +195,14 @@ public sealed class AgentUserMessageRunCoordinator(
                 "provider.readiness.failed",
                 "Provider readiness check failed.",
                 runStopwatch.ElapsedMilliseconds,
-                exception: ex);
+                exception: ex
+            );
             return _sessionService.SaveCheckpoint(
                 sessionId,
                 nextRevision,
                 AgentRunStatus.Failed,
-                ex.Message);
+                ex.Message
+            );
         }
 
         AgentProviderRunCapabilities runCapabilities;
@@ -171,7 +210,9 @@ public sealed class AgentUserMessageRunCoordinator(
         try
         {
             var capabilitiesStopwatch = Stopwatch.StartNew();
-            var metadata = await _providerResolver.ResolveRunMetadataAsync(provider, chatBinding, CancellationToken.None).ConfigureAwait(false);
+            var metadata = await _providerResolver
+                .ResolveRunMetadataAsync(provider, chatBinding, CancellationToken.None)
+                .ConfigureAwait(false);
             runCapabilities = metadata.RunCapabilities;
             modelVariant = metadata.ModelVariant;
             _runEventLogger.LogRunEvent(
@@ -184,15 +225,19 @@ public sealed class AgentUserMessageRunCoordinator(
                 capabilitiesStopwatch.ElapsedMilliseconds,
                 new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
-                    ["provider.supports_native_tool_calling"] = runCapabilities.SupportsNativeToolCalling,
-                    ["provider.supports_streaming_tool_calls"] = runCapabilities.SupportsStreamingToolCalls,
-                    ["provider.supports_multiple_tool_calls"] = runCapabilities.SupportsMultipleToolCalls,
+                    ["provider.supports_native_tool_calling"] =
+                        runCapabilities.SupportsNativeToolCalling,
+                    ["provider.supports_streaming_tool_calls"] =
+                        runCapabilities.SupportsStreamingToolCalls,
+                    ["provider.supports_multiple_tool_calls"] =
+                        runCapabilities.SupportsMultipleToolCalls,
                     ["provider.supports_image_input"] = runCapabilities.SupportsImageInput,
                     ["provider.supports_pdf_input"] = runCapabilities.SupportsPdfInput,
                     ["provider.supports_audio_input"] = runCapabilities.SupportsAudioInput,
                     ["provider.supports_video_input"] = runCapabilities.SupportsVideoInput,
                     ["model.variant_id"] = modelVariant?.VariantId,
-                });
+                }
+            );
         }
         catch (OperationCanceledException)
         {
@@ -208,18 +253,22 @@ public sealed class AgentUserMessageRunCoordinator(
                 "provider.capabilities.failed",
                 "Provider capability lookup failed.",
                 runStopwatch.ElapsedMilliseconds,
-                exception: ex);
+                exception: ex
+            );
             return _sessionService.SaveCheckpoint(
                 sessionId,
                 nextRevision,
                 AgentRunStatus.Failed,
-                ex.Message);
+                ex.Message
+            );
         }
 
         IReadOnlyList<AgentStoredAttachment> storedAttachments;
         try
         {
-            storedAttachments = await _attachmentStore.StoreAsync(sessionId, attachments, CancellationToken.None).ConfigureAwait(false);
+            storedAttachments = await _attachmentStore
+                .StoreAsync(sessionId, attachments, CancellationToken.None)
+                .ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -231,8 +280,14 @@ public sealed class AgentUserMessageRunCoordinator(
                 "attachment.store.failed",
                 ex.Message,
                 runStopwatch.ElapsedMilliseconds,
-                exception: ex);
-            return _sessionService.SaveCheckpoint(sessionId, nextRevision, AgentRunStatus.Failed, ex.Message);
+                exception: ex
+            );
+            return _sessionService.SaveCheckpoint(
+                sessionId,
+                nextRevision,
+                AgentRunStatus.Failed,
+                ex.Message
+            );
         }
 
         var interruptedRun = _activeRunRegistry.Remove(sessionId);
@@ -242,30 +297,40 @@ public sealed class AgentUserMessageRunCoordinator(
                 sessionId,
                 interruptedRun.RunRevision,
                 AgentRunStatus.Interrupted,
-                "Interrupted by a newer user message before provider execution completed.");
+                "Interrupted by a newer user message before provider execution completed."
+            );
 
         if (interruptedRun is not null && interruptedCheckpoint is not null)
         {
-            await _memoryCoordinator.PublishLifecycleEventAsync(
-                AgentLifecycleEventKind.RunInterrupted,
-                session,
-                profile,
-                interruptedRun.RunId,
-                interruptedRun.RunRevision,
-                AgentRunStatus.Interrupted,
-                interruptedRun.StartedAtUtc,
-                interruptedRun.UserMessage,
-                checkpoint: interruptedCheckpoint,
-                isInterrupted: true,
-                cancellationToken: CancellationToken.None).ConfigureAwait(false);
+            await _memoryCoordinator
+                .PublishLifecycleEventAsync(
+                    AgentLifecycleEventKind.RunInterrupted,
+                    session,
+                    profile,
+                    interruptedRun.RunId,
+                    interruptedRun.RunRevision,
+                    AgentRunStatus.Interrupted,
+                    interruptedRun.StartedAtUtc,
+                    interruptedRun.UserMessage,
+                    checkpoint: interruptedCheckpoint,
+                    isInterrupted: true,
+                    cancellationToken: CancellationToken.None
+                )
+                .ConfigureAwait(false);
         }
 
         interruptedRun?.CancellationTokenSource.Cancel();
         interruptedRun?.CancellationTokenSource.Dispose();
 
-        var userTurn = storedAttachments.Count == 0
-            ? _sessionService.AppendTextTurn(sessionId, AgentMessageRole.User, userMessage)
-            : _sessionService.AppendUserTurn(sessionId, AgentMessageRole.User, userMessage, storedAttachments);
+        var userTurn =
+            storedAttachments.Count == 0
+                ? _sessionService.AppendTextTurn(sessionId, AgentMessageRole.User, userMessage)
+                : _sessionService.AppendUserTurn(
+                    sessionId,
+                    AgentMessageRole.User,
+                    userMessage,
+                    storedAttachments
+                );
         _runEventLogger.LogRunEvent(
             PackageLogLevel.Debug,
             sessionId,
@@ -278,40 +343,73 @@ public sealed class AgentUserMessageRunCoordinator(
             {
                 ["turn.content_length"] = userMessage.Length,
                 ["turn.attachment_count"] = storedAttachments.Count,
-                ["turn.attachment_bytes"] = storedAttachments.Sum(attachment => attachment.Metadata.SizeBytes),
-            });
-        await _memoryCoordinator.PublishLifecycleEventAsync(
-            AgentLifecycleEventKind.UserTurnAdded,
-            session,
-            profile,
-            runId,
-            nextRevision,
-            AgentRunStatus.Running,
-            runStartedAtUtc,
-            userMessage,
-            triggerTurn: userTurn,
-            cancellationToken: CancellationToken.None).ConfigureAwait(false);
-        var profileHasCapabilityAssignments = (profile.SelectableCapabilityAssignments?.Count ?? 0) > 0;
-        var runningSummary = runCapabilities.SupportsNativeToolCalling
-            ? "User message queued. Provider execution is starting."
+                ["turn.attachment_bytes"] = storedAttachments.Sum(attachment =>
+                    attachment.Metadata.SizeBytes
+                ),
+            }
+        );
+        await _memoryCoordinator
+            .PublishLifecycleEventAsync(
+                AgentLifecycleEventKind.UserTurnAdded,
+                session,
+                profile,
+                runId,
+                nextRevision,
+                AgentRunStatus.Running,
+                runStartedAtUtc,
+                userMessage,
+                triggerTurn: userTurn,
+                cancellationToken: CancellationToken.None
+            )
+            .ConfigureAwait(false);
+        var profileHasCapabilityAssignments =
+            (profile.SelectableCapabilityAssignments?.Count ?? 0) > 0;
+        var runningSummary =
+            runCapabilities.SupportsNativeToolCalling
+                ? "User message queued. Provider execution is starting."
             : profileHasCapabilityAssignments
                 ? $"User message queued. Provider execution is starting in text-only mode. {runCapabilities.Summary}"
-                : "User message queued. Provider execution is starting.";
+            : "User message queued. Provider execution is starting.";
         var runningCheckpoint = _sessionService.SaveCheckpoint(
             sessionId,
             nextRevision,
             AgentRunStatus.Running,
             runningSummary
         );
-        _runEventLogger.LogRunEvent(PackageLogLevel.Debug, sessionId, runId, nextRevision, "run.running_checkpoint.saved", runningSummary, runStopwatch.ElapsedMilliseconds);
+        _runEventLogger.LogRunEvent(
+            PackageLogLevel.Debug,
+            sessionId,
+            runId,
+            nextRevision,
+            "run.running_checkpoint.saved",
+            runningSummary,
+            runStopwatch.ElapsedMilliseconds
+        );
 
-        var runHandle = new AgentActiveRunHandle(runId, nextRevision, runStartedAtUtc, profile.ProfileId, userMessage, new CancellationTokenSource());
+        var runHandle = new AgentActiveRunHandle(
+            runId,
+            nextRevision,
+            runStartedAtUtc,
+            profile.ProfileId,
+            userMessage,
+            new CancellationTokenSource()
+        );
         _activeRunRegistry.Set(sessionId, runHandle);
 
         try
         {
             var executionBinding = ResolveExecutionBinding(workspace);
-            var host = _behaviorLoopHostFactory.Create(provider, session, profile, workspace, runId, nextRevision, runStartedAtUtc, userMessage, userTurn.TurnId);
+            var host = _behaviorLoopHostFactory.Create(
+                provider,
+                session,
+                profile,
+                workspace,
+                runId,
+                nextRevision,
+                runStartedAtUtc,
+                userMessage,
+                userTurn.TurnId
+            );
             var behaviorLoop = _behaviorLoopResolver.Resolve(profile);
             _runEventLogger.LogRunEvent(
                 PackageLogLevel.Debug,
@@ -324,33 +422,54 @@ public sealed class AgentUserMessageRunCoordinator(
                 new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
                     ["behavior.loop_id"] = behaviorLoop.Descriptor.LoopId,
-                });
-            var loopResult = await behaviorLoop.RunAsync(
-                new AgentBehaviorLoopContext(
-                    session,
-                    profile,
-                    provider.Descriptor.ProviderId,
-                    chatBinding.ModelId,
-                    runCapabilities,
-                    workspace,
-                    executionBinding,
-                    runId,
-                    nextRevision,
-                    runningCheckpoint,
-                    runStartedAtUtc,
-                    userMessage,
-                    userTurn.TurnId,
-                    modelVariant),
-                host,
-                runHandle.CancellationTokenSource.Token).ConfigureAwait(false);
+                }
+            );
+            var loopResult = await behaviorLoop
+                .RunAsync(
+                    new AgentBehaviorLoopContext(
+                        session,
+                        profile,
+                        provider.Descriptor.ProviderId,
+                        chatBinding.ModelId,
+                        runCapabilities,
+                        workspace,
+                        executionBinding,
+                        runId,
+                        nextRevision,
+                        runningCheckpoint,
+                        runStartedAtUtc,
+                        userMessage,
+                        userTurn.TurnId,
+                        modelVariant
+                    ),
+                    host,
+                    runHandle.CancellationTokenSource.Token
+                )
+                .ConfigureAwait(false);
             loopResult = ResolveStoppedOrInterruptedRunResult(sessionId, nextRevision, loopResult);
-            _runEventLogger.LogRunCompletion(sessionId, runId, nextRevision, loopResult, runStopwatch.ElapsedMilliseconds);
+            _runEventLogger.LogRunCompletion(
+                sessionId,
+                runId,
+                nextRevision,
+                loopResult,
+                runStopwatch.ElapsedMilliseconds
+            );
             return loopResult.Checkpoint;
         }
         catch (OperationCanceledException)
         {
-            _runEventLogger.LogRunEvent(PackageLogLevel.Warning, sessionId, runId, nextRevision, "run.canceled", "Agent run was canceled.", runStopwatch.ElapsedMilliseconds);
-            return GetStoppedOrInterruptedCheckpoint(sessionId, nextRevision) ?? interruptedCheckpoint ?? runningCheckpoint;
+            _runEventLogger.LogRunEvent(
+                PackageLogLevel.Warning,
+                sessionId,
+                runId,
+                nextRevision,
+                "run.canceled",
+                "Agent run was canceled.",
+                runStopwatch.ElapsedMilliseconds
+            );
+            return GetStoppedOrInterruptedCheckpoint(sessionId, nextRevision)
+                ?? interruptedCheckpoint
+                ?? runningCheckpoint;
         }
         catch (Exception ex)
         {
@@ -359,26 +478,43 @@ public sealed class AgentUserMessageRunCoordinator(
                 return interruptedCheckpoint ?? runningCheckpoint;
             }
 
-            var assistantTurn = _sessionService.AppendTextTurn(sessionId, AgentMessageRole.Assistant, $"### Agent run failed\n\n{ex.Message}");
+            var assistantTurn = _sessionService.AppendTextTurn(
+                sessionId,
+                AgentMessageRole.Assistant,
+                $"### Agent run failed\n\n{ex.Message}"
+            );
 
             var failedCheckpoint = _sessionService.SaveCheckpoint(
                 sessionId,
                 nextRevision,
                 AgentRunStatus.Failed,
-                ex.Message);
-            _runEventLogger.LogRunEvent(PackageLogLevel.Error, sessionId, runId, nextRevision, "run.failed", ex.Message, runStopwatch.ElapsedMilliseconds, exception: ex);
-            await _memoryCoordinator.PublishLifecycleEventAsync(
-                AgentLifecycleEventKind.RunFailed,
-                session,
-                profile,
+                ex.Message
+            );
+            _runEventLogger.LogRunEvent(
+                PackageLogLevel.Error,
+                sessionId,
                 runId,
                 nextRevision,
-                AgentRunStatus.Failed,
-                runStartedAtUtc,
-                userMessage,
-                triggerTurn: assistantTurn,
-                checkpoint: failedCheckpoint,
-                cancellationToken: CancellationToken.None).ConfigureAwait(false);
+                "run.failed",
+                ex.Message,
+                runStopwatch.ElapsedMilliseconds,
+                exception: ex
+            );
+            await _memoryCoordinator
+                .PublishLifecycleEventAsync(
+                    AgentLifecycleEventKind.RunFailed,
+                    session,
+                    profile,
+                    runId,
+                    nextRevision,
+                    AgentRunStatus.Failed,
+                    runStartedAtUtc,
+                    userMessage,
+                    triggerTurn: assistantTurn,
+                    checkpoint: failedCheckpoint,
+                    cancellationToken: CancellationToken.None
+                )
+                .ConfigureAwait(false);
             return failedCheckpoint;
         }
         finally
@@ -387,29 +523,38 @@ public sealed class AgentUserMessageRunCoordinator(
         }
     }
 
-    private AgentWorkspaceRecord? ResolveWorkspace(string? workspaceId)
-        => string.IsNullOrWhiteSpace(workspaceId)
+    private AgentWorkspaceRecord? ResolveWorkspace(string? workspaceId) =>
+        string.IsNullOrWhiteSpace(workspaceId)
             ? null
             : _workspaceService.GetWorkspace(workspaceId.Trim());
 
-    private AgentProfileRecord? ResolveProfile(string? profileId)
-        => string.IsNullOrWhiteSpace(profileId)
-            ? null
-            : _profileService.GetProfile(profileId);
+    private AgentProfileRecord? ResolveProfile(string? profileId) =>
+        string.IsNullOrWhiteSpace(profileId) ? null : _profileService.GetProfile(profileId);
 
-    private AgentWorkspaceBindingRecord? ResolveExecutionBinding(AgentWorkspaceRecord? workspace)
-        => workspace is null
+    private AgentWorkspaceBindingRecord? ResolveExecutionBinding(AgentWorkspaceRecord? workspace) =>
+        workspace is null
             ? null
-            : _workspaceService.ListBindings(workspace.WorkspaceId)
-                .FirstOrDefault(binding => binding.IsEnabled
-                                           && string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase));
+            : _workspaceService
+                .ListBindings(workspace.WorkspaceId)
+                .FirstOrDefault(binding =>
+                    binding.IsEnabled
+                    && string.Equals(
+                        binding.Role,
+                        AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                );
 
     private AgentBehaviorLoopResult ResolveStoppedOrInterruptedRunResult(
         Guid sessionId,
         long runRevision,
-        AgentBehaviorLoopResult loopResult)
+        AgentBehaviorLoopResult loopResult
+    )
     {
-        if (loopResult.Checkpoint.Status != AgentRunStatus.Running || _activeRunRegistry.IsCurrent(sessionId, runRevision))
+        if (
+            loopResult.Checkpoint.Status != AgentRunStatus.Running
+            || _activeRunRegistry.IsCurrent(sessionId, runRevision)
+        )
         {
             return loopResult;
         }
@@ -420,18 +565,22 @@ public sealed class AgentUserMessageRunCoordinator(
             : new AgentBehaviorLoopResult(replacement, ToCompletionKind(replacement.Status));
     }
 
-    private AgentRunCheckpointRecord? GetStoppedOrInterruptedCheckpoint(Guid sessionId, long runRevision)
+    private AgentRunCheckpointRecord? GetStoppedOrInterruptedCheckpoint(
+        Guid sessionId,
+        long runRevision
+    )
     {
         var latest = _sessionService.GetLatestCheckpoint(sessionId);
-        return latest is not null
-               && latest.RunRevision == runRevision
-               && latest.Status is AgentRunStatus.Stopped or AgentRunStatus.Interrupted
+        return
+            latest is not null
+            && latest.RunRevision == runRevision
+            && latest.Status is AgentRunStatus.Stopped or AgentRunStatus.Interrupted
             ? latest
             : null;
     }
 
-    private static AgentBehaviorLoopCompletionKind ToCompletionKind(AgentRunStatus status)
-        => status switch
+    private static AgentBehaviorLoopCompletionKind ToCompletionKind(AgentRunStatus status) =>
+        status switch
         {
             AgentRunStatus.Completed => AgentBehaviorLoopCompletionKind.Completed,
             AgentRunStatus.WaitingForApproval => AgentBehaviorLoopCompletionKind.WaitingForApproval,

@@ -4,6 +4,7 @@ using Avalonia.Input;
 using Avalonia.Threading;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Services;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -20,10 +21,12 @@ public partial class AgentProfilesView : UserControl
         SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
 
-    public AgentProfilesView(AgentProfileService profileService)
+    public AgentProfilesView(
+        AgentProfileService profileService,
+        IPackageSettingsNavigationService? settingsNavigationService = null)
         : this()
     {
-        _viewModel = new AgentProfilesViewModel(profileService);
+        _viewModel = new AgentProfilesViewModel(profileService, settingsNavigationService);
         DataContext = _viewModel;
     }
 

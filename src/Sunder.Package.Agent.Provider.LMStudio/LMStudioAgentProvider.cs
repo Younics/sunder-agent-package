@@ -15,7 +15,10 @@ public sealed class LMStudioAgentProvider(IPackageContext packageContext) : IAge
         [],
         SupportsStreaming: true,
         SupportsInterruptibleRuns: true
-    );
+    )
+    {
+        PackageId = packageContext.PackageId
+    };
 
     public async ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
     {

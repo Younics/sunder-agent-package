@@ -6,7 +6,10 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentChatViewModel
 {
-    partial void OnSelectedSessionChanging(AgentSessionListItemViewModel? oldValue, AgentSessionListItemViewModel? newValue)
+    partial void OnSelectedSessionChanging(
+        AgentSessionListItemViewModel? oldValue,
+        AgentSessionListItemViewModel? newValue
+    )
     {
         if (_isReconcilingSessionSelection)
         {
@@ -74,14 +77,15 @@ public sealed partial class AgentChatViewModel
         var profile = SelectedProfile;
         if (profile is null)
         {
-            SetGlobalStatus("Create an Agent Profile before starting a session.");
+            SetGlobalStatus("Create an Agent before starting a session.");
             return;
         }
 
         var session = _sessionService.CreateSession(
             $"{profile.DisplayName} Session {Sessions.Count + 1}",
             profileId: profile.ProfileId,
-            behaviorLoopId: profile.BehaviorLoopId);
+            behaviorLoopId: profile.BehaviorLoopId
+        );
         ReloadSessions(session.SessionId);
     }
 
@@ -111,15 +115,15 @@ public sealed partial class AgentChatViewModel
             new Dictionary<string, string?>
             {
                 [SubsessionNavigationSessionIdKey] = childSession.SessionId.ToString("D"),
-            });
+            }
+        );
         if (!opened)
         {
             SetGlobalStatus("Unable to open the Subsessions view.");
         }
     }
 
-    private bool CanCreateSession()
-        => SelectedProfile is not null;
+    private bool CanCreateSession() => SelectedProfile is not null;
 
     private void ReloadSessions(Guid? selectSessionId)
     {
@@ -130,7 +134,8 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        var nextSession = ResolveSessionItem(selectSessionId, allowChildSession: false)
+        var nextSession =
+            ResolveSessionItem(selectSessionId, allowChildSession: false)
             ?? Sessions.FirstOrDefault(session => session.SessionId == SelectedSession?.SessionId)
             ?? Sessions.FirstOrDefault();
         SelectedSession = nextSession;
@@ -157,12 +162,13 @@ public sealed partial class AgentChatViewModel
         DisplayedSession = session;
     }
 
-    private IReadOnlyList<AgentSessionRecord> ListMainSessions()
-        => _sessionService.ListSessions()
-            .Where(session => session.ParentSessionId is null)
-            .ToArray();
+    private IReadOnlyList<AgentSessionRecord> ListMainSessions() =>
+        _sessionService.ListSessions().Where(session => session.ParentSessionId is null).ToArray();
 
-    private AgentSessionListItemViewModel? ResolveSessionItem(Guid? sessionId, bool allowChildSession)
+    private AgentSessionListItemViewModel? ResolveSessionItem(
+        Guid? sessionId,
+        bool allowChildSession
+    )
     {
         if (sessionId is null)
         {
@@ -180,9 +186,12 @@ public sealed partial class AgentChatViewModel
         {
             var rootSessionId = session.RootSessionId ?? session.ParentSessionId.Value;
             return Sessions.FirstOrDefault(candidate => candidate.SessionId == rootSessionId)
-                   ?? (_sessionService.GetSession(rootSessionId) is { ParentSessionId: null } rootSession
-                       ? CreateSessionItem(rootSession)
-                       : null);
+                ?? (
+                    _sessionService.GetSession(rootSessionId)
+                        is { ParentSessionId: null } rootSession
+                        ? CreateSessionItem(rootSession)
+                        : null
+                );
         }
 
         return session is null ? null : CreateSessionItem(session);
@@ -193,7 +202,8 @@ public sealed partial class AgentChatViewModel
         _suppressPermissionState = true;
         try
         {
-            IsUnrestrictedModeEnabled = session is not null
+            IsUnrestrictedModeEnabled =
+                session is not null
                 && _permissionService.GetSessionState(session.SessionId).IsUnrestrictedModeEnabled;
         }
         finally
@@ -207,7 +217,11 @@ public sealed partial class AgentChatViewModel
         PendingPermissionRequests.Clear();
         if (SelectedSession is not null)
         {
-            foreach (var request in _permissionService.ListPendingRequestsForSessionTree(SelectedSession.SessionId))
+            foreach (
+                var request in _permissionService.ListPendingRequestsForSessionTree(
+                    SelectedSession.SessionId
+                )
+            )
             {
                 PendingPermissionRequests.Add(request);
             }
@@ -221,8 +235,10 @@ public sealed partial class AgentChatViewModel
         var desiredSessionIds = sessions.Select(session => session.SessionId).ToHashSet();
         var selectedSessionId = SelectedSession?.SessionId;
         var displayedSessionId = DisplayedSession?.SessionId;
-        var shouldPreserveSelectedSession = selectedSessionId is not null && desiredSessionIds.Contains(selectedSessionId.Value);
-        var shouldPreserveDisplayedSession = displayedSessionId is not null && desiredSessionIds.Contains(displayedSessionId.Value);
+        var shouldPreserveSelectedSession =
+            selectedSessionId is not null && desiredSessionIds.Contains(selectedSessionId.Value);
+        var shouldPreserveDisplayedSession =
+            displayedSessionId is not null && desiredSessionIds.Contains(displayedSessionId.Value);
 
         _isReconcilingSessionSelection = shouldPreserveSelectedSession;
         try
@@ -248,7 +264,11 @@ public sealed partial class AgentChatViewModel
                 }
 
                 Sessions[existingIndex].UpdateSession(session);
-                Sessions[existingIndex].ApplyCheckpoint(_sessionService.GetLatestCheckpoint(session.SessionId), markUnread: false);
+                Sessions[existingIndex]
+                    .ApplyCheckpoint(
+                        _sessionService.GetLatestCheckpoint(session.SessionId),
+                        markUnread: false
+                    );
 
                 if (existingIndex == index)
                 {
@@ -275,7 +295,11 @@ public sealed partial class AgentChatViewModel
 
     private void RestoreReconciledSessionSelection(Guid? sessionId, bool shouldPreserveSession)
     {
-        if (!shouldPreserveSession || sessionId is null || SelectedSession?.SessionId == sessionId.Value)
+        if (
+            !shouldPreserveSession
+            || sessionId is null
+            || SelectedSession?.SessionId == sessionId.Value
+        )
         {
             return;
         }
@@ -299,7 +323,11 @@ public sealed partial class AgentChatViewModel
 
     private void RestoreReconciledDisplayedSession(Guid? sessionId, bool shouldPreserveSession)
     {
-        if (!shouldPreserveSession || sessionId is null || DisplayedSession?.SessionId == sessionId.Value)
+        if (
+            !shouldPreserveSession
+            || sessionId is null
+            || DisplayedSession?.SessionId == sessionId.Value
+        )
         {
             return;
         }
@@ -329,8 +357,8 @@ public sealed partial class AgentChatViewModel
         return index < 0 ? null : Sessions[index];
     }
 
-    private void OnSessionChanged(Guid sessionId)
-        => RunOnUiThread(() => ApplySessionChanged(sessionId));
+    private void OnSessionChanged(Guid sessionId) =>
+        RunOnUiThread(() => ApplySessionChanged(sessionId));
 
     private void ApplySessionChanged(Guid sessionId)
     {
@@ -346,8 +374,16 @@ public sealed partial class AgentChatViewModel
         if (changedSession.ParentSessionId is null)
         {
             ApplyMainSessionChanged(changedSession);
-            RestoreReconciledSessionSelection(selectedSessionId, selectedSessionId is not null && FindSessionItem(selectedSessionId.Value) is not null);
-            RestoreReconciledDisplayedSession(displayedSessionId, displayedSessionId is not null && FindSessionItem(displayedSessionId.Value) is not null);
+            RestoreReconciledSessionSelection(
+                selectedSessionId,
+                selectedSessionId is not null
+                    && FindSessionItem(selectedSessionId.Value) is not null
+            );
+            RestoreReconciledDisplayedSession(
+                displayedSessionId,
+                displayedSessionId is not null
+                    && FindSessionItem(displayedSessionId.Value) is not null
+            );
         }
 
         var isSelectedSession = SelectedSession?.SessionId == sessionId;
@@ -372,7 +408,11 @@ public sealed partial class AgentChatViewModel
         }
 
         Sessions[existingIndex].UpdateSession(session);
-        Sessions[existingIndex].ApplyCheckpoint(_sessionService.GetLatestCheckpoint(session.SessionId), markUnread: false);
+        Sessions[existingIndex]
+            .ApplyCheckpoint(
+                _sessionService.GetLatestCheckpoint(session.SessionId),
+                markUnread: false
+            );
 
         var targetIndex = FindSortedSessionTargetIndex(session);
         if (targetIndex != existingIndex)
@@ -443,24 +483,31 @@ public sealed partial class AgentChatViewModel
         var selectedSession = _sessionService.GetSession(SelectedSession.SessionId);
         var selectedRootId = selectedSession?.RootSessionId ?? selectedSession?.SessionId;
         return changedSession is not null
-               && selectedRootId is not null
-               && (changedSession.SessionId == selectedRootId
-                   || changedSession.ParentSessionId == selectedRootId
-                   || changedSession.RootSessionId == selectedRootId);
+            && selectedRootId is not null
+            && (
+                changedSession.SessionId == selectedRootId
+                || changedSession.ParentSessionId == selectedRootId
+                || changedSession.RootSessionId == selectedRootId
+            );
     }
 
     private void RefreshVisibleChildSessionLinksIfRelevant(AgentSessionRecord changedSession)
     {
-        if (_toolRowsByCallId.Count == 0
+        if (
+            _toolRowsByCallId.Count == 0
             || changedSession.ParentSessionId is null
-            || DisplayedSession is null)
+            || DisplayedSession is null
+        )
         {
             return;
         }
 
         var displayedRootId = DisplayedSession.Session.RootSessionId ?? DisplayedSession.SessionId;
         var changedRootId = changedSession.RootSessionId ?? changedSession.ParentSessionId;
-        if (changedSession.ParentSessionId != DisplayedSession.SessionId && changedRootId != displayedRootId)
+        if (
+            changedSession.ParentSessionId != DisplayedSession.SessionId
+            && changedRootId != displayedRootId
+        )
         {
             return;
         }
@@ -525,7 +572,10 @@ public sealed partial class AgentChatViewModel
     private AgentSessionListItemViewModel CreateSessionItem(AgentSessionRecord session)
     {
         var item = new AgentSessionListItemViewModel(session);
-        item.ApplyCheckpoint(_sessionService.GetLatestCheckpoint(session.SessionId), markUnread: false);
+        item.ApplyCheckpoint(
+            _sessionService.GetLatestCheckpoint(session.SessionId),
+            markUnread: false
+        );
         return item;
     }
 
@@ -534,8 +584,10 @@ public sealed partial class AgentChatViewModel
         var index = FindSessionIndex(sessionId);
         if (index < 0)
         {
-            if (DisplayedSession?.SessionId == sessionId
-                && _sessionService.GetSession(sessionId) is { } displayedSession)
+            if (
+                DisplayedSession?.SessionId == sessionId
+                && _sessionService.GetSession(sessionId) is { } displayedSession
+            )
             {
                 DisplayedSession.UpdateSession(displayedSession);
                 var displayedCheckpoint = _sessionService.GetLatestCheckpoint(sessionId);
