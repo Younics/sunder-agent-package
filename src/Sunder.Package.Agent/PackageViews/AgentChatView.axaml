@@ -999,6 +999,12 @@
                   </StackPanel>
                 </Border>
 
+                <TextBlock Text="Loading messages..."
+                           TextWrapping="Wrap"
+                           HorizontalAlignment="Center"
+                           Margin="0,0,0,18"
+                           Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
+                           IsVisible="{Binding IsTranscriptLoading}" />
                 <TextBlock Text="Loading older messages..."
                            TextWrapping="Wrap"
                            HorizontalAlignment="Center"

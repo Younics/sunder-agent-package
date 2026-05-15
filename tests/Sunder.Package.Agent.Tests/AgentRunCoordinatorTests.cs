@@ -5267,7 +5267,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        for (var index = 0; index < 120; index++)
+        for (var index = 0; index < 95; index++)
         {
             runtime.SessionService.AppendTextTurn(
                 sessionId,
@@ -5284,21 +5284,41 @@ public sealed class AgentRunCoordinatorTests
             runtime.RunCoordinator
         );
 
-        Assert.Equal(100, viewModel.Messages.Count);
+        Assert.Equal(30, viewModel.Messages.Count);
         Assert.True(viewModel.HasOlderTranscriptRows);
         Assert.Equal(
-            "message-020",
+            "message-065",
             Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
         );
         Assert.Equal(
-            "message-119",
+            "message-094",
             Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content
         );
 
         var loaded = await viewModel.LoadOlderTranscriptRowsAsync();
 
         Assert.True(loaded);
-        Assert.Equal(120, viewModel.Messages.Count);
+        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.True(viewModel.HasOlderTranscriptRows);
+        Assert.Equal(
+            "message-035",
+            Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
+        );
+
+        loaded = await viewModel.LoadOlderTranscriptRowsAsync();
+
+        Assert.True(loaded);
+        Assert.Equal(90, viewModel.Messages.Count);
+        Assert.True(viewModel.HasOlderTranscriptRows);
+        Assert.Equal(
+            "message-005",
+            Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
+        );
+
+        loaded = await viewModel.LoadOlderTranscriptRowsAsync();
+
+        Assert.True(loaded);
+        Assert.Equal(95, viewModel.Messages.Count);
         Assert.False(viewModel.HasOlderTranscriptRows);
         Assert.Equal(
             "message-000",

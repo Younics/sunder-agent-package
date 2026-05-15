@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
+using Avalonia;
+using Avalonia.Threading;
 using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.PackageViews;
@@ -8,10 +10,12 @@ public sealed partial class AgentChatViewModel
 {
     private void RefreshTranscript()
     {
+        CancelPendingTranscriptRefresh();
         ResetTranscriptWindow();
         var displayedSession = DisplayedSession;
         if (displayedSession is null)
         {
+            IsTranscriptLoading = false;
             StatusText = string.IsNullOrWhiteSpace(_globalStatusText)
                 ? GetSetupStatusText()
                 : _globalStatusText;
@@ -19,19 +23,172 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        var turns = _sessionService.ListRecentTurns(displayedSession.SessionId, InitialTranscriptTurnLimit);
-        foreach (var turn in turns.OrderBy(turn => turn.CreatedAtUtc).ThenBy(turn => turn.TurnId))
+        if (Application.Current is null)
+        {
+            var turns = _sessionService.ListRecentTurns(displayedSession.SessionId, InitialTranscriptTurnLimit + 1);
+            ApplyInitialTranscriptTurns(displayedSession, turns);
+            return;
+        }
+
+        IsTranscriptLoading = true;
+        StatusText = "Loading transcript...";
+        TranscriptChanged?.Invoke();
+
+        var refreshCts = new CancellationTokenSource();
+        _transcriptRefreshCts = refreshCts;
+        _ = RefreshTranscriptAsync(displayedSession, refreshCts);
+    }
+
+    private async Task RefreshTranscriptAsync(AgentSessionListItemViewModel displayedSession, CancellationTokenSource refreshCts)
+    {
+        var sessionId = displayedSession.SessionId;
+        var cancellationToken = refreshCts.Token;
+        try
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var turns = await Task.Run(
+                () => _sessionService.ListRecentTurns(sessionId, InitialTranscriptTurnLimit + 1),
+                cancellationToken).ConfigureAwait(false);
+            var orderedTurns = turns
+                .OrderBy(turn => turn.CreatedAtUtc)
+                .ThenBy(turn => turn.TurnId)
+                .ToArray();
+            var turnsToApply = SelectTranscriptWindow(orderedTurns, InitialTranscriptTurnLimit);
+
+            for (var index = 0; index < turnsToApply.Length; index += TranscriptHydrationBatchSize)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var batch = turnsToApply
+                    .Skip(index)
+                    .Take(TranscriptHydrationBatchSize)
+                    .ToArray();
+
+                await Dispatcher.UIThread.InvokeAsync(
+                    () =>
+                    {
+                        if (!IsCurrentTranscriptRefresh(sessionId, refreshCts))
+                        {
+                            return;
+                        }
+
+                        foreach (var turn in batch)
+                        {
+                            ApplyTurnToTranscript(turn, InsertMode.Append, trackRunActivity: true, scheduleQuietTimer: false);
+                        }
+                    },
+                    DispatcherPriority.Background);
+                await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            }
+
+            await Dispatcher.UIThread.InvokeAsync(
+                () =>
+                {
+                    if (IsCurrentTranscriptRefresh(sessionId, refreshCts))
+                    {
+                        CompleteTranscriptRefresh(displayedSession, orderedTurns.Length > InitialTranscriptTurnLimit);
+                    }
+                },
+                DispatcherPriority.Background);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            await Dispatcher.UIThread.InvokeAsync(
+                () =>
+                {
+                    if (!IsCurrentTranscriptRefresh(sessionId, refreshCts))
+                    {
+                        return;
+                    }
+
+                    IsTranscriptLoading = false;
+                    StatusText = $"Unable to load transcript: {ex.Message}";
+                },
+                DispatcherPriority.Background);
+        }
+        finally
+        {
+            if (ReferenceEquals(_transcriptRefreshCts, refreshCts))
+            {
+                _transcriptRefreshCts = null;
+            }
+
+            refreshCts.Dispose();
+        }
+    }
+
+    private bool IsCurrentTranscriptRefresh(Guid sessionId, CancellationTokenSource refreshCts)
+        => ReferenceEquals(_transcriptRefreshCts, refreshCts)
+           && DisplayedSession?.SessionId == sessionId;
+
+    private void CancelPendingTranscriptRefresh()
+    {
+        var refreshCts = _transcriptRefreshCts;
+        if (refreshCts is null)
+        {
+            return;
+        }
+
+        _transcriptRefreshCts = null;
+        refreshCts.Cancel();
+    }
+
+    private void ApplyInitialTranscriptTurns(AgentSessionListItemViewModel displayedSession, IReadOnlyList<AgentTurnRecord> turns)
+    {
+        var orderedTurns = turns.OrderBy(turn => turn.CreatedAtUtc).ThenBy(turn => turn.TurnId).ToArray();
+        foreach (var turn in SelectTranscriptWindow(orderedTurns, InitialTranscriptTurnLimit))
         {
             ApplyTurnToTranscript(turn, InsertMode.Append, trackRunActivity: true, scheduleQuietTimer: false);
         }
 
-        HasOlderTranscriptRows = turns.Count >= InitialTranscriptTurnLimit;
+        CompleteTranscriptRefresh(displayedSession, orderedTurns.Length > InitialTranscriptTurnLimit);
+    }
+
+    private static AgentTurnRecord[] SelectTranscriptWindow(AgentTurnRecord[] orderedTurns, int pageSize)
+    {
+        if (orderedTurns.Length <= pageSize)
+        {
+            return orderedTurns;
+        }
+
+        return orderedTurns.Skip(orderedTurns.Length - pageSize).ToArray();
+    }
+
+    private void CompleteTranscriptRefresh(AgentSessionListItemViewModel displayedSession, bool hasOlderRows)
+    {
+        ApplyPendingTranscriptTurns(displayedSession.SessionId);
+        HasOlderTranscriptRows = hasOlderRows;
         ReloadPendingPermissionRequests();
         UpdateActivityRowForCurrentState();
+        IsTranscriptLoading = false;
         TranscriptChanged?.Invoke();
         UpdateSessionState(displayedSession.SessionId, markUnread: false);
         displayedSession.ClearUnreadActivity();
         StatusText = displayedSession.StatusText;
+    }
+
+    private void ApplyPendingTranscriptTurns(Guid sessionId)
+    {
+        if (_pendingTranscriptTurnsByTurnId.Count == 0)
+        {
+            return;
+        }
+
+        var turns = _pendingTranscriptTurnsByTurnId.Values
+            .Where(turn => turn.SessionId == sessionId)
+            .OrderBy(turn => turn.CreatedAtUtc)
+            .ThenBy(turn => turn.TurnId)
+            .ToArray();
+        _pendingTranscriptTurnsByTurnId.Clear();
+
+        foreach (var turn in turns)
+        {
+            ApplyTurnToTranscript(turn, InsertMode.Append, trackRunActivity: true, scheduleQuietTimer: true);
+        }
     }
 
     public async Task<bool> LoadOlderTranscriptRowsAsync()
@@ -45,12 +202,19 @@ public sealed partial class AgentChatViewModel
         IsLoadingOlderTranscriptRows = true;
         try
         {
-            await Task.Yield();
-            var turns = _sessionService.ListTurnsBefore(
-                displayedSession.SessionId,
-                _oldestLoadedTurnCreatedAtUtc.Value,
-                _oldestLoadedTurnId.Value,
-                OlderTranscriptTurnPageSize);
+            var sessionId = displayedSession.SessionId;
+            var beforeCreatedAtUtc = _oldestLoadedTurnCreatedAtUtc.Value;
+            var beforeTurnId = _oldestLoadedTurnId.Value;
+            var turns = await Task.Run(() => _sessionService.ListTurnsBefore(
+                sessionId,
+                beforeCreatedAtUtc,
+                beforeTurnId,
+                OlderTranscriptTurnPageSize + 1));
+            if (DisplayedSession?.SessionId != sessionId)
+            {
+                return false;
+            }
+
             if (turns.Count == 0)
             {
                 HasOlderTranscriptRows = false;
@@ -58,12 +222,13 @@ public sealed partial class AgentChatViewModel
             }
 
             var insertIndex = 0;
-            foreach (var turn in turns.OrderBy(turn => turn.CreatedAtUtc).ThenBy(turn => turn.TurnId))
+            var orderedTurns = turns.OrderBy(turn => turn.CreatedAtUtc).ThenBy(turn => turn.TurnId).ToArray();
+            foreach (var turn in SelectTranscriptWindow(orderedTurns, OlderTranscriptTurnPageSize))
             {
                 insertIndex += ApplyTurnToTranscript(turn, InsertMode.Prepend, insertIndex);
             }
 
-            HasOlderTranscriptRows = turns.Count >= OlderTranscriptTurnPageSize;
+            HasOlderTranscriptRows = orderedTurns.Length > OlderTranscriptTurnPageSize;
             return insertIndex > 0;
         }
         finally
@@ -79,6 +244,12 @@ public sealed partial class AgentChatViewModel
     {
         if (DisplayedSession?.SessionId != sessionId)
         {
+            return;
+        }
+
+        if (IsTranscriptLoading)
+        {
+            _pendingTranscriptTurnsByTurnId[turn.TurnId] = turn;
             return;
         }
 
@@ -152,6 +323,7 @@ public sealed partial class AgentChatViewModel
         _textRowsByTurnId.Clear();
         _toolRowsByCallId.Clear();
         _loadedTurnIds.Clear();
+        _pendingTranscriptTurnsByTurnId.Clear();
         _oldestLoadedTurnCreatedAtUtc = null;
         _oldestLoadedTurnId = null;
         _activityTextBase = "Thinking";
@@ -160,6 +332,7 @@ public sealed partial class AgentChatViewModel
         _activityQuietTimer.Stop();
         HasOlderTranscriptRows = false;
         IsLoadingOlderTranscriptRows = false;
+        IsTranscriptLoading = false;
         Messages.Clear();
         OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
     }

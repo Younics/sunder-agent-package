@@ -20,8 +20,9 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 {
-    private const int InitialTranscriptTurnLimit = 100;
-    private const int OlderTranscriptTurnPageSize = 60;
+    private const int InitialTranscriptTurnLimit = 30;
+    private const int OlderTranscriptTurnPageSize = 30;
+    private const int TranscriptHydrationBatchSize = 8;
     private const string SubsessionsViewId = "sunder.package.agent.subagents.sessions";
     private const string SubsessionNavigationSessionIdKey = "sessionId";
     private static readonly TimeSpan DefaultActivityQuietDelay = TimeSpan.FromMilliseconds(900);
@@ -43,8 +44,10 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         StringComparer.Ordinal
     );
     private readonly HashSet<Guid> _loadedTurnIds = new();
+    private readonly Dictionary<Guid, AgentTurnRecord> _pendingTranscriptTurnsByTurnId = new();
     private AgentSessionListItemViewModel? _observedSelectedSession;
     private AgentActivityTranscriptRowViewModel? _activityRow;
+    private CancellationTokenSource? _transcriptRefreshCts;
     private DateTimeOffset? _oldestLoadedTurnCreatedAtUtc;
     private Guid? _oldestLoadedTurnId;
     private string _globalStatusText = string.Empty;
@@ -146,7 +149,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     public bool ShowExpandedComposer => CanUseChat && IsComposerExpanded;
 
     public bool CanLoadOlderTranscriptRows =>
-        HasOlderTranscriptRows && !IsLoadingOlderTranscriptRows && DisplayedSession is not null;
+        HasOlderTranscriptRows && !IsLoadingOlderTranscriptRows && !IsTranscriptLoading && DisplayedSession is not null;
 
     [ObservableProperty]
     private AgentWorkspaceRecord? _selectedWorkspace;
@@ -191,10 +194,16 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _isLoadingOlderTranscriptRows;
 
+    [ObservableProperty]
+    private bool _isTranscriptLoading;
+
     partial void OnHasOlderTranscriptRowsChanged(bool value) =>
         OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
 
     partial void OnIsLoadingOlderTranscriptRowsChanged(bool value) =>
+        OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
+
+    partial void OnIsTranscriptLoadingChanged(bool value) =>
         OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
 
     partial void OnSelectedWorkspaceChanged(AgentWorkspaceRecord? value)
@@ -489,6 +498,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _activityQuietTimer.Tick -= OnActivityQuietTimerTick;
         _workspaceWarmupCts?.Cancel();
         _workspaceWarmupCts?.Dispose();
+        CancelPendingTranscriptRefresh();
         _activityRow?.Dispose();
         DisposeAttachmentPreviewImage();
     }
