@@ -18,24 +18,43 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddTransient<SubsessionsViewModel>();
     }
 
-    public void RegisterContributions(IPackageContributionRegistry registry, IServiceProvider services)
+    public void RegisterContributions(
+        IPackageContributionRegistry registry,
+        IServiceProvider services
+    )
     {
         var feature = services.GetRequiredService<SubagentFeature>();
-        registry.RegisterPackageView<SubagentsView>(new PackageViewRegistration(
-            "sunder.package.agent.subagents",
-            "Subagents",
-            "assets/sub-profile-icon.png",
-            defaultPlacement: PackageViewPlacement.LeftTop));
-        registry.RegisterPackageView<SubsessionsView>(new PackageViewRegistration(
-            SubagentConstants.SubsessionsViewId,
-            "Subsessions",
-            "assets/sub-session-icon.png",
-            defaultPlacement: PackageViewPlacement.LeftTop,
-            showInHotbarByDefault: false));
-        
-        registry.RegisterExtension(PackageExtensionPoints.ProfileSelectableCapabilityProviders, feature);
+
+        // Left-Top
+        registry.RegisterPackageView<SubsessionsView>(
+            new PackageViewRegistration(
+                SubagentConstants.SubsessionsViewId,
+                "Subsessions",
+                "assets/sub-session-icon.png",
+                defaultPlacement: PackageViewPlacement.LeftTop,
+                showInHotbarByDefault: false
+            )
+        );
+
+        // Right-Top
+        registry.RegisterPackageView<SubagentsView>(
+            new PackageViewRegistration(
+                "sunder.package.agent.subagents",
+                "Subagents",
+                "assets/sub-profile-icon.png",
+                defaultPlacement: PackageViewPlacement.RightTop
+            )
+        );
+
+        registry.RegisterExtension(
+            PackageExtensionPoints.ProfileSelectableCapabilityProviders,
+            feature
+        );
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, feature);
         registry.RegisterExtension(PackageExtensionPoints.SystemPromptContributors, feature);
-        registry.RegisterExtension(PackageExtensionPoints.BehaviorLoops, services.GetRequiredService<OrchestratedAgentBehaviorLoop>());
+        registry.RegisterExtension(
+            PackageExtensionPoints.BehaviorLoops,
+            services.GetRequiredService<OrchestratedAgentBehaviorLoop>()
+        );
     }
 }

@@ -74,6 +74,18 @@ public sealed partial class PackageModule : ISunderPackageModule
             PackageExtensionPoints.BehaviorLoops,
             services.GetRequiredService<DefaultAgentBehaviorLoop>()
         );
+
+        // Left-Top
+        registry.RegisterPackageView<AgentSessionsView>(
+            new PackageViewRegistration(
+                "sunder.package.agent.sessions",
+                "Sessions",
+                "Assets/session-icon.png",
+                defaultPlacement: PackageViewPlacement.LeftTop
+            )
+        );
+
+        // Middle
         registry.RegisterPackageView<AgentChatView>(
             new PackageViewRegistration(
                 "sunder.package.agent.chat",
@@ -82,12 +94,14 @@ public sealed partial class PackageModule : ISunderPackageModule
                 defaultPlacement: PackageViewPlacement.Middle
             )
         );
-        registry.RegisterPackageView<AgentSessionsView>(
+
+        // Right-Top
+        registry.RegisterPackageView<AgentWorkspacesView>(
             new PackageViewRegistration(
-                "sunder.package.agent.sessions",
-                "Sessions",
-                "Assets/session-icon.png",
-                defaultPlacement: PackageViewPlacement.LeftTop
+                "sunder.package.agent.workspaces",
+                "Workspaces",
+                "Assets/workspace-icon.png",
+                defaultPlacement: PackageViewPlacement.RightTop
             )
         );
         registry.RegisterPackageView<AgentProfilesView>(
@@ -98,14 +112,7 @@ public sealed partial class PackageModule : ISunderPackageModule
                 defaultPlacement: PackageViewPlacement.RightTop
             )
         );
-        registry.RegisterPackageView<AgentWorkspacesView>(
-            new PackageViewRegistration(
-                "sunder.package.agent.workspaces",
-                "Workspaces",
-                "Assets/workspace-icon.png",
-                defaultPlacement: PackageViewPlacement.RightTop
-            )
-        );
+
         registry.RegisterSettingsView<AgentPermissionsView>();
     }
 }
