@@ -31,8 +31,7 @@ public sealed class PackageModule : ISunderPackageModule
                 SubagentConstants.SubsessionsViewId,
                 "Subsessions",
                 "assets/sub-session-icon.png",
-                defaultPlacement: PackageViewPlacement.LeftTop,
-                showInHotbarByDefault: false
+                defaultPlacement: PackageViewPlacement.LeftTop
             )
         );
 
