@@ -22,6 +22,10 @@ public sealed record ConfiguredMcpServerRecord
 
     public int? TimeoutMilliseconds { get; init; }
 
+    public int? DiscoveryTimeoutMilliseconds { get; init; }
+
+    public int? ToolTimeoutMilliseconds { get; init; }
+
     public string[] HeaderNames { get; init; } = [];
 
     public string[] EnvironmentVariableNames { get; init; } = [];

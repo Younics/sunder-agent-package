@@ -20,7 +20,13 @@ public static class DockerExecutionConfiguration
                         PackageConfigurationFieldKind.Text,
                         Description: "Default timeout in seconds for Docker shell commands.",
                         DefaultValue: "300",
-                        Placeholder: "300")
+                        Placeholder: "300"),
+                    new PackageConfigurationField(
+                        DockerCli.ExecutablePathConfigurationKey,
+                        "Docker CLI path",
+                        PackageConfigurationFieldKind.Text,
+                        Description: "Optional path to the Docker CLI. Leave empty to auto-detect Docker Desktop, Homebrew, or system Docker installs.",
+                        Placeholder: "Auto-detect")
                 ])
         ]);
 }

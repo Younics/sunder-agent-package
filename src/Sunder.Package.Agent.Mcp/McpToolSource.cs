@@ -24,8 +24,16 @@ public sealed class McpToolSource(
 
     public event Action? SelectableCapabilitiesChanged
     {
-        add => _serverCatalogService.ServersChanged += value;
-        remove => _serverCatalogService.ServersChanged -= value;
+        add
+        {
+            _serverCatalogService.ServersChanged += value;
+            _connectionManager.StatusChanged += value;
+        }
+        remove
+        {
+            _serverCatalogService.ServersChanged -= value;
+            _connectionManager.StatusChanged -= value;
+        }
     }
 
     public async ValueTask<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListCapabilitiesAsync(
@@ -56,11 +64,7 @@ public sealed class McpToolSource(
                 server.ServerId,
                 server.DisplayName,
                 server.Description,
-                server.IsEnabled
-                    ? server.TransportType == ConfiguredMcpTransportType.Stdio
-                        ? "Configured as local MCP server."
-                        : "Configured as remote MCP server."
-                    : "Disabled in MCP settings."))
+                _connectionManager.GetStatus(server).Message))
             .ToArray();
     }
 
@@ -96,7 +100,7 @@ public sealed class McpToolSource(
         var runtimeTools = new List<AgentRuntimeTool>();
         foreach (var server in servers.Where(server => server.IsEnabled && enabledServerIds.Contains(server.ServerId)))
         {
-            var effectiveTimeoutMilliseconds = McpTimeoutResolver.ResolveEffectiveTimeoutMilliseconds(server.TimeoutMilliseconds);
+            var discoveryTimeoutMilliseconds = McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server);
             var cachedTools = _connectionManager.GetCachedTools(sessionId, server);
             if (cachedTools is not null)
             {
@@ -111,11 +115,11 @@ public sealed class McpToolSource(
                 server,
                 headers,
                 environmentVariables,
-                McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server.TimeoutMilliseconds),
+                discoveryTimeoutMilliseconds,
                 cancellationToken);
             if (tools.Count == 0)
             {
-                QueueBackgroundRefresh(sessionId, server, headers, environmentVariables, effectiveTimeoutMilliseconds);
+                QueueBackgroundRefresh(sessionId, server, headers, environmentVariables, discoveryTimeoutMilliseconds);
             }
 
             runtimeTools.AddRange(tools.Select(tool => ToRuntimeTool(server, tool)));
@@ -146,17 +150,17 @@ public sealed class McpToolSource(
         {
             var headers = _serverCatalogService.GetHeaders(server);
             var environmentVariables = _serverCatalogService.GetEnvironmentVariables(server);
-            var effectiveTimeoutMilliseconds = McpTimeoutResolver.ResolveEffectiveTimeoutMilliseconds(server.TimeoutMilliseconds);
+            var discoveryTimeoutMilliseconds = McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server);
             tools = await _connectionManager.GetToolsAsync(
                 sessionId,
                 server,
                 headers,
                 environmentVariables,
-                McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server.TimeoutMilliseconds),
+                discoveryTimeoutMilliseconds,
                 cancellationToken);
             if (tools.Count == 0)
             {
-                QueueBackgroundRefresh(sessionId, server, headers, environmentVariables, effectiveTimeoutMilliseconds);
+                QueueBackgroundRefresh(sessionId, server, headers, environmentVariables, discoveryTimeoutMilliseconds);
             }
         }
 
@@ -203,13 +207,13 @@ public sealed class McpToolSource(
 
         try
         {
-            var effectiveTimeoutMilliseconds = McpTimeoutResolver.ResolveEffectiveTimeoutMilliseconds(server.TimeoutMilliseconds);
+            var discoveryTimeoutMilliseconds = McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server);
             var client = await _connectionManager.GetClientAsync(
                 context.SessionId.Value,
                 server,
                 _serverCatalogService.GetHeaders(server),
                 _serverCatalogService.GetEnvironmentVariables(server),
-                effectiveTimeoutMilliseconds,
+                discoveryTimeoutMilliseconds,
                 cancellationToken);
             if (client is null)
             {
@@ -222,12 +226,13 @@ public sealed class McpToolSource(
             }
 
             var rawToolName = request.ToolId[(server.Name.Length + 1)..];
+            using var toolTimeoutScope = CreateTimeoutScope(McpTimeoutResolver.ResolveToolTimeoutMilliseconds(server), cancellationToken);
             var result = await client.CallToolAsync(
                 rawToolName,
                 arguments,
                 progress: null,
                 options: null,
-                cancellationToken: cancellationToken);
+                cancellationToken: toolTimeoutScope.Token);
 
             var structuredPayloadJson = result.StructuredContent is JsonElement structured && structured.ValueKind != JsonValueKind.Undefined
                 ? structured.GetRawText()
@@ -248,9 +253,12 @@ public sealed class McpToolSource(
                 ErrorCode: result.IsError == true ? "mcp-tool-error" : null,
                 BackendId: $"mcp:{server.Name}");
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
-            await _connectionManager.DisconnectServerAsync(server.ServerId);
             return new AgentToolResult(
                 request.ToolId,
                 ex.Message,
@@ -275,6 +283,18 @@ public sealed class McpToolSource(
     {
         var refreshTimeoutMilliseconds = McpTimeoutResolver.ResolveBackgroundRefreshTimeoutMilliseconds(effectiveTimeoutMilliseconds);
         _connectionManager.RefreshToolsInBackground(sessionId, server, headers, environmentVariables, refreshTimeoutMilliseconds);
+    }
+
+    private static TimeoutScope CreateTimeoutScope(int? timeoutMilliseconds, CancellationToken cancellationToken)
+    {
+        if (timeoutMilliseconds is not > 0)
+        {
+            return new TimeoutScope(cancellationToken, null);
+        }
+
+        var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        source.CancelAfter(timeoutMilliseconds.Value);
+        return new TimeoutScope(source.Token, source);
     }
 
     private static IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> GetSelectableCapabilityAssignments(AgentProfileRecord profile)
@@ -324,5 +344,12 @@ public sealed class McpToolSource(
 
         arguments = parsedArguments!.ToDictionary();
         return true;
+    }
+
+    private sealed class TimeoutScope(CancellationToken token, CancellationTokenSource? source) : IDisposable
+    {
+        public CancellationToken Token { get; } = token;
+
+        public void Dispose() => source?.Dispose();
     }
 }

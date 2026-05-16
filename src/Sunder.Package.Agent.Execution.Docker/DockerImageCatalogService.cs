@@ -249,7 +249,7 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext)
         SaveImages(images);
     }
 
-    private static async Task<DockerImageProcessResult> RunDockerAsync(
+    private async Task<DockerImageProcessResult> RunDockerAsync(
         IReadOnlyList<string> args,
         int timeoutSeconds,
         CancellationToken cancellationToken,
@@ -260,17 +260,14 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext)
             return await overrideRunner(args, timeoutSeconds, cancellationToken, progress).ConfigureAwait(false);
         }
 
-        var startInfo = new ProcessStartInfo
+        ProcessStartInfo startInfo;
+        try
         {
-            FileName = "docker",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-        foreach (var arg in args)
+            startInfo = DockerCli.CreateStartInfo(packageContext, args, redirectStandardInput: false);
+        }
+        catch (Exception ex)
         {
-            startInfo.ArgumentList.Add(arg);
+            return new DockerImageProcessResult(127, $"Failed to start Docker CLI: {ex.Message}", TimedOut: false, WasTruncated: false);
         }
 
         using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };

@@ -2439,8 +2439,8 @@ public sealed class AgentRunCoordinatorTests
 
     [Theory]
     [InlineData(5000, 5000)]
-    [InlineData(null, 300000)]
-    public void ResolveEffectiveTimeoutMilliseconds_UsesServerTimeoutThenDefaultFallback(
+    [InlineData(null, null)]
+    public void ResolveEffectiveTimeoutMilliseconds_UsesOnlyConfiguredTimeout(
         int? serverTimeoutMilliseconds,
         int? expectedTimeoutMilliseconds
     )

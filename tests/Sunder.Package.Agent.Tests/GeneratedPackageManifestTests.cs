@@ -95,7 +95,12 @@ public sealed class GeneratedPackageManifestTests
             SunderSdkCapabilities.SettingsViewsV1,
             SunderSdkCapabilities.ExtensionsV1,
         ],
-        ["Sunder.Package.Agent.Execution.Docker"] = [SunderSdkCapabilities.ConfigurationSchemaV1, SunderSdkCapabilities.ExtensionsV1],
+        ["Sunder.Package.Agent.Execution.Docker"] =
+        [
+            SunderSdkCapabilities.ConfigurationSchemaV1,
+            SunderSdkCapabilities.ExtensionsV1,
+            SunderSdkCapabilities.BackgroundProcessesV1,
+        ],
     };
 
     private static string FindRepositoryRoot()

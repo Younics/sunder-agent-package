@@ -461,14 +461,22 @@ public sealed class DockerExecutionTarget(
         return index <= 0 ? "/" : path[..index];
     }
 
-    private static async Task<DockerProcessResult> RunDockerAsync(IReadOnlyList<string> args, int timeoutSeconds, CancellationToken cancellationToken, string? standardInput = null)
+    private async Task<DockerProcessResult> RunDockerAsync(IReadOnlyList<string> args, int timeoutSeconds, CancellationToken cancellationToken, string? standardInput = null)
     {
         if (RunDockerOverride is { } overrideRunner)
         {
             return await overrideRunner(args, timeoutSeconds, cancellationToken, standardInput);
         }
 
-        var startInfo = CreateDockerStartInfo(args, standardInput);
+        ProcessStartInfo startInfo;
+        try
+        {
+            startInfo = CreateDockerStartInfo(packageContext, args, standardInput);
+        }
+        catch (Exception ex)
+        {
+            return new DockerProcessResult(127, $"Failed to start Docker CLI: {FormatDockerStartError(ex)}", TimedOut: false, WasTruncated: false);
+        }
 
         using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         try
@@ -508,29 +516,11 @@ public sealed class DockerExecutionTarget(
         return new DockerProcessResult(process.ExitCode, truncatedOutput, TimedOut: false, stdout.WasTruncated || stderr.WasTruncated || wasTruncated);
     }
 
-    internal static ProcessStartInfo CreateDockerStartInfo(IReadOnlyList<string> args, string? standardInput)
-    {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = "docker",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = standardInput is not null,
-            CreateNoWindow = true,
-        };
-        if (standardInput is not null)
-        {
-            startInfo.StandardInputEncoding = Encoding.UTF8;
-        }
-
-        foreach (var arg in args)
-        {
-            startInfo.ArgumentList.Add(arg);
-        }
-
-        return startInfo;
-    }
+    internal static ProcessStartInfo CreateDockerStartInfo(
+        IPackageContext packageContext,
+        IReadOnlyList<string> args,
+        string? standardInput)
+        => DockerCli.CreateStartInfo(packageContext, args, redirectStandardInput: standardInput is not null);
 
     private static async Task WriteStandardInputAsync(Process process, string? standardInput, CancellationToken cancellationToken)
     {

@@ -28,7 +28,6 @@ internal static class McpConfigurationDocument
             type = "local",
             enabled = true,
             command = new[] { "npx", "-y", "@modelcontextprotocol/server-everything" },
-            timeout = 5000,
         });
 
     public static string CreateRemoteTemplate()
@@ -41,7 +40,6 @@ internal static class McpConfigurationDocument
             {
                 ["Authorization"] = "Bearer MY_API_KEY",
             },
-            timeout = 5000,
         });
 
     public static ParsedMcpServerConfiguration Parse(
@@ -86,7 +84,9 @@ internal static class McpConfigurationDocument
                 CommandParts = parsed.CommandParts,
                 WorkingDirectory = string.IsNullOrWhiteSpace(parsed.WorkingDirectory) ? null : parsed.WorkingDirectory.Trim(),
                 EndpointUrl = string.IsNullOrWhiteSpace(parsed.EndpointUrl) ? null : parsed.EndpointUrl.Trim(),
-                TimeoutMilliseconds = parsed.TimeoutMilliseconds,
+                TimeoutMilliseconds = parsed.LegacyTimeoutMilliseconds,
+                DiscoveryTimeoutMilliseconds = parsed.DiscoveryTimeoutMilliseconds,
+                ToolTimeoutMilliseconds = parsed.ToolTimeoutMilliseconds,
                 HeaderNames = [.. parsed.Headers.Keys],
                 EnvironmentVariableNames = [.. parsed.EnvironmentVariables.Keys],
                 CreatedAtUtc = existingServer?.CreatedAtUtc ?? now,
@@ -104,6 +104,11 @@ internal static class McpConfigurationDocument
         var displayName = string.Equals(server.DisplayName, server.Name, StringComparison.OrdinalIgnoreCase)
             ? null
             : server.DisplayName;
+        var legacyTimeout = server.TimeoutMilliseconds is not null
+                            && server.DiscoveryTimeoutMilliseconds is null
+                            && server.ToolTimeoutMilliseconds is null
+            ? server.TimeoutMilliseconds
+            : null;
 
         object payload = server.TransportType switch
         {
@@ -113,7 +118,9 @@ internal static class McpConfigurationDocument
                 enabled = server.IsEnabled,
                 command = server.CommandParts,
                 environment = environmentVariables.Count == 0 ? null : environmentVariables,
-                timeout = server.TimeoutMilliseconds,
+                timeout = legacyTimeout,
+                discoveryTimeout = server.DiscoveryTimeoutMilliseconds,
+                toolTimeout = server.ToolTimeoutMilliseconds,
                 workingDirectory = server.WorkingDirectory,
                 displayName,
                 description = server.Description,
@@ -124,7 +131,9 @@ internal static class McpConfigurationDocument
                 url = server.EndpointUrl,
                 enabled = server.IsEnabled,
                 headers = headers.Count == 0 ? null : headers,
-                timeout = server.TimeoutMilliseconds,
+                timeout = legacyTimeout,
+                discoveryTimeout = server.DiscoveryTimeoutMilliseconds,
+                toolTimeout = server.ToolTimeoutMilliseconds,
                 displayName,
                 description = server.Description,
             },
@@ -174,6 +183,10 @@ internal static class McpConfigurationDocument
             throw new InvalidOperationException("Local MCP configuration requires at least one command segment.");
         }
 
+        var legacyTimeoutMilliseconds = ReadOptionalPositiveInt(root, "timeout");
+        var discoveryTimeoutMilliseconds = ReadOptionalPositiveInt(root, "discoveryTimeout") ?? legacyTimeoutMilliseconds;
+        var toolTimeoutMilliseconds = ReadOptionalPositiveInt(root, "toolTimeout") ?? legacyTimeoutMilliseconds;
+
         return new ParsedEditorDocument(
             ConfiguredMcpTransportType.Stdio,
             ReadOptionalBool(root, "enabled") ?? true,
@@ -182,7 +195,9 @@ internal static class McpConfigurationDocument
             EndpointUrl: null,
             Headers: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             EnvironmentVariables: ReadStringMap(root, "environment"),
-            ReadOptionalPositiveInt(root, "timeout"),
+            legacyTimeoutMilliseconds,
+            discoveryTimeoutMilliseconds,
+            toolTimeoutMilliseconds,
             ReadOptionalString(root, "displayName"),
             ReadOptionalString(root, "description"));
     }
@@ -195,6 +210,10 @@ internal static class McpConfigurationDocument
             throw new InvalidOperationException("Remote MCP configuration requires 'url' to be an absolute URL.");
         }
 
+        var legacyTimeoutMilliseconds = ReadOptionalPositiveInt(root, "timeout");
+        var discoveryTimeoutMilliseconds = ReadOptionalPositiveInt(root, "discoveryTimeout") ?? legacyTimeoutMilliseconds;
+        var toolTimeoutMilliseconds = ReadOptionalPositiveInt(root, "toolTimeout") ?? legacyTimeoutMilliseconds;
+
         return new ParsedEditorDocument(
             ConfiguredMcpTransportType.HttpSse,
             ReadOptionalBool(root, "enabled") ?? true,
@@ -203,7 +222,9 @@ internal static class McpConfigurationDocument
             endpointUrl,
             ReadStringMap(root, "headers"),
             EnvironmentVariables: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-            ReadOptionalPositiveInt(root, "timeout"),
+            legacyTimeoutMilliseconds,
+            discoveryTimeoutMilliseconds,
+            toolTimeoutMilliseconds,
             ReadOptionalString(root, "displayName"),
             ReadOptionalString(root, "description"));
     }
@@ -310,7 +331,9 @@ internal static class McpConfigurationDocument
         string? EndpointUrl,
         IReadOnlyDictionary<string, string> Headers,
         IReadOnlyDictionary<string, string> EnvironmentVariables,
-        int? TimeoutMilliseconds,
+        int? LegacyTimeoutMilliseconds,
+        int? DiscoveryTimeoutMilliseconds,
+        int? ToolTimeoutMilliseconds,
         string? DisplayName,
         string? Description);
 }

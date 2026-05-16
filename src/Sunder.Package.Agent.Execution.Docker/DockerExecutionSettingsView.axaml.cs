@@ -2,7 +2,7 @@ using Avalonia.Controls;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-public partial class DockerExecutionSettingsView : UserControl
+public partial class DockerExecutionSettingsView : UserControl, IDisposable
 {
     public DockerExecutionSettingsView()
     {
@@ -13,5 +13,13 @@ public partial class DockerExecutionSettingsView : UserControl
         : this()
     {
         DataContext = viewModel;
+    }
+
+    public void Dispose()
+    {
+        if (DataContext is IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
     }
 }

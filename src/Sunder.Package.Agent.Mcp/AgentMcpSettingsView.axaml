@@ -210,7 +210,7 @@
                         HorizontalScrollBarVisibility="Disabled"
                         VerticalScrollBarVisibility="Auto">
             <Border Classes="mcp-editor-body">
-              <Grid RowDefinitions="Auto,Auto,Auto"
+              <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto"
                     RowSpacing="14">
                 <Border Classes="mcp-card">
                   <StackPanel Spacing="6">
@@ -259,15 +259,76 @@
                                  ShowLineNumbers="True"
                                  HorizontalScrollBarVisibility="Auto"
                                  VerticalScrollBarVisibility="Auto"
-                                 Background="{DynamicResource Sunder.Brush.Surface.Code}"
-                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Code}"
-                                 FontFamily="Cascadia Code,Consolas,Menlo,Monospace"
-                                 FontSize="13"
-                                 MinWidth="0"
-                                 MinHeight="0"
-                                 HorizontalAlignment="Stretch"
-                                 VerticalAlignment="Stretch"
-                                 WordWrap="False" />
+                                  Background="{DynamicResource Sunder.Brush.Surface.Code}"
+                                  Foreground="{DynamicResource Sunder.Brush.Foreground.Code}"
+                                  FontFamily="Cascadia Code,Consolas,Menlo,Monospace"
+                                  FontSize="13"
+                                  MinWidth="0"
+                                  MinHeight="0"
+                                  HorizontalAlignment="Stretch"
+                                  VerticalAlignment="Stretch"
+                                  WordWrap="False" />
+                </Border>
+
+                <Border Grid.Row="3"
+                        Classes="mcp-card">
+                  <StackPanel Spacing="6">
+                    <TextBlock Classes="mcp-field-label"
+                               Text="Connection status" />
+                    <TextBlock Classes="mcp-status-message"
+                               Classes.success="{Binding IsConnectionStatusSuccess}"
+                               Classes.warning="{Binding IsConnectionStatusWarning}"
+                               Classes.error="{Binding IsConnectionStatusError}"
+                               Text="{Binding ConnectionStatusText}" />
+                    <TextBlock Classes="mcp-field-help"
+                               Text="{Binding ConnectionStatusDetail}"
+                               IsVisible="{Binding HasConnectionStatusDetail}" />
+                    <WrapPanel Orientation="Horizontal">
+                      <Button Content="Discover Tools"
+                              Margin="0,6,10,0"
+                              Command="{Binding DiscoverToolsCommand}" />
+                      <Button Content="Cancel Discovery"
+                              Margin="0,6,10,0"
+                              Command="{Binding CancelDiscoveryCommand}" />
+                      <Button Content="Disconnect"
+                              Margin="0,6,10,0"
+                              Command="{Binding DisconnectMcpServerCommand}" />
+                      <Button Content="Reconnect"
+                              Margin="0,6,10,0"
+                              Command="{Binding ReconnectMcpServerCommand}" />
+                    </WrapPanel>
+                  </StackPanel>
+                </Border>
+
+                <Border Grid.Row="4"
+                        Classes="mcp-card"
+                        IsVisible="{Binding HasSelectedServer}">
+                  <Grid RowDefinitions="Auto,*"
+                        RowSpacing="8">
+                    <StackPanel Spacing="4">
+                      <TextBlock Classes="mcp-field-label"
+                                 Text="Connection diagnostics" />
+                      <TextBlock Classes="mcp-field-help"
+                                 Text="Status history, discovered tools, connection errors, and recent MCP process stderr." />
+                    </StackPanel>
+                    <Border Grid.Row="1"
+                            Background="{DynamicResource Sunder.Brush.Surface.Code}"
+                            BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
+                            BorderThickness="1"
+                            CornerRadius="{DynamicResource Sunder.Radius.Small}"
+                            Padding="10"
+                            MaxHeight="240"
+                            ClipToBounds="True">
+                      <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                    VerticalScrollBarVisibility="Auto">
+                        <TextBlock Text="{Binding ConnectionDiagnosticsText}"
+                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Code}"
+                                   FontFamily="Cascadia Code,Consolas,Menlo,Monospace"
+                                   FontSize="12"
+                                   TextWrapping="NoWrap" />
+                      </ScrollViewer>
+                    </Border>
+                  </Grid>
                 </Border>
               </Grid>
             </Border>

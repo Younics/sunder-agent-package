@@ -205,6 +205,8 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
             WorkingDirectory = ReadString(root, "WorkingDirectory"),
             EndpointUrl = ReadString(root, "EndpointUrl"),
             TimeoutMilliseconds = ReadInt(root, "TimeoutMilliseconds"),
+            DiscoveryTimeoutMilliseconds = ReadInt(root, "DiscoveryTimeoutMilliseconds") ?? ReadInt(root, "TimeoutMilliseconds"),
+            ToolTimeoutMilliseconds = ReadInt(root, "ToolTimeoutMilliseconds") ?? ReadInt(root, "TimeoutMilliseconds"),
             HeaderNames = headerNames,
             EnvironmentVariableNames = ReadStringArray(root, "EnvironmentVariableNames"),
             CreatedAtUtc = ReadDateTimeOffset(root, "CreatedAtUtc") ?? DateTimeOffset.UtcNow,

@@ -378,6 +378,27 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
+    public void DockerExecutionSettingsViewModel_PullSelectedImage_QueuesBackgroundPull()
+    {
+        using var scope = TestScope.Create();
+        var queue = new FakeBackgroundProcessQueue();
+        var imageCatalog = new DockerImageCatalogService(scope.Context);
+        var viewModel = new DockerExecutionSettingsViewModel(imageCatalog, scope.Context, queue);
+
+        viewModel.SelectedImage = Assert.Single(viewModel.Images);
+
+        viewModel.PullSelectedImageCommand.Execute(null);
+
+        var request = Assert.Single(queue.Requests);
+        Assert.Equal(DockerExecutionSettingsViewModel.ImagePullGroupKey, request.GroupKey);
+        Assert.Equal(BackgroundProcessIndicator.Settings, request.Indicator);
+        Assert.Equal(BackgroundProcessConcurrencyMode.SequentialWithinGroup, request.ConcurrencyMode);
+        Assert.Equal("agent0ai/agent-zero:latest", request.Metadata?[DockerExecutionSettingsViewModel.ImageReferenceMetadataKey]);
+        Assert.Equal(DockerImageStatus.Pulling, viewModel.SelectedImage?.Status);
+        Assert.False(viewModel.PullSelectedImageCommand.CanExecute(null));
+    }
+
+    [Fact]
     public async Task DockerExecutionTarget_WriteFileAsync_StreamsContentThroughStdin()
     {
         using var scope = TestScope.Create();
@@ -424,8 +445,11 @@ public sealed class WorkspaceTests
     [Fact]
     public void DockerExecutionTarget_CreateDockerStartInfo_OnlySetsInputEncodingWhenInputIsRedirected()
     {
-        var runStartInfo = DockerExecutionTarget.CreateDockerStartInfo(["run", "image"], standardInput: null);
-        var writeStartInfo = DockerExecutionTarget.CreateDockerStartInfo(["exec", "-i", "container"], standardInput: "content");
+        using var scope = TestScope.Create();
+        ConfigureFakeDockerCli(scope);
+
+        var runStartInfo = DockerExecutionTarget.CreateDockerStartInfo(scope.Context, ["run", "image"], standardInput: null);
+        var writeStartInfo = DockerExecutionTarget.CreateDockerStartInfo(scope.Context, ["exec", "-i", "container"], standardInput: "content");
 
         Assert.False(runStartInfo.RedirectStandardInput);
         Assert.Null(runStartInfo.StandardInputEncoding);
@@ -434,14 +458,67 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void DockerExecutionConfiguration_Schema_ExposesDockerTimeout()
+    public void DockerCli_ResolveExecutable_FindsFallback_WhenInheritedPathOmitsDocker()
     {
-        var field = DockerExecutionConfiguration.Schema.Sections
-            .SelectMany(section => section.Fields)
-            .Single(field => field.Key == "docker.timeoutSeconds.default");
+        var fallbackPath = "/opt/homebrew/bin/docker";
+        var pathValue = string.Join(Path.PathSeparator, "/usr/bin", "/bin");
 
-        Assert.Equal("300", field.DefaultValue);
-        Assert.Equal("300", field.Placeholder);
+        var resolution = DockerCli.ResolveExecutable(
+            configuredPath: null,
+            environmentPath: null,
+            pathValue,
+            [fallbackPath],
+            path => string.Equals(path, fallbackPath, StringComparison.Ordinal),
+            isWindows: false);
+
+        Assert.Equal(fallbackPath, resolution.ExecutablePath);
+    }
+
+    [Fact]
+    public void DockerCli_ResolveExecutable_UsesConfiguredPathBeforePath()
+    {
+        const string configuredPath = "/custom/docker";
+        const string pathDocker = "/usr/local/bin/docker";
+        var pathValue = "/usr/local/bin";
+
+        var resolution = DockerCli.ResolveExecutable(
+            configuredPath,
+            environmentPath: null,
+            pathValue,
+            fallbackPaths: [],
+            path => path is configuredPath or pathDocker,
+            isWindows: false);
+
+        Assert.Equal(configuredPath, resolution.ExecutablePath);
+    }
+
+    [Fact]
+    public void DockerCli_CreateStartInfo_UsesConfiguredPathAndAugmentsPath()
+    {
+        using var scope = TestScope.Create();
+        var dockerPath = ConfigureFakeDockerCli(scope);
+
+        var startInfo = DockerCli.CreateStartInfo(scope.Context, ["pull", "custom:latest"], redirectStandardInput: false);
+
+        Assert.Equal(dockerPath, startInfo.FileName);
+        Assert.False(startInfo.RedirectStandardInput);
+        Assert.Contains("pull", startInfo.ArgumentList);
+        var startInfoPath = startInfo.Environment["PATH"];
+        Assert.NotNull(startInfoPath);
+        Assert.Contains(Path.GetDirectoryName(dockerPath)!, startInfoPath.Split(Path.PathSeparator));
+    }
+
+    [Fact]
+    public void DockerExecutionConfiguration_Schema_ExposesDockerSettings()
+    {
+        var fields = DockerExecutionConfiguration.Schema.Sections
+            .SelectMany(section => section.Fields)
+            .ToDictionary(field => field.Key, StringComparer.OrdinalIgnoreCase);
+
+        Assert.Equal("300", fields["docker.timeoutSeconds.default"].DefaultValue);
+        Assert.Equal("300", fields["docker.timeoutSeconds.default"].Placeholder);
+        Assert.Equal("Docker CLI path", fields[DockerCli.ExecutablePathConfigurationKey].Label);
+        Assert.Equal("Auto-detect", fields[DockerCli.ExecutablePathConfigurationKey].Placeholder);
     }
 
     [Fact]
@@ -2280,6 +2357,59 @@ public sealed class WorkspaceTests
     private sealed class DelegateProgress(Action<string> report) : IProgress<string>
     {
         public void Report(string value) => report(value);
+    }
+
+    private sealed class FakeBackgroundProcessQueue : IBackgroundProcessQueue
+    {
+        private readonly List<BackgroundProcessSnapshot> _snapshots = [];
+
+        public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public List<BackgroundProcessRequest> Requests { get; } = [];
+
+        public BackgroundProcessSnapshot Enqueue(BackgroundProcessRequest request)
+        {
+            Requests.Add(request);
+            var snapshot = new BackgroundProcessSnapshot(
+                Guid.NewGuid(),
+                request.Title,
+                request.GroupKey,
+                request.Indicator,
+                request.ConcurrencyMode,
+                BackgroundProcessState.Queued,
+                "Queued",
+                null,
+                request.CanCancel,
+                request.Metadata ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                null,
+                DateTimeOffset.UtcNow,
+                null,
+                null);
+            _snapshots.Add(snapshot);
+            return snapshot;
+        }
+
+        public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null)
+            => _snapshots
+                .Where(snapshot => string.IsNullOrWhiteSpace(groupKey)
+                                   || string.Equals(snapshot.GroupKey, groupKey, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+
+        public bool Cancel(Guid processId)
+            => _snapshots.Any(snapshot => snapshot.ProcessId == processId);
+    }
+
+    private static string ConfigureFakeDockerCli(TestScope scope)
+    {
+        var dockerPath = Path.Combine(scope.RootPath, "bin", OperatingSystem.IsWindows() ? "docker.exe" : "docker");
+        Directory.CreateDirectory(Path.GetDirectoryName(dockerPath)!);
+        File.WriteAllText(dockerPath, string.Empty);
+        scope.Context.Storage.State.SetValueAsync(DockerCli.ExecutablePathConfigurationKey, dockerPath).GetAwaiter().GetResult();
+        return dockerPath;
     }
 
     private sealed class TestScope : IDisposable

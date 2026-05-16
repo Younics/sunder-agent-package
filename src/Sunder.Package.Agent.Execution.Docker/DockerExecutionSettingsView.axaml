@@ -101,21 +101,18 @@
                        TextWrapping="Wrap" />
           </StackPanel>
           <TextBox Text="{Binding TimeoutSeconds, Mode=TwoWay}"
-                   PlaceholderText="300" />
+                    PlaceholderText="300" />
+          <StackPanel Spacing="6">
+            <TextBlock Classes="caption"
+                       Text="Optional Docker CLI path. Leave empty to auto-detect Docker Desktop, Homebrew, or system Docker installs."
+                       TextWrapping="Wrap" />
+            <TextBox Text="{Binding DockerCliPath, Mode=TwoWay}"
+                     PlaceholderText="Auto-detect" />
+          </StackPanel>
           <Button Classes="primary-action"
                   Content="Save Settings"
                   HorizontalAlignment="Left"
                   Command="{Binding SaveSettingsCommand}" />
-        </StackPanel>
-      </Border>
-
-      <Border Classes="card-surface">
-        <StackPanel Spacing="8">
-          <TextBlock Classes="section-title"
-                     Text="Status" />
-          <TextBlock Classes="muted"
-                     Text="{Binding StatusText}"
-                     TextWrapping="Wrap" />
         </StackPanel>
       </Border>
     </StackPanel>
