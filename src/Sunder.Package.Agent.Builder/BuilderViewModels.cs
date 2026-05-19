@@ -331,12 +331,25 @@ public sealed class BuilderViewModel(
             return;
         }
 
-        var project = SelectedProject;
-        Projects.Remove(project);
-        SelectedProject = Projects.FirstOrDefault();
-        IsEditorActive = SelectedProject is not null;
-        await SaveProjectsAsync();
-        StatusText = $"Removed {project.DisplayName} from Builder.";
+        await RunBusyAsync(async () =>
+        {
+            var project = SelectedProject ?? throw new InvalidOperationException("No package project is selected.");
+            var deletedName = project.DisplayName;
+            var shouldClearSelection = IsCompactLayout;
+            Projects.Remove(project);
+            SelectedProject = shouldClearSelection ? null : Projects.FirstOrDefault();
+            await SaveProjectsAsync();
+            if (shouldClearSelection)
+            {
+                ClearStatus();
+            }
+            else
+            {
+                StatusText = $"Deleted package project '{deletedName}'.";
+            }
+
+            IsEditorActive = false;
+        });
     }
 
     public async Task InitializeSelectedProjectAsync()
@@ -1088,6 +1101,8 @@ public sealed class BuilderViewModel(
         var error = string.IsNullOrWhiteSpace(status.ErrorMessage) ? string.Empty : $" Last error: {status.ErrorMessage}";
         return $"{status.PackageId} {status.Version} loaded from {source}{overlay}.{watch}{error}";
     }
+
+    private void ClearStatus() => StatusText = string.Empty;
 
     private void ShowStatusMessageForCurrentText()
     {
