@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sunder.Package.Agent.Builder;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Xunit;
@@ -51,14 +52,61 @@ public sealed class BuilderViewModelTests
         Assert.True(viewModel.ShowStatusMessage);
     }
 
-    private static BuilderViewModel CreateViewModel()
+    [Fact]
+    public async Task InitializeSelectedProjectAsync_WhenValid_EnqueuesMainIndicatorProcessAndLocksProjectIdentity()
+    {
+        var queue = new TestBackgroundProcessQueue();
+        var viewModel = CreateViewModel(queue);
+        var project = CreateProject("one", "One Package");
+        AddWorkspace(viewModel, project.WorkspaceId);
+        viewModel.Projects.Add(project);
+        viewModel.ActivateProject(project);
+
+        await viewModel.InitializeSelectedProjectAsync();
+
+        var request = Assert.Single(queue.Requests);
+        Assert.Equal("Initialize One Package", request.Title);
+        Assert.Equal("sunder-package-builder", request.GroupKey);
+        Assert.Equal(BackgroundProcessIndicator.Main, request.Indicator);
+        Assert.True(viewModel.IsSelectedProjectInitializing);
+        Assert.False(viewModel.CanEditSelectedProject);
+        Assert.False(viewModel.CanEditProjectIdentity);
+        Assert.False(viewModel.CanInitializeSelectedProject);
+        Assert.Equal("Package initialization queued.", viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task InitializeSelectedProjectAsync_WhenWorkspaceIsMissing_DoesNotQueueProcess()
+    {
+        var queue = new TestBackgroundProcessQueue();
+        var viewModel = CreateViewModel(queue);
+        var project = CreateProject("one", "One Package");
+        project.WorkspaceId = string.Empty;
+        viewModel.Projects.Add(project);
+        viewModel.ActivateProject(project);
+
+        await viewModel.InitializeSelectedProjectAsync();
+
+        Assert.Empty(queue.Requests);
+        Assert.False(viewModel.IsSelectedProjectInitializing);
+        Assert.Equal("Workspace is required.", viewModel.StatusText);
+    }
+
+    private static BuilderViewModel CreateViewModel(TestBackgroundProcessQueue? queue = null)
     {
         var packageContext = new TestPackageContext();
         return new BuilderViewModel(
             new BuilderSetupService(),
+            new BuilderWorkspaceExecutionService(new TestExtensionCatalog()),
             new BuilderProjectStore(packageContext),
             NullPackageSessionService.Instance,
-            new TestBackgroundProcessQueue());
+            queue ?? new TestBackgroundProcessQueue());
+    }
+
+    private static void AddWorkspace(BuilderViewModel viewModel, string workspaceId)
+    {
+        var now = DateTimeOffset.UtcNow;
+        viewModel.Workspaces.Add(new AgentWorkspaceRecord(workspaceId, "Local workspace", null, now, now));
     }
 
     private static BuilderProjectViewModel CreateProject(string id, string displayName)
@@ -68,11 +116,18 @@ public sealed class BuilderViewModelTests
             id,
             displayName,
             $"local.{id}",
+            "workspace.local",
+            $"/tmp/{id}",
             $"/tmp/{id}",
             $"/tmp/{id}/bin/Debug/net10.0/sunder-dev",
-            Watch: true,
+            true,
             now,
             now));
+    }
+
+    private sealed class TestExtensionCatalog : IPackageExtensionCatalog
+    {
+        public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint) => [];
     }
 
     private sealed class TestPackageContext : IPackageContext
@@ -171,8 +226,13 @@ public sealed class BuilderViewModelTests
             remove { }
         }
 
+        public List<BackgroundProcessRequest> Requests { get; } = [];
+
         public BackgroundProcessSnapshot Enqueue(BackgroundProcessRequest request)
-            => new(
+        {
+            Requests.Add(request);
+
+            return new(
                 Guid.NewGuid(),
                 request.Title,
                 request.GroupKey,
@@ -187,6 +247,7 @@ public sealed class BuilderViewModelTests
                 DateTimeOffset.UtcNow,
                 StartedAtUtc: null,
                 CompletedAtUtc: null);
+        }
 
         public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null) => [];
 

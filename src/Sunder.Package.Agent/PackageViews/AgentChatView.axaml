@@ -932,7 +932,7 @@
                     Click="JumpToLatestTranscript_OnClick"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Bottom"
-                    Margin="30,0,0,18"
+                    Margin="37,0,0,18"
                     ToolTip.Tip="Jump to latest"
                     IsVisible="False" />
           </Grid>

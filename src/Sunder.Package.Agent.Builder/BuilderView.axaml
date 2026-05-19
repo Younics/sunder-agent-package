@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Sunder.Package.Agent.Builder"
+             xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
              x:Class="Sunder.Package.Agent.Builder.BuilderView"
              x:DataType="vm:BuilderViewModel"
              mc:Ignorable="d">
@@ -203,10 +204,6 @@
 
           <StackPanel Orientation="Horizontal"
                       Spacing="8">
-            <Button Classes="primary-action"
-                    Content="Install missing prerequisites"
-                    IsEnabled="{Binding CanInstallMissingPrerequisites}"
-                    Click="OnInstallMissingPrerequisitesClicked" />
             <Button Classes="secondary-action compact-action builder-icon-action"
                     Content="↻"
                     ToolTip.Tip="Recheck setup"
@@ -325,29 +322,84 @@
 
                       <StackPanel Spacing="5">
                         <TextBlock Classes="builder-field-label"
-                                   Text="Package id" />
+                                    Text="Package id" />
                         <TextBox Text="{Binding SelectedProject.PackageId, Mode=TwoWay}"
-                                 IsEnabled="{Binding CanEditProjectIdentity}"
-                                 PlaceholderText="Package id" />
+                                  IsEnabled="{Binding CanEditProjectIdentity}"
+                                  PlaceholderText="Package id" />
                       </StackPanel>
 
                       <StackPanel Spacing="5">
                         <TextBlock Classes="builder-field-label"
-                                   Text="Project folder" />
-                        <Grid ColumnDefinitions="*,Auto"
-                              ColumnSpacing="8">
-                          <TextBox Grid.Column="0"
-                                   Text="{Binding SelectedProject.ProjectFolder, Mode=TwoWay}"
-                                   IsEnabled="{Binding CanEditProjectIdentity}"
-                                   PlaceholderText="Project folder" />
-                          <Button Grid.Column="1"
-                                  Classes="secondary-action compact-action"
-                                  Content="Choose"
+                                   Text="Workspace" />
+                        <ComboBox ItemsSource="{Binding Workspaces}"
+                                  SelectedValue="{Binding SelectedProject.WorkspaceId, Mode=TwoWay}"
+                                  SelectedValueBinding="{Binding WorkspaceId}"
                                   IsEnabled="{Binding CanEditProjectIdentity}"
-                                  IsVisible="{Binding CanEditProjectIdentity}"
-                                  Click="OnPickProjectFolderClicked" />
-                        </Grid>
+                                  HorizontalAlignment="Stretch">
+                          <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="m:AgentWorkspaceRecord">
+                              <TextBlock Text="{Binding DisplayName}" />
+                            </DataTemplate>
+                          </ComboBox.ItemTemplate>
+                        </ComboBox>
+                        <TextBlock Classes="builder-field-help"
+                                   Text="The project will be created inside the selected workspace's default allowed root." />
                       </StackPanel>
+
+                      <StackPanel Spacing="5"
+                                  IsVisible="{Binding IsSelectedProjectInitialized}">
+                        <TextBlock Classes="builder-field-label"
+                                   Text="Host project folder" />
+                        <TextBox Text="{Binding SelectedProject.ProjectFolder}"
+                                 IsReadOnly="True" />
+                      </StackPanel>
+
+                      <StackPanel Spacing="5"
+                                  IsVisible="{Binding IsSelectedProjectInitialized}">
+                        <TextBlock Classes="builder-field-label"
+                                   Text="Executor project folder" />
+                        <TextBox Text="{Binding SelectedProject.ExecutionProjectFolder}"
+                                 IsReadOnly="True" />
+                      </StackPanel>
+                    </StackPanel>
+                  </Border>
+
+                  <Border Classes="builder-card"
+                          IsVisible="{Binding ShowSelectedProjectSetup}">
+                    <StackPanel Spacing="14">
+                      <StackPanel Spacing="4">
+                        <TextBlock Text="Workspace Setup"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+                        <TextBlock Classes="builder-caption"
+                                   Text="Missing prerequisites are installed automatically when you initialize the package." />
+                      </StackPanel>
+
+                      <ItemsControl ItemsSource="{Binding SetupItems}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:BuilderPrerequisiteViewModel">
+                            <Grid ColumnDefinitions="*,Auto"
+                                  RowDefinitions="Auto,Auto"
+                                  ColumnSpacing="12"
+                                  RowSpacing="4"
+                                  Margin="0,0,0,8">
+                              <TextBlock Text="{Binding Name}"
+                                         FontWeight="SemiBold"
+                                         Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+                              <TextBlock Grid.Column="1"
+                                         Text="{Binding StateText}"
+                                         Classes.builder-success="{Binding IsInstalled}"
+                                         Classes.builder-warning="{Binding !IsInstalled}" />
+                              <TextBlock Grid.Row="1"
+                                         Grid.ColumnSpan="2"
+                                         Text="{Binding Detail}"
+                                         TextWrapping="Wrap"
+                                         Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+                            </Grid>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+
                     </StackPanel>
                   </Border>
 
@@ -411,6 +463,11 @@
                                 IsEnabled="{Binding CanUseSelectedProjectRuntimeActions}"
                                 IsVisible="{Binding IsSelectedProjectInitialized}"
                                 Click="OnBuildProjectClicked" />
+                        <Button Classes="secondary-action compact-action"
+                                Content="Publish"
+                                IsEnabled="{Binding CanUseSelectedProjectRuntimeActions}"
+                                IsVisible="{Binding IsSelectedProjectInitialized}"
+                                Click="OnPublishProjectClicked" />
                       </StackPanel>
                     </StackPanel>
                   </Border>
@@ -453,7 +510,7 @@
                             Click="OnBackToProjectListClicked" />
                     <Button Classes="primary-action"
                             Content="Initialize"
-                            IsEnabled="{Binding CanUseSelectedProjectRuntimeActions}"
+                            IsEnabled="{Binding CanInitializeSelectedProject}"
                             IsVisible="{Binding ShowInitializeSelectedProject}"
                             Click="OnInitializeProjectClicked" />
                     <Button Classes="primary-action"

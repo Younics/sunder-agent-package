@@ -98,23 +98,24 @@
   </Style>
 
   <Style Selector="Button.transcript-jump-latest">
-    <Setter Property="Width" Value="42" />
-    <Setter Property="Height" Value="42" />
+    <Setter Property="Width" Value="28" />
+    <Setter Property="Height" Value="28" />
+    <Setter Property="MinWidth" Value="0" />
     <Setter Property="Padding" Value="0" />
-    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
-    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
-    <Setter Property="BorderThickness" Value="2" />
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
+    <Setter Property="BorderThickness" Value="0" />
     <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Full}" />
     <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
-    <Setter Property="FontSize" Value="24" />
+    <Setter Property="FontSize" Value="18" />
     <Setter Property="FontWeight" Value="SemiBold" />
     <Setter Property="HorizontalContentAlignment" Value="Center" />
     <Setter Property="VerticalContentAlignment" Value="Center" />
   </Style>
 
   <Style Selector="Button.transcript-jump-latest:pointerover">
-    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
-    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
-    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Accent}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.OnAccent}" />
   </Style>
 </Styles>

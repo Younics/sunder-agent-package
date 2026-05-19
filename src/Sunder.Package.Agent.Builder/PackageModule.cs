@@ -8,6 +8,7 @@ public sealed class PackageModule : ISunderPackageModule
     public void ConfigureServices(IServiceCollection services, IPackageContext context)
     {
         services.AddSingleton<BuilderSetupService>();
+        services.AddSingleton<BuilderWorkspaceExecutionService>();
         services.AddSingleton<BuilderProjectStore>();
         services.AddSingleton<BuilderViewModel>();
         services.AddTransient<BuilderView>();

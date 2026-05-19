@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace Sunder.Package.Agent.Builder;
 
-internal sealed record BuilderProcessResult(int ExitCode, string StandardOutput, string StandardError)
+public sealed record BuilderProcessResult(int ExitCode, string StandardOutput, string StandardError)
 {
     public string CombinedOutput => (StandardOutput + Environment.NewLine + StandardError).Trim();
 }

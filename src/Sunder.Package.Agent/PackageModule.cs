@@ -16,6 +16,7 @@ public sealed partial class PackageModule : ISunderPackageModule
         services.AddSingleton(new AgentLocalStore(context));
         services.AddSingleton<AgentWorkspaceService>();
         services.AddSingleton<AgentExecutionTargetService>();
+        services.AddSingleton<AgentWorkspaceExecutionResolver>();
         services.AddSingleton<AgentExecutionTargetWarmupService>();
         services.AddSingleton<AgentProfileService>();
         services.AddSingleton<AgentSessionService>();
@@ -57,6 +58,10 @@ public sealed partial class PackageModule : ISunderPackageModule
         registry.RegisterExtension(
             PackageExtensionPoints.RuntimeCatalogs,
             services.GetRequiredService<AgentRuntimeCatalog>()
+        );
+        registry.RegisterExtension(
+            PackageExtensionPoints.WorkspaceExecutionResolvers,
+            services.GetRequiredService<AgentWorkspaceExecutionResolver>()
         );
         registry.RegisterExtension(
             PackageExtensionPoints.ChildRunExecutors,

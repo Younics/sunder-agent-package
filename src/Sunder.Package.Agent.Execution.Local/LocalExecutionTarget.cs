@@ -9,7 +9,7 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.Execution.Local;
 
 public sealed class LocalExecutionTarget(IPackageContext packageContext, LocalExecutionWorkspaceConfigService configService, LocalShellCatalogService shellCatalogService)
-    : IAgentProcessExecutionTarget, IAgentWorkspaceBindingContributor, IAgentExecutionScopeProvider, IAgentExecutionResourceResolver
+    : IAgentProcessExecutionTarget, IAgentWorkspaceBindingContributor, IAgentExecutionScopeProvider, IAgentExecutionResourceResolver, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment
 {
     private const int DefaultTimeoutSeconds = 300;
     private const int MaxOutputLength = 51200;
@@ -129,6 +129,7 @@ public sealed class LocalExecutionTarget(IPackageContext packageContext, LocalEx
         var shell = shellCatalogService.ResolveShell(config.SelectedShellId);
         var workingDirectory = ResolveWorkingDirectory(config, request.WorkingDirectory, context.AllowOutsideConfiguredScope);
         var startInfo = BuildShellStartInfo(shell, request.Command, workingDirectory);
+        ApplyPathEntries(startInfo, config.PathEntries);
         return await ExecuteProcessStartInfoAsync(startInfo, request.TimeoutSeconds ?? ResolveDefaultTimeoutSeconds(), workingDirectory, cancellationToken);
     }
 
@@ -158,7 +159,49 @@ public sealed class LocalExecutionTarget(IPackageContext packageContext, LocalEx
             startInfo.ArgumentList.Add(argument);
         }
 
+        ApplyPathEntries(startInfo, config.PathEntries);
+
         return await ExecuteProcessStartInfoAsync(startInfo, request.TimeoutSeconds ?? ResolveDefaultTimeoutSeconds(), workingDirectory, cancellationToken);
+    }
+
+    public ValueTask<AgentExecutionPathMapping> MapToHostPathAsync(
+        AgentExecutionTargetContext context,
+        string executionPath,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var config = configService.GetConfig(context.Binding.BindingId);
+        var resolved = ResolvePath(config, executionPath, allowOutsideConfiguredScope: false);
+        return ValueTask.FromResult(new AgentExecutionPathMapping(resolved, resolved, IsInsideAllowedRoot(config, resolved)));
+    }
+
+    public ValueTask<IReadOnlyList<string>> ListPathEntriesAsync(
+        AgentExecutionTargetContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(configService.GetConfig(context.Binding.BindingId).PathEntries ?? []);
+    }
+
+    public ValueTask AddPathEntryAsync(
+        AgentExecutionTargetContext context,
+        string executionPath,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(executionPath))
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        var config = configService.GetConfig(context.Binding.BindingId);
+        var pathEntry = Path.GetFullPath(LocalExecutionWorkspaceConfigService.ExpandPath(executionPath.Trim()));
+        var pathEntries = (config.PathEntries ?? [])
+            .Append(pathEntry)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        configService.SaveConfig(context.Binding.BindingId, config with { PathEntries = pathEntries });
+        return ValueTask.CompletedTask;
     }
 
     private static async ValueTask<AgentShellCommandResult> ExecuteProcessStartInfoAsync(
@@ -388,6 +431,23 @@ public sealed class LocalExecutionTarget(IPackageContext packageContext, LocalEx
 
     private static string StripAnsiEscapeSequences(string output)
         => string.IsNullOrEmpty(output) ? output : AnsiEscapeRegex.Replace(output, string.Empty);
+
+    private static void ApplyPathEntries(ProcessStartInfo startInfo, IReadOnlyList<string>? pathEntries)
+    {
+        var entries = pathEntries?
+            .Where(entry => !string.IsNullOrWhiteSpace(entry))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (entries is null || entries.Length == 0)
+        {
+            return;
+        }
+
+        var path = startInfo.Environment.TryGetValue("PATH", out var existing)
+            ? existing
+            : Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        startInfo.Environment["PATH"] = string.Join(Path.PathSeparator, entries.Concat([path]));
+    }
 
     private sealed record BoundedProcessOutput(string Content, bool WasTruncated);
 

@@ -12,17 +12,17 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
         var json = packageContext.Storage.State.GetValue(BuildKey(bindingId));
         if (string.IsNullOrWhiteSpace(json))
         {
-            return new LocalExecutionWorkspaceConfig([], null, null);
+            return new LocalExecutionWorkspaceConfig([], null, null, []);
         }
 
         try
         {
             var config = JsonSerializer.Deserialize<LocalExecutionWorkspaceConfig>(json, JsonOptions);
-            return Normalize(config ?? new LocalExecutionWorkspaceConfig([], null, null));
+            return Normalize(config ?? new LocalExecutionWorkspaceConfig([], null, null, []));
         }
         catch
         {
-            return new LocalExecutionWorkspaceConfig([], null, null);
+            return new LocalExecutionWorkspaceConfig([], null, null, []);
         }
     }
 
@@ -50,7 +50,17 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
             defaultWorkingDirectory = roots.FirstOrDefault();
         }
 
-        return new LocalExecutionWorkspaceConfig(roots, defaultWorkingDirectory, string.IsNullOrWhiteSpace(config.SelectedShellId) ? null : config.SelectedShellId.Trim());
+        var pathEntries = (config.PathEntries ?? [])
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => Path.GetFullPath(ExpandPath(path.Trim())))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return new LocalExecutionWorkspaceConfig(
+            roots,
+            defaultWorkingDirectory,
+            string.IsNullOrWhiteSpace(config.SelectedShellId) ? null : config.SelectedShellId.Trim(),
+            pathEntries);
     }
 
     internal static string ExpandPath(string path)

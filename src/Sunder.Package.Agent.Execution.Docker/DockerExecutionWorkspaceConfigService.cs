@@ -20,17 +20,17 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
         var json = packageContext.Storage.State.GetValue(BuildKey(bindingId));
         if (string.IsNullOrWhiteSpace(json))
         {
-            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(null, [DefaultContainerRoot], DefaultContainerRoot, null, DefaultShellPath));
+            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(null, [DefaultContainerRoot], DefaultContainerRoot, null, DefaultShellPath, null, []));
         }
 
         try
         {
             return Normalize(bindingId, JsonSerializer.Deserialize<DockerExecutionWorkspaceConfig>(json, JsonOptions)
-                                        ?? new DockerExecutionWorkspaceConfig(null, [], null, null, null));
+                                        ?? new DockerExecutionWorkspaceConfig(null, [], null, null, null, null, []));
         }
         catch
         {
-            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(null, [DefaultContainerRoot], DefaultContainerRoot, null, DefaultShellPath));
+            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(null, [DefaultContainerRoot], DefaultContainerRoot, null, DefaultShellPath, null, []));
         }
     }
 
@@ -104,6 +104,11 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
             ? DefaultShellPath
             : NormalizeContainerPath(config.ShellPath, allowRoot: false);
         var hostRoots = NormalizeHostRoots(config.HostRoots, roots);
+        var pathEntries = (config.PathEntries ?? [])
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => NormalizeContainerPath(path.Trim(), allowRoot: false))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 
         return new DockerExecutionWorkspaceConfig(
             string.IsNullOrWhiteSpace(config.ImageReference) ? _imageCatalogService.GetDefaultImageReference() : DockerImageCatalogService.NormalizeImageReference(config.ImageReference),
@@ -111,7 +116,8 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
             defaultWorkingDirectory,
             ResolveContainerName(bindingId, config.ContainerName),
             shellPath,
-            hostRoots);
+            hostRoots,
+            pathEntries);
     }
 
     internal static string NormalizeContainerPath(string path)

@@ -53,14 +53,6 @@ public partial class BuilderView : UserControl
         }
     }
 
-    private async void OnInstallMissingPrerequisitesClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (DataContext is BuilderViewModel viewModel)
-        {
-            await viewModel.InstallMissingPrerequisitesAsync();
-        }
-    }
-
     private async void OnCreateProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (DataContext is BuilderViewModel viewModel)
@@ -128,6 +120,14 @@ public partial class BuilderView : UserControl
         if (DataContext is BuilderViewModel viewModel)
         {
             await viewModel.BuildSelectedProjectAsync();
+        }
+    }
+
+    private async void OnPublishProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is BuilderViewModel viewModel)
+        {
+            await viewModel.PublishSelectedProjectAsync();
         }
     }
 

@@ -23,6 +23,9 @@ public static class PackageExtensionPoints
     public static readonly PackageExtensionPoint<IAgentRuntimeCatalog> RuntimeCatalogs =
         new("sunder.package.agent:runtime-catalogs");
 
+    public static readonly PackageExtensionPoint<IAgentWorkspaceExecutionResolver> WorkspaceExecutionResolvers =
+        new("sunder.package.agent:workspace-execution-resolvers");
+
     public static readonly PackageExtensionPoint<IAgentChildRunExecutor> ChildRunExecutors =
         new("sunder.package.agent:child-run-executors");
 

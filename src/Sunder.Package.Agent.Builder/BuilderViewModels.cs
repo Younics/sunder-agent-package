@@ -3,12 +3,14 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Avalonia.Threading;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Builder;
 
 public sealed class BuilderViewModel(
     BuilderSetupService setupService,
+    BuilderWorkspaceExecutionService executionService,
     BuilderProjectStore projectStore,
     IPackageSessionService packageSessionService,
     IBackgroundProcessQueue backgroundProcesses) : INotifyPropertyChanged
@@ -16,17 +18,17 @@ public sealed class BuilderViewModel(
     private static readonly TimeSpan StatusMessageVisibleDuration = TimeSpan.FromSeconds(3);
 
     private BuilderProjectViewModel? _selectedProject;
-    private string _statusText = "Checking package builder setup...";
+    private string _statusText = string.Empty;
     private string _runtimeLogText = string.Empty;
     private bool _isBusy;
     private bool _isSetupComplete;
-    private bool _isSetupInstallQueued;
     private bool _initialized;
     private bool _processedStartupAutoLoad;
     private bool _isCompactLayout;
     private bool _isEditorActive;
     private bool _isSelectedProjectInitialized;
     private bool _isSelectedProjectLoaded;
+    private bool _isSelectedProjectInitializing;
     private bool _showStatusMessage;
     private int _selectedProjectStatusVersion;
     private long _statusMessageVersion;
@@ -36,6 +38,8 @@ public sealed class BuilderViewModel(
     public ObservableCollection<BuilderPrerequisiteViewModel> SetupItems { get; } = [];
 
     public ObservableCollection<BuilderProjectViewModel> Projects { get; } = [];
+
+    public ObservableCollection<AgentWorkspaceRecord> Workspaces { get; } = [];
 
     public bool IsBusy
     {
@@ -64,27 +68,13 @@ public sealed class BuilderViewModel(
         }
     }
 
-    public bool ShowSetup => !IsSetupComplete;
+    public bool ShowSetup => false;
 
-    public bool ShowProjects => IsSetupComplete;
-
-    public bool IsSetupInstallQueued
-    {
-        get => _isSetupInstallQueued;
-        private set
-        {
-            if (SetField(ref _isSetupInstallQueued, value))
-            {
-                NotifySetupStatePropertiesChanged();
-            }
-        }
-    }
-
-    public bool CanInstallMissingPrerequisites => !IsSetupComplete && !IsBusy && !IsSetupInstallQueued && SetupItems.Any(item => !item.IsInstalled);
+    public bool ShowProjects => true;
 
     public bool HasSelectedProject => SelectedProject is not null;
 
-    public bool CanEditSelectedProject => HasSelectedProject && !IsBusy;
+    public bool CanEditSelectedProject => HasSelectedProject && !IsBusy && !IsSelectedProjectInitializing;
 
     public bool CanEditProjectIdentity => CanEditSelectedProject && !IsSelectedProjectInitialized;
 
@@ -118,7 +108,30 @@ public sealed class BuilderViewModel(
         }
     }
 
+    public bool IsSelectedProjectInitializing
+    {
+        get => _isSelectedProjectInitializing;
+        private set
+        {
+            if (SetField(ref _isSelectedProjectInitializing, value))
+            {
+                NotifyProjectStatePropertiesChanged();
+                NotifySetupStatePropertiesChanged();
+            }
+        }
+    }
+
     public bool ShowInitializeSelectedProject => HasSelectedProject && !IsSelectedProjectInitialized;
+
+    public bool ShowSelectedProjectSetup => HasSelectedProject && !IsSelectedProjectInitialized && SetupItems.Count > 0;
+
+    public bool CanInitializeSelectedProject => HasSelectedProject
+                                                && !IsBusy
+                                                && !IsSelectedProjectInitializing
+                                                && !IsSelectedProjectInitialized
+                                               && !string.IsNullOrWhiteSpace(SelectedProject?.DisplayName)
+                                               && !string.IsNullOrWhiteSpace(SelectedProject?.PackageId)
+                                               && !string.IsNullOrWhiteSpace(SelectedProject?.WorkspaceId);
 
     public bool ShowLoadSelectedProject => HasSelectedProject && IsSelectedProjectInitialized && !IsSelectedProjectLoaded;
 
@@ -184,6 +197,11 @@ public sealed class BuilderViewModel(
 
                 if (value is not null)
                 {
+                    if (string.IsNullOrWhiteSpace(value.WorkspaceId))
+                    {
+                        value.WorkspaceId = Workspaces.FirstOrDefault()?.WorkspaceId ?? string.Empty;
+                    }
+
                     value.PropertyChanged += OnSelectedProjectPropertyChanged;
                     if (IsCompactLayout)
                     {
@@ -246,44 +264,20 @@ public sealed class BuilderViewModel(
         }
 
         _initialized = true;
-        await RefreshSetupAsync();
+        ReloadWorkspaces();
+        await LoadProjectsAsync();
     }
 
     public async Task RefreshSetupAsync()
     {
         await RunBusyAsync(async () =>
         {
-            await CheckAndApplySetupAsync();
-        });
-    }
-
-    public Task InstallMissingPrerequisitesAsync()
-    {
-        if (!CanInstallMissingPrerequisites)
-        {
-            return Task.CompletedTask;
-        }
-
-        IsSetupInstallQueued = true;
-        backgroundProcesses.Enqueue(new BackgroundProcessRequest(
-            "Install package builder prerequisites",
-            "sunder-package-builder-setup",
-            BackgroundProcessIndicator.Packages,
-            BackgroundProcessConcurrencyMode.SequentialWithinGroup,
-            CanCancel: true,
-            async context =>
+            if (SelectedProject is not null && !string.IsNullOrWhiteSpace(SelectedProject.WorkspaceId))
             {
-                try
-                {
-                    await InstallMissingPrerequisitesCoreAsync(context);
-                }
-                finally
-                {
-                    IsSetupInstallQueued = false;
-                }
-            }));
-        StatusText = "Prerequisite installation queued.";
-        return Task.CompletedTask;
+                var execution = await executionService.ResolveAsync(SelectedProject.WorkspaceId);
+                await CheckAndApplySetupAsync(execution);
+            }
+        });
     }
 
     public async Task InstallDotnetSdkAsync()
@@ -291,8 +285,9 @@ public sealed class BuilderViewModel(
         await RunBusyAsync(async () =>
         {
             StatusText = "Downloading .NET SDK installer...";
-            StatusText = await setupService.InstallDotnetSdkAsync();
-            await CheckAndApplySetupAsync();
+            var execution = await ResolveSelectedExecutionAsync();
+            StatusText = await setupService.InstallDotnetSdkAsync(execution);
+            await CheckAndApplySetupAsync(execution);
         });
     }
 
@@ -301,8 +296,9 @@ public sealed class BuilderViewModel(
         await RunBusyAsync(async () =>
         {
             StatusText = "Installing Sunder package template...";
-            StatusText = await setupService.InstallTemplateAsync();
-            await CheckAndApplySetupAsync();
+            var execution = await ResolveSelectedExecutionAsync();
+            StatusText = await setupService.InstallTemplateAsync(execution);
+            await CheckAndApplySetupAsync(execution);
         });
     }
 
@@ -315,9 +311,12 @@ public sealed class BuilderViewModel(
             string.Empty,
             string.Empty,
             string.Empty,
+            string.Empty,
+            string.Empty,
             Watch: true,
             now,
             now));
+        project.WorkspaceId = Workspaces.FirstOrDefault()?.WorkspaceId ?? string.Empty;
         Projects.Add(project);
         SelectedProject = project;
         IsEditorActive = true;
@@ -355,39 +354,92 @@ public sealed class BuilderViewModel(
     public async Task InitializeSelectedProjectAsync()
     {
         var project = SelectedProject;
-        if (!ValidateSelectedProject(project, requireExistingFolder: false))
+        if (!ValidateSelectedProject(project, requireExistingFolder: false, requireInitializedPaths: false))
         {
             return;
         }
 
+        var draft = BuilderProjectInitializationDraft.From(project!);
         project!.Touch();
         await SaveProjectsAsync();
-        backgroundProcesses.Enqueue(new BackgroundProcessRequest(
-            $"Initialize {project.DisplayName}",
-            "sunder-package-builder",
-            BackgroundProcessIndicator.Packages,
-            BackgroundProcessConcurrencyMode.SequentialWithinGroup,
-            CanCancel: true,
-            async context =>
-            {
-                context.ReportIndeterminate("Creating Sunder package project...");
-                await InitializeProjectInFolderAsync(project, context);
-
-                project.DevPackageFolder = ResolveDefaultDevPackageFolder(project.ProjectFolder);
-                project.Touch();
-                await SaveProjectsAsync(context.CancellationToken);
-                UpdateSelectedProjectInitialized();
-                await RefreshSelectedStatusAsync(updateStatusText: false);
-                context.ReportProgress(100, "Sunder package project initialized.");
-                StatusText = $"Initialized {project.DisplayName}.";
-            }));
         StatusText = "Package initialization queued.";
+        RuntimeLogText = string.Empty;
+        IsSelectedProjectInitializing = true;
+        try
+        {
+            backgroundProcesses.Enqueue(new BackgroundProcessRequest(
+                $"Initialize {draft.DisplayName}",
+                "sunder-package-builder",
+                BackgroundProcessIndicator.Main,
+                BackgroundProcessConcurrencyMode.SequentialWithinGroup,
+                CanCancel: true,
+                async context =>
+                {
+                    try
+                    {
+                        context.ReportIndeterminate("Resolving workspace execution target...");
+                        var execution = await executionService.ResolveAsync(draft.WorkspaceId, context.CancellationToken);
+                        var statuses = await EnsurePrerequisitesInstalledAsync(execution, context);
+
+                        if (!statuses.All(status => status.IsInstalled))
+                        {
+                            throw new InvalidOperationException(BuildMissingPrerequisitesMessage(statuses));
+                        }
+
+                        context.ReportIndeterminate("Creating Sunder package project...");
+                        await RunOnUiThreadAsync(() => StatusText = "Creating Sunder package project...");
+                        await InitializeProjectInFolderAsync(project, draft, execution, context);
+
+                        project.Touch();
+                        await SaveProjectsAsync(context.CancellationToken);
+                        await RunOnUiThreadAsync(() =>
+                        {
+                            if (ReferenceEquals(SelectedProject, project))
+                            {
+                                UpdateSelectedProjectInitialized();
+                            }
+                        });
+                        if (ReferenceEquals(SelectedProject, project))
+                        {
+                            await RefreshSelectedStatusAsync(updateStatusText: false);
+                        }
+
+                        context.ReportProgress(100, "Sunder package project initialized.");
+                        await RunOnUiThreadAsync(() => StatusText = $"Initialized {draft.DisplayName}.");
+                    }
+                    catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+                    {
+                        await RunOnUiThreadAsync(() => StatusText = "Package initialization cancelled.");
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        context.ReportProgress(100, "Package initialization failed.");
+                        await RunOnUiThreadAsync(() =>
+                        {
+                            RuntimeLogText = ex.Message;
+                            StatusText = "Initialization failed. See runtime log.";
+                        });
+                        throw;
+                    }
+                    finally
+                    {
+                        await RunOnUiThreadAsync(() => IsSelectedProjectInitializing = false);
+                    }
+                }));
+        }
+        catch (Exception ex)
+        {
+            IsSelectedProjectInitializing = false;
+            RuntimeLogText = ex.Message;
+            StatusText = "Initialization failed. See runtime log.";
+        }
     }
 
     public async Task BuildSelectedProjectAsync()
     {
         var project = SelectedProject;
-        if (!ValidateSelectedProject(project, requireExistingFolder: true))
+        if (!ValidateSelectedProject(project, requireExistingFolder: true, requireInitializedPaths: true))
         {
             return;
         }
@@ -395,13 +447,15 @@ public sealed class BuilderViewModel(
         backgroundProcesses.Enqueue(new BackgroundProcessRequest(
             $"Build {project!.DisplayName}",
             "sunder-package-builder",
-            BackgroundProcessIndicator.Packages,
+            BackgroundProcessIndicator.Main,
             BackgroundProcessConcurrencyMode.SequentialWithinGroup,
             CanCancel: true,
             async context =>
             {
                 context.ReportIndeterminate("Running dotnet build...");
-                var result = await BuilderDotnetTool.RunAsync(["build", project.ProjectFolder], project.ProjectFolder, context.CancellationToken);
+                var execution = await executionService.ResolveAsync(project.WorkspaceId, context.CancellationToken);
+                var projectFolder = ResolveExecutionProjectFolder(project);
+                var result = await execution.RunProcessAsync("dotnet", ["build", projectFolder], projectFolder, cancellationToken: context.CancellationToken);
                 if (result.ExitCode != 0)
                 {
                     RuntimeLogText = string.IsNullOrWhiteSpace(result.CombinedOutput) ? "dotnet build failed." : result.CombinedOutput;
@@ -422,10 +476,48 @@ public sealed class BuilderViewModel(
         StatusText = "Build queued.";
     }
 
+    public async Task PublishSelectedProjectAsync()
+    {
+        var project = SelectedProject;
+        if (!ValidateSelectedProject(project, requireExistingFolder: true, requireInitializedPaths: true))
+        {
+            return;
+        }
+
+        backgroundProcesses.Enqueue(new BackgroundProcessRequest(
+            $"Publish {project!.DisplayName}",
+            "sunder-package-builder",
+            BackgroundProcessIndicator.Main,
+            BackgroundProcessConcurrencyMode.SequentialWithinGroup,
+            CanCancel: true,
+            async context =>
+            {
+                context.ReportIndeterminate("Running dotnet publish...");
+                var execution = await executionService.ResolveAsync(project.WorkspaceId, context.CancellationToken);
+                var projectFolder = ResolveExecutionProjectFolder(project);
+                var result = await execution.RunProcessAsync("dotnet", ["publish", projectFolder], projectFolder, timeoutSeconds: 900, cancellationToken: context.CancellationToken);
+                if (result.ExitCode != 0)
+                {
+                    RuntimeLogText = string.IsNullOrWhiteSpace(result.CombinedOutput) ? "dotnet publish failed." : result.CombinedOutput;
+                    StatusText = "Publish failed. See runtime log.";
+                    context.ReportProgress(100, "Publish failed. See runtime log.");
+                    throw new InvalidOperationException("dotnet publish failed. See Builder runtime log for details.");
+                }
+
+                RuntimeLogText = string.IsNullOrWhiteSpace(result.CombinedOutput) ? "Publish completed." : result.CombinedOutput;
+                project.Touch();
+                await SaveProjectsAsync(context.CancellationToken);
+                context.ReportProgress(100, "Sunder package publish completed.");
+                StatusText = "Publish completed.";
+            }));
+        StatusText = "Publish queued.";
+        await Task.CompletedTask;
+    }
+
     public async Task LoadSelectedProjectAsync()
     {
         var project = SelectedProject;
-        if (!ValidateSelectedProject(project, requireExistingFolder: true))
+        if (!ValidateSelectedProject(project, requireExistingFolder: true, requireInitializedPaths: true))
         {
             return;
         }
@@ -565,6 +657,42 @@ public sealed class BuilderViewModel(
         }
     }
 
+    private void ReloadWorkspaces()
+    {
+        var selectedWorkspaceId = SelectedProject?.WorkspaceId;
+        Workspaces.Clear();
+        foreach (var workspace in executionService.ListWorkspaces().OrderBy(workspace => workspace.DisplayName, StringComparer.OrdinalIgnoreCase))
+        {
+            Workspaces.Add(workspace);
+        }
+
+        if (SelectedProject is not null && string.IsNullOrWhiteSpace(SelectedProject.WorkspaceId))
+        {
+            SelectedProject.WorkspaceId = Workspaces.FirstOrDefault()?.WorkspaceId ?? string.Empty;
+        }
+
+        if (SelectedProject is not null
+            && !string.IsNullOrWhiteSpace(selectedWorkspaceId)
+            && Workspaces.Any(workspace => string.Equals(workspace.WorkspaceId, selectedWorkspaceId, StringComparison.OrdinalIgnoreCase)))
+        {
+            SelectedProject.WorkspaceId = selectedWorkspaceId;
+        }
+
+        OnPropertyChanged(nameof(Workspaces));
+        NotifyProjectStatePropertiesChanged();
+    }
+
+    private async Task<BuilderWorkspaceExecution> ResolveSelectedExecutionAsync(CancellationToken cancellationToken = default)
+    {
+        var workspaceId = SelectedProject?.WorkspaceId;
+        if (string.IsNullOrWhiteSpace(workspaceId))
+        {
+            throw new InvalidOperationException("Select a workspace before continuing.");
+        }
+
+        return await executionService.ResolveAsync(workspaceId, cancellationToken);
+    }
+
     private async Task SaveProjectsAsync(CancellationToken cancellationToken = default)
         => await projectStore.SaveAsync(Projects.Select(project => project.ToRecord()).ToArray(), cancellationToken);
 
@@ -590,9 +718,11 @@ public sealed class BuilderViewModel(
         }
     }
 
-    private async Task<IReadOnlyList<BuilderPrerequisiteStatus>> CheckAndApplySetupAsync(CancellationToken cancellationToken = default)
+    private async Task<IReadOnlyList<BuilderPrerequisiteStatus>> CheckAndApplySetupAsync(
+        BuilderWorkspaceExecution execution,
+        CancellationToken cancellationToken = default)
     {
-        var statuses = await setupService.CheckAsync(cancellationToken);
+        var statuses = await setupService.CheckAsync(execution, cancellationToken);
         var isSetupComplete = statuses.All(status => status.IsInstalled);
         await RunOnUiThreadAsync(() =>
         {
@@ -602,60 +732,69 @@ public sealed class BuilderViewModel(
                 SetupItems.Add(new BuilderPrerequisiteViewModel(status));
             }
 
-            IsSetupComplete = isSetupComplete;
             StatusText = isSetupComplete
-                ? "Package builder setup is ready."
-                : "Install the missing prerequisites to enable package project management.";
+                ? "Package builder setup is ready for this workspace."
+                : "Install the missing prerequisites for this workspace.";
             NotifySetupStatePropertiesChanged();
+            NotifyProjectStatePropertiesChanged();
         });
-
-        if (isSetupComplete)
-        {
-            await LoadProjectsAsync(cancellationToken);
-        }
 
         return statuses;
     }
 
-    private async Task InstallMissingPrerequisitesCoreAsync(BackgroundProcessContext context)
+    private async Task<IReadOnlyList<BuilderPrerequisiteStatus>> EnsurePrerequisitesInstalledAsync(
+        BuilderWorkspaceExecution execution,
+        BackgroundProcessContext context)
     {
         context.ReportIndeterminate("Checking package builder prerequisites...");
-        var statuses = await CheckAndApplySetupAsync(context.CancellationToken);
+        var statuses = await CheckAndApplySetupAsync(execution, context.CancellationToken);
         if (statuses.All(status => status.IsInstalled))
         {
             context.ReportProgress(100, "Package builder setup is already ready.");
-            return;
+            return statuses;
         }
 
         if (IsMissing(statuses, BuilderPrerequisiteKind.DotnetSdk))
         {
             context.ReportIndeterminate("Downloading .NET SDK installer...");
-            var message = await setupService.InstallDotnetSdkAsync(context.CancellationToken);
-            StatusText = message;
+            var message = await setupService.InstallDotnetSdkAsync(execution, context.CancellationToken);
+            await RunOnUiThreadAsync(() => StatusText = message);
             context.ReportIndeterminate(message);
-            statuses = await CheckAndApplySetupAsync(context.CancellationToken);
+            statuses = await CheckAndApplySetupAsync(execution, context.CancellationToken);
         }
 
         if (IsMissing(statuses, BuilderPrerequisiteKind.DotnetSdk))
         {
             context.ReportProgress(100, "Complete the .NET SDK installer, then recheck setup.");
-            return;
+            return statuses;
         }
 
         if (IsMissing(statuses, BuilderPrerequisiteKind.SunderTemplate))
         {
             context.ReportIndeterminate("Installing Sunder package template...");
-            var message = await setupService.InstallTemplateAsync(context.CancellationToken);
-            StatusText = message;
+            var message = await setupService.InstallTemplateAsync(execution, context.CancellationToken);
+            await RunOnUiThreadAsync(() => StatusText = message);
             context.ReportIndeterminate(message);
-            statuses = await CheckAndApplySetupAsync(context.CancellationToken);
+            statuses = await CheckAndApplySetupAsync(execution, context.CancellationToken);
         }
 
         context.ReportProgress(
             100,
             statuses.All(status => status.IsInstalled)
                 ? "Package builder setup is ready."
-                : "Some prerequisites are still missing. Recheck setup after completing external installers.");
+                : "Some prerequisites are still missing.");
+        return statuses;
+    }
+
+    private static string BuildMissingPrerequisitesMessage(IReadOnlyList<BuilderPrerequisiteStatus> statuses)
+    {
+        var missing = statuses
+            .Where(status => !status.IsInstalled)
+            .Select(status => $"{status.Name}: {status.Detail}")
+            .ToArray();
+        return missing.Length == 0
+            ? "Package builder setup is incomplete."
+            : "Package builder setup is incomplete." + Environment.NewLine + string.Join(Environment.NewLine, missing);
     }
 
     private static bool IsMissing(IReadOnlyList<BuilderPrerequisiteStatus> statuses, BuilderPrerequisiteKind kind)
@@ -668,11 +807,22 @@ public sealed class BuilderViewModel(
             return;
         }
 
-        if (e.PropertyName is nameof(BuilderProjectViewModel.ProjectFolder) or nameof(BuilderProjectViewModel.PackageId) or nameof(BuilderProjectViewModel.DevPackageFolder))
+        if (e.PropertyName is nameof(BuilderProjectViewModel.ProjectFolder)
+            or nameof(BuilderProjectViewModel.ExecutionProjectFolder)
+            or nameof(BuilderProjectViewModel.WorkspaceId)
+            or nameof(BuilderProjectViewModel.DisplayName)
+            or nameof(BuilderProjectViewModel.PackageId)
+            or nameof(BuilderProjectViewModel.DevPackageFolder))
         {
             var version = ++_selectedProjectStatusVersion;
             UpdateSelectedProjectInitialized();
             IsSelectedProjectLoaded = false;
+            if (e.PropertyName is nameof(BuilderProjectViewModel.DisplayName) && string.IsNullOrWhiteSpace(SelectedProject?.PackageId))
+            {
+                SelectedProject!.PackageId = ToPackageId(SelectedProject.DisplayName);
+            }
+
+            NotifyProjectStatePropertiesChanged();
             if (!string.IsNullOrWhiteSpace(SelectedProject?.PackageId))
             {
                 _ = RefreshSelectedStatusAsync(version, updateStatusText: false);
@@ -768,7 +918,10 @@ public sealed class BuilderViewModel(
         return status;
     }
 
-    private bool ValidateSelectedProject(BuilderProjectViewModel? project, bool requireExistingFolder)
+    private bool ValidateSelectedProject(
+        BuilderProjectViewModel? project,
+        bool requireExistingFolder,
+        bool requireInitializedPaths)
     {
         if (project is null)
         {
@@ -787,9 +940,32 @@ public sealed class BuilderViewModel(
             project.PackageId = ToPackageId(project.DisplayName);
         }
 
+        if (string.IsNullOrWhiteSpace(project.WorkspaceId))
+        {
+            StatusText = "Workspace is required.";
+            return false;
+        }
+
+        if (!Workspaces.Any(workspace => string.Equals(workspace.WorkspaceId, project.WorkspaceId, StringComparison.OrdinalIgnoreCase)))
+        {
+            StatusText = "Selected workspace was not found.";
+            return false;
+        }
+
+        if (!requireInitializedPaths)
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(project.ExecutionProjectFolder))
+        {
+            StatusText = "Initialize the package project first.";
+            return false;
+        }
+
         if (string.IsNullOrWhiteSpace(project.ProjectFolder))
         {
-            StatusText = "Project folder is required.";
+            StatusText = "Host project folder is not available. Reinitialize the package project.";
             return false;
         }
 
@@ -812,54 +988,48 @@ public sealed class BuilderViewModel(
         return true;
     }
 
-    private async Task InitializeProjectInFolderAsync(BuilderProjectViewModel project, BackgroundProcessContext context)
+    private async Task InitializeProjectInFolderAsync(
+        BuilderProjectViewModel project,
+        BuilderProjectInitializationDraft draft,
+        BuilderWorkspaceExecution execution,
+        BackgroundProcessContext context)
     {
-        Directory.CreateDirectory(project.ProjectFolder);
-        EnsureProjectFolderCanBeInitialized(project.ProjectFolder);
-
-        var result = await BuilderDotnetTool.RunAsync(
-            BuildTemplateArguments(project, project.ProjectFolder, createInPlace: true),
-            project.ProjectFolder,
-            context.CancellationToken);
-        if (result.ExitCode == 0)
+        var executionProjectFolder = string.IsNullOrWhiteSpace(draft.ExecutionProjectFolder)
+            ? execution.CombinePath(execution.DefaultExecutionRoot, ToProjectName(draft.DisplayName))
+            : draft.ExecutionProjectFolder;
+        var hostMapping = await execution.MapToHostPathAsync(executionProjectFolder, context.CancellationToken);
+        if (!hostMapping.IsInsideAllowedRoot)
         {
-            return;
+            throw new InvalidOperationException("Generated project path is outside the selected workspace allowed roots.");
         }
 
-        if (!ShouldFallbackToStaging(result))
+        Directory.CreateDirectory(Path.GetDirectoryName(hostMapping.HostPath) ?? hostMapping.HostPath);
+        if (Directory.Exists(hostMapping.HostPath))
+        {
+            EnsureProjectFolderCanBeInitialized(hostMapping.HostPath);
+        }
+
+        var executionWorkingDirectory = GetExecutionParentFolder(executionProjectFolder) ?? execution.DefaultExecutionRoot;
+
+        var result = await execution.RunProcessAsync(
+            "dotnet",
+            BuildTemplateArguments(draft, executionProjectFolder, createInPlace: true),
+            executionWorkingDirectory,
+            cancellationToken: context.CancellationToken);
+        if (result.ExitCode != 0)
         {
             throw new InvalidOperationException(string.IsNullOrWhiteSpace(result.CombinedOutput) ? "Package initialization failed." : result.CombinedOutput);
         }
 
-        context.ReportIndeterminate("Installed template does not support --createInPlace; staging generated files...");
-        await InitializeProjectViaStagingAsync(project, context);
+        project.DisplayName = draft.DisplayName;
+        project.PackageId = draft.PackageId;
+        project.WorkspaceId = draft.WorkspaceId;
+        project.ExecutionProjectFolder = executionProjectFolder;
+        project.ProjectFolder = hostMapping.HostPath;
+        project.DevPackageFolder = ResolveDefaultDevPackageFolder(project.ProjectFolder);
     }
 
-    private static async Task InitializeProjectViaStagingAsync(BuilderProjectViewModel project, BackgroundProcessContext context)
-    {
-        var stagingRoot = Path.Combine(Path.GetTempPath(), "sunder-builder", "template-staging", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(stagingRoot);
-        try
-        {
-            var result = await BuilderDotnetTool.RunAsync(
-                BuildTemplateArguments(project, stagingRoot, createInPlace: false),
-                stagingRoot,
-                context.CancellationToken);
-            if (result.ExitCode != 0)
-            {
-                throw new InvalidOperationException(string.IsNullOrWhiteSpace(result.CombinedOutput) ? "Package initialization failed." : result.CombinedOutput);
-            }
-
-            var generatedProjectFolder = ResolveGeneratedProjectFolder(stagingRoot, ToProjectName(project.DisplayName));
-            MoveGeneratedProjectContents(stagingRoot, generatedProjectFolder, project.ProjectFolder);
-        }
-        finally
-        {
-            TryDeleteDirectory(stagingRoot);
-        }
-    }
-
-    private static string[] BuildTemplateArguments(BuilderProjectViewModel project, string outputFolder, bool createInPlace)
+    private static string[] BuildTemplateArguments(BuilderProjectInitializationDraft project, string outputFolder, bool createInPlace)
     {
         List<string> arguments =
         [
@@ -897,6 +1067,23 @@ public sealed class BuilderViewModel(
 
     private static bool IsIgnorableProjectFolderEntry(string path)
         => string.Equals(Path.GetFileName(path), ".DS_Store", StringComparison.OrdinalIgnoreCase);
+
+    private static string? GetExecutionParentFolder(string path)
+    {
+        var trimmed = path.TrimEnd('/', '\\');
+        var separatorIndex = Math.Max(trimmed.LastIndexOf('/'), trimmed.LastIndexOf('\\'));
+        if (separatorIndex <= 0)
+        {
+            return null;
+        }
+
+        if (trimmed.Length > 2 && trimmed[1] == ':' && separatorIndex == 2)
+        {
+            return trimmed[..3];
+        }
+
+        return trimmed[..separatorIndex];
+    }
 
     private static bool ShouldFallbackToStaging(BuilderProcessResult result)
     {
@@ -1021,7 +1208,8 @@ public sealed class BuilderViewModel(
 
     private void NotifySetupStatePropertiesChanged()
     {
-        OnPropertyChanged(nameof(CanInstallMissingPrerequisites));
+        OnPropertyChanged(nameof(ShowSelectedProjectSetup));
+        OnPropertyChanged(nameof(CanInitializeSelectedProject));
     }
 
     private void NotifyProjectStatePropertiesChanged()
@@ -1033,6 +1221,8 @@ public sealed class BuilderViewModel(
         OnPropertyChanged(nameof(CanUseSelectedProjectRuntimeActions));
         OnPropertyChanged(nameof(ShowRuntimeSection));
         OnPropertyChanged(nameof(ShowInitializeSelectedProject));
+        OnPropertyChanged(nameof(ShowSelectedProjectSetup));
+        OnPropertyChanged(nameof(CanInitializeSelectedProject));
         OnPropertyChanged(nameof(ShowLoadSelectedProject));
         OnPropertyChanged(nameof(ShowUnloadSelectedProject));
     }
@@ -1073,6 +1263,25 @@ public sealed class BuilderViewModel(
 
     private static string ResolveDefaultDevPackageFolder(string projectFolder)
         => Path.Combine(Path.GetFullPath(projectFolder), "bin", "Debug", "net10.0", "sunder-dev");
+
+    private static string ResolveExecutionProjectFolder(BuilderProjectViewModel project)
+        => string.IsNullOrWhiteSpace(project.ExecutionProjectFolder)
+            ? project.ProjectFolder
+            : project.ExecutionProjectFolder;
+
+    private sealed record BuilderProjectInitializationDraft(
+        string DisplayName,
+        string PackageId,
+        string WorkspaceId,
+        string ExecutionProjectFolder)
+    {
+        public static BuilderProjectInitializationDraft From(BuilderProjectViewModel project)
+            => new(
+                project.DisplayName.Trim(),
+                project.PackageId.Trim(),
+                project.WorkspaceId.Trim(),
+                project.ExecutionProjectFolder.Trim());
+    }
 
     private static string ToProjectName(string displayName)
     {
@@ -1154,10 +1363,12 @@ public sealed class BuilderPrerequisiteViewModel(BuilderPrerequisiteStatus statu
 
 public sealed class BuilderProjectViewModel(BuilderProjectRecord record) : INotifyPropertyChanged
 {
-    private string _displayName = record.DisplayName;
-    private string _packageId = record.PackageId;
-    private string _projectFolder = record.ProjectFolder;
-    private string _devPackageFolder = record.DevPackageFolder;
+    private string _displayName = record.DisplayName ?? string.Empty;
+    private string _packageId = record.PackageId ?? string.Empty;
+    private string _workspaceId = record.WorkspaceId ?? string.Empty;
+    private string _executionProjectFolder = record.ExecutionProjectFolder ?? string.Empty;
+    private string _projectFolder = record.ProjectFolder ?? string.Empty;
+    private string _devPackageFolder = record.DevPackageFolder ?? string.Empty;
     private bool _watch = record.Watch;
     private bool _autoLoadOnStartup = record.AutoLoadOnStartup;
     private DateTimeOffset _updatedAtUtc = record.UpdatedAtUtc;
@@ -1178,6 +1389,18 @@ public sealed class BuilderProjectViewModel(BuilderProjectRecord record) : INoti
     {
         get => _packageId;
         set => SetField(ref _packageId, value);
+    }
+
+    public string WorkspaceId
+    {
+        get => _workspaceId;
+        set => SetField(ref _workspaceId, value);
+    }
+
+    public string ExecutionProjectFolder
+    {
+        get => _executionProjectFolder;
+        set => SetField(ref _executionProjectFolder, value);
     }
 
     public string ProjectFolder
@@ -1217,6 +1440,8 @@ public sealed class BuilderProjectViewModel(BuilderProjectRecord record) : INoti
             Id,
             DisplayName.Trim(),
             PackageId.Trim(),
+            WorkspaceId.Trim(),
+            ExecutionProjectFolder.Trim(),
             ProjectFolder.Trim(),
             DevPackageFolder.Trim(),
             Watch,

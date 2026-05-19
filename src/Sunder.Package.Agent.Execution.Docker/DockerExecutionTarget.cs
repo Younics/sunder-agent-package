@@ -11,7 +11,7 @@ public sealed class DockerExecutionTarget(
     IPackageContext packageContext,
     DockerExecutionWorkspaceConfigService configService,
     DockerContainerLifecycleService lifecycleService)
-    : IAgentProcessExecutionTarget, IAgentWorkspaceBindingContributor, IAgentExecutionScopeProvider
+    : IAgentProcessExecutionTarget, IAgentWorkspaceBindingContributor, IAgentExecutionScopeProvider, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment
 {
     private const int DefaultTimeoutSeconds = 300;
     private const int MaxOutputLength = 51200;
@@ -136,7 +136,7 @@ public sealed class DockerExecutionTarget(
         var workingDirectory = string.IsNullOrWhiteSpace(request.WorkingDirectory)
             ? ResolveDefaultBaseDirectory(config)
             : ResolvePath(config, request.WorkingDirectory, context.AllowOutsideConfiguredScope);
-        var result = await RunDockerAsync(["exec", "-w", workingDirectory, lease.ContainerName, ResolveShellPath(config), "-c", request.Command], request.TimeoutSeconds ?? ResolveDefaultTimeoutSeconds(), cancellationToken);
+        var result = await RunDockerAsync(["exec", "-w", workingDirectory, lease.ContainerName, ResolveShellPath(config), "-c", ApplyPathEntries(request.Command, config.PathEntries)], request.TimeoutSeconds ?? ResolveDefaultTimeoutSeconds(), cancellationToken);
         return new AgentShellCommandResult(result.ExitCode, result.Output, result.TimedOut, workingDirectory, result.WasTruncated);
     }
 
@@ -155,11 +155,60 @@ public sealed class DockerExecutionTarget(
         var workingDirectory = string.IsNullOrWhiteSpace(request.WorkingDirectory)
             ? ResolveDefaultBaseDirectory(config)
             : ResolvePath(config, request.WorkingDirectory, context.AllowOutsideConfiguredScope);
-        var dockerArgs = new List<string> { "exec", "-w", workingDirectory, lease.ContainerName, request.FileName };
-        dockerArgs.AddRange(request.Arguments);
+        var dockerArgs = new List<string> { "exec", "-w", workingDirectory, lease.ContainerName, ResolveShellPath(config), "-c", ApplyPathEntries(BuildProcessCommand(request), config.PathEntries) };
 
         var result = await RunDockerAsync(dockerArgs, request.TimeoutSeconds ?? ResolveDefaultTimeoutSeconds(), cancellationToken);
         return new AgentShellCommandResult(result.ExitCode, result.Output, result.TimedOut, workingDirectory, result.WasTruncated);
+    }
+
+    public ValueTask<AgentExecutionPathMapping> MapToHostPathAsync(
+        AgentExecutionTargetContext context,
+        string executionPath,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var config = configService.GetConfig(context.Binding.BindingId);
+        var normalizedPath = ResolvePath(config, executionPath, allowOutsideConfiguredScope: false);
+        var root = config.AllowedRoots
+            .Where(root => DockerExecutionWorkspaceConfigService.IsSameOrChildPath(normalizedPath, root))
+            .OrderByDescending(root => root.Length)
+            .FirstOrDefault()
+            ?? throw new InvalidOperationException("Execution path is outside the selected workspace allowed roots.");
+        var hostRoot = configService.ResolveHostPath(config, root);
+        var relative = normalizedPath[root.Length..].TrimStart('/');
+        var hostPath = string.IsNullOrWhiteSpace(relative)
+            ? hostRoot
+            : Path.Combine([hostRoot, .. relative.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)]);
+        return ValueTask.FromResult(new AgentExecutionPathMapping(normalizedPath, Path.GetFullPath(hostPath), IsInsideAllowedRoot(config, normalizedPath)));
+    }
+
+    public ValueTask<IReadOnlyList<string>> ListPathEntriesAsync(
+        AgentExecutionTargetContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(configService.GetConfig(context.Binding.BindingId).PathEntries ?? []);
+    }
+
+    public ValueTask AddPathEntryAsync(
+        AgentExecutionTargetContext context,
+        string executionPath,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(executionPath))
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        var config = configService.GetConfig(context.Binding.BindingId);
+        var pathEntry = DockerExecutionWorkspaceConfigService.NormalizeContainerPath(executionPath.Trim());
+        var pathEntries = (config.PathEntries ?? [])
+            .Append(pathEntry)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        configService.SaveConfig(context.Binding.BindingId, config with { PathEntries = pathEntries });
+        return ValueTask.CompletedTask;
     }
 
     public async ValueTask<AgentFileReadResult> ReadFileAsync(
@@ -307,6 +356,24 @@ public sealed class DockerExecutionTarget(
             ? message
             : $"{message} {trimmed}";
     }
+
+    private static string ApplyPathEntries(string command, IReadOnlyList<string>? pathEntries)
+    {
+        var entries = pathEntries?
+            .Where(entry => !string.IsNullOrWhiteSpace(entry))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (entries is null || entries.Length == 0)
+        {
+            return command;
+        }
+
+        var pathPrefix = string.Join(':', entries);
+        return $"export PATH={Quote(pathPrefix)}:$PATH; {command}";
+    }
+
+    private static string BuildProcessCommand(AgentProcessCommandRequest request)
+        => string.Join(' ', new[] { Quote(request.FileName) }.Concat(request.Arguments.Select(Quote)));
 
     private async Task StopContainerAsync(string containerName, CancellationToken cancellationToken)
     {
