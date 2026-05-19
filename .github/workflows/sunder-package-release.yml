@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "agent/v*"
+      - "agent-builder/v*"
       - "agent-execution-docker/v*"
       - "agent-execution-local/v*"
       - "agent-mcp/v*"
@@ -61,6 +62,12 @@ jobs:
               package_id="sunder.package.agent"
               release_title="Sunder Agent"
               artifact_name="sunder-agent-package"
+              ;;
+            agent-builder)
+              project_path="src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj"
+              package_id="sunder.package.agent.builder"
+              release_title="Sunder Agent Builder"
+              artifact_name="sunder-agent-builder-package"
               ;;
             agent-execution-docker)
               project_path="src/Sunder.Package.Agent.Execution.Docker/Sunder.Package.Agent.Execution.Docker.csproj"
