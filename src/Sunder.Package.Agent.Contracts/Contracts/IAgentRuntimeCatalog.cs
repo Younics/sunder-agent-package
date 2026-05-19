@@ -30,6 +30,8 @@ public interface IAgentRuntimeCatalog
 
     IReadOnlyList<AgentTurnRecord> ListTurnsBefore(Guid sessionId, DateTimeOffset beforeCreatedAtUtc, Guid beforeTurnId, int limit);
 
+    IReadOnlyList<AgentTurnRecord> ListTurnsAfter(Guid sessionId, DateTimeOffset afterCreatedAtUtc, Guid afterTurnId, int limit);
+
     IReadOnlyList<AgentProfileRecord> ListProfiles();
 
     AgentProfileRecord? GetProfile(string profileId);

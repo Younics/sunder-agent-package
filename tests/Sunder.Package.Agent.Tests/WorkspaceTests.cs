@@ -165,6 +165,30 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
+    public void AgentLocalStore_ListTurnsAfter_ReturnsForwardPage()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var session = store.CreateSession("Forward Paging Session");
+        for (var index = 0; index < 6; index++)
+        {
+            store.AppendTextTurn(session.SessionId, AgentMessageRole.User, $"turn-{index}");
+        }
+
+        var allTurns = store.ListTurns(session.SessionId)
+            .OrderBy(turn => turn.CreatedAtUtc)
+            .ThenBy(turn => turn.TurnId)
+            .ToArray();
+        var boundary = allTurns[2];
+
+        var afterTurns = store.ListTurnsAfter(session.SessionId, boundary.CreatedAtUtc, boundary.TurnId, 2);
+
+        Assert.Equal(
+            allTurns.Skip(3).Take(2).Select(turn => turn.TurnId),
+            afterTurns.Select(turn => turn.TurnId));
+    }
+
+    [Fact]
     public void AgentLocalStore_ProfileDeletion_IsIndependentFromWorkspaces()
     {
         using var scope = TestScope.Create();

@@ -1,30 +1,33 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
-using Avalonia.Threading;
+using Avalonia.Interactivity;
+using Sunder.Package.Agent.Shared.PackageViews;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
 
 public partial class SubsessionsView : UserControl
 {
-    private const double AutoScrollThreshold = 24;
-    private const double LoadOlderThreshold = 36;
     private const double WideSubsessionMinimumWidth = 820;
 
     private SubsessionsViewModel? _viewModel;
-    private bool _shouldAutoScroll = true;
-    private bool _isProgrammaticScroll;
-    private bool _scrollToBottomPending;
-    private bool _loadOlderPending;
+    private readonly TranscriptScrollCoordinator _transcriptScrollCoordinator;
 
     public SubsessionsView()
     {
         InitializeComponent();
-        TranscriptScrollViewer.PropertyChanged += OnScrollViewerPropertyChanged;
+        _transcriptScrollCoordinator = new TranscriptScrollCoordinator(
+            TranscriptScrollViewer,
+            () => _viewModel?.CanLoadOlderTranscriptRows == true,
+            () => _viewModel?.LoadOlderTranscriptRowsAsync() ?? Task.FromResult(false),
+            () => _viewModel?.CanLoadNewerTranscriptRows == true,
+            () => _viewModel?.LoadNewerTranscriptRowsAsync() ?? Task.FromResult(false),
+            () => _viewModel?.HasNewerTranscriptRows == true,
+            isVisible => JumpToLatestTranscriptButton.IsVisible = isVisible);
         Loaded += (_, _) =>
         {
             ApplyResponsiveLayout();
-            QueueScrollToBottom();
+            _transcriptScrollCoordinator.QueueScrollToBottom();
         };
         SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
@@ -67,107 +70,29 @@ public partial class SubsessionsView : UserControl
         viewModel?.ActivateSubsession(subsession);
     }
 
-    private void OnScrollViewerPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs change)
-    {
-        if (change.Property != ScrollViewer.OffsetProperty)
-        {
-            return;
-        }
-
-        OnScrollOffsetChanged();
-    }
-
     private void OnTranscriptChanged()
-    {
-        if (_shouldAutoScroll)
-        {
-            QueueScrollToBottom();
-        }
-    }
+        => _transcriptScrollCoordinator.OnTranscriptChanged();
 
-    private void OnScrollOffsetChanged()
+    private void JumpToLatestTranscript_OnClick(object? sender, RoutedEventArgs e)
     {
-        if (_isProgrammaticScroll)
+        var viewModel = _viewModel ?? DataContext as SubsessionsViewModel;
+        if (viewModel is null)
         {
             return;
         }
 
-        _shouldAutoScroll = IsNearBottom();
-        if (TranscriptScrollViewer.Offset.Y <= LoadOlderThreshold)
+        if (!viewModel.HasNewerTranscriptRows)
         {
-            QueueLoadOlderTranscriptRows();
+            _transcriptScrollCoordinator.QueueScrollToBottom();
+            return;
         }
-    }
 
-    private void QueueLoadOlderTranscriptRows()
-    {
-        if (_loadOlderPending || _viewModel?.CanLoadOlderTranscriptRows != true)
+        if (!viewModel.JumpToLatestTranscriptCommand.CanExecute(null))
         {
             return;
         }
 
-        _loadOlderPending = true;
-        var oldExtentHeight = TranscriptScrollViewer.Extent.Height;
-        var oldOffset = TranscriptScrollViewer.Offset;
-
-        Dispatcher.UIThread.Post(async () =>
-        {
-            try
-            {
-                if (_viewModel is null)
-                {
-                    return;
-                }
-
-                var loaded = await _viewModel.LoadOlderTranscriptRowsAsync();
-                if (!loaded)
-                {
-                    return;
-                }
-
-                Dispatcher.UIThread.Post(() =>
-                {
-                    var addedHeight = Math.Max(0, TranscriptScrollViewer.Extent.Height - oldExtentHeight);
-                    _isProgrammaticScroll = true;
-                    TranscriptScrollViewer.Offset = new Vector(oldOffset.X, oldOffset.Y + addedHeight);
-                    _isProgrammaticScroll = false;
-                    _shouldAutoScroll = false;
-                }, DispatcherPriority.Background);
-            }
-            finally
-            {
-                _loadOlderPending = false;
-            }
-        }, DispatcherPriority.Background);
-    }
-
-    private void QueueScrollToBottom()
-    {
-        if (_scrollToBottomPending)
-        {
-            return;
-        }
-
-        _scrollToBottomPending = true;
-        Dispatcher.UIThread.Post(() =>
-        {
-            _scrollToBottomPending = false;
-            ScrollToBottom();
-        }, DispatcherPriority.Background);
-    }
-
-    private void ScrollToBottom()
-    {
-        var maxOffsetY = Math.Max(0, TranscriptScrollViewer.Extent.Height - TranscriptScrollViewer.Viewport.Height);
-        _isProgrammaticScroll = true;
-        TranscriptScrollViewer.Offset = new Vector(TranscriptScrollViewer.Offset.X, maxOffsetY);
-        _isProgrammaticScroll = false;
-        _shouldAutoScroll = true;
-    }
-
-    private bool IsNearBottom()
-    {
-        var distanceFromBottom = TranscriptScrollViewer.Extent.Height - (TranscriptScrollViewer.Offset.Y + TranscriptScrollViewer.Viewport.Height);
-        return distanceFromBottom <= AutoScrollThreshold;
+        _transcriptScrollCoordinator.ForceScrollToBottomOnNextTranscriptChanged();
+        viewModel.JumpToLatestTranscriptCommand.Execute(null);
     }
 }

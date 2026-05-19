@@ -5,8 +5,8 @@ using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
-using Avalonia.Threading;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
@@ -15,8 +15,6 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public partial class AgentChatView : UserControl
 {
-    private const double AutoScrollThreshold = 24;
-    private const double LoadOlderThreshold = 36;
     private const double WideHeaderMinimumWidth = 520;
     private static readonly FilePickerFileType SupportedAttachmentFileType = new("Supported attachments")
     {
@@ -31,26 +29,30 @@ public partial class AgentChatView : UserControl
     };
 
     private AgentChatViewModel? _viewModel;
+    private readonly TranscriptScrollCoordinator _transcriptScrollCoordinator;
     private IPackageNotificationService _notificationService = NullPackageNotificationService.Instance;
-    private bool _shouldAutoScroll = true;
-    private bool _isProgrammaticScroll;
-    private bool _scrollToBottomPending;
-    private bool _loadOlderPending;
 
     public AgentChatView()
     {
         InitializeComponent();
+        _transcriptScrollCoordinator = new TranscriptScrollCoordinator(
+            TranscriptScrollViewer,
+            () => _viewModel?.CanLoadOlderTranscriptRows == true,
+            () => _viewModel?.LoadOlderTranscriptRowsAsync() ?? Task.FromResult(false),
+            () => _viewModel?.CanLoadNewerTranscriptRows == true,
+            () => _viewModel?.LoadNewerTranscriptRowsAsync() ?? Task.FromResult(false),
+            () => _viewModel?.HasNewerTranscriptRows == true,
+            isVisible => JumpToLatestTranscriptButton.IsVisible = isVisible);
         ConfigureComposerDropTarget(ExpandedComposerDropTarget);
         ConfigureComposerDropTarget(ExpandedComposerTextBox);
         ConfigureComposerDropTarget(CollapsedComposerDropTarget);
         ConfigureComposerDropTarget(CollapsedComposerTextBox);
         ConfigureComposerKeyHandler(ExpandedComposerTextBox);
         ConfigureComposerKeyHandler(CollapsedComposerTextBox);
-        TranscriptScrollViewer.PropertyChanged += OnScrollViewerPropertyChanged;
         Loaded += (_, _) =>
         {
             ApplyHeaderLayout();
-            QueueScrollToBottom();
+            _transcriptScrollCoordinator.QueueScrollToBottom();
         };
         SizeChanged += (_, _) => ApplyHeaderLayout();
     }
@@ -111,6 +113,28 @@ public partial class AgentChatView : UserControl
         {
             await PublishClipboardNotificationAsync("Clipboard unavailable", "Sunder could not write to the system clipboard.", PackageNotificationSeverity.Warning);
         }
+    }
+
+    private void JumpToLatestTranscript_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null)
+        {
+            return;
+        }
+
+        if (!_viewModel.HasNewerTranscriptRows)
+        {
+            _transcriptScrollCoordinator.QueueScrollToBottom();
+            return;
+        }
+
+        if (!_viewModel.JumpToLatestTranscriptCommand.CanExecute(null))
+        {
+            return;
+        }
+
+        _transcriptScrollCoordinator.ForceScrollToBottomOnNextTranscriptChanged();
+        _viewModel.JumpToLatestTranscriptCommand.Execute(null);
     }
 
     private ValueTask PublishClipboardNotificationAsync(string title, string message, PackageNotificationSeverity severity)
@@ -351,111 +375,8 @@ public partial class AgentChatView : UserControl
             .ToArray()
             ?? [];
 
-    private void OnScrollViewerPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs change)
-    {
-        if (change.Property != ScrollViewer.OffsetProperty)
-        {
-            return;
-        }
-
-        OnScrollOffsetChanged();
-    }
-
     private void OnTranscriptChanged()
-    {
-        if (!_shouldAutoScroll)
-        {
-            return;
-        }
-
-        QueueScrollToBottom();
-    }
-
-    private void OnScrollOffsetChanged()
-    {
-        if (_isProgrammaticScroll)
-        {
-            return;
-        }
-
-        _shouldAutoScroll = IsNearBottom();
-        if (TranscriptScrollViewer.Offset.Y <= LoadOlderThreshold)
-        {
-            QueueLoadOlderTranscriptRows();
-        }
-    }
-
-    private void QueueLoadOlderTranscriptRows()
-    {
-        if (_loadOlderPending || _viewModel?.CanLoadOlderTranscriptRows != true)
-        {
-            return;
-        }
-
-        _loadOlderPending = true;
-        var oldExtentHeight = TranscriptScrollViewer.Extent.Height;
-        var oldOffset = TranscriptScrollViewer.Offset;
-
-        Dispatcher.UIThread.Post(async () =>
-        {
-            try
-            {
-                if (_viewModel is null)
-                {
-                    return;
-                }
-
-                var loaded = await _viewModel.LoadOlderTranscriptRowsAsync();
-                if (!loaded)
-                {
-                    return;
-                }
-
-                Dispatcher.UIThread.Post(() =>
-                {
-                    var addedHeight = Math.Max(0, TranscriptScrollViewer.Extent.Height - oldExtentHeight);
-                    _isProgrammaticScroll = true;
-                    TranscriptScrollViewer.Offset = new Vector(oldOffset.X, oldOffset.Y + addedHeight);
-                    _isProgrammaticScroll = false;
-                    _shouldAutoScroll = false;
-                }, DispatcherPriority.Background);
-            }
-            finally
-            {
-                _loadOlderPending = false;
-            }
-        }, DispatcherPriority.Background);
-    }
-
-    private void QueueScrollToBottom()
-    {
-        if (_scrollToBottomPending)
-        {
-            return;
-        }
-
-        _scrollToBottomPending = true;
-        Dispatcher.UIThread.Post(() =>
-        {
-            _scrollToBottomPending = false;
-            ScrollToBottom();
-        }, DispatcherPriority.Background);
-    }
-
-    private void ScrollToBottom()
-    {
-        var maxOffsetY = Math.Max(0, TranscriptScrollViewer.Extent.Height - TranscriptScrollViewer.Viewport.Height);
-        _isProgrammaticScroll = true;
-        TranscriptScrollViewer.Offset = new Vector(TranscriptScrollViewer.Offset.X, maxOffsetY);
-        _isProgrammaticScroll = false;
-        _shouldAutoScroll = true;
-    }
-
-    private bool IsNearBottom()
-    {
-        var distanceFromBottom = TranscriptScrollViewer.Extent.Height - (TranscriptScrollViewer.Offset.Y + TranscriptScrollViewer.Viewport.Height);
-        return distanceFromBottom <= AutoScrollThreshold;
-    }
+        => _transcriptScrollCoordinator.OnTranscriptChanged();
 
     private void ApplyHeaderLayout()
     {

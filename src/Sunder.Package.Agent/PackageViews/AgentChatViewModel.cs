@@ -1,27 +1,20 @@
 using System.Collections.ObjectModel;
-using System.Collections.Specialized;
-using System.ComponentModel;
-using System.Globalization;
-using System.Text.Json;
 using Avalonia;
-using Avalonia.Media;
-using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using LiveMarkdown.Avalonia;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Theming;
 
 namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 {
-    private const int InitialTranscriptTurnLimit = 30;
-    private const int OlderTranscriptTurnPageSize = 30;
+    private const int InitialTranscriptTurnLimit = 100;
+    private const int OlderTranscriptTurnPageSize = 60;
+    private const int TranscriptWindowTurnLimit = 180;
     private const int TranscriptHydrationBatchSize = 8;
     private const string SubsessionsViewId = "sunder.package.agent.subagents.sessions";
     private const string SubsessionNavigationSessionIdKey = "sessionId";
@@ -43,13 +36,11 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private readonly Dictionary<string, AgentToolInvocationRowViewModel> _toolRowsByCallId = new(
         StringComparer.Ordinal
     );
-    private readonly HashSet<Guid> _loadedTurnIds = new();
+    private readonly AgentTranscriptTurnWindow _transcriptTurnWindow = new(TranscriptWindowTurnLimit);
     private readonly Dictionary<Guid, AgentTurnRecord> _pendingTranscriptTurnsByTurnId = new();
     private AgentSessionListItemViewModel? _observedSelectedSession;
     private AgentActivityTranscriptRowViewModel? _activityRow;
     private CancellationTokenSource? _transcriptRefreshCts;
-    private DateTimeOffset? _oldestLoadedTurnCreatedAtUtc;
-    private Guid? _oldestLoadedTurnId;
     private string _globalStatusText = string.Empty;
     private string _activityTextBase = "Thinking";
     private bool _hasVisibleRunActivity;
@@ -151,6 +142,9 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     public bool CanLoadOlderTranscriptRows =>
         HasOlderTranscriptRows && !IsLoadingOlderTranscriptRows && !IsTranscriptLoading && DisplayedSession is not null;
 
+    public bool CanLoadNewerTranscriptRows =>
+        HasNewerTranscriptRows && !IsLoadingNewerTranscriptRows && !IsTranscriptLoading && DisplayedSession is not null;
+
     [ObservableProperty]
     private AgentWorkspaceRecord? _selectedWorkspace;
 
@@ -192,7 +186,13 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private bool _hasOlderTranscriptRows;
 
     [ObservableProperty]
+    private bool _hasNewerTranscriptRows;
+
+    [ObservableProperty]
     private bool _isLoadingOlderTranscriptRows;
+
+    [ObservableProperty]
+    private bool _isLoadingNewerTranscriptRows;
 
     [ObservableProperty]
     private bool _isTranscriptLoading;
@@ -200,31 +200,19 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     partial void OnHasOlderTranscriptRowsChanged(bool value) =>
         OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
 
+    partial void OnHasNewerTranscriptRowsChanged(bool value) =>
+        OnPropertyChanged(nameof(CanLoadNewerTranscriptRows));
+
     partial void OnIsLoadingOlderTranscriptRowsChanged(bool value) =>
         OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
 
-    partial void OnIsTranscriptLoadingChanged(bool value) =>
+    partial void OnIsLoadingNewerTranscriptRowsChanged(bool value) =>
+        OnPropertyChanged(nameof(CanLoadNewerTranscriptRows));
+
+    partial void OnIsTranscriptLoadingChanged(bool value)
+    {
         OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
-
-    partial void OnSelectedWorkspaceChanged(AgentWorkspaceRecord? value)
-    {
-        if (_suppressWorkspaceSelection)
-        {
-            return;
-        }
-
-        _selectionState?.SaveSelectedWorkspaceId(value?.WorkspaceId);
-        _globalStatusText = string.Empty;
-        RefreshSetupState();
-        ScheduleSelectedWorkspaceWarmup();
-    }
-
-    partial void OnSelectedProfileChanged(AgentProfileRecord? value)
-    {
-        _selectionState?.SaveSelectedProfileId(value?.ProfileId);
-        _globalStatusText = string.Empty;
-        CreateSessionCommand.NotifyCanExecuteChanged();
-        RefreshSetupState();
+        OnPropertyChanged(nameof(CanLoadNewerTranscriptRows));
     }
 
     partial void OnIsUnrestrictedModeEnabledChanged(bool value)
@@ -514,248 +502,4 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
     }
 
-    private void OnProfilesChanged(string profileId) =>
-        RunOnUiThread(
-            () =>
-                ReloadProfiles(
-                    SelectedProfile?.ProfileId ?? _selectionState?.GetSelectedProfileId()
-                )
-        );
-
-    private void ReloadProfiles(string? selectProfileId)
-    {
-        var profiles = _profileService.ListProfiles();
-        Profiles.Clear();
-        foreach (var profile in profiles)
-        {
-            Profiles.Add(profile);
-        }
-
-        var desiredProfileId = selectProfileId ?? SelectedProfile?.ProfileId;
-        SelectedProfile =
-            Profiles.FirstOrDefault(profile =>
-                string.Equals(
-                    profile.ProfileId,
-                    desiredProfileId,
-                    StringComparison.OrdinalIgnoreCase
-                )
-            ) ?? Profiles.FirstOrDefault();
-        _selectionState?.SaveSelectedProfileId(SelectedProfile?.ProfileId);
-        NotifyProfileStateChanged();
-        CreateSessionCommand.NotifyCanExecuteChanged();
-        RefreshSetupState();
-    }
-
-    private bool ReloadWorkspaces(string? selectWorkspaceId)
-    {
-        var previousSelectedWorkspaceId = SelectedWorkspace?.WorkspaceId;
-        var workspaces = _workspaceService.ListWorkspaces();
-        _suppressWorkspaceSelection = true;
-        try
-        {
-            ReconcileWorkspaces(workspaces);
-
-            var desiredWorkspaceId = selectWorkspaceId ?? previousSelectedWorkspaceId;
-
-            SelectedWorkspace =
-                Workspaces.FirstOrDefault(workspace =>
-                    string.Equals(
-                        workspace.WorkspaceId,
-                        desiredWorkspaceId,
-                        StringComparison.OrdinalIgnoreCase
-                    )
-                ) ?? Workspaces.FirstOrDefault();
-        }
-        finally
-        {
-            _suppressWorkspaceSelection = false;
-        }
-
-        var selectedWorkspaceChanged = !string.Equals(
-            previousSelectedWorkspaceId,
-            SelectedWorkspace?.WorkspaceId,
-            StringComparison.OrdinalIgnoreCase
-        );
-        _selectionState?.SaveSelectedWorkspaceId(SelectedWorkspace?.WorkspaceId);
-        NotifyWorkspaceStateChanged();
-        CreateSessionCommand.NotifyCanExecuteChanged();
-        RefreshSetupState();
-        return selectedWorkspaceChanged;
-    }
-
-    private void ReconcileWorkspaces(IReadOnlyList<AgentWorkspaceRecord> workspaces)
-    {
-        var desiredWorkspaceIds = workspaces
-            .Select(workspace => workspace.WorkspaceId)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        for (var index = Workspaces.Count - 1; index >= 0; index--)
-        {
-            if (desiredWorkspaceIds.Contains(Workspaces[index].WorkspaceId))
-            {
-                continue;
-            }
-
-            Workspaces.RemoveAt(index);
-        }
-
-        for (var index = 0; index < workspaces.Count; index++)
-        {
-            var workspace = workspaces[index];
-            var existingIndex = FindWorkspaceIndex(workspace.WorkspaceId);
-            if (existingIndex < 0)
-            {
-                Workspaces.Insert(index, workspace);
-                continue;
-            }
-
-            if (!Equals(Workspaces[existingIndex], workspace))
-            {
-                Workspaces[existingIndex] = workspace;
-            }
-
-            if (existingIndex == index)
-            {
-                continue;
-            }
-
-            Workspaces.Move(existingIndex, index);
-        }
-    }
-
-    private void NotifyWorkspaceStateChanged()
-    {
-        OnPropertyChanged(nameof(HasWorkspaces));
-        OnPropertyChanged(nameof(HasNoWorkspaces));
-    }
-
-    private void NotifyProfileStateChanged()
-    {
-        OnPropertyChanged(nameof(HasProfiles));
-        OnPropertyChanged(nameof(HasNoProfiles));
-    }
-
-    private void RefreshSetupState()
-    {
-        var (title, description) = GetSetupContent();
-        SetupTitle = title;
-        SetupDescription = description;
-        if (SelectedSession is null)
-        {
-            StatusText = string.IsNullOrWhiteSpace(_globalStatusText)
-                ? description
-                : _globalStatusText;
-        }
-        else if (!CanUseChat)
-        {
-            StatusText = string.IsNullOrWhiteSpace(_globalStatusText)
-                ? GetSetupStatusText()
-                : _globalStatusText;
-        }
-
-        OnPropertyChanged(nameof(CanUseChat));
-        OnPropertyChanged(nameof(CannotUseChat));
-        OnPropertyChanged(nameof(HasProfiles));
-        OnPropertyChanged(nameof(HasNoProfiles));
-        OnPropertyChanged(nameof(HasSelectedSession));
-        OnPropertyChanged(nameof(ShowSetupInstructions));
-        OnPropertyChanged(nameof(ShowTranscriptSurface));
-        OnPropertyChanged(nameof(ShowCollapsedComposer));
-        OnPropertyChanged(nameof(ShowExpandedComposer));
-        OnPropertyChanged(nameof(IsSelectedSessionRunInactive));
-        SendMessageCommand.NotifyCanExecuteChanged();
-    }
-
-    private (string Title, string Description) GetSetupContent()
-    {
-        if (Profiles.Count == 0)
-        {
-            return (
-                "Create an agent before chatting",
-                "Agents choose model settings, instructions, and runtime capabilities. Create one in Agents, then return here to chat."
-            );
-        }
-
-        if (Workspaces.Count == 0)
-        {
-            return (
-                "Create a workspace before chatting",
-                "Workspaces choose the execution environment used by sessions. Open Workspaces and create one to start chatting."
-            );
-        }
-
-        if (SelectedWorkspace is null)
-        {
-            return (
-                "Select a workspace",
-                "Choose the workspace this session should run against. You can switch workspaces without changing sessions."
-            );
-        }
-
-        return (
-            "Create a session to start chatting",
-            "Create or select a session to begin a conversation with the selected agent."
-        );
-    }
-
-    private string GetSetupStatusText()
-    {
-        if (Profiles.Count == 0)
-        {
-            return "Create an Agent before chatting.";
-        }
-
-        if (Workspaces.Count == 0)
-        {
-            return "Create a workspace before chatting. Workspaces choose the execution environment used by sessions.";
-        }
-
-        if (SelectedWorkspace is null)
-        {
-            return "Select a workspace to run the selected session.";
-        }
-
-        if (SelectedProfile is null)
-        {
-            return "Select an Agent before chatting.";
-        }
-
-        return "Create a session to start chatting.";
-    }
-
-    private int FindWorkspaceIndex(string workspaceId)
-    {
-        for (var index = 0; index < Workspaces.Count; index++)
-        {
-            if (
-                string.Equals(
-                    Workspaces[index].WorkspaceId,
-                    workspaceId,
-                    StringComparison.OrdinalIgnoreCase
-                )
-            )
-            {
-                return index;
-            }
-        }
-
-        return -1;
-    }
-
-    private void OnWorkspacesChanged() => RunOnUiThread(ApplyWorkspacesChanged);
-
-    private void ApplyWorkspacesChanged()
-    {
-        ReloadWorkspaces(SelectedWorkspace?.WorkspaceId);
-        ScheduleSelectedWorkspaceWarmup();
-    }
-
-    private void SetGlobalStatus(string statusText)
-    {
-        _globalStatusText = statusText;
-        if (SelectedSession is null)
-        {
-            StatusText = statusText;
-        }
-    }
 }

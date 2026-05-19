@@ -48,6 +48,8 @@ internal sealed class AgentBehaviorLoopHost(
 
     public IReadOnlyList<AgentTurnRecord> ListTurns() => _sessionService.ListTurns(_session.SessionId);
 
+    public IReadOnlyList<AgentTurnRecord> ListRecentTurns(int limit) => _sessionService.ListRecentTurns(_session.SessionId, limit);
+
     public async ValueTask<AgentBehaviorInstructionContext> BuildInstructionContextAsync(CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();

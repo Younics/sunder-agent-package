@@ -58,6 +58,9 @@ public sealed class AgentRuntimeCatalog : IAgentRuntimeCatalog
     public IReadOnlyList<AgentTurnRecord> ListTurnsBefore(Guid sessionId, DateTimeOffset beforeCreatedAtUtc, Guid beforeTurnId, int limit)
         => _sessionService.ListTurnsBefore(sessionId, beforeCreatedAtUtc, beforeTurnId, limit);
 
+    public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(Guid sessionId, DateTimeOffset afterCreatedAtUtc, Guid afterTurnId, int limit)
+        => _sessionService.ListTurnsAfter(sessionId, afterCreatedAtUtc, afterTurnId, limit);
+
     public IReadOnlyList<AgentProfileRecord> ListProfiles() => _profileService.ListProfiles();
 
     public AgentProfileRecord? GetProfile(string profileId) => _profileService.GetProfile(profileId);

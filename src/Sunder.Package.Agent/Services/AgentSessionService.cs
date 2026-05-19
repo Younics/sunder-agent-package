@@ -96,6 +96,9 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
     public IReadOnlyList<AgentTurnRecord> ListTurnsBefore(Guid sessionId, DateTimeOffset beforeCreatedAtUtc, Guid beforeTurnId, int limit)
         => _store.ListTurnsBefore(sessionId, beforeCreatedAtUtc, beforeTurnId, limit);
 
+    public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(Guid sessionId, DateTimeOffset afterCreatedAtUtc, Guid afterTurnId, int limit)
+        => _store.ListTurnsAfter(sessionId, afterCreatedAtUtc, afterTurnId, limit);
+
     public IReadOnlyList<AgentTranscriptMessageRecord> ListMessages(Guid sessionId) => _store.ListMessages(sessionId);
 
     public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => _store.GetLatestCheckpoint(sessionId);

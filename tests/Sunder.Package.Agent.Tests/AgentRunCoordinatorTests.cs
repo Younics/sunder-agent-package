@@ -806,6 +806,39 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task QueueUserMessageAsync_BoundsProviderPromptHistory_ForLongSessions()
+    {
+        const string toolId = "fetch_page";
+        const string currentUserMessage = "Current request: summarize the recent context.";
+        var provider = new ScriptedProvider(
+            (request, _) =>
+            {
+                Assert.Contains(request.Turns, turn => RenderTurnText(turn) == currentUserMessage);
+                Assert.Contains(request.Turns, turn => RenderTurnText(turn) == "old-119");
+                Assert.DoesNotContain(request.Turns, turn => RenderTurnText(turn) == "old-000");
+                Assert.InRange(request.Turns.Count, 1, 20);
+                return Complete("bounded");
+            }
+        );
+        using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        for (var index = 0; index < 120; index++)
+        {
+            var role = index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant;
+            runtime.SessionService.AppendTextTurn(sessionId, role, $"old-{index:000}");
+        }
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            currentUserMessage,
+            runtime.CurrentWorkspaceId
+        );
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+    }
+
+    [Fact]
     public async Task QueueUserMessageAsync_ReusesDuplicateReadOnlyToolCallsWithoutReExecutingTool()
     {
         const string toolId = "fetch_page";
@@ -5267,7 +5300,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        for (var index = 0; index < 95; index++)
+        for (var index = 0; index < 165; index++)
         {
             runtime.SessionService.AppendTextTurn(
                 sessionId,
@@ -5284,31 +5317,21 @@ public sealed class AgentRunCoordinatorTests
             runtime.RunCoordinator
         );
 
-        Assert.Equal(30, viewModel.Messages.Count);
+        Assert.Equal(100, viewModel.Messages.Count);
         Assert.True(viewModel.HasOlderTranscriptRows);
         Assert.Equal(
             "message-065",
             Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
         );
         Assert.Equal(
-            "message-094",
+            "message-164",
             Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content
         );
 
         var loaded = await viewModel.LoadOlderTranscriptRowsAsync();
 
         Assert.True(loaded);
-        Assert.Equal(60, viewModel.Messages.Count);
-        Assert.True(viewModel.HasOlderTranscriptRows);
-        Assert.Equal(
-            "message-035",
-            Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
-        );
-
-        loaded = await viewModel.LoadOlderTranscriptRowsAsync();
-
-        Assert.True(loaded);
-        Assert.Equal(90, viewModel.Messages.Count);
+        Assert.Equal(160, viewModel.Messages.Count);
         Assert.True(viewModel.HasOlderTranscriptRows);
         Assert.Equal(
             "message-005",
@@ -5318,12 +5341,92 @@ public sealed class AgentRunCoordinatorTests
         loaded = await viewModel.LoadOlderTranscriptRowsAsync();
 
         Assert.True(loaded);
-        Assert.Equal(95, viewModel.Messages.Count);
+        Assert.Equal(165, viewModel.Messages.Count);
         Assert.False(viewModel.HasOlderTranscriptRows);
         Assert.Equal(
             "message-000",
             Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
         );
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_KeepsTranscriptWindowBounded_WhenPagingBothDirections()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        for (var index = 0; index < 260; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                AgentMessageRole.User,
+                $"message-{index:000}"
+            );
+        }
+
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+
+        for (var index = 0; index < 10 && viewModel.CanLoadOlderTranscriptRows; index++)
+        {
+            await viewModel.LoadOlderTranscriptRowsAsync();
+        }
+
+        Assert.InRange(viewModel.Messages.Count, 1, 180);
+        Assert.True(viewModel.HasNewerTranscriptRows);
+
+        var loadedNewer = await viewModel.LoadNewerTranscriptRowsAsync();
+
+        Assert.True(loadedNewer);
+        Assert.InRange(viewModel.Messages.Count, 1, 180);
+        Assert.True(viewModel.HasOlderTranscriptRows);
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_DoesNotAppendUnboundedLiveRows_WhenBrowsingHistoricalWindow()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        for (var index = 0; index < 220; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                AgentMessageRole.User,
+                $"message-{index:000}"
+            );
+        }
+
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+        for (var index = 0; index < 7 && viewModel.CanLoadOlderTranscriptRows; index++)
+        {
+            await viewModel.LoadOlderTranscriptRowsAsync();
+        }
+        var messageCount = viewModel.Messages.Count;
+
+        runtime.SessionService.AppendTextTurn(sessionId, AgentMessageRole.Assistant, "new live message");
+
+        Assert.Equal(messageCount, viewModel.Messages.Count);
+        Assert.True(viewModel.HasNewerTranscriptRows);
     }
 
     [Fact]
@@ -8986,6 +9089,13 @@ public sealed class AgentRunCoordinatorTests
             Guid sessionId,
             DateTimeOffset beforeCreatedAtUtc,
             Guid beforeTurnId,
+            int limit
+        ) => [];
+
+        public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(
+            Guid sessionId,
+            DateTimeOffset afterCreatedAtUtc,
+            Guid afterTurnId,
             int limit
         ) => [];
 

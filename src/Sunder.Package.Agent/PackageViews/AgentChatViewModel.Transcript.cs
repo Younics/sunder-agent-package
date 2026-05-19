@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Threading;
+using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.PackageViews;
@@ -162,6 +163,8 @@ public sealed partial class AgentChatViewModel
     {
         ApplyPendingTranscriptTurns(displayedSession.SessionId);
         HasOlderTranscriptRows = hasOlderRows;
+        HasNewerTranscriptRows = false;
+        EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest);
         ReloadPendingPermissionRequests();
         UpdateActivityRowForCurrentState();
         IsTranscriptLoading = false;
@@ -194,7 +197,7 @@ public sealed partial class AgentChatViewModel
     public async Task<bool> LoadOlderTranscriptRowsAsync()
     {
         var displayedSession = DisplayedSession;
-        if (!CanLoadOlderTranscriptRows || _oldestLoadedTurnCreatedAtUtc is null || _oldestLoadedTurnId is null || displayedSession is null)
+        if (!CanLoadOlderTranscriptRows || _transcriptTurnWindow.OldestCreatedAtUtc is null || _transcriptTurnWindow.OldestTurnId is null || displayedSession is null)
         {
             return false;
         }
@@ -203,8 +206,8 @@ public sealed partial class AgentChatViewModel
         try
         {
             var sessionId = displayedSession.SessionId;
-            var beforeCreatedAtUtc = _oldestLoadedTurnCreatedAtUtc.Value;
-            var beforeTurnId = _oldestLoadedTurnId.Value;
+            var beforeCreatedAtUtc = _transcriptTurnWindow.OldestCreatedAtUtc.Value;
+            var beforeTurnId = _transcriptTurnWindow.OldestTurnId.Value;
             var turns = await Task.Run(() => _sessionService.ListTurnsBefore(
                 sessionId,
                 beforeCreatedAtUtc,
@@ -229,6 +232,7 @@ public sealed partial class AgentChatViewModel
             }
 
             HasOlderTranscriptRows = orderedTurns.Length > OlderTranscriptTurnPageSize;
+            EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Newest);
             return insertIndex > 0;
         }
         finally
@@ -236,6 +240,57 @@ public sealed partial class AgentChatViewModel
             IsLoadingOlderTranscriptRows = false;
         }
     }
+
+    public async Task<bool> LoadNewerTranscriptRowsAsync()
+    {
+        var displayedSession = DisplayedSession;
+        if (!CanLoadNewerTranscriptRows || _transcriptTurnWindow.NewestCreatedAtUtc is null || _transcriptTurnWindow.NewestTurnId is null || displayedSession is null)
+        {
+            return false;
+        }
+
+        IsLoadingNewerTranscriptRows = true;
+        try
+        {
+            var sessionId = displayedSession.SessionId;
+            var afterCreatedAtUtc = _transcriptTurnWindow.NewestCreatedAtUtc.Value;
+            var afterTurnId = _transcriptTurnWindow.NewestTurnId.Value;
+            var turns = await Task.Run(() => _sessionService.ListTurnsAfter(
+                sessionId,
+                afterCreatedAtUtc,
+                afterTurnId,
+                OlderTranscriptTurnPageSize + 1));
+            if (DisplayedSession?.SessionId != sessionId)
+            {
+                return false;
+            }
+
+            if (turns.Count == 0)
+            {
+                HasNewerTranscriptRows = false;
+                return false;
+            }
+
+            var insertedRows = 0;
+            var orderedTurns = turns.OrderBy(turn => turn.CreatedAtUtc).ThenBy(turn => turn.TurnId).ToArray();
+            foreach (var turn in orderedTurns.Take(OlderTranscriptTurnPageSize))
+            {
+                insertedRows += ApplyTurnToTranscript(turn, InsertMode.Append);
+            }
+
+            HasNewerTranscriptRows = orderedTurns.Length > OlderTranscriptTurnPageSize;
+            EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest);
+            return insertedRows > 0;
+        }
+        finally
+        {
+            IsLoadingNewerTranscriptRows = false;
+        }
+    }
+
+    [RelayCommand]
+    private void JumpToLatestTranscript()
+        => RefreshTranscript();
 
     private void OnTurnChanged(Guid sessionId, AgentTurnRecord turn)
         => RunOnUiThread(() => ApplyTurnChanged(sessionId, turn));
@@ -253,10 +308,22 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
+        if (HasNewerTranscriptRows && !CanApplyHistoricalWindowTurnUpdate(turn))
+        {
+            HasNewerTranscriptRows = true;
+            TranscriptChanged?.Invoke();
+            return;
+        }
+
         ApplyTurnToTranscript(turn, InsertMode.Append, trackRunActivity: true, scheduleQuietTimer: true);
+        EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest);
         UpdateActivityRowForCurrentState();
         TranscriptChanged?.Invoke();
     }
+
+    private bool CanApplyHistoricalWindowTurnUpdate(AgentTurnRecord turn)
+        => _transcriptTurnWindow.Contains(turn.TurnId)
+           || turn.Items.Any(item => !string.IsNullOrWhiteSpace(item.CallId) && _toolRowsByCallId.ContainsKey(item.CallId));
 
     private void RefreshVisibleChildSessionLinks()
     {
@@ -322,19 +389,20 @@ public sealed partial class AgentChatViewModel
         _activityRow = null;
         _textRowsByTurnId.Clear();
         _toolRowsByCallId.Clear();
-        _loadedTurnIds.Clear();
+        _transcriptTurnWindow.Reset();
         _pendingTranscriptTurnsByTurnId.Clear();
-        _oldestLoadedTurnCreatedAtUtc = null;
-        _oldestLoadedTurnId = null;
         _activityTextBase = "Thinking";
         _hasVisibleRunActivity = false;
         _showActivityAfterQuiet = false;
         _activityQuietTimer.Stop();
         HasOlderTranscriptRows = false;
+        HasNewerTranscriptRows = false;
         IsLoadingOlderTranscriptRows = false;
+        IsLoadingNewerTranscriptRows = false;
         IsTranscriptLoading = false;
         Messages.Clear();
         OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
+        OnPropertyChanged(nameof(CanLoadNewerTranscriptRows));
     }
 
     private int ApplyTurnToTranscript(
@@ -345,8 +413,8 @@ public sealed partial class AgentChatViewModel
         bool scheduleQuietTimer = true)
     {
         var insertedRows = 0;
-        var isNewTurn = _loadedTurnIds.Add(turn.TurnId);
-        TrackOldestLoadedTurn(turn);
+        var isNewTurn = !_transcriptTurnWindow.Contains(turn.TurnId);
+        _transcriptTurnWindow.AddOrUpdate(turn);
         if (insertMode == InsertMode.Append && trackRunActivity)
         {
             TrackVisibleRunActivity(turn, scheduleQuietTimer);
@@ -437,15 +505,41 @@ public sealed partial class AgentChatViewModel
         Messages.Insert(insertIndex, row);
     }
 
-    private void TrackOldestLoadedTurn(AgentTurnRecord turn)
+    private void EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection trimDirection)
     {
-        if (_oldestLoadedTurnCreatedAtUtc is null
-            || turn.CreatedAtUtc < _oldestLoadedTurnCreatedAtUtc
-            || turn.CreatedAtUtc == _oldestLoadedTurnCreatedAtUtc && string.CompareOrdinal(turn.TurnId.ToString(), _oldestLoadedTurnId?.ToString()) < 0)
+        var trimResult = _transcriptTurnWindow.Trim(trimDirection);
+        if (!trimResult.Trimmed)
         {
-            _oldestLoadedTurnCreatedAtUtc = turn.CreatedAtUtc;
-            _oldestLoadedTurnId = turn.TurnId;
+            return;
         }
+
+        RebuildTranscriptWindow(trimResult.RetainedTurns);
+        if (trimDirection == AgentTranscriptTrimDirection.Oldest)
+        {
+            HasOlderTranscriptRows = true;
+        }
+        else
+        {
+            HasNewerTranscriptRows = true;
+        }
+    }
+
+    private void RebuildTranscriptWindow(IReadOnlyList<AgentTurnRecord> turns)
+    {
+        var activityRow = _activityRow;
+        _activityRow = null;
+        Messages.Clear();
+        _textRowsByTurnId.Clear();
+        _toolRowsByCallId.Clear();
+        _transcriptTurnWindow.Reset();
+
+        foreach (var turn in turns.OrderBy(turn => turn.CreatedAtUtc).ThenBy(turn => turn.TurnId))
+        {
+            ApplyTurnToTranscript(turn, InsertMode.Append, trackRunActivity: false, scheduleQuietTimer: false);
+        }
+
+        _activityRow = activityRow;
+        UpdateActivityRowForCurrentState();
     }
 
     private void UpdateActivityRowForCurrentState()

@@ -17,6 +17,11 @@
     <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptScrollCoordinator.cs" Link="PackageViews\TranscriptScrollCoordinator.cs" />
+    <AvaloniaResource Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptStyles.axaml" Link="PackageViews\TranscriptStyles.axaml" />
+  </ItemGroup>
+
   <ItemGroup Condition="!Exists('..\..\..\sunder-core\src\Sdk\Sunder.Package.Build\build\Sunder.Package.Build.targets')">
     <PackageReference Include="Sunder.Package.Build" PrivateAssets="all" />
   </ItemGroup>

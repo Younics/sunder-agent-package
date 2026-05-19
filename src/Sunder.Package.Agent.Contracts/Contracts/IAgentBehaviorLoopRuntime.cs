@@ -9,6 +9,8 @@ public interface IAgentBehaviorLoopRuntime
 
     IReadOnlyList<AgentTurnRecord> ListTurns();
 
+    IReadOnlyList<AgentTurnRecord> ListRecentTurns(int limit);
+
     ValueTask<AgentBehaviorInstructionContext> BuildInstructionContextAsync(CancellationToken cancellationToken = default);
 
     ValueTask<IReadOnlyList<AgentRuntimeTool>> ListReadyToolsAsync(CancellationToken cancellationToken = default);

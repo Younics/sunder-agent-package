@@ -565,6 +565,7 @@ public sealed partial class AgentChatViewModel
         OnPropertyChanged(nameof(ShowCollapsedComposer));
         OnPropertyChanged(nameof(ShowExpandedComposer));
         OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
+        OnPropertyChanged(nameof(CanLoadNewerTranscriptRows));
         SendMessageCommand.NotifyCanExecuteChanged();
         UpdateActivityRowForCurrentState();
     }

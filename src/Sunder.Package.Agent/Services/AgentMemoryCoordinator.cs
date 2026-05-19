@@ -12,6 +12,7 @@ public sealed class AgentMemoryCoordinator(
     IPackageExtensionCatalog extensionCatalog)
 {
     private const int MaxRecentLiveBufferTurns = 8;
+    private const int MaxPromptContextTurns = 64;
 
     private readonly AgentSessionService _sessionService = sessionService;
     private readonly IPackageExtensionCatalog _extensionCatalog = extensionCatalog;
@@ -25,7 +26,7 @@ public sealed class AgentMemoryCoordinator(
         DateTimeOffset runStartedAtUtc,
         CancellationToken cancellationToken = default)
     {
-        var turns = _sessionService.ListTurns(session.SessionId);
+        var turns = _sessionService.ListRecentTurns(session.SessionId, MaxPromptContextTurns);
         var recentLiveBufferTurns = BuildRecentLiveBufferTurns(turns);
         var workingSummary = _sessionService.GetWorkingSummary(session.SessionId)?.SummaryText;
         var sessionContext = CreateSessionContext(session, profile, workingSummary);
@@ -55,7 +56,7 @@ public sealed class AgentMemoryCoordinator(
         bool isInterrupted = false,
         CancellationToken cancellationToken = default)
     {
-        var turns = _sessionService.ListTurns(session.SessionId);
+        var turns = _sessionService.ListRecentTurns(session.SessionId, MaxPromptContextTurns);
         var recentLiveBufferTurns = BuildRecentLiveBufferTurns(turns);
         var workingSummary = _sessionService.GetWorkingSummary(session.SessionId)?.SummaryText;
         var sessionContext = CreateSessionContext(session, profile, workingSummary);

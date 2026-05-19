@@ -1,0 +1,120 @@
+<Styles xmlns="https://github.com/avaloniaui">
+  <Style Selector="Border.message-avatar">
+    <Setter Property="Width" Value="42" />
+    <Setter Property="Height" Value="42" />
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+  </Style>
+
+  <Style Selector="TextBlock.avatar-glyph">
+    <Setter Property="HorizontalAlignment" Value="Center" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+  </Style>
+
+  <Style Selector="TextBlock.thinking-text">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="FontWeight" Value="Regular" />
+    <Setter Property="Opacity" Value="0.72" />
+    <Style.Animations>
+      <Animation Duration="0:0:1.4"
+                 IterationCount="INFINITE"
+                 PlaybackDirection="Alternate">
+        <KeyFrame Cue="0%">
+          <Setter Property="Opacity" Value="0.52" />
+        </KeyFrame>
+        <KeyFrame Cue="100%">
+          <Setter Property="Opacity" Value="0.88" />
+        </KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+
+  <Style Selector="Border.message-bubble">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+    <Setter Property="Padding" Value="16,12" />
+  </Style>
+
+  <Style Selector="Border.message-bubble.user">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+  </Style>
+
+  <Style Selector="Border.timeline-spine">
+    <Setter Property="Width" Value="1" />
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+    <Setter Property="HorizontalAlignment" Value="Center" />
+  </Style>
+
+  <Style Selector="Button.tool-step-header">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+    <Setter Property="Padding" Value="14,10" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="VerticalContentAlignment" Value="Stretch" />
+  </Style>
+
+  <Style Selector="Border.tool-state-dot">
+    <Setter Property="Width" Value="18" />
+    <Setter Property="Height" Value="18" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Full}" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-state-icon">
+    <Setter Property="HorizontalAlignment" Value="Center" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="FontSize" Value="11" />
+    <Setter Property="FontWeight" Value="Bold" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-label">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+    <Setter Property="FontSize" Value="14" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-command">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="FontFamily" Value="Menlo,Consolas,monospace" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-chevron">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="HorizontalAlignment" Value="Center" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+
+  <Style Selector="Button.transcript-jump-latest">
+    <Setter Property="Width" Value="42" />
+    <Setter Property="Height" Value="42" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+    <Setter Property="BorderThickness" Value="2" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Full}" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+    <Setter Property="FontSize" Value="24" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+  </Style>
+
+  <Style Selector="Button.transcript-jump-latest:pointerover">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+  </Style>
+</Styles>

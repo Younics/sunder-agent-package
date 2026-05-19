@@ -534,6 +534,8 @@ public sealed class MemoryEvaluationTests
 
         public IReadOnlyList<AgentTurnRecord> ListTurnsBefore(Guid sessionId, DateTimeOffset beforeCreatedAtUtc, Guid beforeTurnId, int limit) => [];
 
+        public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(Guid sessionId, DateTimeOffset afterCreatedAtUtc, Guid afterTurnId, int limit) => [];
+
         public IReadOnlyList<AgentProfileRecord> ListProfiles() => [profile];
 
         public AgentProfileRecord? GetProfile(string profileId)
