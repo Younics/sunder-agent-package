@@ -1,0 +1,78 @@
+name: Bug report
+description: Report a reproducible problem in Sunder Agent packages
+title: "Bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please do not include API keys, tokens, provider credentials, private prompts, private files, or sensitive transcripts.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: packages
+    attributes:
+      label: Installed Agent packages
+      description: List the Agent packages and versions involved.
+      placeholder: |
+        sunder.package.agent 1.0.0
+        sunder.package.agent.provider.openai 1.0.0
+        sunder.package.agent.tools.files 1.0.0
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest steps that reproduce the issue.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Core Agent
+        - Agent contracts
+        - Provider
+        - Tools
+        - Execution target
+        - Memory
+        - MCP
+        - Skills
+        - Subagents
+        - Builder
+        - Documentation
+        - Other
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11, macOS 15, Ubuntu 24.04
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste relevant logs with secrets, prompts, and private file contents removed.
+      render: text

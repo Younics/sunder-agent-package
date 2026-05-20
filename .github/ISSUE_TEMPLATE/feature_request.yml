@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest an improvement for Sunder Agent packages
+title: "Feature: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior, package, provider, tool, or contract you want.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Core Agent
+        - Agent contracts
+        - Provider
+        - Tools
+        - Execution target
+        - Memory
+        - MCP
+        - Skills
+        - Subagents
+        - Builder
+        - Documentation
+        - Other
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety or permission considerations
+      description: Mention file, shell, web, execution, credential, transcript, prompt, or memory concerns if relevant.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other approaches did you consider?
