@@ -163,6 +163,15 @@ public sealed class AgentToolService(
                 new AgentToolRequest(toolId, argumentsJson),
                 cancellationToken);
         }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new AgentToolResult(
+                toolId,
+                $"Tool '{toolId}' timed out or was canceled before it completed: {ex.Message}",
+                Content: $"### Tool execution failed\n\nTool '{toolId}' timed out or was canceled before it completed.\n\n{ex.Message}",
+                IsError: true,
+                ErrorCode: AgentToolResultErrorCodes.ToolExecutionException);
+        }
         catch (OperationCanceledException)
         {
             throw;

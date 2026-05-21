@@ -19,6 +19,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
     private readonly AgentToolPresentationService _presentationService;
     private readonly Func<AgentTurnRecord, AgentTurnItemRecord, IReadOnlyList<AgentChildSessionLinkViewModel>>? _childSessionLinksResolver;
     private AgentTurnItemRecord _currentItem;
+    private Guid? _resultTurnId;
     private string _toolLabel = string.Empty;
     private string _headerDetailText = string.Empty;
     private string _statusIconText = string.Empty;
@@ -39,6 +40,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
         _presentationService = presentationService;
         _childSessionLinksResolver = childSessionLinksResolver;
         _currentItem = item;
+        _resultTurnId = item.Kind == AgentTurnItemKind.ToolResult ? turn.TurnId : null;
         ToolLabel = HumanizeToolName(_toolId);
         StatusText = item.Kind == AgentTurnItemKind.ToolResult
             ? (item.IsError ? "Failed" : "Completed")
@@ -149,6 +151,8 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
 
     public bool HasMarkdownDetails => HasDetails;
 
+    public Guid? ResultTurnId => _resultTurnId;
+
     public ObservableCollection<AgentChildSessionLinkViewModel> ChildSessionLinks { get; } = [];
 
     public AgentChildSessionLinkViewModel? ChildSessionLink => ChildSessionLinks.FirstOrDefault();
@@ -182,6 +186,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
 
     public void ApplyResult(AgentTurnRecord turn, AgentTurnItemRecord item)
     {
+        _resultTurnId = turn.TurnId;
         StatusText = item.IsError ? "Failed" : "Completed";
         StatusIconText = ResolveStatusIcon(StatusText);
         StateBrush = ResolveStateBrush(StatusText);

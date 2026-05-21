@@ -160,6 +160,10 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
             AgentLogLevel.Debug,
             toolAware ? "openai.codex.tool_http.send.start" : "openai.codex.http.send.start",
             "POST codex/responses",
+            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["network.address_family"] = CodexHttpClientFactory.NetworkAddressFamily,
+            },
             cancellationToken: cancellationToken);
         var response = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         await LogAsync(
@@ -173,6 +177,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
                 ["http.status_code"] = (int)response.StatusCode,
                 ["http.reason_phrase"] = response.ReasonPhrase,
                 ["http.response_content_type"] = response.Content.Headers.ContentType?.ToString(),
+                ["network.address_family"] = CodexHttpClientFactory.NetworkAddressFamily,
             },
             cancellationToken: cancellationToken);
         return new RequestAttempt(response);

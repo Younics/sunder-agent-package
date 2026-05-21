@@ -127,6 +127,15 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
                 WasTruncated: result.WasTruncated,
                 BackendId: "http");
         }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new AgentToolResult(
+                Descriptor.ToolId,
+                ex.Message,
+                Content: $"### Web fetch failed\n\nThe web fetch timed out or was canceled before the resource could be reached.\n\n{ex.Message}",
+                IsError: true,
+                ErrorCode: "web-fetch-http");
+        }
         catch (OperationCanceledException)
         {
             throw;

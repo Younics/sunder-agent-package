@@ -8,6 +8,7 @@ public sealed class PackageModule : ISunderPackageModule
 {
     public void ConfigureServices(IServiceCollection services, IPackageContext context)
     {
+        services.AddSingleton<DockerCliRunner>();
         services.AddSingleton<DockerImageCatalogService>();
         services.AddSingleton<DockerExecutionWorkspaceConfigService>();
         services.AddSingleton<DockerContainerLifecycleService>();

@@ -1,21 +1,16 @@
-using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-public sealed class DockerImageCatalogService(IPackageContext packageContext)
+public sealed class DockerImageCatalogService(IPackageContext packageContext, DockerCliRunner? dockerCliRunner = null)
 {
     private const string ImagesKey = "docker.images:v1";
     private const string InitializedKey = "docker.images.initialized";
     private const int ImageCheckTimeoutSeconds = 30;
     private const int ImagePullTimeoutSeconds = 1800;
-    private const int MaxOutputLength = 51200;
-
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
-
-    internal static Func<IReadOnlyList<string>, int, CancellationToken, IProgress<string>?, Task<DockerImageProcessResult>>? RunDockerOverride { get; set; }
+    private readonly DockerCliRunner _dockerCliRunner = dockerCliRunner ?? new DockerCliRunner(packageContext);
 
     public IReadOnlyList<DockerImageDefinition> ListImages()
     {
@@ -249,114 +244,16 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext)
         SaveImages(images);
     }
 
-    private async Task<DockerImageProcessResult> RunDockerAsync(
+    private async Task<DockerCliRunResult> RunDockerAsync(
         IReadOnlyList<string> args,
         int timeoutSeconds,
         CancellationToken cancellationToken,
         IProgress<string>? progress)
-    {
-        if (RunDockerOverride is { } overrideRunner)
-        {
-            return await overrideRunner(args, timeoutSeconds, cancellationToken, progress).ConfigureAwait(false);
-        }
-
-        ProcessStartInfo startInfo;
-        try
-        {
-            startInfo = DockerCli.CreateStartInfo(packageContext, args, redirectStandardInput: false);
-        }
-        catch (Exception ex)
-        {
-            return new DockerImageProcessResult(127, $"Failed to start Docker CLI: {ex.Message}", TimedOut: false, WasTruncated: false);
-        }
-
-        using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        try
-        {
-            process.Start();
-        }
-        catch (Exception ex)
-        {
-            return new DockerImageProcessResult(127, $"Failed to start Docker CLI: {ex.Message}", TimedOut: false, WasTruncated: false);
-        }
-
-        var stdoutTask = ReadWithProgressAsync(process.StandardOutput, progress, cancellationToken);
-        var stderrTask = ReadWithProgressAsync(process.StandardError, progress, cancellationToken);
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
-        try
-        {
-            await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            TryKill(process);
-            return new DockerImageProcessResult(124, $"Docker command timed out after {timeoutSeconds} seconds.", TimedOut: true, WasTruncated: false);
-        }
-        catch (OperationCanceledException)
-        {
-            TryKill(process);
-            throw;
-        }
-
-        var stdout = await stdoutTask.ConfigureAwait(false);
-        var stderr = await stderrTask.ConfigureAwait(false);
-        var output = string.Concat(stdout.Content, stderr.Content);
-        var truncatedOutput = TruncateOutput(output, out var wasTruncated);
-        return new DockerImageProcessResult(process.ExitCode, truncatedOutput, TimedOut: false, stdout.WasTruncated || stderr.WasTruncated || wasTruncated);
-    }
-
-    private static async Task<BoundedProcessOutput> ReadWithProgressAsync(
-        StreamReader reader,
-        IProgress<string>? progress,
-        CancellationToken cancellationToken)
-    {
-        var buffer = new char[4096];
-        var builder = new StringBuilder(capacity: buffer.Length);
-        var wasTruncated = false;
-
-        while (true)
-        {
-            var read = await reader.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken).ConfigureAwait(false);
-            if (read == 0)
-            {
-                break;
-            }
-
-            var chunk = new string(buffer, 0, read);
-            var progressLine = NormalizeProgressChunk(chunk);
-            if (!string.IsNullOrWhiteSpace(progressLine))
-            {
-                progress?.Report(progressLine);
-            }
-
-            var remaining = MaxOutputLength - builder.Length;
-            if (remaining > 0)
-            {
-                builder.Append(buffer, 0, Math.Min(read, remaining));
-            }
-
-            if (read > remaining)
-            {
-                wasTruncated = true;
-            }
-        }
-
-        return new BoundedProcessOutput(builder.ToString(), wasTruncated);
-    }
-
-    private static string NormalizeProgressChunk(string chunk)
-        => chunk.Replace('\r', '\n')
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .LastOrDefault() ?? string.Empty;
-
-    private static string TruncateOutput(string output, out bool wasTruncated)
-    {
-        wasTruncated = output.Length > MaxOutputLength;
-        return wasTruncated
-            ? output[..MaxOutputLength] + Environment.NewLine + "[output truncated]"
-            : output;
-    }
+        => await _dockerCliRunner.RunAsync(
+            args,
+            timeoutSeconds,
+            cancellationToken,
+            progress: progress).ConfigureAwait(false);
 
     private static string AppendOutput(string message, string? output)
     {
@@ -366,25 +263,7 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext)
             : $"{message} {trimmed}";
     }
 
-    private static void TryKill(Process process)
-    {
-        try
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-            }
-        }
-        catch
-        {
-        }
-    }
-
     private sealed record DockerImageCatalogState(int Version, IReadOnlyList<DockerImageDefinition> Images);
-
-    internal sealed record DockerImageProcessResult(int ExitCode, string Output, bool TimedOut, bool WasTruncated);
-
-    private sealed record BoundedProcessOutput(string Content, bool WasTruncated);
 }
 
 public sealed record DockerImageDefinition(

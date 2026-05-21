@@ -14,6 +14,7 @@ public sealed class AgentSystemPromptComposer(IPackageExtensionCatalog extension
     {
         cancellationToken.ThrowIfCancellationRequested();
         var blocks = new List<AgentSystemPromptBlock>();
+        blocks.Add(AgentVisibleResponseGuard.CreateSystemPromptBlock());
         blocks.AddRange(BuildToolPriorityBlocks(request.AvailableTools));
         blocks.AddRange(BuildToolRuntimeInstructionBlocks(request.AvailableTools));
 

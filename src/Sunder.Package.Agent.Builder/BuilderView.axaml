@@ -455,20 +455,31 @@
                         </ScrollViewer>
                       </Border>
 
-                      <StackPanel Orientation="Horizontal"
-                                  HorizontalAlignment="Right"
-                                  Spacing="8">
-                        <Button Classes="secondary-action compact-action"
-                                Content="Build"
+                      <Grid ColumnDefinitions="Auto,*,Auto"
+                            ColumnSpacing="8">
+                        <Button Grid.Column="0"
+                                Classes="secondary-action compact-action"
+                                Content="Check setup"
+                                ToolTip.Tip="Check and install package builder prerequisites"
                                 IsEnabled="{Binding CanUseSelectedProjectRuntimeActions}"
                                 IsVisible="{Binding IsSelectedProjectInitialized}"
-                                Click="OnBuildProjectClicked" />
-                        <Button Classes="secondary-action compact-action"
-                                Content="Publish"
-                                IsEnabled="{Binding CanUseSelectedProjectRuntimeActions}"
-                                IsVisible="{Binding IsSelectedProjectInitialized}"
-                                Click="OnPublishProjectClicked" />
-                      </StackPanel>
+                                Click="OnEnsureSetupClicked" />
+                        <StackPanel Grid.Column="2"
+                                    Orientation="Horizontal"
+                                    HorizontalAlignment="Right"
+                                    Spacing="8">
+                          <Button Classes="secondary-action compact-action"
+                                  Content="Build"
+                                  IsEnabled="{Binding CanUseSelectedProjectRuntimeActions}"
+                                  IsVisible="{Binding IsSelectedProjectInitialized}"
+                                  Click="OnBuildProjectClicked" />
+                          <Button Classes="secondary-action compact-action"
+                                  Content="Publish"
+                                  IsEnabled="{Binding CanUseSelectedProjectRuntimeActions}"
+                                  IsVisible="{Binding IsSelectedProjectInitialized}"
+                                  Click="OnPublishProjectClicked" />
+                        </StackPanel>
+                      </Grid>
                     </StackPanel>
                   </Border>
                 </StackPanel>

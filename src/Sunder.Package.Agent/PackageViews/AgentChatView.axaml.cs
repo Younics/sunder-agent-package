@@ -5,6 +5,7 @@ using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Services;
@@ -29,20 +30,17 @@ public partial class AgentChatView : UserControl
     };
 
     private AgentChatViewModel? _viewModel;
-    private readonly TranscriptScrollCoordinator _transcriptScrollCoordinator;
+    private TranscriptScrollCoordinator? _transcriptScrollCoordinator;
+    private bool _transcriptChangedBeforeScrollReady;
+    private bool _initialTranscriptPlacementPending = true;
+    private bool _initialTranscriptPlacementQueued;
+    private int _initialTranscriptPlacementVersion;
     private IPackageNotificationService _notificationService = NullPackageNotificationService.Instance;
 
     public AgentChatView()
     {
         InitializeComponent();
-        _transcriptScrollCoordinator = new TranscriptScrollCoordinator(
-            TranscriptScrollViewer,
-            () => _viewModel?.CanLoadOlderTranscriptRows == true,
-            () => _viewModel?.LoadOlderTranscriptRowsAsync() ?? Task.FromResult(false),
-            () => _viewModel?.CanLoadNewerTranscriptRows == true,
-            () => _viewModel?.LoadNewerTranscriptRowsAsync() ?? Task.FromResult(false),
-            () => _viewModel?.HasNewerTranscriptRows == true,
-            isVisible => JumpToLatestTranscriptButton.IsVisible = isVisible);
+        HideTranscriptUntilInitialPlacement();
         ConfigureComposerDropTarget(ExpandedComposerDropTarget);
         ConfigureComposerDropTarget(ExpandedComposerTextBox);
         ConfigureComposerDropTarget(CollapsedComposerDropTarget);
@@ -52,7 +50,19 @@ public partial class AgentChatView : UserControl
         Loaded += (_, _) =>
         {
             ApplyHeaderLayout();
-            _transcriptScrollCoordinator.QueueScrollToBottom();
+            if (EnsureTranscriptScrollCoordinator())
+            {
+                HandleTranscriptReadyAfterScrollReady();
+                return;
+            }
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (EnsureTranscriptScrollCoordinator())
+                {
+                    HandleTranscriptReadyAfterScrollReady();
+                }
+            }, DispatcherPriority.Loaded);
         };
         SizeChanged += (_, _) => ApplyHeaderLayout();
     }
@@ -83,6 +93,7 @@ public partial class AgentChatView : UserControl
             warmupService: warmupService,
             shellViewService: shellViewService,
             attachmentService: attachmentService);
+        _viewModel.TranscriptChanging += OnTranscriptChanging;
         _viewModel.TranscriptChanged += OnTranscriptChanged;
         DataContext = _viewModel;
     }
@@ -124,7 +135,7 @@ public partial class AgentChatView : UserControl
 
         if (!_viewModel.HasNewerTranscriptRows)
         {
-            _transcriptScrollCoordinator.QueueScrollToBottom();
+            _transcriptScrollCoordinator?.QueueScrollToBottom();
             return;
         }
 
@@ -133,7 +144,7 @@ public partial class AgentChatView : UserControl
             return;
         }
 
-        _transcriptScrollCoordinator.ForceScrollToBottomOnNextTranscriptChanged();
+        _transcriptScrollCoordinator?.ForceScrollToBottomOnNextTranscriptChanged();
         _viewModel.JumpToLatestTranscriptCommand.Execute(null);
     }
 
@@ -376,7 +387,144 @@ public partial class AgentChatView : UserControl
             ?? [];
 
     private void OnTranscriptChanged()
-        => _transcriptScrollCoordinator.OnTranscriptChanged();
+    {
+        if (!EnsureTranscriptScrollCoordinator())
+        {
+            _transcriptChangedBeforeScrollReady = true;
+            return;
+        }
+
+        if (TryHandleInitialTranscriptPlacement())
+        {
+            return;
+        }
+
+        _transcriptScrollCoordinator?.OnTranscriptChanged();
+    }
+
+    private void OnTranscriptChanging()
+    {
+        if (_initialTranscriptPlacementPending || _viewModel?.IsTranscriptLoading == true)
+        {
+            return;
+        }
+
+        if (!EnsureTranscriptScrollCoordinator())
+        {
+            return;
+        }
+
+        _transcriptScrollCoordinator?.BeginTranscriptMutation();
+    }
+
+    private bool EnsureTranscriptScrollCoordinator()
+    {
+        if (_transcriptScrollCoordinator is not null)
+        {
+            return true;
+        }
+
+        _transcriptScrollCoordinator = new TranscriptScrollCoordinator(
+            TranscriptScrollViewer,
+            TranscriptItemsControl,
+            () => _viewModel?.CanLoadOlderTranscriptRows == true,
+            () => _viewModel?.LoadOlderTranscriptRowsAsync() ?? Task.FromResult(false),
+            () => _viewModel?.CanLoadNewerTranscriptRows == true,
+            () => _viewModel?.LoadNewerTranscriptRowsAsync() ?? Task.FromResult(false),
+            () => _viewModel?.HasNewerTranscriptRows == true,
+            isVisible => JumpToLatestTranscriptButton.IsVisible = isVisible);
+        return true;
+    }
+
+    private void HandleTranscriptReadyAfterScrollReady()
+    {
+        if (TryHandleInitialTranscriptPlacement())
+        {
+            return;
+        }
+
+        if (_transcriptChangedBeforeScrollReady)
+        {
+            _transcriptChangedBeforeScrollReady = false;
+            _transcriptScrollCoordinator?.OnTranscriptChanged();
+        }
+    }
+
+    private bool TryHandleInitialTranscriptPlacement()
+    {
+        var viewModel = _viewModel ?? DataContext as AgentChatViewModel;
+        if (viewModel?.IsTranscriptLoading == true)
+        {
+            MarkInitialTranscriptPlacementPending();
+            return true;
+        }
+
+        if (!_initialTranscriptPlacementPending)
+        {
+            return false;
+        }
+
+        _transcriptChangedBeforeScrollReady = false;
+        if (viewModel is null || viewModel.ShowSetupInstructions || viewModel.Messages.Count == 0 || !TranscriptScrollViewer.IsVisible)
+        {
+            CompleteInitialTranscriptPlacement(_initialTranscriptPlacementVersion);
+            return true;
+        }
+
+        if (_initialTranscriptPlacementQueued)
+        {
+            return true;
+        }
+
+        _initialTranscriptPlacementQueued = true;
+        var placementVersion = _initialTranscriptPlacementVersion;
+        HideTranscriptUntilInitialPlacement();
+        _transcriptScrollCoordinator?.QueueScrollToBottomAfterLayoutSettles(() => CompleteInitialTranscriptPlacement(placementVersion));
+        return true;
+    }
+
+    private void MarkInitialTranscriptPlacementPending()
+    {
+        if (!_initialTranscriptPlacementPending || _initialTranscriptPlacementQueued)
+        {
+            _initialTranscriptPlacementVersion++;
+        }
+
+        _initialTranscriptPlacementPending = true;
+        _initialTranscriptPlacementQueued = false;
+        HideTranscriptUntilInitialPlacement();
+    }
+
+    private void HideTranscriptUntilInitialPlacement()
+        => TranscriptScrollViewer.Opacity = 0;
+
+    private void CompleteInitialTranscriptPlacement(int placementVersion)
+    {
+        if (placementVersion != _initialTranscriptPlacementVersion)
+        {
+            return;
+        }
+
+        _initialTranscriptPlacementPending = false;
+        _initialTranscriptPlacementQueued = false;
+        TranscriptScrollViewer.Opacity = 1;
+    }
+
+    private void ToolStepHeader_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is not AgentToolInvocationRowViewModel toolRow)
+        {
+            return;
+        }
+
+        if (EnsureTranscriptScrollCoordinator())
+        {
+            _transcriptScrollCoordinator?.BeginViewportMutation();
+        }
+
+        toolRow.ToggleExpandedCommand.Execute(null);
+        _transcriptScrollCoordinator?.OnViewportContentChanged();
+    }
 
     private void ApplyHeaderLayout()
     {

@@ -111,6 +111,15 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
                 WasTruncated: result.WasTruncated,
                 BackendId: result.BackendId);
         }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new AgentToolResult(
+                Descriptor.ToolId,
+                ex.Message,
+                Content: $"### Web search failed\n\nThe web search timed out or was canceled before the backend could respond.\n\n{ex.Message}",
+                IsError: true,
+                ErrorCode: "web-search-http");
+        }
         catch (OperationCanceledException)
         {
             throw;

@@ -14,7 +14,7 @@ public sealed class PackageModule : ISunderPackageModule
     {
         services.AddSingleton<ApiKeyAuthStrategy>();
         services.AddSingleton<CodexConnectedAuthStrategy>();
-        services.AddSingleton(_ => new HttpClient { BaseAddress = new Uri("https://chatgpt.com/backend-api/") });
+        services.AddSingleton(_ => CodexHttpClientFactory.CreateBackendClient());
         services.AddSingleton<CodexConnectedTransport>();
         services.AddTransient<OpenAiSettingsViewModel>();
         services.AddSingleton<OpenAiPackageAuthHandler>();

@@ -35,6 +35,16 @@
     </Style.Animations>
   </Style>
 
+  <Style Selector="ScrollViewer.transcript-scroll">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
+    <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
+    <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+  </Style>
+
+  <Style Selector="Border.transcript-content">
+    <Setter Property="Padding" Value="30" />
+  </Style>
+
   <Style Selector="Border.message-bubble">
     <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />

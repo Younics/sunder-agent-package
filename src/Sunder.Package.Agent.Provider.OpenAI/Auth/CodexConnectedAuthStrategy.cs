@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Provider.OpenAI.Auth;
 
@@ -13,8 +14,11 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
     private const string ClientId = "app_EMoamEEZ73f0CkXaXp7hrann";
     private const string AuthorizeUrl = "https://auth.openai.com/oauth/authorize";
     private const string TokenUrl = "https://auth.openai.com/oauth/token";
+    private const int PreferredCallbackPort = 1455;
+    private const int FallbackCallbackPort = 1457;
+    private const string CallbackPath = "/auth/callback";
     private const string RedirectUri = "http://localhost:1455/auth/callback";
-    private const string Scope = "openid profile email offline_access";
+    private const string Scope = "openid profile email offline_access api.connectors.read api.connectors.invoke";
 
     private readonly IPackageContext _packageContext = packageContext;
     private readonly Dictionary<string, PendingBrowserAuth> _pendingBrowserAuth = new(StringComparer.OrdinalIgnoreCase);
@@ -59,13 +63,26 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
                 return cached;
             }
 
+            LogAuthEvent(
+                PackageLogLevel.Information,
+                "openai.codex.auth.silent.refresh_required",
+                "Cached Codex session is expired or near expiry; refreshing silently.",
+                attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["auth.expires_at"] = cached.ExpiresAtUtc,
+                });
             var refreshed = await RefreshCoreAsync(cached.RefreshToken, clearSessionOnTerminalFailure: true, cancellationToken);
             if (refreshed is null)
             {
+                LogAuthEvent(
+                    PackageLogLevel.Warning,
+                    "openai.codex.auth.silent.refresh_failed",
+                    "Cached Codex session could not be refreshed silently.");
                 return null;
             }
 
             SaveSession(refreshed);
+            LogSessionSaved("silent_refresh", refreshed);
             return refreshed;
         }
         finally
@@ -87,10 +104,20 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
 
             if (cached is not null)
             {
+                LogAuthEvent(
+                    PackageLogLevel.Information,
+                    "openai.codex.auth.refresh_required",
+                    "Cached Codex session is expired or near expiry; refreshing.",
+                    attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["auth.allow_interactive"] = allowInteractive,
+                        ["auth.expires_at"] = cached.ExpiresAtUtc,
+                    });
                 var refreshed = await RefreshCoreAsync(cached.RefreshToken, clearSessionOnTerminalFailure: true, cancellationToken);
                 if (refreshed is not null)
                 {
                     SaveSession(refreshed);
+                    LogSessionSaved("refresh", refreshed);
                     return refreshed;
                 }
             }
@@ -100,8 +127,13 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
                 throw new InvalidOperationException("OpenAI Codex session could not be refreshed silently.");
             }
 
+            LogAuthEvent(
+                PackageLogLevel.Information,
+                "openai.codex.auth.interactive.start",
+                "Starting interactive Codex browser authorization.");
             var authenticated = await SignInWithBrowserAsync(cancellationToken);
             SaveSession(authenticated);
+            LogSessionSaved("interactive", authenticated);
             return authenticated;
         }
         finally
@@ -126,6 +158,10 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
             var refreshToken = cached?.RefreshToken ?? expectedSession?.RefreshToken;
             if (string.IsNullOrWhiteSpace(refreshToken))
             {
+                LogAuthEvent(
+                    PackageLogLevel.Warning,
+                    "openai.codex.auth.refresh.no_token",
+                    "No Codex refresh token is available for silent refresh.");
                 return null;
             }
 
@@ -136,6 +172,7 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
             }
 
             SaveSession(refreshed);
+            LogSessionSaved("explicit_refresh", refreshed);
             return refreshed;
         }
         finally
@@ -159,29 +196,98 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
         bool clearSessionOnTerminalFailure,
         CancellationToken cancellationToken)
     {
-        using var httpClient = new HttpClient();
-        using var response = await httpClient.PostAsync(
-            TokenUrl,
-            new FormUrlEncodedContent(new Dictionary<string, string>
+        var stopwatch = Stopwatch.StartNew();
+        LogAuthEvent(
+            PackageLogLevel.Information,
+            "openai.codex.auth.refresh.start",
+            "Refreshing Codex auth session.",
+            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
             {
-                ["grant_type"] = "refresh_token",
-                ["refresh_token"] = refreshToken,
-                ["client_id"] = ClientId,
-            }),
-            cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
+                ["network.address_family"] = CodexHttpClientFactory.NetworkAddressFamily,
+            });
+        try
         {
-            if (clearSessionOnTerminalFailure && IsTerminalRefreshFailure(response.StatusCode, await response.Content.ReadAsStringAsync(cancellationToken)))
+            using var httpClient = CodexHttpClientFactory.CreateAuthClient();
+            using var request = new HttpRequestMessage(HttpMethod.Post, TokenUrl)
             {
-                _packageContext.Secrets.DeleteSecret(SessionSecretKey);
+                Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["grant_type"] = "refresh_token",
+                    ["refresh_token"] = refreshToken,
+                    ["client_id"] = ClientId,
+                }),
+            };
+            using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            LogAuthEvent(
+                response.IsSuccessStatusCode ? PackageLogLevel.Debug : PackageLogLevel.Warning,
+                "openai.codex.auth.refresh.headers_received",
+                $"{(int)response.StatusCode} {response.ReasonPhrase}",
+                stopwatch.ElapsedMilliseconds,
+                new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["http.status_code"] = (int)response.StatusCode,
+                    ["http.reason_phrase"] = response.ReasonPhrase,
+                    ["network.address_family"] = CodexHttpClientFactory.NetworkAddressFamily,
+                });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                if (clearSessionOnTerminalFailure && IsTerminalRefreshFailure(response.StatusCode, await response.Content.ReadAsStringAsync(cancellationToken)))
+                {
+                    _packageContext.Secrets.DeleteSecret(SessionSecretKey);
+                    LogAuthEvent(
+                        PackageLogLevel.Warning,
+                        "openai.codex.auth.refresh.terminal_failure",
+                        "Codex refresh failed terminally; cached session was removed.",
+                        stopwatch.ElapsedMilliseconds,
+                        new Dictionary<string, object?>(StringComparer.Ordinal)
+                        {
+                            ["http.status_code"] = (int)response.StatusCode,
+                        });
+                }
+
+                return null;
             }
 
-            return null;
+            var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+            var session = TryParseTokenResponse(payload);
+            LogAuthEvent(
+                session is null ? PackageLogLevel.Warning : PackageLogLevel.Information,
+                session is null ? "openai.codex.auth.refresh.parse_failed" : "openai.codex.auth.refresh.completed",
+                session is null
+                    ? "Codex refresh response was missing required session fields."
+                    : "Codex auth session refreshed.",
+                stopwatch.ElapsedMilliseconds,
+                session is null
+                    ? null
+                    : new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["auth.expires_at"] = session.ExpiresAtUtc,
+                    });
+            return session;
         }
-
-        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
-        return TryParseTokenResponse(payload);
+        catch (OperationCanceledException ex)
+        {
+            LogAuthEvent(
+                PackageLogLevel.Warning,
+                "openai.codex.auth.refresh.canceled",
+                cancellationToken.IsCancellationRequested
+                    ? "Codex auth session refresh was canceled by the caller."
+                    : "Codex auth session refresh was canceled or timed out before completion.",
+                stopwatch.ElapsedMilliseconds,
+                exception: ex);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LogAuthEvent(
+                PackageLogLevel.Error,
+                "openai.codex.auth.refresh.failed",
+                "Codex auth session refresh failed.",
+                stopwatch.ElapsedMilliseconds,
+                exception: ex);
+            throw;
+        }
     }
 
     public string CreateAuthorizationUrl(string authSessionId, Uri callbackUri)
@@ -190,6 +296,15 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
         var verifier = CreatePkceVerifier();
         var challenge = CreatePkceChallenge(verifier);
         _pendingBrowserAuth[authSessionId] = new PendingBrowserAuth(verifier, callbackUri.ToString());
+        LogAuthEvent(
+            PackageLogLevel.Information,
+            "openai.codex.auth.browser.start",
+            "OpenAI browser authorization URL was created.",
+            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["auth.flow"] = "runtime_callback",
+                ["auth.callback_uri"] = callbackUri.GetLeftPart(UriPartial.Path),
+            });
         return BuildAuthorizationUrl(state, challenge, callbackUri.ToString());
     }
 
@@ -201,24 +316,61 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
         await _sessionGate.WaitAsync(cancellationToken);
         try
         {
+            LogAuthEvent(
+                PackageLogLevel.Information,
+                "openai.codex.auth.callback.received",
+                "OpenAI browser authorization callback was received.",
+                attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["auth.flow"] = "runtime_callback",
+                    ["auth.has_code"] = queryValues.TryGetValue("code", out var codeValue) && !string.IsNullOrWhiteSpace(codeValue),
+                    ["auth.has_error"] = queryValues.TryGetValue("error", out var errorValue) && !string.IsNullOrWhiteSpace(errorValue),
+                });
+
             if (!_pendingBrowserAuth.TryGetValue(authSessionId, out var pending))
             {
+                LogAuthEvent(
+                    PackageLogLevel.Warning,
+                    "openai.codex.auth.callback.no_pending_session",
+                    "OpenAI browser authorization callback did not match a pending session.",
+                    attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["auth.flow"] = "runtime_callback",
+                    });
                 throw new InvalidOperationException("No pending OpenAI browser auth session was found.");
             }
 
             if (queryValues.TryGetValue("error", out var error) && !string.IsNullOrWhiteSpace(error))
             {
                 queryValues.TryGetValue("error_description", out var errorDescription);
+                LogAuthEvent(
+                    PackageLogLevel.Warning,
+                    "openai.codex.auth.callback.error",
+                    "OpenAI browser authorization callback reported an error.",
+                    attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["auth.flow"] = "runtime_callback",
+                        ["auth.error"] = error,
+                    });
                 throw new InvalidOperationException(string.IsNullOrWhiteSpace(errorDescription) ? error : errorDescription);
             }
 
             if (!queryValues.TryGetValue("code", out var code) || string.IsNullOrWhiteSpace(code))
             {
+                LogAuthEvent(
+                    PackageLogLevel.Warning,
+                    "openai.codex.auth.callback.missing_code",
+                    "OpenAI browser authorization callback did not include an authorization code.",
+                    attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["auth.flow"] = "runtime_callback",
+                    });
                 throw new InvalidOperationException("OpenAI browser sign-in did not return an authorization code.");
             }
 
             var session = await ExchangeAuthorizationCodeAsync(code, pending.Verifier, pending.RedirectUri, cancellationToken);
             SaveSession(session);
+            LogSessionSaved("runtime_callback", session);
             return session;
         }
         finally
@@ -234,18 +386,86 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
         var verifier = CreatePkceVerifier();
         var challenge = CreatePkceChallenge(verifier);
 
-        using var listener = new HttpListener();
-        listener.Prefixes.Add("http://localhost:1455/auth/callback/");
-        listener.Start();
+        HttpListener listener;
+        string redirectUri;
+        LogAuthEvent(
+            PackageLogLevel.Information,
+            "openai.codex.auth.listener.start",
+            "Starting local OpenAI browser authorization callback listener.",
+            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["auth.flow"] = "direct_listener",
+                ["auth.callback_uri"] = RedirectUri,
+                ["auth.callback_fallback_uri"] = CreateRedirectUri(FallbackCallbackPort),
+            });
+        try
+        {
+            listener = StartCallbackListener(out redirectUri);
+        }
+        catch (Exception ex)
+        {
+            LogAuthEvent(
+                PackageLogLevel.Error,
+                "openai.codex.auth.listener.start_failed",
+                "Failed to start local OpenAI browser authorization callback listener.",
+                attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["auth.flow"] = "direct_listener",
+                },
+                exception: ex);
+            throw;
+        }
+        using var listenerRegistration = listener;
+        LogAuthEvent(
+            PackageLogLevel.Debug,
+            "openai.codex.auth.listener.started",
+            "Local OpenAI browser authorization callback listener started.",
+            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["auth.flow"] = "direct_listener",
+                ["auth.callback_uri"] = redirectUri,
+            });
 
-        var authorizationUrl = BuildAuthorizationUrl(state, challenge, RedirectUri);
-        OpenBrowser(authorizationUrl);
+        var authorizationUrl = BuildAuthorizationUrl(state, challenge, redirectUri);
+        try
+        {
+            OpenBrowser(authorizationUrl);
+            LogAuthEvent(
+                PackageLogLevel.Information,
+                "openai.codex.auth.browser.opened",
+                "Opened browser for OpenAI authorization.",
+                attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["auth.flow"] = "direct_listener",
+                });
+        }
+        catch (Exception ex)
+        {
+            LogAuthEvent(
+                PackageLogLevel.Error,
+                "openai.codex.auth.browser.open_failed",
+                "Failed to open browser for OpenAI authorization.",
+                attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["auth.flow"] = "direct_listener",
+                },
+                exception: ex);
+            throw;
+        }
 
         using var registration = cancellationToken.Register(() =>
         {
             try { listener.Stop(); } catch { }
         });
 
+        LogAuthEvent(
+            PackageLogLevel.Information,
+            "openai.codex.auth.callback.wait_start",
+            "Waiting for OpenAI browser authorization callback.",
+            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["auth.flow"] = "direct_listener",
+            });
         HttpListenerContext context;
         try
         {
@@ -254,19 +474,50 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
         catch (Exception ex) when (cancellationToken.IsCancellationRequested
                                    && ex is HttpListenerException or ObjectDisposedException or InvalidOperationException)
         {
+            LogAuthEvent(
+                PackageLogLevel.Warning,
+                "openai.codex.auth.callback.wait_canceled",
+                "Waiting for OpenAI browser authorization callback was canceled or timed out.",
+                attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["auth.flow"] = "direct_listener",
+                },
+                exception: ex);
             throw new OperationCanceledException(cancellationToken);
         }
         var returnedState = context.Request.QueryString["state"];
         var code = context.Request.QueryString["code"];
+        var callbackIsValid = string.Equals(returnedState, state, StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(code);
+        LogAuthEvent(
+            PackageLogLevel.Information,
+            "openai.codex.auth.callback.received",
+            "OpenAI browser authorization callback was received.",
+            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["auth.flow"] = "direct_listener",
+                ["auth.has_code"] = !string.IsNullOrWhiteSpace(code),
+                ["auth.state_matches"] = string.Equals(returnedState, state, StringComparison.Ordinal),
+                ["auth.has_error"] = !string.IsNullOrWhiteSpace(context.Request.QueryString["error"]),
+            });
 
-        await WriteBrowserCompletionAsync(context.Response, returnedState == state && !string.IsNullOrWhiteSpace(code));
+        await WriteBrowserCompletionAsync(context.Response, callbackIsValid);
 
-        if (!string.Equals(returnedState, state, StringComparison.Ordinal) || string.IsNullOrWhiteSpace(code))
+        if (!callbackIsValid)
         {
+            LogAuthEvent(
+                PackageLogLevel.Warning,
+                "openai.codex.auth.callback.invalid",
+                "OpenAI Codex browser sign-in failed or returned an invalid state.",
+                attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["auth.flow"] = "direct_listener",
+                    ["auth.has_code"] = !string.IsNullOrWhiteSpace(code),
+                    ["auth.state_matches"] = string.Equals(returnedState, state, StringComparison.Ordinal),
+                });
             throw new InvalidOperationException("OpenAI Codex browser sign-in failed or returned an invalid state.");
         }
 
-        return await ExchangeAuthorizationCodeAsync(code, verifier, RedirectUri, cancellationToken);
+        return await ExchangeAuthorizationCodeAsync(code!, verifier, redirectUri, cancellationToken);
     }
 
     private async Task<OpenAiCodexSession> ExchangeAuthorizationCodeAsync(
@@ -275,22 +526,127 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
         string redirectUri,
         CancellationToken cancellationToken)
     {
-        using var httpClient = new HttpClient();
-        using var response = await httpClient.PostAsync(
-            TokenUrl,
-            new FormUrlEncodedContent(new Dictionary<string, string>
+        var stopwatch = Stopwatch.StartNew();
+        LogAuthEvent(
+            PackageLogLevel.Information,
+            "openai.codex.auth.token_exchange.start",
+            "Exchanging OpenAI authorization code for tokens.",
+            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
             {
-                ["grant_type"] = "authorization_code",
-                ["client_id"] = ClientId,
-                ["code"] = code,
-                ["code_verifier"] = verifier,
-                ["redirect_uri"] = redirectUri,
-            }),
-            cancellationToken);
+                ["auth.redirect_uri"] = redirectUri,
+                ["network.address_family"] = CodexHttpClientFactory.NetworkAddressFamily,
+            });
+        try
+        {
+            using var httpClient = CodexHttpClientFactory.CreateAuthClient();
+            using var request = new HttpRequestMessage(HttpMethod.Post, TokenUrl)
+            {
+                Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["grant_type"] = "authorization_code",
+                    ["client_id"] = ClientId,
+                    ["code"] = code,
+                    ["code_verifier"] = verifier,
+                    ["redirect_uri"] = redirectUri,
+                }),
+            };
+            using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
-        response.EnsureSuccessStatusCode();
-        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
-        return TryParseTokenResponse(payload) ?? throw new InvalidOperationException("OpenAI Codex token response was missing required fields.");
+            LogAuthEvent(
+                response.IsSuccessStatusCode ? PackageLogLevel.Debug : PackageLogLevel.Warning,
+                "openai.codex.auth.token_exchange.headers_received",
+                $"{(int)response.StatusCode} {response.ReasonPhrase}",
+                stopwatch.ElapsedMilliseconds,
+                new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["http.status_code"] = (int)response.StatusCode,
+                    ["http.reason_phrase"] = response.ReasonPhrase,
+                    ["network.address_family"] = CodexHttpClientFactory.NetworkAddressFamily,
+                });
+            response.EnsureSuccessStatusCode();
+            var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+            var session = TryParseTokenResponse(payload) ?? throw new InvalidOperationException("OpenAI Codex token response was missing required fields.");
+            LogAuthEvent(
+                PackageLogLevel.Information,
+                "openai.codex.auth.token_exchange.completed",
+                "OpenAI token exchange completed.",
+                stopwatch.ElapsedMilliseconds,
+                new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["auth.expires_at"] = session.ExpiresAtUtc,
+                });
+            return session;
+        }
+        catch (OperationCanceledException ex)
+        {
+            LogAuthEvent(
+                PackageLogLevel.Warning,
+                "openai.codex.auth.token_exchange.canceled",
+                cancellationToken.IsCancellationRequested
+                    ? "OpenAI token exchange was canceled by the caller."
+                    : "OpenAI token exchange was canceled or timed out before completion.",
+                stopwatch.ElapsedMilliseconds,
+                exception: ex);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LogAuthEvent(
+                PackageLogLevel.Error,
+                "openai.codex.auth.token_exchange.failed",
+                "OpenAI token exchange failed.",
+                stopwatch.ElapsedMilliseconds,
+                exception: ex);
+            throw;
+        }
+    }
+
+    private void LogSessionSaved(string flow, OpenAiCodexSession session)
+    {
+        LogAuthEvent(
+            PackageLogLevel.Information,
+            "openai.codex.auth.session.saved",
+            "Codex auth session was saved.",
+            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["auth.flow"] = flow,
+                ["auth.expires_at"] = session.ExpiresAtUtc,
+            });
+    }
+
+    private void LogAuthEvent(
+        PackageLogLevel level,
+        string eventName,
+        string message,
+        long? elapsedMilliseconds = null,
+        IReadOnlyDictionary<string, object?>? attributes = null,
+        Exception? exception = null)
+    {
+        var mergedAttributes = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["auth.mode"] = ModeId,
+        };
+        if (elapsedMilliseconds is not null)
+        {
+            mergedAttributes["duration.ms"] = elapsedMilliseconds.Value;
+        }
+
+        if (attributes is not null)
+        {
+            foreach (var attribute in attributes)
+            {
+                mergedAttributes[attribute.Key] = attribute.Value;
+            }
+        }
+
+        try
+        {
+            _packageContext.Logging.Events.WriteAsync(level, eventName, message, mergedAttributes, exception).GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // Auth diagnostics must not interrupt authorization.
+        }
     }
 
     private static string BuildAuthorizationUrl(string state, string challenge, string redirectUri)
@@ -313,6 +669,47 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
         return uriBuilder.ToString();
     }
 
+    private static HttpListener StartCallbackListener(out string redirectUri)
+    {
+        if (TryStartCallbackListener(PreferredCallbackPort, out var preferredListener, out var preferredException))
+        {
+            redirectUri = CreateRedirectUri(PreferredCallbackPort);
+            return preferredListener!;
+        }
+
+        if (TryStartCallbackListener(FallbackCallbackPort, out var fallbackListener, out var fallbackException))
+        {
+            redirectUri = CreateRedirectUri(FallbackCallbackPort);
+            return fallbackListener!;
+        }
+
+        throw new InvalidOperationException(
+            $"Sunder could not start the local OpenAI browser callback listener on {CreateRedirectUri(PreferredCallbackPort)} or {CreateRedirectUri(FallbackCallbackPort)}. Close other Codex/Sunder auth listeners or applications using ports {PreferredCallbackPort} and {FallbackCallbackPort} and retry.",
+            new AggregateException(preferredException!, fallbackException!));
+    }
+
+    private static bool TryStartCallbackListener(int port, out HttpListener? listener, out Exception? exception)
+    {
+        listener = new HttpListener();
+        listener.Prefixes.Add($"{CreateRedirectUri(port)}/");
+        try
+        {
+            listener.Start();
+            exception = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            listener.Close();
+            listener = null;
+            exception = ex;
+            return false;
+        }
+    }
+
+    private static string CreateRedirectUri(int port)
+        => $"http://localhost:{port}{CallbackPath}";
+
     private static void OpenBrowser(string url)
     {
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
@@ -330,9 +727,9 @@ public sealed class CodexConnectedAuthStrategy(IPackageContext packageContext)
 
     private static string BuildBrowserCompletionPage(bool success)
     {
-        var title = WebUtility.HtmlEncode(success ? "OpenAI sign-in complete." : "OpenAI sign-in failed.");
+        var title = WebUtility.HtmlEncode(success ? "OpenAI callback received." : "OpenAI sign-in failed.");
         var subtitle = WebUtility.HtmlEncode(success
-            ? "You can close this window and return to Sunder."
+            ? "Sunder is finishing authorization. Return to Sunder to see the final status."
             : "You can close this window and retry from Sunder.");
 
         return $$"""

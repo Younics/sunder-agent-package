@@ -28,11 +28,14 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
 
     public bool CanCancelAuthorization => IsAuthorizing;
 
-    [ObservableProperty]
-    private string? _apiKeyValue;
+    public bool CanSaveApiKey => !IsBusy;
+
+    public bool IsCodexStatusWarning => IsAuthorizing || (!IsCodexConnected && !IsCodexStatusError);
+
+    public bool IsApiKeyStatusWarning => !IsApiKeyStored;
 
     [ObservableProperty]
-    private string _statusText = string.Empty;
+    private string? _apiKeyValue;
 
     [ObservableProperty]
     private bool _isBusy;
@@ -43,9 +46,44 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
     [ObservableProperty]
     private bool _canDisconnect;
 
-    partial void OnIsBusyChanged(bool value) => OnPropertyChanged(nameof(CanAuthorize));
+    [ObservableProperty]
+    private string _codexStatusLabel = string.Empty;
 
-    partial void OnIsAuthorizingChanged(bool value) => OnPropertyChanged(nameof(CanCancelAuthorization));
+    [ObservableProperty]
+    private string _codexStatusDetail = string.Empty;
+
+    [ObservableProperty]
+    private bool _isCodexConnected;
+
+    [ObservableProperty]
+    private bool _isCodexStatusError;
+
+    [ObservableProperty]
+    private string _apiKeyStatusLabel = string.Empty;
+
+    [ObservableProperty]
+    private string _apiKeyStatusDetail = string.Empty;
+
+    [ObservableProperty]
+    private bool _isApiKeyStored;
+
+    partial void OnIsBusyChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanAuthorize));
+        OnPropertyChanged(nameof(CanSaveApiKey));
+    }
+
+    partial void OnIsAuthorizingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanCancelAuthorization));
+        OnPropertyChanged(nameof(IsCodexStatusWarning));
+    }
+
+    partial void OnIsCodexConnectedChanged(bool value) => OnPropertyChanged(nameof(IsCodexStatusWarning));
+
+    partial void OnIsCodexStatusErrorChanged(bool value) => OnPropertyChanged(nameof(IsCodexStatusWarning));
+
+    partial void OnIsApiKeyStoredChanged(bool value) => OnPropertyChanged(nameof(IsApiKeyStatusWarning));
 
     [RelayCommand]
     private async Task SaveAsync()
@@ -54,9 +92,6 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
         try
         {
             await SaveStateAsync();
-            StatusText = HasStoredApiKey
-                ? "OpenAI API key saved. It will be used for chat when API-key mode is active."
-                : "OpenAI settings saved.";
             OnPropertyChanged(nameof(HasStoredApiKey));
             await RefreshStatusAsync();
         }
@@ -78,21 +113,29 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
         _authorizationCts = authorizationCts;
         IsBusy = true;
         IsAuthorizing = true;
-        StatusText = "Opened auth.openai.com in your browser. Complete sign-in there, or cancel and retry if you closed the page.";
+        IsCodexStatusError = false;
+        IsCodexConnected = false;
+        CodexStatusLabel = "Authorizing...";
+        CodexStatusDetail = "Opened auth.openai.com in your browser. Complete sign-in there; Sunder will finish authorization after the callback.";
         try
         {
             await SaveStateAsync();
             await _codexConnectedAuthStrategy.EnsureAuthenticatedAsync(authorizationCts.Token);
-            StatusText = "Authorization succeeded. ChatGPT Plus/Pro session is ready.";
             await RefreshStatusAsync();
         }
         catch (OperationCanceledException) when (authorizationCts.IsCancellationRequested)
         {
-            StatusText = "Authorization was cancelled or timed out. Click Authorize to try again.";
+            IsCodexStatusError = true;
+            IsCodexConnected = false;
+            CodexStatusLabel = "Authorization canceled";
+            CodexStatusDetail = "Authorization was cancelled or timed out. Click Authorize to try again.";
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            IsCodexStatusError = true;
+            IsCodexConnected = false;
+            CodexStatusLabel = "Authorization failed";
+            CodexStatusDetail = ex.Message;
         }
         finally
         {
@@ -115,7 +158,8 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
             return;
         }
 
-        StatusText = "Cancelling browser authorization...";
+        CodexStatusLabel = "Canceling...";
+        CodexStatusDetail = "Canceling browser authorization.";
         try
         {
             _authorizationCts?.Cancel();
@@ -129,7 +173,10 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
     private Task DisconnectAsync()
     {
         _codexConnectedAuthStrategy.ClearSession();
-        StatusText = "ChatGPT Plus/Pro session removed.";
+        IsCodexConnected = false;
+        IsCodexStatusError = false;
+        CodexStatusLabel = "Not connected";
+        CodexStatusDetail = "ChatGPT Plus/Pro session removed. Click Authorize to sign in again.";
         CanDisconnect = false;
         return Task.CompletedTask;
     }
@@ -140,19 +187,46 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
         var session = _codexConnectedAuthStrategy.GetCachedSession();
         CanDisconnect = session is not null;
         var authMode = OpenAiAuthMode.GetSelected(_packageContext.Configuration);
-        var codexStatus = session is null
-            ? "ChatGPT Plus/Pro: not authorized. Click Authorize to sign in."
-            : authMode == OpenAiAuthMode.CodexConnected
-                ? $"ChatGPT Plus/Pro: authorized until {session.ExpiresAtUtc:O}. Codex-connected chat mode is active."
-                : $"ChatGPT Plus/Pro: authorized until {session.ExpiresAtUtc:O}, but inactive because API-key mode is selected.";
-        var apiKeyStatus = HasStoredApiKey
-            ? authMode == OpenAiAuthMode.ApiKey
-                ? "API key: stored. API-key chat mode and embeddings are ready."
-                : "API key: stored. It is available for embeddings and inactive for chat while ChatGPT Plus/Pro mode is selected."
-            : authMode == OpenAiAuthMode.ApiKey
-                ? "API key: not stored. API-key chat mode and embeddings are unavailable until you add one."
-                : "API key: not stored. Embeddings are unavailable until you add one.";
-        StatusText = codexStatus + "\n\n" + apiKeyStatus;
+        IsCodexStatusError = false;
+        IsCodexConnected = session is not null;
+        if (session is null)
+        {
+            CodexStatusLabel = "Not connected";
+            CodexStatusDetail = "Authorize with ChatGPT Plus/Pro to use Codex-connected chat mode.";
+        }
+        else if (authMode == OpenAiAuthMode.CodexConnected)
+        {
+            CodexStatusLabel = "Connected, active";
+            CodexStatusDetail = $"Authorized until {session.ExpiresAtUtc:O}. Codex-connected chat mode is active.";
+        }
+        else
+        {
+            CodexStatusLabel = "Connected";
+            CodexStatusDetail = $"Authorized until {session.ExpiresAtUtc:O}. Inactive for chat while API-key mode is selected.";
+        }
+
+        IsApiKeyStored = HasStoredApiKey;
+        if (IsApiKeyStored && authMode == OpenAiAuthMode.ApiKey)
+        {
+            ApiKeyStatusLabel = "Stored, active";
+            ApiKeyStatusDetail = "API-key chat mode and embeddings are ready.";
+        }
+        else if (IsApiKeyStored)
+        {
+            ApiKeyStatusLabel = "Stored";
+            ApiKeyStatusDetail = "Available for embeddings and for chat when API-key mode is selected.";
+        }
+        else if (authMode == OpenAiAuthMode.ApiKey)
+        {
+            ApiKeyStatusLabel = "Missing";
+            ApiKeyStatusDetail = "API-key chat mode and embeddings are unavailable until you add one.";
+        }
+        else
+        {
+            ApiKeyStatusLabel = "Not stored";
+            ApiKeyStatusDetail = "Add an API key to enable embeddings or API-key chat mode.";
+        }
+
         return Task.CompletedTask;
     }
 

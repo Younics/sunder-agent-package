@@ -61,14 +61,26 @@ public sealed class SubsessionTextTranscriptRowViewModel : SubsessionTranscriptR
 
     public void UpdateContent(string content)
     {
-        if (string.Equals(Content, content, StringComparison.Ordinal))
+        var previousContent = Content;
+        if (string.Equals(previousContent, content, StringComparison.Ordinal))
         {
             return;
         }
 
         Content = content;
-        MarkdownBuilder.Clear();
-        MarkdownBuilder.Append(content);
+        if (content.StartsWith(previousContent, StringComparison.Ordinal))
+        {
+            var suffix = content[previousContent.Length..];
+            if (suffix.Length > 0)
+            {
+                MarkdownBuilder.Append(suffix);
+            }
+        }
+        else
+        {
+            MarkdownBuilder = new ObservableStringBuilder().Append(content);
+        }
+
         OnPropertyChanged(nameof(HasContent));
     }
 
@@ -143,6 +155,7 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
     private readonly SubsessionToolPresentationService _presentationService;
     private readonly Func<AgentTurnRecord, AgentTurnItemRecord, IReadOnlyList<SubsessionChildSessionLinkViewModel>>? _childSessionLinksResolver;
     private AgentTurnItemRecord _currentItem;
+    private Guid? _resultTurnId;
     private string _toolLabel = string.Empty;
     private string _headerDetailText = string.Empty;
     private string _statusIconText = string.Empty;
@@ -161,6 +174,7 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
         _presentationService = presentationService;
         _childSessionLinksResolver = childSessionLinksResolver;
         _currentItem = item;
+        _resultTurnId = item.Kind == AgentTurnItemKind.ToolResult ? turn.TurnId : null;
         ToolLabel = HumanizeToolName(_toolId);
         StatusText = item.Kind == AgentTurnItemKind.ToolResult
             ? (item.IsError ? "Failed" : "Completed")
@@ -238,6 +252,8 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
 
     public bool HasMarkdownDetails => HasDetails;
 
+    public Guid? ResultTurnId => _resultTurnId;
+
     public ObservableCollection<SubsessionChildSessionLinkViewModel> ChildSessionLinks { get; } = [];
 
     public bool HasChildSessionLinks => ChildSessionLinks.Count > 0;
@@ -254,6 +270,7 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
 
     public void ApplyResult(AgentTurnRecord turn, AgentTurnItemRecord item)
     {
+        _resultTurnId = turn.TurnId;
         StatusText = item.IsError ? "Failed" : "Completed";
         StatusIconText = ResolveStatusIcon(StatusText);
         StateBrush = ResolveStateBrush(StatusText);

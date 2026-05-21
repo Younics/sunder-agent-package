@@ -92,6 +92,43 @@ public sealed class BuilderViewModelTests
         Assert.Equal("Workspace is required.", viewModel.StatusText);
     }
 
+    [Fact]
+    public async Task EnsureSelectedProjectSetupAsync_WhenValid_EnqueuesMainIndicatorProcess()
+    {
+        var queue = new TestBackgroundProcessQueue();
+        var viewModel = CreateViewModel(queue);
+        var project = CreateProject("one", "One Package");
+        AddWorkspace(viewModel, project.WorkspaceId);
+        viewModel.Projects.Add(project);
+        viewModel.ActivateProject(project);
+
+        await viewModel.EnsureSelectedProjectSetupAsync();
+
+        var request = Assert.Single(queue.Requests);
+        Assert.Equal("Check setup for One Package", request.Title);
+        Assert.Equal("sunder-package-builder", request.GroupKey);
+        Assert.Equal(BackgroundProcessIndicator.Main, request.Indicator);
+        Assert.True(request.CanCancel);
+        Assert.Equal("Setup check queued.", viewModel.StatusText);
+        Assert.True(viewModel.CanUseSelectedProjectRuntimeActions);
+    }
+
+    [Fact]
+    public async Task EnsureSelectedProjectSetupAsync_WhenWorkspaceIsMissing_DoesNotQueueProcess()
+    {
+        var queue = new TestBackgroundProcessQueue();
+        var viewModel = CreateViewModel(queue);
+        var project = CreateProject("one", "One Package");
+        project.WorkspaceId = string.Empty;
+        viewModel.Projects.Add(project);
+        viewModel.ActivateProject(project);
+
+        await viewModel.EnsureSelectedProjectSetupAsync();
+
+        Assert.Empty(queue.Requests);
+        Assert.Equal("Workspace is required.", viewModel.StatusText);
+    }
+
     private static BuilderViewModel CreateViewModel(TestBackgroundProcessQueue? queue = null)
     {
         var packageContext = new TestPackageContext();

@@ -8,13 +8,31 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class McpConfigurationDocumentTests
 {
     [Fact]
-    public void CreateLocalTemplate_DoesNotConfigureTimeoutsByDefault()
+    public void CreateTemplates_IncludeOptionalTimeoutExamples()
     {
-        using var document = JsonDocument.Parse(McpConfigurationDocument.CreateLocalTemplate());
+        using var localDocument = JsonDocument.Parse(McpConfigurationDocument.CreateLocalTemplate());
+        using var remoteDocument = JsonDocument.Parse(McpConfigurationDocument.CreateRemoteTemplate());
 
-        Assert.False(document.RootElement.TryGetProperty("timeout", out _));
-        Assert.False(document.RootElement.TryGetProperty("discoveryTimeout", out _));
-        Assert.False(document.RootElement.TryGetProperty("toolTimeout", out _));
+        Assert.False(localDocument.RootElement.TryGetProperty("timeout", out _));
+        Assert.Equal(5000, localDocument.RootElement.GetProperty("discoveryTimeout").GetInt32());
+        Assert.Equal(180000, localDocument.RootElement.GetProperty("toolTimeout").GetInt32());
+        Assert.False(remoteDocument.RootElement.TryGetProperty("timeout", out _));
+        Assert.Equal(5000, remoteDocument.RootElement.GetProperty("discoveryTimeout").GetInt32());
+        Assert.Equal(180000, remoteDocument.RootElement.GetProperty("toolTimeout").GetInt32());
+    }
+
+    [Fact]
+    public void CreateLocalTemplate_IncludesGenericEnvPlaceholder()
+    {
+        var template = McpConfigurationDocument.CreateLocalTemplate();
+        using var document = JsonDocument.Parse(template);
+
+        var env = document.RootElement.GetProperty("env");
+        Assert.Equal(JsonValueKind.Object, env.ValueKind);
+        Assert.Equal("<insert-your-api-key-here>", env.GetProperty("MY_API_KEY").GetString());
+        Assert.False(document.RootElement.TryGetProperty("environment", out _));
+        Assert.Contains("<insert-your-api-key-here>", template, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\u003C", template, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -38,6 +56,77 @@ public sealed class McpConfigurationDocumentTests
         Assert.Equal(300000, parsed.Server.ToolTimeoutMilliseconds);
         Assert.Equal(120000, McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(parsed.Server));
         Assert.Equal(300000, McpTimeoutResolver.ResolveToolTimeoutMilliseconds(parsed.Server));
+    }
+
+    [Fact]
+    public void Parse_StoresLocalEnvVariables()
+    {
+        var parsed = McpConfigurationDocument.Parse(
+            "server-1",
+            "elevenlabs",
+            """
+            {
+              "type": "local",
+              "enabled": true,
+              "command": ["uvx", "elevenlabs-mcp"],
+              "env": {
+                "ELEVENLABS_API_KEY": "test-api-key"
+              }
+            }
+            """);
+
+        Assert.Contains(parsed.Server.EnvironmentVariableNames, name => name == "ELEVENLABS_API_KEY");
+        Assert.Equal("test-api-key", parsed.EnvironmentVariables["ELEVENLABS_API_KEY"]);
+        Assert.Null(parsed.Server.TimeoutMilliseconds);
+        Assert.Null(parsed.Server.DiscoveryTimeoutMilliseconds);
+        Assert.Null(parsed.Server.ToolTimeoutMilliseconds);
+    }
+
+    [Fact]
+    public void BuildEditorText_EmitsEnvForLocalServers()
+    {
+        var parsed = McpConfigurationDocument.Parse(
+            "server-1",
+            "local_mcp",
+            """
+            {
+              "type": "local",
+              "enabled": true,
+              "command": ["uvx", "example-mcp"],
+              "env": {
+                "MY_API_KEY": "<insert-your-api-key-here>"
+              }
+            }
+            """);
+
+        var editorText = McpConfigurationDocument.BuildEditorText(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
+        using var document = JsonDocument.Parse(editorText);
+
+        Assert.Equal("<insert-your-api-key-here>", document.RootElement.GetProperty("env").GetProperty("MY_API_KEY").GetString());
+        Assert.False(document.RootElement.TryGetProperty("environment", out _));
+        Assert.Contains("<insert-your-api-key-here>", editorText, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\u003C", editorText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Parse_StillReadsLegacyLocalEnvironmentVariables()
+    {
+        var parsed = McpConfigurationDocument.Parse(
+            "server-1",
+            "legacy_env",
+            """
+            {
+              "type": "local",
+              "enabled": true,
+              "command": ["uvx", "example-mcp"],
+              "environment": {
+                "MY_API_KEY": "legacy-api-key"
+              }
+            }
+            """);
+
+        Assert.Contains(parsed.Server.EnvironmentVariableNames, name => name == "MY_API_KEY");
+        Assert.Equal("legacy-api-key", parsed.EnvironmentVariables["MY_API_KEY"]);
     }
 
     [Fact]

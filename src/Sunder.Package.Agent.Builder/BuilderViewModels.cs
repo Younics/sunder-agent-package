@@ -476,6 +476,68 @@ public sealed class BuilderViewModel(
         StatusText = "Build queued.";
     }
 
+    public async Task EnsureSelectedProjectSetupAsync()
+    {
+        var project = SelectedProject;
+        if (!ValidateSelectedProject(project, requireExistingFolder: false, requireInitializedPaths: false))
+        {
+            return;
+        }
+
+        RuntimeLogText = string.Empty;
+        backgroundProcesses.Enqueue(new BackgroundProcessRequest(
+            $"Check setup for {project!.DisplayName}",
+            "sunder-package-builder",
+            BackgroundProcessIndicator.Main,
+            BackgroundProcessConcurrencyMode.SequentialWithinGroup,
+            CanCancel: true,
+            async context =>
+            {
+                try
+                {
+                    context.ReportIndeterminate("Resolving workspace execution target...");
+                    var execution = await executionService.ResolveAsync(project.WorkspaceId, context.CancellationToken);
+                    var statuses = await EnsurePrerequisitesInstalledAsync(execution, context);
+                    if (!statuses.All(status => status.IsInstalled))
+                    {
+                        var message = BuildMissingPrerequisitesMessage(statuses);
+                        await RunOnUiThreadAsync(() =>
+                        {
+                            RuntimeLogText = message;
+                            StatusText = "Setup incomplete. See runtime log.";
+                        });
+                        context.ReportProgress(100, "Setup incomplete. See runtime log.");
+                        throw new InvalidOperationException(message);
+                    }
+
+                    await RunOnUiThreadAsync(() =>
+                    {
+                        RuntimeLogText = string.Empty;
+                        StatusText = "Package builder setup is ready.";
+                    });
+                    context.ReportProgress(100, "Package builder setup is ready.");
+                }
+                catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+                {
+                    await RunOnUiThreadAsync(() => StatusText = "Setup check cancelled.");
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    await RunOnUiThreadAsync(() =>
+                    {
+                        RuntimeLogText = ex.Message;
+                        StatusText = ex.Message.StartsWith("Package builder setup is incomplete.", StringComparison.Ordinal)
+                            ? "Setup incomplete. See runtime log."
+                            : "Setup check failed. See runtime log.";
+                    });
+                    throw;
+                }
+            }));
+        StatusText = "Setup check queued.";
+        await Task.CompletedTask;
+    }
+
     public async Task PublishSelectedProjectAsync()
     {
         var project = SelectedProject;

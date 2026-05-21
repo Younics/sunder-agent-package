@@ -14,6 +14,7 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
 
     private const int MaxHistoricalTurnsWithInstructionContext = 16;
     private const int MaxPromptContextTurns = 64;
+    private const int MaxFunctionInvokingIterationsPerRequest = 128;
     private static readonly TimeSpan AssistantStreamFlushInterval = TimeSpan.FromMilliseconds(150);
     private readonly IAgentAttachmentContentStore? _attachmentStore = attachmentStore;
 
@@ -87,6 +88,7 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
             var chatClient = new FunctionInvokingChatClient(rawChatClient)
             {
                 FunctionInvoker = toolInvoker.InvokeAsync,
+                MaximumIterationsPerRequest = MaxFunctionInvokingIterationsPerRequest,
                 MaximumConsecutiveErrorsPerRequest = 0,
             };
             var agentOptions = new ChatClientAgentOptions
@@ -189,6 +191,35 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
                     if (!string.IsNullOrEmpty(streamUpdate.Text))
                     {
                         contentBuilder.Append(streamUpdate.Text);
+                        if (AgentVisibleResponseGuard.ContainsProtocolLeak(contentBuilder.ToString()))
+                        {
+                            assistantTurn = host.UpsertAssistantTurn(
+                                assistantTurn,
+                                AgentVisibleResponseGuard.BlockedResponseContent);
+                            var failedCheckpoint = host.SaveCheckpoint(
+                                AgentRunStatus.Failed,
+                                "Assistant response contained internal protocol syntax.");
+                            await host.PublishLifecycleEventAsync(
+                                AgentLifecycleEventKind.RunFailed,
+                                AgentRunStatus.Failed,
+                                triggerTurn: assistantTurn,
+                                checkpoint: failedCheckpoint,
+                                cancellationToken: attemptCancellationToken);
+                            host.LogEvent(
+                                AgentLogLevel.Warning,
+                                "assistant.response.protocol_leak_blocked",
+                                "Assistant response contained internal protocol syntax.",
+                                loopStopwatch.ElapsedMilliseconds,
+                                new Dictionary<string, object?>(StringComparer.Ordinal)
+                                {
+                                    ["assistant.response_length"] = contentBuilder.Length,
+                                });
+                            interruptedResult = new AgentBehaviorLoopResult(
+                                failedCheckpoint,
+                                AgentBehaviorLoopCompletionKind.Failed);
+                            return;
+                        }
+
                         if (ShouldFlushAssistantStream(assistantTurn, loopStopwatch.Elapsed, lastAssistantFlushElapsed))
                         {
                             assistantTurn = host.UpsertAssistantTurn(assistantTurn, contentBuilder.ToString());

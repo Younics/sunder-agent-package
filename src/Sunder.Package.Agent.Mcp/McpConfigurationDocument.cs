@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -19,6 +20,7 @@ internal static class McpConfigurationDocument
     private static readonly JsonSerializerOptions JsonSerializerOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         WriteIndented = true,
     };
 
@@ -28,6 +30,12 @@ internal static class McpConfigurationDocument
             type = "local",
             enabled = true,
             command = new[] { "npx", "-y", "@modelcontextprotocol/server-everything" },
+            discoveryTimeout = 5000,
+            toolTimeout = 180000,
+            env = new Dictionary<string, string>
+            {
+                ["MY_API_KEY"] = "<insert-your-api-key-here>",
+            },
         });
 
     public static string CreateRemoteTemplate()
@@ -36,6 +44,8 @@ internal static class McpConfigurationDocument
             type = "remote",
             enabled = true,
             url = "https://my-mcp-server.com",
+            discoveryTimeout = 5000,
+            toolTimeout = 180000,
             headers = new Dictionary<string, string>
             {
                 ["Authorization"] = "Bearer MY_API_KEY",
@@ -117,7 +127,7 @@ internal static class McpConfigurationDocument
                 type = "local",
                 enabled = server.IsEnabled,
                 command = server.CommandParts,
-                environment = environmentVariables.Count == 0 ? null : environmentVariables,
+                env = environmentVariables.Count == 0 ? null : environmentVariables,
                 timeout = legacyTimeout,
                 discoveryTimeout = server.DiscoveryTimeoutMilliseconds,
                 toolTimeout = server.ToolTimeoutMilliseconds,
@@ -194,7 +204,7 @@ internal static class McpConfigurationDocument
             ReadOptionalString(root, "workingDirectory"),
             EndpointUrl: null,
             Headers: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-            EnvironmentVariables: ReadStringMap(root, "environment"),
+            EnvironmentVariables: ReadStringMap(root, "env", "environment"),
             legacyTimeoutMilliseconds,
             discoveryTimeoutMilliseconds,
             toolTimeoutMilliseconds,
@@ -290,11 +300,16 @@ internal static class McpConfigurationDocument
         return parsedValue;
     }
 
-    private static Dictionary<string, string> ReadStringMap(JsonElement root, string propertyName)
+    private static Dictionary<string, string> ReadStringMap(JsonElement root, string propertyName, string? legacyPropertyName = null)
     {
         if (!root.TryGetProperty(propertyName, out var value))
         {
-            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (legacyPropertyName is null || !root.TryGetProperty(legacyPropertyName, out value))
+            {
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            propertyName = legacyPropertyName;
         }
 
         if (value.ValueKind != JsonValueKind.Object)

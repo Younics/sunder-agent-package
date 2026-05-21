@@ -14,8 +14,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 {
     private const int InitialTranscriptTurnLimit = 100;
     private const int OlderTranscriptTurnPageSize = 60;
-    private const int TranscriptWindowTurnLimit = 180;
-    private const int TranscriptHydrationBatchSize = 8;
+    private const int TranscriptWindowTurnLimit = 240;
     private const string SubsessionsViewId = "sunder.package.agent.subagents.sessions";
     private const string SubsessionNavigationSessionIdKey = "sessionId";
     private static readonly TimeSpan DefaultActivityQuietDelay = TimeSpan.FromMilliseconds(900);
@@ -47,6 +46,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private bool _showActivityAfterQuiet;
     private bool _isReconcilingSessionSelection;
     private bool _isRestoringReconciledSessionSelection;
+    private bool _isReplacingTranscriptWindow;
     private bool _suppressWorkspaceSelection;
     private bool _suppressPermissionState;
 
@@ -106,6 +106,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         [];
 
     public event Action? TranscriptChanged;
+
+    public event Action? TranscriptChanging;
 
     public bool IsSelectedSessionRunActive => SelectedSession?.IsRunActive == true;
 

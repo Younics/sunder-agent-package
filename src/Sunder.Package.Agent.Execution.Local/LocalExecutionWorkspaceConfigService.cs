@@ -37,7 +37,7 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
         var roots = config.AllowedRoots
             .Where(root => !string.IsNullOrWhiteSpace(root))
             .Select(root => Path.GetFullPath(ExpandPath(root.Trim())))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Distinct(GetPathStringComparer())
             .ToArray();
 
         var defaultWorkingDirectory = string.IsNullOrWhiteSpace(config.DefaultWorkingDirectory)
@@ -53,7 +53,7 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
         var pathEntries = (config.PathEntries ?? [])
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(path => Path.GetFullPath(ExpandPath(path.Trim())))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Distinct(GetPathStringComparer())
             .ToArray();
 
         return new LocalExecutionWorkspaceConfig(
@@ -84,9 +84,20 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
     {
         var candidate = Path.GetFullPath(candidatePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return string.Equals(candidate, root, StringComparison.OrdinalIgnoreCase)
-               || candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        var comparison = GetPathStringComparison();
+        return string.Equals(candidate, root, comparison)
+               || candidate.StartsWith(root + Path.DirectorySeparatorChar, comparison);
     }
+
+    private static StringComparer GetPathStringComparer()
+        => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+
+    private static StringComparison GetPathStringComparison()
+        => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
 
     private static string BuildKey(string bindingId) => $"workspace-bindings:{bindingId}:config";
 }

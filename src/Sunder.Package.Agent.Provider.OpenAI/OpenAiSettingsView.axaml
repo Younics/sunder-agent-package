@@ -6,18 +6,89 @@
              x:Class="Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsView"
              x:DataType="vm:OpenAiSettingsViewModel"
              mc:Ignorable="d">
+  <UserControl.Styles>
+    <Style Selector="Border.auth-status-pill">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Border.auth-status-pill.success">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+
+    <Style Selector="Border.auth-status-pill.warning">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Selected}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+    </Style>
+
+    <Style Selector="Border.auth-status-pill.danger">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Danger.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Danger}" />
+    </Style>
+
+    <Style Selector="TextBlock.auth-status-label">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    </Style>
+
+    <Style Selector="Border.auth-status-pill.success TextBlock.auth-status-label">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+
+    <Style Selector="Border.auth-status-pill.danger TextBlock.auth-status-label">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.OnDanger}" />
+    </Style>
+
+    <Style Selector="Border.auth-detail-card">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="12" />
+    </Style>
+  </UserControl.Styles>
+
   <ScrollViewer>
     <StackPanel Margin="0,0,0,8"
                 Spacing="16">
       <Border Classes="card-surface">
-        <StackPanel Spacing="12">
-          <TextBlock Classes="section-title" Text="ChatGPT Plus/Pro" />
-          <TextBlock Classes="caption"
-                     Text="Authorize this provider with your ChatGPT Plus or Pro account. This is used when auth mode is set to ChatGPT Plus/Pro."
-                     TextWrapping="Wrap" />
+        <StackPanel Spacing="14">
+          <Grid ColumnDefinitions="*,Auto"
+                ColumnSpacing="12">
+            <TextBlock Classes="section-title"
+                       Text="ChatGPT Plus/Pro"
+                       VerticalAlignment="Center" />
+            <Border Grid.Column="1"
+                    Classes="auth-status-pill"
+                    Classes.success="{Binding IsCodexConnected}"
+                    Classes.warning="{Binding IsCodexStatusWarning}"
+                    Classes.danger="{Binding IsCodexStatusError}">
+              <TextBlock Classes="auth-status-label"
+                         Text="{Binding CodexStatusLabel}" />
+            </Border>
+          </Grid>
+
+          <Border Classes="auth-detail-card">
+            <StackPanel Spacing="6">
+              <TextBlock Classes="caption"
+                         Text="Authorize this provider with your ChatGPT Plus or Pro account. This is used when auth mode is set to ChatGPT Plus/Pro."
+                         TextWrapping="Wrap" />
+              <TextBlock Classes="muted"
+                         Text="{Binding CodexStatusDetail}"
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+
           <StackPanel Orientation="Horizontal"
                       Spacing="10">
-            <Button Content="Authorize"
+            <Button Classes="primary-action"
+                    Content="Authorize"
                     Command="{Binding AuthorizeCommand}"
                     IsEnabled="{Binding CanAuthorize}" />
             <Button Classes="secondary-action"
@@ -34,32 +105,40 @@
       </Border>
 
       <Border Classes="card-surface">
-        <StackPanel Spacing="12">
-          <TextBlock Classes="section-title" Text="API Key" />
-          <TextBlock Classes="caption"
-                     Text="A stored API key enables embeddings and is used for chat when auth mode is set to API key. Existing keys remain stored unless you replace them here."
-                     TextWrapping="Wrap" />
-          <TextBox Text="{Binding ApiKeyValue}"
-                   PlaceholderText="sk-..." />
-        </StackPanel>
-      </Border>
+        <StackPanel Spacing="14">
+          <Grid ColumnDefinitions="*,Auto"
+                ColumnSpacing="12">
+            <TextBlock Classes="section-title"
+                       Text="API Key"
+                       VerticalAlignment="Center" />
+            <Border Grid.Column="1"
+                    Classes="auth-status-pill"
+                    Classes.success="{Binding IsApiKeyStored}"
+                    Classes.warning="{Binding IsApiKeyStatusWarning}">
+              <TextBlock Classes="auth-status-label"
+                         Text="{Binding ApiKeyStatusLabel}" />
+            </Border>
+          </Grid>
 
-      <Border Classes="card-surface">
-        <StackPanel Spacing="12">
-          <TextBlock Classes="section-title" Text="Status" />
-          <TextBlock Classes="muted"
-                     Text="{Binding StatusText}"
-                     TextWrapping="Wrap" />
+          <Border Classes="auth-detail-card">
+            <StackPanel Spacing="6">
+              <TextBlock Classes="caption"
+                         Text="A stored API key enables embeddings and is used for chat when auth mode is set to API key. Existing keys remain stored unless you replace them here."
+                         TextWrapping="Wrap" />
+              <TextBlock Classes="muted"
+                         Text="{Binding ApiKeyStatusDetail}"
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+
+          <TextBox Text="{Binding ApiKeyValue}"
+                    PlaceholderText="sk-..." />
           <StackPanel Orientation="Horizontal"
                       Spacing="10">
-            <Button Classes="secondary-action"
-                    Content="Refresh"
-                    Command="{Binding RefreshStatusCommand}"
-                    IsEnabled="{Binding !IsBusy}" />
             <Button Classes="primary-action"
-                    Content="Save"
+                    Content="Save API Key"
                     Command="{Binding SaveCommand}"
-                    IsEnabled="{Binding !IsBusy}" />
+                    IsEnabled="{Binding CanSaveApiKey}" />
           </StackPanel>
         </StackPanel>
       </Border>

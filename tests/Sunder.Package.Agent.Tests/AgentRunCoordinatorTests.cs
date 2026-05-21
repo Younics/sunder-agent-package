@@ -107,6 +107,51 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task AgentSystemPromptComposer_ComposeAsync_RendersVisibleResponseGuardrail()
+    {
+        var composer = new AgentSystemPromptComposer(new TestExtensionCatalog());
+
+        var prompt = await composer.ComposeAsync(BuildSystemPromptRequest(), null);
+
+        Assert.Contains("## Visible Response Format", prompt ?? string.Empty);
+        Assert.Contains("use Sunder's native tool-calling interface", prompt ?? string.Empty);
+    }
+
+    [Theory]
+    [InlineData("assistant to=functions.webfetch  {\"url\":\"https://example.com\"}")]
+    [InlineData("First I will edit the file.assistant to=functions.apply_patch {\"patch\":\"*** Begin Patch\"}")]
+    [InlineData("<assistant to=functions.apply_patch>{\"patch\":\"*** Begin Patch\"}</assistant>")]
+    [InlineData("<function=apply_patch>\n{\"patch\":\"*** Begin Patch\"}")]
+    [InlineData("{\"tool_calls\":[{\"name\":\"apply_patch\"}]}")]
+    [InlineData("{\"recipient_name\":\"functions.apply_patch\",\"parameters\":{}}")]
+    [InlineData("<tool>{\"name\":\"webfetch\"}</tool>")]
+    [InlineData("tool_code")]
+    public void AgentVisibleResponseGuard_ContainsProtocolLeak_DetectsInternalSyntax(string content)
+    {
+        Assert.True(AgentVisibleResponseGuard.ContainsProtocolLeak(content));
+    }
+
+    [Fact]
+    public void AgentVisibleResponseGuard_ContainsProtocolLeak_IgnoresFencedCode()
+    {
+        var content = """
+            Here is the literal text you asked for:
+
+            ```text
+            assistant to=functions.webfetch
+            <assistant to=functions.apply_patch>{"patch":"*** Begin Patch"}</assistant>
+            <function=apply_patch>
+            {"tool_calls":[{"name":"apply_patch"}]}
+            {"recipient_name":"functions.apply_patch","parameters":{}}
+            <tool>{"name":"webfetch"}</tool>
+            tool_code
+            ```
+            """;
+
+        Assert.False(AgentVisibleResponseGuard.ContainsProtocolLeak(content));
+    }
+
+    [Fact]
     public async Task AgentSystemPromptComposer_ComposeAsync_PropagatesCancellation()
     {
         var composer = new AgentSystemPromptComposer(new TestExtensionCatalog());
@@ -243,6 +288,68 @@ public sealed class AgentRunCoordinatorTests
             turn => turn.Role == AgentMessageRole.Assistant
         );
         Assert.Equal("final answer", RenderTurnText(assistantTurn));
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_BlocksAssistantProtocolLeakWithoutPersistingRawText()
+    {
+        var provider = new ScriptedProvider(
+            (_, _) =>
+                [
+                    Delta("assistant"),
+                    Delta(" to=functions.webfetch  {\"url\":\"https://example.com\"}"),
+                ]
+        );
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Fetch the page and summarize it.",
+            runtime.CurrentWorkspaceId
+        );
+
+        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
+        var assistantTurn = Assert.Single(
+            runtime.SessionService.ListTurns(sessionId),
+            turn => turn.Role == AgentMessageRole.Assistant
+        );
+        var assistantText = RenderTurnText(assistantTurn);
+        Assert.Contains("Assistant response blocked", assistantText, StringComparison.Ordinal);
+        Assert.DoesNotContain("assistant to=functions.webfetch", assistantText, StringComparison.Ordinal);
+        Assert.DoesNotContain("https://example.com", assistantText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_BlocksScreenshotStyleProtocolLeakWithoutPersistingRawText()
+    {
+        var provider = new ScriptedProvider(
+            (_, _) =>
+                [
+                    Delta("I'll edit the file now."),
+                    Delta("<function=apply_patch>\n{\"patch\":\"*** Begin Patch\"}"),
+                ]
+        );
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Edit the file.",
+            runtime.CurrentWorkspaceId
+        );
+
+        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
+        var assistantTurn = Assert.Single(
+            runtime.SessionService.ListTurns(sessionId),
+            turn => turn.Role == AgentMessageRole.Assistant
+        );
+        var assistantText = RenderTurnText(assistantTurn);
+        Assert.Contains("Assistant response blocked", assistantText, StringComparison.Ordinal);
+        Assert.DoesNotContain("function=apply_patch", assistantText, StringComparison.Ordinal);
+        Assert.DoesNotContain("*** Begin Patch", assistantText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -485,6 +592,56 @@ public sealed class AgentRunCoordinatorTests
         Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
         Assert.Equal(2, provider.Requests.Count);
         Assert.Equal(1, tool.ExecutionCount);
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_ContinuesProviderAfterToolOperationCanceled_WhenRunIsNotCanceled()
+    {
+        const string toolId = "web_fetch";
+
+        var provider = new ScriptedProvider(
+            (request, requestIndex) =>
+                requestIndex switch
+                {
+                    1 => ToolRequest("call-1", toolId, "{\"url\":\"https://example.com\",\"timeoutSeconds\":1}"),
+                    2 => AssertErroredToolResultAndComplete(
+                        request,
+                        toolId,
+                        "call-1",
+                        AgentToolResultErrorCodes.ToolExecutionException,
+                        "web request timed out"
+                    ),
+                    _ => throw new Xunit.Sdk.XunitException(
+                        $"Unexpected provider request {requestIndex}."
+                    ),
+                }
+        );
+        var tool = new OperationCanceledTool(toolId, "web request timed out");
+        using var runtime = AgentTestRuntime.Create(provider, tool);
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Fetch the page.",
+            runtime.CurrentWorkspaceId
+        );
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(2, provider.Requests.Count);
+        Assert.Equal(1, tool.ExecutionCount);
+        Assert.Contains(
+            runtime.SessionService.ListRecentTurns(sessionId, 20),
+            turn =>
+                turn.Kind == AgentTurnKind.ToolResult
+                && turn.Items.Any(item =>
+                    item.Kind == AgentTurnItemKind.ToolResult
+                    && item.ToolId == toolId
+                    && item.CallId == "call-1"
+                    && item.IsError
+                    && item.ErrorCode == AgentToolResultErrorCodes.ToolExecutionException
+                )
+        );
     }
 
     [Fact]
@@ -798,6 +955,38 @@ public sealed class AgentRunCoordinatorTests
             sessionId,
             runtime.CurrentProfileId,
             currentUserMessage,
+            runtime.CurrentWorkspaceId
+        );
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(toolLoopCount + 1, provider.Requests.Count);
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_KeepsToolsAvailablePastDefaultFunctionClientIterationLimit()
+    {
+        const string toolId = "fetch_page";
+        const int toolLoopCount = 45;
+
+        var provider = new ScriptedProvider(
+            (request, requestIndex) =>
+                requestIndex <= toolLoopCount
+                    ? AssertToolAvailableAndRequest(
+                        request,
+                        toolId,
+                        $"call-{requestIndex}",
+                        $"{{\"step\":{requestIndex}}}"
+                    )
+                    : Complete("Finished after a long tool loop.")
+        );
+
+        using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Keep using the tool until enough steps are complete.",
             runtime.CurrentWorkspaceId
         );
 
@@ -5381,14 +5570,64 @@ public sealed class AgentRunCoordinatorTests
             await viewModel.LoadOlderTranscriptRowsAsync();
         }
 
-        Assert.InRange(viewModel.Messages.Count, 1, 180);
+        Assert.InRange(viewModel.Messages.Count, 1, 240);
         Assert.True(viewModel.HasNewerTranscriptRows);
 
         var loadedNewer = await viewModel.LoadNewerTranscriptRowsAsync();
 
         Assert.True(loadedNewer);
-        Assert.InRange(viewModel.Messages.Count, 1, 180);
+        Assert.InRange(viewModel.Messages.Count, 1, 240);
         Assert.True(viewModel.HasOlderTranscriptRows);
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_TrimsLiveTranscriptWindowWithoutResettingRetainedRows()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+
+        for (var index = 0; index < 240; index++)
+        {
+            runtime.SessionService.AppendTextTurn(sessionId, AgentMessageRole.User, $"message-{index:000}");
+        }
+
+        var retainedRow = viewModel.Messages
+            .OfType<AgentTextTranscriptRowViewModel>()
+            .Single(row => row.Content == "message-050");
+        var resetCount = 0;
+        viewModel.Messages.CollectionChanged += (_, args) =>
+        {
+            if (args.Action == NotifyCollectionChangedAction.Reset)
+            {
+                resetCount++;
+            }
+        };
+
+        runtime.SessionService.AppendTextTurn(sessionId, AgentMessageRole.User, "message-240");
+
+        Assert.Equal(0, resetCount);
+        Assert.Equal(240, viewModel.Messages.Count);
+        Assert.True(viewModel.HasOlderTranscriptRows);
+        Assert.DoesNotContain(
+            viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>(),
+            row => row.Content == "message-000"
+        );
+        Assert.Same(
+            retainedRow,
+            viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>().Single(row => row.Content == "message-050")
+        );
     }
 
     [Fact]
@@ -5401,7 +5640,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        for (var index = 0; index < 220; index++)
+        for (var index = 0; index < 320; index++)
         {
             runtime.SessionService.AppendTextTurn(
                 sessionId,
@@ -5453,6 +5692,7 @@ public sealed class AgentRunCoordinatorTests
             "partial"
         );
         var row = Assert.IsType<AgentTextTranscriptRowViewModel>(Assert.Single(viewModel.Messages));
+        var markdownBuilder = row.MarkdownBuilder;
 
         runtime.SessionService.UpdateTextTurn(turn.TurnId, "partial plus more");
 
@@ -5460,7 +5700,46 @@ public sealed class AgentRunCoordinatorTests
             Assert.Single(viewModel.Messages)
         );
         Assert.Same(row, updatedRow);
+        Assert.Same(markdownBuilder, updatedRow.MarkdownBuilder);
         Assert.Equal("partial plus more", updatedRow.Content);
+    }
+
+    [Fact]
+    public void AgentTextTranscriptRowViewModel_ReplacesMarkdownBuilder_ForNonPrefixUpdate()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var turn = new AgentTurnRecord(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            AgentMessageRole.Assistant,
+            AgentTurnKind.Message,
+            [
+                new AgentTurnItemRecord(
+                    Guid.NewGuid(),
+                    Guid.Empty,
+                    0,
+                    AgentTurnItemKind.Text,
+                    "first",
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    null,
+                    null),
+            ],
+            now,
+            now);
+        var row = new AgentTextTranscriptRowViewModel(turn, "first");
+        var markdownBuilder = row.MarkdownBuilder;
+
+        row.UpdateContent("replacement");
+
+        Assert.NotSame(markdownBuilder, row.MarkdownBuilder);
+        Assert.Equal("replacement", row.Content);
     }
 
     [Fact]
@@ -8751,6 +9030,40 @@ public sealed class AgentRunCoordinatorTests
             Interlocked.Increment(ref _executionCount);
             throw new InvalidOperationException(message);
         }
+    }
+
+    private sealed class OperationCanceledTool(string toolId, string message) : IAgentTool
+    {
+        private int _executionCount;
+
+        public int ExecutionCount => Volatile.Read(ref _executionCount);
+
+        public AgentToolDescriptor Descriptor { get; } =
+            new(
+                toolId,
+                "Operation Canceled Tool",
+                "Throws deterministic operation-canceled tool exceptions.",
+                IsReadOnly: true,
+                RequiresNetwork: false,
+                ArgumentsJsonSchema: "{\"type\":\"object\"}"
+            );
+
+        public ValueTask<AgentToolResult> ExecuteAsync(
+            AgentToolExecutionContext context,
+            AgentToolRequest request,
+            CancellationToken cancellationToken = default
+        )
+        {
+            Interlocked.Increment(ref _executionCount);
+            throw new TaskCanceledException(message);
+        }
+
+        public ValueTask<AgentToolReadiness> GetReadinessAsync(
+            CancellationToken cancellationToken = default
+        ) =>
+            ValueTask.FromResult(
+                new AgentToolReadiness(Descriptor.ToolId, AgentToolReadinessStatus.Ready, "Ready.")
+            );
     }
 
     private sealed class PermissionedToolSource(string toolId)

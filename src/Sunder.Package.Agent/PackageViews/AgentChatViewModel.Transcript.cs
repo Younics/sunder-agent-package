@@ -17,6 +17,7 @@ public sealed partial class AgentChatViewModel
         if (displayedSession is null)
         {
             IsTranscriptLoading = false;
+            _isReplacingTranscriptWindow = false;
             StatusText = string.IsNullOrWhiteSpace(_globalStatusText)
                 ? GetSetupStatusText()
                 : _globalStatusText;
@@ -58,36 +59,16 @@ public sealed partial class AgentChatViewModel
                 .ToArray();
             var turnsToApply = SelectTranscriptWindow(orderedTurns, InitialTranscriptTurnLimit);
 
-            for (var index = 0; index < turnsToApply.Length; index += TranscriptHydrationBatchSize)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var batch = turnsToApply
-                    .Skip(index)
-                    .Take(TranscriptHydrationBatchSize)
-                    .ToArray();
-
-                await Dispatcher.UIThread.InvokeAsync(
-                    () =>
-                    {
-                        if (!IsCurrentTranscriptRefresh(sessionId, refreshCts))
-                        {
-                            return;
-                        }
-
-                        foreach (var turn in batch)
-                        {
-                            ApplyTurnToTranscript(turn, InsertMode.Append, trackRunActivity: true, scheduleQuietTimer: false);
-                        }
-                    },
-                    DispatcherPriority.Background);
-                await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-            }
-
             await Dispatcher.UIThread.InvokeAsync(
                 () =>
                 {
                     if (IsCurrentTranscriptRefresh(sessionId, refreshCts))
                     {
+                        foreach (var turn in turnsToApply)
+                        {
+                            ApplyTurnToTranscript(turn, InsertMode.Append, trackRunActivity: true, scheduleQuietTimer: false);
+                        }
+
                         CompleteTranscriptRefresh(displayedSession, orderedTurns.Length > InitialTranscriptTurnLimit);
                     }
                 },
@@ -107,6 +88,7 @@ public sealed partial class AgentChatViewModel
                     }
 
                     IsTranscriptLoading = false;
+                    _isReplacingTranscriptWindow = false;
                     StatusText = $"Unable to load transcript: {ex.Message}";
                 },
                 DispatcherPriority.Background);
@@ -136,6 +118,14 @@ public sealed partial class AgentChatViewModel
 
         _transcriptRefreshCts = null;
         refreshCts.Cancel();
+    }
+
+    private void NotifyTranscriptChanging()
+    {
+        if (!_isReplacingTranscriptWindow)
+        {
+            TranscriptChanging?.Invoke();
+        }
     }
 
     private void ApplyInitialTranscriptTurns(AgentSessionListItemViewModel displayedSession, IReadOnlyList<AgentTurnRecord> turns)
@@ -168,6 +158,7 @@ public sealed partial class AgentChatViewModel
         ReloadPendingPermissionRequests();
         UpdateActivityRowForCurrentState();
         IsTranscriptLoading = false;
+        _isReplacingTranscriptWindow = false;
         TranscriptChanged?.Invoke();
         UpdateSessionState(displayedSession.SessionId, markUnread: false);
         displayedSession.ClearUnreadActivity();
@@ -202,6 +193,7 @@ public sealed partial class AgentChatViewModel
             return false;
         }
 
+        var transcriptChanged = false;
         IsLoadingOlderTranscriptRows = true;
         try
         {
@@ -226,6 +218,7 @@ public sealed partial class AgentChatViewModel
 
             var insertIndex = 0;
             var orderedTurns = turns.OrderBy(turn => turn.CreatedAtUtc).ThenBy(turn => turn.TurnId).ToArray();
+            NotifyTranscriptChanging();
             foreach (var turn in SelectTranscriptWindow(orderedTurns, OlderTranscriptTurnPageSize))
             {
                 insertIndex += ApplyTurnToTranscript(turn, InsertMode.Prepend, insertIndex);
@@ -233,11 +226,16 @@ public sealed partial class AgentChatViewModel
 
             HasOlderTranscriptRows = orderedTurns.Length > OlderTranscriptTurnPageSize;
             EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Newest);
+            transcriptChanged = insertIndex > 0;
             return insertIndex > 0;
         }
         finally
         {
             IsLoadingOlderTranscriptRows = false;
+            if (transcriptChanged)
+            {
+                TranscriptChanged?.Invoke();
+            }
         }
     }
 
@@ -249,6 +247,7 @@ public sealed partial class AgentChatViewModel
             return false;
         }
 
+        var transcriptChanged = false;
         IsLoadingNewerTranscriptRows = true;
         try
         {
@@ -273,6 +272,7 @@ public sealed partial class AgentChatViewModel
 
             var insertedRows = 0;
             var orderedTurns = turns.OrderBy(turn => turn.CreatedAtUtc).ThenBy(turn => turn.TurnId).ToArray();
+            NotifyTranscriptChanging();
             foreach (var turn in orderedTurns.Take(OlderTranscriptTurnPageSize))
             {
                 insertedRows += ApplyTurnToTranscript(turn, InsertMode.Append);
@@ -280,11 +280,16 @@ public sealed partial class AgentChatViewModel
 
             HasNewerTranscriptRows = orderedTurns.Length > OlderTranscriptTurnPageSize;
             EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest);
+            transcriptChanged = insertedRows > 0;
             return insertedRows > 0;
         }
         finally
         {
             IsLoadingNewerTranscriptRows = false;
+            if (transcriptChanged)
+            {
+                TranscriptChanged?.Invoke();
+            }
         }
     }
 
@@ -315,6 +320,7 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
+        NotifyTranscriptChanging();
         ApplyTurnToTranscript(turn, InsertMode.Append, trackRunActivity: true, scheduleQuietTimer: true);
         EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest);
         UpdateActivityRowForCurrentState();
@@ -394,6 +400,7 @@ public sealed partial class AgentChatViewModel
         _activityTextBase = "Thinking";
         _hasVisibleRunActivity = false;
         _showActivityAfterQuiet = false;
+        _isReplacingTranscriptWindow = true;
         _activityQuietTimer.Stop();
         HasOlderTranscriptRows = false;
         HasNewerTranscriptRows = false;
@@ -526,20 +533,136 @@ public sealed partial class AgentChatViewModel
 
     private void RebuildTranscriptWindow(IReadOnlyList<AgentTurnRecord> turns)
     {
+        NotifyTranscriptChanging();
         var activityRow = _activityRow;
-        _activityRow = null;
-        Messages.Clear();
+        if (activityRow is not null)
+        {
+            Messages.Remove(activityRow);
+        }
+
+        var oldTextRows = new Dictionary<Guid, AgentTextTranscriptRowViewModel>(_textRowsByTurnId);
+        var oldToolRows = new Dictionary<string, AgentToolInvocationRowViewModel>(_toolRowsByCallId, StringComparer.Ordinal);
+        var orderedTurns = turns.OrderBy(turn => turn.CreatedAtUtc).ThenBy(turn => turn.TurnId).ToArray();
+        var retainedTurnIds = orderedTurns.Select(turn => turn.TurnId).ToHashSet();
+        var desiredRows = new List<AgentTranscriptRowViewModel>();
+
         _textRowsByTurnId.Clear();
         _toolRowsByCallId.Clear();
         _transcriptTurnWindow.Reset();
 
-        foreach (var turn in turns.OrderBy(turn => turn.CreatedAtUtc).ThenBy(turn => turn.TurnId))
+        foreach (var turn in orderedTurns)
         {
-            ApplyTurnToTranscript(turn, InsertMode.Append, trackRunActivity: false, scheduleQuietTimer: false);
+            _transcriptTurnWindow.AddOrUpdate(turn);
+            AddRetainedTurnRows(turn, retainedTurnIds, oldTextRows, oldToolRows, desiredRows);
         }
 
+        ReconcileTranscriptRows(desiredRows);
         _activityRow = activityRow;
         UpdateActivityRowForCurrentState();
+    }
+
+    private void AddRetainedTurnRows(
+        AgentTurnRecord turn,
+        IReadOnlySet<Guid> retainedTurnIds,
+        IReadOnlyDictionary<Guid, AgentTextTranscriptRowViewModel> oldTextRows,
+        IReadOnlyDictionary<string, AgentToolInvocationRowViewModel> oldToolRows,
+        ICollection<AgentTranscriptRowViewModel> desiredRows)
+    {
+        switch (turn.Kind)
+        {
+            case AgentTurnKind.ToolCall:
+                foreach (var item in turn.Items.Where(item => item.Kind == AgentTurnItemKind.ToolCall))
+                {
+                    if (string.IsNullOrWhiteSpace(item.CallId) || _toolRowsByCallId.ContainsKey(item.CallId))
+                    {
+                        continue;
+                    }
+
+                    var row = oldToolRows.TryGetValue(item.CallId, out var existingRow)
+                              && existingRow.RowId == turn.TurnId
+                              && (existingRow.ResultTurnId is null || retainedTurnIds.Contains(existingRow.ResultTurnId.Value))
+                        ? existingRow
+                        : new AgentToolInvocationRowViewModel(turn, item, _toolPresentationService, ResolveChildSessionLinksFromStore);
+                    _toolRowsByCallId[item.CallId] = row;
+                    desiredRows.Add(row);
+                }
+
+                break;
+
+            case AgentTurnKind.ToolResult:
+                foreach (var item in turn.Items.Where(item => item.Kind == AgentTurnItemKind.ToolResult))
+                {
+                    if (!string.IsNullOrWhiteSpace(item.CallId) && _toolRowsByCallId.TryGetValue(item.CallId, out var existingToolRow))
+                    {
+                        existingToolRow.ApplyResult(turn, item);
+                        continue;
+                    }
+
+                    var row = !string.IsNullOrWhiteSpace(item.CallId)
+                              && oldToolRows.TryGetValue(item.CallId, out var existingRow)
+                              && existingRow.RowId == turn.TurnId
+                        ? existingRow
+                        : new AgentToolInvocationRowViewModel(turn, item, _toolPresentationService, ResolveChildSessionLinksFromStore);
+                    if (!string.IsNullOrWhiteSpace(item.CallId))
+                    {
+                        _toolRowsByCallId[item.CallId] = row;
+                    }
+
+                    desiredRows.Add(row);
+                }
+
+                break;
+
+            default:
+                var textContent = ExtractTextContent(turn);
+                var attachmentRows = ExtractAttachmentViewModels(turn);
+                if (string.IsNullOrWhiteSpace(textContent) && attachmentRows.Count == 0)
+                {
+                    break;
+                }
+
+                AgentTextTranscriptRowViewModel textRow;
+                if (oldTextRows.TryGetValue(turn.TurnId, out var existingTextRow))
+                {
+                    textRow = existingTextRow;
+                    textRow.UpdateContent(textContent);
+                    textRow.ReplaceAttachments(attachmentRows);
+                }
+                else
+                {
+                    textRow = new AgentTextTranscriptRowViewModel(turn, textContent, attachmentRows);
+                }
+
+                _textRowsByTurnId[turn.TurnId] = textRow;
+                desiredRows.Add(textRow);
+                break;
+        }
+    }
+
+    private void ReconcileTranscriptRows(IReadOnlyList<AgentTranscriptRowViewModel> desiredRows)
+    {
+        var desiredRowSet = desiredRows.ToHashSet(ReferenceEqualityComparer.Instance);
+        for (var index = Messages.Count - 1; index >= 0; index--)
+        {
+            if (!desiredRowSet.Contains(Messages[index]))
+            {
+                Messages.RemoveAt(index);
+            }
+        }
+
+        for (var targetIndex = 0; targetIndex < desiredRows.Count; targetIndex++)
+        {
+            var row = desiredRows[targetIndex];
+            var currentIndex = Messages.IndexOf(row);
+            if (currentIndex < 0)
+            {
+                Messages.Insert(targetIndex, row);
+            }
+            else if (currentIndex != targetIndex)
+            {
+                Messages.Move(currentIndex, targetIndex);
+            }
+        }
     }
 
     private void UpdateActivityRowForCurrentState()
@@ -554,6 +677,7 @@ public sealed partial class AgentChatViewModel
         {
             if (_activityRow is null)
             {
+                NotifyTranscriptChanging();
                 _activityRow = new AgentActivityTranscriptRowViewModel(_activityTextBase);
                 Messages.Add(_activityRow);
                 return;
@@ -564,10 +688,12 @@ public sealed partial class AgentChatViewModel
             var index = Messages.IndexOf(_activityRow);
             if (index >= 0 && index != Messages.Count - 1)
             {
+                NotifyTranscriptChanging();
                 Messages.Move(index, Messages.Count - 1);
             }
             else if (index < 0)
             {
+                NotifyTranscriptChanging();
                 Messages.Add(_activityRow);
             }
 
@@ -582,6 +708,7 @@ public sealed partial class AgentChatViewModel
         var activityIndex = Messages.IndexOf(_activityRow);
         if (activityIndex >= 0)
         {
+            NotifyTranscriptChanging();
             Messages.RemoveAt(activityIndex);
         }
 

@@ -230,7 +230,7 @@
                       <TextBlock Classes="mcp-field-label"
                                  Text="Editor tools" />
                       <TextBlock Classes="mcp-field-help"
-                                 Text="Start from a local or remote template, then format before saving." />
+                                 Text="Start from a local or remote template, then format before saving. Timeout examples are optional milliseconds: discoveryTimeout controls server/tool discovery, and toolTimeout controls individual MCP tool calls. Keep, remove, or adjust them for each server." />
                     </StackPanel>
                     <WrapPanel Orientation="Horizontal">
                       <Button Content="Local Template"

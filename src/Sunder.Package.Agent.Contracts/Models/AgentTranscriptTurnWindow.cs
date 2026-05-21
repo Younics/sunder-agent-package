@@ -35,11 +35,14 @@ public sealed class AgentTranscriptTurnWindow(int turnLimit)
     {
         if (_turnsById.Count <= turnLimit)
         {
-            return new AgentTranscriptWindowTrimResult(false, OrderedTurns());
+            return new AgentTranscriptWindowTrimResult(false, OrderedTurns(), []);
         }
 
         var orderedTurns = OrderedTurns();
         var overflowCount = orderedTurns.Length - turnLimit;
+        var trimmedTurns = direction == AgentTranscriptTrimDirection.Oldest
+            ? orderedTurns.Take(overflowCount).ToArray()
+            : orderedTurns.Skip(turnLimit).ToArray();
         var retainedTurns = direction == AgentTranscriptTrimDirection.Oldest
             ? orderedTurns.Skip(overflowCount).ToArray()
             : orderedTurns.Take(turnLimit).ToArray();
@@ -51,7 +54,7 @@ public sealed class AgentTranscriptTurnWindow(int turnLimit)
         }
 
         RecalculateBoundaries();
-        return new AgentTranscriptWindowTrimResult(true, retainedTurns);
+        return new AgentTranscriptWindowTrimResult(true, retainedTurns, trimmedTurns);
     }
 
     public AgentTurnRecord[] OrderedTurns()
@@ -84,7 +87,8 @@ public sealed class AgentTranscriptTurnWindow(int turnLimit)
 
 public readonly record struct AgentTranscriptWindowTrimResult(
     bool Trimmed,
-    IReadOnlyList<AgentTurnRecord> RetainedTurns);
+    IReadOnlyList<AgentTurnRecord> RetainedTurns,
+    IReadOnlyList<AgentTurnRecord> TrimmedTurns);
 
 public enum AgentTranscriptTrimDirection
 {

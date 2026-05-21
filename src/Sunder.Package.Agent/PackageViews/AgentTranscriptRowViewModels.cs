@@ -70,14 +70,26 @@ public sealed class AgentTextTranscriptRowViewModel : AgentTranscriptRowViewMode
 
     public void UpdateContent(string content)
     {
-        if (string.Equals(Content, content, StringComparison.Ordinal))
+        var previousContent = Content;
+        if (string.Equals(previousContent, content, StringComparison.Ordinal))
         {
             return;
         }
 
         Content = content;
-        MarkdownBuilder.Clear();
-        MarkdownBuilder.Append(content);
+        if (content.StartsWith(previousContent, StringComparison.Ordinal))
+        {
+            var suffix = content[previousContent.Length..];
+            if (suffix.Length > 0)
+            {
+                MarkdownBuilder.Append(suffix);
+            }
+        }
+        else
+        {
+            MarkdownBuilder = new ObservableStringBuilder().Append(content);
+        }
+
         OnPropertyChanged(nameof(HasContent));
     }
 

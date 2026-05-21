@@ -8,7 +8,6 @@ namespace Sunder.Package.Agent.Execution.Docker;
 public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packageContext, DockerImageCatalogService? imageCatalogService = null)
 {
     internal const string DefaultImageReference = "agent0ai/agent-zero:latest";
-    internal const string DefaultContainerName = "sunder-agent";
     internal const string DefaultContainerRoot = "/workspace";
     internal const string DefaultShellPath = "/bin/sh";
 
@@ -59,7 +58,7 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
     public string ResolveDefaultHostPath(string containerRoot)
     {
         var relativePath = ToFileStoreRelativePath(containerRoot);
-        return Path.GetFullPath(packageContext.Storage.Files.GetPath(relativePath));
+        return ValidateHostPath(Path.GetFullPath(packageContext.Storage.Files.GetPath(relativePath)));
     }
 
     public void EnsureHostRoots(DockerExecutionWorkspaceConfig config)
@@ -150,7 +149,7 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
     }
 
     internal static string NormalizeHostPath(string hostPath)
-        => Path.GetFullPath(Environment.ExpandEnvironmentVariables(hostPath.Trim()));
+        => ValidateHostPath(Path.GetFullPath(Environment.ExpandEnvironmentVariables(hostPath.Trim())));
 
     private static IReadOnlyDictionary<string, string> NormalizeHostRoots(IReadOnlyDictionary<string, string>? hostRoots, IReadOnlyList<string> allowedRoots)
     {
@@ -247,7 +246,7 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
             return configuredName.Trim();
         }
 
-        return DefaultContainerName;
+        return BuildContainerName(bindingId);
     }
 
     internal static string BuildContainerName(string bindingId)
@@ -260,6 +259,16 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
         => containerName.Length > 0
            && char.IsLetterOrDigit(containerName[0])
            && containerName.All(ch => char.IsLetterOrDigit(ch) || ch is '_' or '.' or '-');
+
+    private static string ValidateHostPath(string hostPath)
+    {
+        if (hostPath.Contains(',', StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Docker host mount paths cannot contain commas.");
+        }
+
+        return hostPath;
+    }
 
     private static string BuildKey(string bindingId) => $"workspace-bindings:{bindingId}:config";
 }

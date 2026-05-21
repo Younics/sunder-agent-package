@@ -123,6 +123,14 @@ public partial class BuilderView : UserControl
         }
     }
 
+    private async void OnEnsureSetupClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is BuilderViewModel viewModel)
+        {
+            await viewModel.EnsureSelectedProjectSetupAsync();
+        }
+    }
+
     private async void OnPublishProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (DataContext is BuilderViewModel viewModel)
