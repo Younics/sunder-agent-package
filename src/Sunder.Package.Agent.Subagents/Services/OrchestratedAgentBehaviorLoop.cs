@@ -12,7 +12,7 @@ public sealed class OrchestratedAgentBehaviorLoop(IPackageExtensionCatalog exten
         "Orchestrated",
         "Enables task delegation to profile-selected subagents while preserving the base agent loop.",
         SubagentConstants.PackageId,
-        ["subagents"]);
+        [SubagentConstants.FeatureKind]);
 
     public ValueTask<AgentBehaviorLoopResult> RunAsync(
         AgentBehaviorLoopContext context,

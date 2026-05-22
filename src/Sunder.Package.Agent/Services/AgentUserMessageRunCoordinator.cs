@@ -16,7 +16,8 @@ public sealed partial class AgentUserMessageRunCoordinator(
     AgentRunEventLogger runEventLogger,
     AgentRunProviderResolver providerResolver,
     AgentBehaviorLoopHostFactory behaviorLoopHostFactory,
-    AgentBehaviorLoopResolver behaviorLoopResolver
+    AgentBehaviorLoopResolver behaviorLoopResolver,
+    AgentSessionTitleService? sessionTitleService = null
 )
 {
     private readonly AgentSessionService _sessionService = sessionService;
@@ -30,6 +31,7 @@ public sealed partial class AgentUserMessageRunCoordinator(
     private readonly AgentBehaviorLoopHostFactory _behaviorLoopHostFactory =
         behaviorLoopHostFactory;
     private readonly AgentBehaviorLoopResolver _behaviorLoopResolver = behaviorLoopResolver;
+    private readonly AgentSessionTitleService? _sessionTitleService = sessionTitleService;
 
     public Task<AgentRunCheckpointRecord> QueueAsync(
         Guid sessionId,
@@ -62,6 +64,8 @@ public sealed partial class AgentUserMessageRunCoordinator(
         var runId = Guid.NewGuid();
         var runStartedAtUtc = DateTimeOffset.UtcNow;
         var runStopwatch = Stopwatch.StartNew();
+        var shouldGenerateSessionTitle =
+            _sessionTitleService?.ShouldGenerateTitleForFirstUserMessage(session) == true;
 
         var workspace = ResolveWorkspace(workspaceId);
         if (workspace is null)
@@ -347,6 +351,16 @@ public sealed partial class AgentUserMessageRunCoordinator(
                     userMessage,
                     storedAttachments
                 );
+        if (shouldGenerateSessionTitle)
+        {
+            _sessionTitleService?.ScheduleTitleFromFirstUserMessage(
+                session,
+                profile,
+                userMessage,
+                runId,
+                nextRevision);
+        }
+
         _runEventLogger.LogRunEvent(
             PackageLogLevel.Debug,
             sessionId,

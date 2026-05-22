@@ -106,7 +106,8 @@ internal sealed class LMStudioChatClient(
 
         var streamStopwatch = System.Diagnostics.Stopwatch.StartNew();
         var contentBuilder = new StringBuilder();
-        var toolCallAccumulator = new StreamingToolCallAccumulator();
+        var toolCallAccumulators = new SortedDictionary<int, StreamingToolCallAccumulator>();
+        var allowMultipleToolCalls = options?.AllowMultipleToolCalls == true;
         var firstEventRecorded = false;
 
         await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
@@ -153,7 +154,7 @@ internal sealed class LMStudioChatClient(
 
             foreach (var toolCallUpdate in update.ToolCallUpdates)
             {
-                toolCallAccumulator.Apply(toolCallUpdate, out var tooManyToolCalls);
+                ApplyToolCallUpdate(toolCallAccumulators, toolCallUpdate, allowMultipleToolCalls, out var tooManyToolCalls);
                 if (tooManyToolCalls)
                 {
                     throw new AgentChatProviderException(
@@ -163,18 +164,18 @@ internal sealed class LMStudioChatClient(
                 }
             }
 
-            if (update.FinishReason == OpenAIChatFinishReason.ToolCalls && toolCallAccumulator.TryBuild(out var completedToolCall))
+            if (update.FinishReason == OpenAIChatFinishReason.ToolCalls && TryBuildToolCalls(toolCallAccumulators, out var completedToolCalls))
             {
                 firstEventRecorded = await RecordFirstEventAsync(firstEventRecorded, "ToolCallRequested", streamStopwatch.ElapsedMilliseconds, cancellationToken);
-                yield return CreateToolCallUpdate(completedToolCall, responseId, messageId, modelId);
+                yield return CreateToolCallUpdate(completedToolCalls, responseId, messageId, modelId);
                 yield break;
             }
         }
 
-        if (toolCallAccumulator.TryBuild(out var finalToolCall))
+        if (TryBuildToolCalls(toolCallAccumulators, out var finalToolCalls))
         {
             firstEventRecorded = await RecordFirstEventAsync(firstEventRecorded, "ToolCallRequested", streamStopwatch.ElapsedMilliseconds, cancellationToken);
-            yield return CreateToolCallUpdate(finalToolCall, responseId, messageId, modelId);
+            yield return CreateToolCallUpdate(finalToolCalls, responseId, messageId, modelId);
             yield break;
         }
 
@@ -250,6 +251,11 @@ internal sealed class LMStudioChatClient(
 
     private static void AddChatMessages(ICollection<OpenAIChatMessage> messages, AIChatMessage message)
     {
+        if (TryAddFunctionCallMessage(messages, message) || TryAddFunctionResultMessages(messages, message))
+        {
+            return;
+        }
+
         var textBuilder = new StringBuilder();
         foreach (var content in message.Contents)
         {
@@ -284,6 +290,38 @@ internal sealed class LMStudioChatClient(
         FlushTextMessage(messages, message.Role, textBuilder);
     }
 
+    private static bool TryAddFunctionCallMessage(ICollection<OpenAIChatMessage> messages, AIChatMessage message)
+    {
+        var functionCalls = message.Contents.OfType<FunctionCallContent>().ToArray();
+        if (functionCalls.Length == 0 || functionCalls.Length != message.Contents.Count)
+        {
+            return false;
+        }
+
+        messages.Add(OpenAIChatMessage.CreateAssistantMessage(functionCalls.Select(functionCall =>
+            ChatToolCall.CreateFunctionToolCall(
+                string.IsNullOrWhiteSpace(functionCall.CallId) ? Guid.NewGuid().ToString("N") : functionCall.CallId,
+                functionCall.Name,
+                BinaryData.FromString(SerializeArguments(functionCall.Arguments ?? new Dictionary<string, object?>(StringComparer.Ordinal))))).ToArray()));
+        return true;
+    }
+
+    private static bool TryAddFunctionResultMessages(ICollection<OpenAIChatMessage> messages, AIChatMessage message)
+    {
+        var functionResults = message.Contents.OfType<FunctionResultContent>().ToArray();
+        if (functionResults.Length == 0 || functionResults.Length != message.Contents.Count)
+        {
+            return false;
+        }
+
+        foreach (var functionResult in functionResults)
+        {
+            messages.Add(OpenAIChatMessage.CreateToolMessage(functionResult.CallId, RenderFunctionResult(functionResult.Result)));
+        }
+
+        return true;
+    }
+
     private static void AppendText(StringBuilder builder, string text)
     {
         if (builder.Length > 0)
@@ -315,7 +353,7 @@ internal sealed class LMStudioChatClient(
     {
         var sdkOptions = new ChatCompletionOptions
         {
-            AllowParallelToolCalls = false,
+            AllowParallelToolCalls = options?.AllowMultipleToolCalls == true,
         };
 
         if (options?.MaxOutputTokens is { } maxOutputTokens)
@@ -355,13 +393,53 @@ internal sealed class LMStudioChatClient(
             })
             : schema.GetRawText();
 
-    private static ChatResponseUpdate CreateToolCallUpdate(AgentToolCallRequest toolCall, string responseId, string messageId, string modelId)
-        => new(AIChatRole.Assistant, [new FunctionCallContent(toolCall.CallId, toolCall.ToolId, ParseArguments(toolCall.ArgumentsJson))])
+    private static ChatResponseUpdate CreateToolCallUpdate(IReadOnlyList<AgentToolCallRequest> toolCalls, string responseId, string messageId, string modelId)
+        => new(AIChatRole.Assistant, toolCalls.Select(toolCall => new FunctionCallContent(toolCall.CallId, toolCall.ToolId, ParseArguments(toolCall.ArgumentsJson))).ToArray())
         {
             ResponseId = responseId,
             MessageId = messageId,
             ModelId = modelId,
         };
+
+    private static void ApplyToolCallUpdate(
+        IDictionary<int, StreamingToolCallAccumulator> accumulators,
+        StreamingChatToolCallUpdate update,
+        bool allowMultipleToolCalls,
+        out bool tooManyToolCalls)
+    {
+        tooManyToolCalls = false;
+        var index = update.Index;
+        if (!accumulators.TryGetValue(index, out var accumulator))
+        {
+            if (!allowMultipleToolCalls && accumulators.Count > 0)
+            {
+                tooManyToolCalls = true;
+                return;
+            }
+
+            accumulator = new StreamingToolCallAccumulator();
+            accumulators[index] = accumulator;
+        }
+
+        accumulator.Apply(update, out tooManyToolCalls);
+    }
+
+    private static bool TryBuildToolCalls(
+        IReadOnlyDictionary<int, StreamingToolCallAccumulator> accumulators,
+        out IReadOnlyList<AgentToolCallRequest> toolCalls)
+    {
+        var completedToolCalls = new List<AgentToolCallRequest>();
+        foreach (var accumulator in accumulators.Values)
+        {
+            if (accumulator.TryBuild(out var toolCall))
+            {
+                completedToolCalls.Add(toolCall);
+            }
+        }
+
+        toolCalls = completedToolCalls;
+        return completedToolCalls.Count > 0;
+    }
 
     private static AgentChatProviderException CreateProviderException(Exception exception)
         => new(

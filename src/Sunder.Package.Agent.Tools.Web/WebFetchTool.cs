@@ -41,7 +41,10 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
           "required": ["url"],
           "additionalProperties": false
         }
-        """);
+        """)
+    {
+        ConcurrencyMode = AgentToolConcurrencyMode.ParallelSafe,
+    };
 
     public AgentToolPresentation? ResolveToolPresentation(AgentToolPresentationRequest request)
     {

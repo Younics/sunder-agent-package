@@ -119,7 +119,7 @@ public sealed class CodexResponsesRequestBuilderTests
     }
 
     [Fact]
-    public void Build_ToolAwareRequest_AddsFunctionToolsWithoutForcingStrictOrParallelCalls()
+    public void Build_ToolAwareRequest_AddsFunctionToolsAndDisablesParallelCallsByDefault()
     {
         using var schemaDocument = JsonDocument.Parse("""
             {
@@ -150,7 +150,7 @@ public sealed class CodexResponsesRequestBuilderTests
         var root = document.RootElement;
         var toolJson = root.GetProperty("tools")[0];
 
-        Assert.False(root.TryGetProperty("parallel_tool_calls", out _));
+        Assert.False(root.GetProperty("parallel_tool_calls").GetBoolean());
         Assert.Equal("auto", root.GetProperty("tool_choice").GetString());
         Assert.Equal("function", toolJson.GetProperty("type").GetString());
         Assert.Equal("read", toolJson.GetProperty("name").GetString());
@@ -159,6 +159,42 @@ public sealed class CodexResponsesRequestBuilderTests
         Assert.Equal(["path"], toolJson.GetProperty("parameters").GetProperty("required").EnumerateArray().Select(item => item.GetString()!).ToArray());
         Assert.Equal(1, request.ToolCount);
         Assert.Equal("auto", request.ToolChoice);
+        Assert.False(request.ParallelToolCalls);
+    }
+
+    [Fact]
+    public void Build_ToolAwareRequest_EnablesParallelCallsWhenAllowed()
+    {
+        using var schemaDocument = JsonDocument.Parse("""
+            {
+              "type": "object",
+              "properties": {
+                "path": { "type": "string" }
+              }
+            }
+            """);
+        var tool = AIFunctionFactory.CreateDeclaration(
+            "read",
+            "Read a file.",
+            schemaDocument.RootElement.Clone(),
+            returnJsonSchema: null);
+
+        var request = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", "openai/gpt-5.5"),
+            [new ChatMessage(ChatRole.User, "Read the file.")],
+            new ChatOptions
+            {
+                ConversationId = "session-123",
+                ToolMode = new AutoChatToolMode(),
+                Tools = [tool],
+                AllowMultipleToolCalls = true,
+            },
+            toolAware: true);
+
+        using var document = JsonDocument.Parse(request.Body);
+
+        Assert.True(document.RootElement.GetProperty("parallel_tool_calls").GetBoolean());
+        Assert.True(request.ParallelToolCalls);
     }
 
     [Fact]

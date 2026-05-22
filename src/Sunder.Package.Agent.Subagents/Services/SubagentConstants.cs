@@ -10,6 +10,8 @@ public static class SubagentConstants
 
     public const string OrchestratedBehaviorLoopId = "orchestrated";
 
+    public const string FeatureKind = "subagents";
+
     public const string TaskToolId = "task";
 
     public const string DelegateTasksToolId = "delegate_tasks";

@@ -42,6 +42,11 @@ public sealed class SubagentFeature(
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (!SupportsSubagentFeature(request.Profile))
+        {
+            return [];
+        }
+
         await Task.CompletedTask;
         return _subagentService.ListSubagents()
             .Select(agent => new AgentProfileSelectableCapabilityDescriptor(
@@ -57,7 +62,7 @@ public sealed class SubagentFeature(
                 SourceDisplayName: SourceDisplayName,
                 GroupId: SubagentConstants.PackageId,
                 GroupDisplayName: SourceDisplayName,
-                GroupDescription: "Delegated specialists available to orchestrated profiles.",
+                GroupDescription: "Delegated specialists available to behavior loops with subagent support.",
                 GroupSortOrder: 40))
             .ToArray();
     }
@@ -68,7 +73,7 @@ public sealed class SubagentFeature(
     {
         cancellationToken.ThrowIfCancellationRequested();
         var enabledSubagents = ListEnabledSubagents(context.Profile, requireUsable: true);
-        if (!IsOrchestratedProfile(context.Profile) || enabledSubagents.Count == 0)
+        if (!SupportsSubagentFeature(context.Profile) || enabledSubagents.Count == 0)
         {
             return [];
         }
@@ -123,8 +128,8 @@ public sealed class SubagentFeature(
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var hasEnabledSubagents = IsOrchestratedProfile(context.Profile)
-                                  && ListEnabledSubagents(context.Profile, requireUsable: true).Count > 0;
+        var hasEnabledSubagents = SupportsSubagentFeature(context.Profile)
+                                   && ListEnabledSubagents(context.Profile, requireUsable: true).Count > 0;
         if (!hasEnabledSubagents)
         {
             return ValueTask.FromResult<AgentToolReadiness?>(null);
@@ -195,7 +200,7 @@ public sealed class SubagentFeature(
     {
         cancellationToken.ThrowIfCancellationRequested();
         var enabledSubagents = ListEnabledSubagents(request.Profile, requireUsable: true);
-        if (!IsOrchestratedProfile(request.Profile) || enabledSubagents.Count == 0)
+        if (!SupportsSubagentFeature(request.Profile) || enabledSubagents.Count == 0)
         {
             return ValueTask.FromResult<IReadOnlyList<AgentSystemPromptBlock>>([]);
         }
@@ -229,9 +234,9 @@ public sealed class SubagentFeature(
         }
 
         var parentProfile = string.IsNullOrWhiteSpace(context.ProfileId) ? null : runtimeCatalog.GetProfile(context.ProfileId);
-        if (!IsOrchestratedProfile(parentProfile))
+        if (!SupportsSubagentFeature(parentProfile))
         {
-            return Error(SubagentConstants.DelegateTasksToolId, "Delegate tasks is only available to profiles using orchestrated behavior.", "task-loop-disabled");
+            return Error(SubagentConstants.DelegateTasksToolId, "Delegate tasks is only available to profiles using a behavior loop with subagent support.", "task-loop-disabled");
         }
 
         if (!TryParseDelegateTasksArgs(request.ArgumentsJson, out var args, out var error))
@@ -331,9 +336,9 @@ public sealed class SubagentFeature(
         }
 
         var parentProfile = string.IsNullOrWhiteSpace(context.ProfileId) ? null : runtimeCatalog.GetProfile(context.ProfileId);
-        if (!IsOrchestratedProfile(parentProfile))
+        if (!SupportsSubagentFeature(parentProfile))
         {
-            return Error(resultToolId, "The task tool is only available to profiles using orchestrated behavior.", "task-loop-disabled");
+            return Error(resultToolId, "The task tool is only available to profiles using a behavior loop with subagent support.", "task-loop-disabled");
         }
 
         if (string.IsNullOrWhiteSpace(args.Prompt) || string.IsNullOrWhiteSpace(args.SubagentType))
@@ -438,9 +443,35 @@ public sealed class SubagentFeature(
             ?.DisplayName;
     }
 
-    private static bool IsOrchestratedProfile(AgentProfileRecord? profile)
-        => profile is not null
-           && string.Equals(profile.BehaviorLoopId, SubagentConstants.OrchestratedBehaviorLoopId, StringComparison.OrdinalIgnoreCase);
+    private bool SupportsSubagentFeature(AgentProfileRecord? profile)
+    {
+        if (profile is null)
+        {
+            return false;
+        }
+
+        var behaviorLoop = ResolveBehaviorLoop(profile);
+        return behaviorLoop?.Descriptor.FeatureKinds?.Any(kind =>
+            string.Equals(kind, SubagentConstants.FeatureKind, StringComparison.OrdinalIgnoreCase)) == true;
+    }
+
+    private IAgentBehaviorLoop? ResolveBehaviorLoop(AgentProfileRecord profile)
+    {
+        var requestedLoopId = string.IsNullOrWhiteSpace(profile.BehaviorLoopId)
+            ? AgentBehaviorLoopIds.Default
+            : profile.BehaviorLoopId.Trim();
+        var requestedSourceId = string.IsNullOrWhiteSpace(profile.BehaviorLoopSourceId)
+            ? null
+            : profile.BehaviorLoopSourceId.Trim();
+        var loops = _extensionCatalog.GetExtensions(PackageExtensionPoints.BehaviorLoops);
+
+        return loops.FirstOrDefault(loop =>
+                   string.Equals(loop.Descriptor.LoopId, requestedLoopId, StringComparison.OrdinalIgnoreCase)
+                   && (requestedSourceId is null
+                       || string.Equals(loop.Descriptor.SourceId, requestedSourceId, StringComparison.OrdinalIgnoreCase)))
+               ?? loops.FirstOrDefault(loop =>
+                   string.Equals(loop.Descriptor.LoopId, AgentBehaviorLoopIds.Default, StringComparison.OrdinalIgnoreCase));
+    }
 
     private static string BuildTaskToolDescription(IReadOnlyList<SubagentRecord> agents)
         => string.Join("\n", [
@@ -466,7 +497,7 @@ public sealed class SubagentFeature(
     private static string BuildRuntimeInstructions(IReadOnlyList<SubagentRecord> agents)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("You are using an orchestrated profile with delegated subagents.");
+        builder.AppendLine("You are using a profile with delegated subagents.");
         builder.AppendLine("Before doing substantial work yourself, compare the user request against the enabled subagent descriptions.");
         builder.AppendLine("If one or more descriptions clearly match independent parts of the request, call the task tool for those parts.");
         builder.AppendLine("Use the parent agent for coordination, synthesis, final user communication, and direct work that does not match any subagent.");

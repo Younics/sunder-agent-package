@@ -16,6 +16,7 @@ public sealed class AgentSystemPromptComposer(IPackageExtensionCatalog extension
         var blocks = new List<AgentSystemPromptBlock>();
         blocks.Add(AgentVisibleResponseGuard.CreateSystemPromptBlock());
         blocks.AddRange(BuildToolPriorityBlocks(request.AvailableTools));
+        blocks.AddRange(BuildToolConcurrencyBlocks(request));
         blocks.AddRange(BuildToolRuntimeInstructionBlocks(request.AvailableTools));
 
         foreach (var contributor in extensionCatalog.GetExtensions(PackageExtensionPoints.SystemPromptContributors)
@@ -117,6 +118,26 @@ public sealed class AgentSystemPromptComposer(IPackageExtensionCatalog extension
                 "Tool Priority",
                 "When multiple tools can satisfy the same need, prefer higher-priority tools first. Use lower-priority tools only when higher-priority tools do not fit the task or cannot complete it.",
                 Priority: 110,
+                Required: true,
+                SourceId: "sunder.package.agent")
+        ];
+    }
+
+    private static IReadOnlyList<AgentSystemPromptBlock> BuildToolConcurrencyBlocks(AgentSystemPromptRequest request)
+    {
+        if (!request.RunCapabilities.SupportsMultipleToolCalls
+            || request.AvailableTools.All(tool => tool.ConcurrencyMode != AgentToolConcurrencyMode.ParallelSafe))
+        {
+            return [];
+        }
+
+        return
+        [
+            new AgentSystemPromptBlock(
+                "tool-concurrency",
+                "Tool Concurrency",
+                "You may request multiple tools in the same assistant turn only when those calls are independent and do not need each other's results. Sunder may run tools marked parallel-safe concurrently. Treat mutating tools such as write, edit, and apply_patch as sequential barriers, and do not include later calls that depend on their results in the same assistant turn.",
+                Priority: 105,
                 Required: true,
                 SourceId: "sunder.package.agent")
         ];

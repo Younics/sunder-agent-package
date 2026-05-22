@@ -43,4 +43,9 @@ public interface IAgentBehaviorLoopRuntime
         AgentToolCallRequest toolCall,
         AgentTurnRecord? assistantTurn,
         CancellationToken cancellationToken = default);
+
+    ValueTask<IReadOnlyList<AgentToolCallOutcome>> InvokeToolsAsync(
+        IReadOnlyList<AgentToolCallRequest> toolCalls,
+        AgentTurnRecord? assistantTurn,
+        CancellationToken cancellationToken = default);
 }

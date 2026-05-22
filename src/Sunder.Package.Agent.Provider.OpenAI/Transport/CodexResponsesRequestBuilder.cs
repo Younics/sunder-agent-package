@@ -36,9 +36,10 @@ internal static class CodexResponsesRequestBuilder
         var instructions = string.IsNullOrWhiteSpace(options?.Instructions) ? null : options.Instructions;
         IReadOnlyList<string>? include = isReasoningModel ? ["reasoning.encrypted_content"] : null;
         var toolChoice = toolAware ? "auto" : null;
+        bool? parallelToolCalls = toolAware ? options?.AllowMultipleToolCalls == true : null;
         var reasoning = BuildReasoningOptions(isReasoningModel, options?.Reasoning);
         var text = ShouldUseLowTextVerbosity(model) ? new CodexTextOptions("low") : null;
-        var shapeFingerprint = BuildShapeFingerprint(model, instructions, tools, toolChoice, include, serviceTier, reasoning, text);
+        var shapeFingerprint = BuildShapeFingerprint(model, instructions, tools, toolChoice, parallelToolCalls, include, serviceTier, reasoning, text);
         var previousResponseId = TryBuildContinuationInput(
             continuationState,
             shapeFingerprint,
@@ -55,6 +56,7 @@ internal static class CodexResponsesRequestBuilder
             Instructions = instructions,
             Tools = toolAware ? tools : null,
             ToolChoice = toolChoice,
+            ParallelToolCalls = parallelToolCalls,
             Stream = true,
             Store = false,
             PreviousResponseId = previousResponseId,
@@ -80,6 +82,7 @@ internal static class CodexResponsesRequestBuilder
             HasReasoningOptions: body.Reasoning is not null,
             HasTextOptions: body.Text is not null,
             ToolChoice: toolChoice,
+            ParallelToolCalls: parallelToolCalls,
             HasPreviousResponseId: previousResponseId is not null,
             ShapeFingerprint: shapeFingerprint,
             ConversationItemFingerprints: conversationItemFingerprints);
@@ -357,6 +360,7 @@ internal static class CodexResponsesRequestBuilder
         string? instructions,
         IReadOnlyList<object> tools,
         string? toolChoice,
+        bool? parallelToolCalls,
         IReadOnlyList<string>? include,
         string? serviceTier,
         CodexReasoningOptions? reasoning,
@@ -366,6 +370,7 @@ internal static class CodexResponsesRequestBuilder
             instructions,
             tools,
             toolChoice,
+            parallelToolCalls,
             include,
             serviceTier,
             reasoning,
@@ -396,6 +401,9 @@ internal static class CodexResponsesRequestBuilder
 
         [JsonPropertyName("tool_choice")]
         public string? ToolChoice { get; init; }
+
+        [JsonPropertyName("parallel_tool_calls")]
+        public bool? ParallelToolCalls { get; init; }
 
         [JsonPropertyName("stream")]
         public required bool Stream { get; init; }
@@ -519,6 +527,7 @@ internal static class CodexResponsesRequestBuilder
         string? Instructions,
         IReadOnlyList<object> Tools,
         string? ToolChoice,
+        bool? ParallelToolCalls,
         IReadOnlyList<string>? Include,
         string? ServiceTier,
         CodexReasoningOptions? Reasoning,
@@ -539,6 +548,7 @@ internal sealed record CodexResponsesRequest(
     bool HasReasoningOptions,
     bool HasTextOptions,
     string? ToolChoice,
+    bool? ParallelToolCalls,
     bool HasPreviousResponseId,
     string ShapeFingerprint,
     IReadOnlyList<string> ConversationItemFingerprints);

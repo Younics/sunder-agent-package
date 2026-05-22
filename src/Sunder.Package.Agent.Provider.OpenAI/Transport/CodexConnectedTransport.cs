@@ -224,6 +224,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
                 ["request.has_text_options"] = request.HasTextOptions,
                 ["request.has_previous_response_id"] = request.HasPreviousResponseId,
                 ["request.tool_choice"] = request.ToolChoice,
+                ["request.parallel_tool_calls"] = request.ParallelToolCalls,
                 ["system_prompt.length"] = options?.Instructions?.Length ?? 0,
             },
             cancellationToken: cancellationToken);

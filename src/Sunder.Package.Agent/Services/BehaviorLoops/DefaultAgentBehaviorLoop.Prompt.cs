@@ -28,8 +28,45 @@ public sealed partial class DefaultAgentBehaviorLoop
             messages.Add(await BuildChatMessageAsync(turn, runCapabilities, cancellationToken).ConfigureAwait(false));
         }
 
-        return messages;
+        return MergeAdjacentToolMessages(messages);
     }
+
+    private static IReadOnlyList<ChatMessage> MergeAdjacentToolMessages(IReadOnlyList<ChatMessage> messages)
+    {
+        if (messages.Count < 2)
+        {
+            return messages;
+        }
+
+        var merged = new List<ChatMessage>(messages.Count);
+        foreach (var message in messages)
+        {
+            if (merged.Count > 0 && CanMergeToolMessages(merged[^1], message))
+            {
+                foreach (var content in message.Contents)
+                {
+                    merged[^1].Contents.Add(content);
+                }
+
+                continue;
+            }
+
+            merged.Add(message);
+        }
+
+        return merged;
+    }
+
+    private static bool CanMergeToolMessages(ChatMessage left, ChatMessage right)
+        => left.Role == right.Role
+           && (left.Role == ChatRole.Assistant && HasOnlyFunctionCalls(left) && HasOnlyFunctionCalls(right)
+               || left.Role == ChatRole.Tool && HasOnlyFunctionResults(left) && HasOnlyFunctionResults(right));
+
+    private static bool HasOnlyFunctionCalls(ChatMessage message)
+        => message.Contents.Count > 0 && message.Contents.All(content => content is FunctionCallContent);
+
+    private static bool HasOnlyFunctionResults(ChatMessage message)
+        => message.Contents.Count > 0 && message.Contents.All(content => content is FunctionResultContent);
 
     private static IReadOnlyList<AgentTurnRecord> BuildPromptTurns(
         IReadOnlyList<AgentTurnRecord> turns,

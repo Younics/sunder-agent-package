@@ -15,6 +15,63 @@
       <ResourceDictionary.MergedDictionaries>
         <ResourceInclude Source="avares://LiveMarkdown.Avalonia/Defaults.axaml" />
       </ResourceDictionary.MergedDictionaries>
+
+      <DataTemplate x:Key="SessionSelectionBoxTemplate"
+                    x:DataType="vm:AgentSessionListItemViewModel">
+        <Grid ColumnDefinitions="*,Auto,Auto"
+              ColumnSpacing="8"
+              MinWidth="0"
+              ToolTip.Tip="{Binding StatusText}">
+          <TextBlock Text="{Binding Title}"
+                     MinWidth="0"
+                     MaxLines="1"
+                     TextTrimming="CharacterEllipsis"
+                     VerticalAlignment="Center" />
+          <Ellipse Grid.Column="1"
+                   Width="8"
+                   Height="8"
+                   Fill="{DynamicResource Sunder.Brush.Accent}"
+                   VerticalAlignment="Center"
+                   IsVisible="{Binding HasUnreadActivity}" />
+          <TextBlock Grid.Column="2"
+                     Text="{Binding StatusBadgeText}"
+                     Foreground="{Binding StatusBrush}"
+                     FontSize="11"
+                     FontWeight="SemiBold"
+                     VerticalAlignment="Center" />
+        </Grid>
+      </DataTemplate>
+
+      <DataTemplate x:Key="SessionDropDownItemTemplate"
+                    x:DataType="vm:AgentSessionListItemViewModel">
+        <Grid ColumnDefinitions="*,Auto"
+              ColumnSpacing="10"
+              MinWidth="0"
+              Margin="0,2"
+              ToolTip.Tip="{Binding StatusText}">
+          <TextBlock Text="{Binding Title}"
+                     MinWidth="0"
+                     MaxLines="3"
+                     TextWrapping="Wrap"
+                     TextTrimming="CharacterEllipsis"
+                     VerticalAlignment="Center" />
+          <StackPanel Grid.Column="1"
+                      Orientation="Horizontal"
+                      Spacing="8"
+                      VerticalAlignment="Center">
+            <Ellipse Width="8"
+                     Height="8"
+                     Fill="{DynamicResource Sunder.Brush.Accent}"
+                     VerticalAlignment="Center"
+                     IsVisible="{Binding HasUnreadActivity}" />
+            <TextBlock Text="{Binding StatusBadgeText}"
+                       Foreground="{Binding StatusBrush}"
+                       FontSize="11"
+                       FontWeight="SemiBold"
+                       VerticalAlignment="Center" />
+          </StackPanel>
+        </Grid>
+      </DataTemplate>
     </ResourceDictionary>
   </UserControl.Resources>
 
@@ -840,65 +897,44 @@
                         MinWidth="0">
               <TextBlock Classes="control-label"
                          Text="Workspace" />
-              <ComboBox ItemsSource="{Binding Workspaces}"
-                        SelectedItem="{Binding SelectedWorkspace, Mode=TwoWay}"
-                        IsEnabled="{Binding HasWorkspaces}"
-                        HorizontalAlignment="Stretch">
-                <ComboBox.ItemTemplate>
+              <shared:SunderComboBox ItemsSource="{Binding Workspaces}"
+                                     SelectedItem="{Binding SelectedWorkspace, Mode=TwoWay}"
+                                     IsEnabled="{Binding HasWorkspaces}"
+                                     HorizontalAlignment="Stretch">
+                <shared:SunderComboBox.ItemTemplate>
                   <DataTemplate x:DataType="m:AgentWorkspaceRecord">
                     <TextBlock Text="{Binding DisplayName}" />
                   </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
+                </shared:SunderComboBox.ItemTemplate>
+              </shared:SunderComboBox>
             </StackPanel>
 
             <StackPanel Grid.Column="1"
                         MinWidth="0">
               <TextBlock Classes="control-label"
                          Text="Agent" />
-              <ComboBox ItemsSource="{Binding Profiles}"
-                        SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
-                        IsEnabled="{Binding HasProfiles}"
-                        HorizontalAlignment="Stretch">
-                <ComboBox.ItemTemplate>
+              <shared:SunderComboBox ItemsSource="{Binding Profiles}"
+                                     SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
+                                     IsEnabled="{Binding HasProfiles}"
+                                     HorizontalAlignment="Stretch">
+                <shared:SunderComboBox.ItemTemplate>
                   <DataTemplate x:DataType="m:AgentProfileRecord">
                     <TextBlock Text="{Binding DisplayName}" />
                   </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
+                </shared:SunderComboBox.ItemTemplate>
+              </shared:SunderComboBox>
             </StackPanel>
 
             <StackPanel Grid.Column="2"
                         MinWidth="0">
               <TextBlock Classes="control-label"
                          Text="Session" />
-              <ComboBox ItemsSource="{Binding Sessions}"
-                        SelectedItem="{Binding SelectedSession, Mode=TwoWay}"
-                        HorizontalAlignment="Stretch">
-                <ComboBox.ItemTemplate>
-                  <DataTemplate x:DataType="vm:AgentSessionListItemViewModel">
-                    <Grid ColumnDefinitions="*,Auto,Auto"
-                          ColumnSpacing="8"
-                          ToolTip.Tip="{Binding StatusText}">
-                      <TextBlock Text="{Binding Title}"
-                                 TextTrimming="CharacterEllipsis"
-                                 VerticalAlignment="Center" />
-                      <Ellipse Grid.Column="1"
-                               Width="8"
-                               Height="8"
-                               Fill="{DynamicResource Sunder.Brush.Accent}"
-                               VerticalAlignment="Center"
-                               IsVisible="{Binding HasUnreadActivity}" />
-                      <TextBlock Grid.Column="2"
-                                 Text="{Binding StatusBadgeText}"
-                                 Foreground="{Binding StatusBrush}"
-                                 FontSize="11"
-                                 FontWeight="SemiBold"
-                                 VerticalAlignment="Center" />
-                    </Grid>
-                  </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
+              <shared:SunderComboBox ItemsSource="{Binding Sessions}"
+                                      SelectedItem="{Binding SelectedSession, Mode=TwoWay}"
+                                      SelectionBoxItemTemplate="{StaticResource SessionSelectionBoxTemplate}"
+                                      ItemTemplate="{StaticResource SessionDropDownItemTemplate}"
+                                      HorizontalAlignment="Stretch">
+              </shared:SunderComboBox>
             </StackPanel>
 
             <Button Grid.Column="3"
@@ -918,16 +954,16 @@
                         MinWidth="0">
               <TextBlock Classes="control-label"
                          Text="Workspace" />
-              <ComboBox ItemsSource="{Binding Workspaces}"
-                        SelectedItem="{Binding SelectedWorkspace, Mode=TwoWay}"
-                        IsEnabled="{Binding HasWorkspaces}"
-                        HorizontalAlignment="Stretch">
-                <ComboBox.ItemTemplate>
+              <shared:SunderComboBox ItemsSource="{Binding Workspaces}"
+                                     SelectedItem="{Binding SelectedWorkspace, Mode=TwoWay}"
+                                     IsEnabled="{Binding HasWorkspaces}"
+                                     HorizontalAlignment="Stretch">
+                <shared:SunderComboBox.ItemTemplate>
                   <DataTemplate x:DataType="m:AgentWorkspaceRecord">
                     <TextBlock Text="{Binding DisplayName}" />
                   </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
+                </shared:SunderComboBox.ItemTemplate>
+              </shared:SunderComboBox>
             </StackPanel>
 
             <StackPanel Grid.Row="1"
@@ -935,16 +971,16 @@
                         MinWidth="0">
               <TextBlock Classes="control-label"
                          Text="Agent" />
-              <ComboBox ItemsSource="{Binding Profiles}"
-                        SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
-                        IsEnabled="{Binding HasProfiles}"
-                        HorizontalAlignment="Stretch">
-                <ComboBox.ItemTemplate>
+              <shared:SunderComboBox ItemsSource="{Binding Profiles}"
+                                     SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
+                                     IsEnabled="{Binding HasProfiles}"
+                                     HorizontalAlignment="Stretch">
+                <shared:SunderComboBox.ItemTemplate>
                   <DataTemplate x:DataType="m:AgentProfileRecord">
                     <TextBlock Text="{Binding DisplayName}" />
                   </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
+                </shared:SunderComboBox.ItemTemplate>
+              </shared:SunderComboBox>
             </StackPanel>
 
             <StackPanel Grid.Row="2"
@@ -952,33 +988,12 @@
                         MinWidth="0">
               <TextBlock Classes="control-label"
                          Text="Session" />
-              <ComboBox ItemsSource="{Binding Sessions}"
-                        SelectedItem="{Binding SelectedSession, Mode=TwoWay}"
-                        HorizontalAlignment="Stretch">
-                <ComboBox.ItemTemplate>
-                  <DataTemplate x:DataType="vm:AgentSessionListItemViewModel">
-                    <Grid ColumnDefinitions="*,Auto,Auto"
-                          ColumnSpacing="8"
-                          ToolTip.Tip="{Binding StatusText}">
-                      <TextBlock Text="{Binding Title}"
-                                 TextTrimming="CharacterEllipsis"
-                                 VerticalAlignment="Center" />
-                      <Ellipse Grid.Column="1"
-                               Width="8"
-                               Height="8"
-                               Fill="{DynamicResource Sunder.Brush.Accent}"
-                               VerticalAlignment="Center"
-                               IsVisible="{Binding HasUnreadActivity}" />
-                      <TextBlock Grid.Column="2"
-                                 Text="{Binding StatusBadgeText}"
-                                 Foreground="{Binding StatusBrush}"
-                                 FontSize="11"
-                                 FontWeight="SemiBold"
-                                 VerticalAlignment="Center" />
-                    </Grid>
-                  </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
+              <shared:SunderComboBox ItemsSource="{Binding Sessions}"
+                                      SelectedItem="{Binding SelectedSession, Mode=TwoWay}"
+                                      SelectionBoxItemTemplate="{StaticResource SessionSelectionBoxTemplate}"
+                                      ItemTemplate="{StaticResource SessionDropDownItemTemplate}"
+                                      HorizontalAlignment="Stretch">
+              </shared:SunderComboBox>
             </StackPanel>
 
             <Button Grid.Row="2"

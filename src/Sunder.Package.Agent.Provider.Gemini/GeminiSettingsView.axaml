@@ -2,10 +2,10 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:vm="using:Sunder.Package.Agent.Provider.OpenAI"
+             xmlns:vm="using:Sunder.Package.Agent.Provider.Gemini"
              xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
-             x:Class="Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsView"
-             x:DataType="vm:OpenAiSettingsViewModel"
+             x:Class="Sunder.Package.Agent.Provider.Gemini.GeminiSettingsView"
+             x:DataType="vm:GeminiSettingsViewModel"
              mc:Ignorable="d">
   <UserControl.Styles>
     <Style Selector="Border.auth-status-pill">
@@ -27,11 +27,6 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
     </Style>
 
-    <Style Selector="Border.auth-status-pill.danger">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Danger.Soft}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Danger}" />
-    </Style>
-
     <Style Selector="TextBlock.auth-status-label">
       <Setter Property="FontSize" Value="12" />
       <Setter Property="FontWeight" Value="SemiBold" />
@@ -40,10 +35,6 @@
 
     <Style Selector="Border.auth-status-pill.success TextBlock.auth-status-label">
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
-    </Style>
-
-    <Style Selector="Border.auth-status-pill.danger TextBlock.auth-status-label">
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.OnDanger}" />
     </Style>
 
     <Style Selector="Border.auth-detail-card">
@@ -63,53 +54,6 @@
           <Grid ColumnDefinitions="*,Auto"
                 ColumnSpacing="12">
             <TextBlock Classes="section-title"
-                       Text="ChatGPT Plus/Pro"
-                       VerticalAlignment="Center" />
-            <Border Grid.Column="1"
-                    Classes="auth-status-pill"
-                    Classes.success="{Binding IsCodexConnected}"
-                    Classes.warning="{Binding IsCodexStatusWarning}"
-                    Classes.danger="{Binding IsCodexStatusError}">
-              <TextBlock Classes="auth-status-label"
-                         Text="{Binding CodexStatusLabel}" />
-            </Border>
-          </Grid>
-
-          <Border Classes="auth-detail-card">
-            <StackPanel Spacing="6">
-              <TextBlock Classes="caption"
-                         Text="Authorize this provider with your ChatGPT Plus or Pro account. This is used when auth mode is set to ChatGPT Plus/Pro."
-                         TextWrapping="Wrap" />
-              <TextBlock Classes="muted"
-                         Text="{Binding CodexStatusDetail}"
-                         TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
-
-          <StackPanel Orientation="Horizontal"
-                      Spacing="10">
-            <Button Classes="primary-action"
-                    Content="Authorize"
-                    Command="{Binding AuthorizeCommand}"
-                    IsEnabled="{Binding CanAuthorize}" />
-            <Button Classes="secondary-action"
-                    Content="Cancel authorization"
-                    Command="{Binding CancelAuthorizationCommand}"
-                    IsEnabled="{Binding CanCancelAuthorization}"
-                    IsVisible="{Binding IsAuthorizing}" />
-            <Button Classes="secondary-action"
-                     Content="Disconnect"
-                     Command="{Binding DisconnectCommand}"
-                     IsEnabled="{Binding CanDisconnect}" />
-          </StackPanel>
-        </StackPanel>
-      </Border>
-
-      <Border Classes="card-surface">
-        <StackPanel Spacing="14">
-          <Grid ColumnDefinitions="*,Auto"
-                ColumnSpacing="12">
-            <TextBlock Classes="section-title"
                        Text="API Key"
                        VerticalAlignment="Center" />
             <Border Grid.Column="1"
@@ -124,7 +68,7 @@
           <Border Classes="auth-detail-card">
             <StackPanel Spacing="6">
               <TextBlock Classes="caption"
-                         Text="A stored API key enables embeddings and is used for chat when auth mode is set to API key. Existing keys remain stored unless you replace them here."
+                         Text="A stored API key enables Gemini chat and embeddings. Existing keys remain stored unless you replace them here."
                          TextWrapping="Wrap" />
               <TextBlock Classes="muted"
                          Text="{Binding ApiKeyStatusDetail}"
@@ -133,14 +77,12 @@
           </Border>
 
           <TextBox Text="{Binding ApiKeyValue}"
-                    PlaceholderText="sk-..." />
-          <StackPanel Orientation="Horizontal"
-                      Spacing="10">
-            <Button Classes="primary-action"
-                    Content="Save API Key"
-                    Command="{Binding SaveCommand}"
-                    IsEnabled="{Binding CanSaveApiKey}" />
-          </StackPanel>
+                   PlaceholderText="AIza..." />
+          <Button Classes="primary-action"
+                  Content="Save API Key"
+                  HorizontalAlignment="Left"
+                  Command="{Binding SaveSettingsCommand}"
+                  IsEnabled="{Binding CanSaveSettings}" />
         </StackPanel>
       </Border>
 
@@ -158,7 +100,7 @@
                                  SelectedItem="{Binding SelectedUtilityModel, Mode=TwoWay}"
                                  HorizontalAlignment="Left">
             <shared:SunderComboBox.ItemTemplate>
-              <DataTemplate x:DataType="vm:OpenAiUtilityModelOption">
+              <DataTemplate x:DataType="vm:GeminiUtilityModelOption">
                 <TextBlock Text="{Binding DisplayName}" />
               </DataTemplate>
             </shared:SunderComboBox.ItemTemplate>
@@ -167,8 +109,8 @@
           <Button Classes="primary-action"
                   Content="Save Utility Model"
                   HorizontalAlignment="Left"
-                  Command="{Binding SaveCommand}"
-                  IsEnabled="{Binding CanSaveApiKey}" />
+                  Command="{Binding SaveSettingsCommand}"
+                  IsEnabled="{Binding CanSaveSettings}" />
         </StackPanel>
       </Border>
     </StackPanel>

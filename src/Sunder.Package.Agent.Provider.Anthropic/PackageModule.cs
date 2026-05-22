@@ -9,6 +9,7 @@ public sealed class PackageModule : ISunderPackageModule
 {
     public void ConfigureServices(IServiceCollection services, IPackageContext context)
     {
+        services.AddTransient<AnthropicSettingsViewModel>();
         services.AddSingleton<AnthropicAgentProvider>();
         services.AddSingleton<IAgentChatProvider>(serviceProvider => serviceProvider.GetRequiredService<AnthropicAgentProvider>());
     }
@@ -16,6 +17,7 @@ public sealed class PackageModule : ISunderPackageModule
     public void RegisterContributions(IPackageContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterConfigurationSchema(AnthropicProviderConfiguration.Schema);
+        registry.RegisterSettingsView<AnthropicSettingsView>();
         registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<AnthropicAgentProvider>());
     }
 }

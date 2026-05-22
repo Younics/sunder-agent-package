@@ -11,6 +11,9 @@ internal sealed class TranscriptScrollCoordinator
     private const double DefaultLoadOlderThreshold = 96;
     private const double DefaultLoadNewerThreshold = 96;
     private const double ViewportLoadThresholdRatio = 0.25;
+    private const int BottomPlacementMaxPasses = 18;
+    private const int BottomPlacementStablePasses = 3;
+    private const int BottomPlacementPostRevealPasses = 6;
 
     private readonly ScrollViewer _scrollViewer;
     private readonly ItemsControl? _itemsControl;
@@ -32,9 +35,12 @@ internal sealed class TranscriptScrollCoordinator
     private bool _isRestoringAnchor;
     private bool _scrollToBottomPending;
     private bool _settledScrollToBottomPending;
+    private bool _bottomPlacementLockActive;
+    private bool _bottomPlacementReleasePending;
     private bool _restoreAnchorPending;
     private bool _loadOlderPending;
     private bool _loadNewerPending;
+    private int _bottomPlacementLockVersion;
     private Action? _pendingSettledScrollCompleted;
     private ScrollAnchor? _pendingAnchor;
 
@@ -188,6 +194,7 @@ internal sealed class TranscriptScrollCoordinator
     public void QueueScrollToBottomAfterLayoutSettles(Action? completed = null)
     {
         _pendingSettledScrollCompleted += completed;
+        BeginBottomPlacementLock();
         if (_settledScrollToBottomPending)
         {
             return;
@@ -206,6 +213,7 @@ internal sealed class TranscriptScrollCoordinator
                 var callback = _pendingSettledScrollCompleted;
                 _pendingSettledScrollCompleted = null;
                 callback?.Invoke();
+                QueueReleaseBottomPlacementLock();
             }
         }, DispatcherPriority.Loaded);
     }
@@ -220,6 +228,13 @@ internal sealed class TranscriptScrollCoordinator
 
         if (change.Property == ScrollViewer.ExtentProperty || change.Property == ScrollViewer.ViewportProperty)
         {
+            if (_bottomPlacementLockActive)
+            {
+                PinToBottom(updateLayout: false);
+                UpdateJumpToLatestVisibility();
+                return;
+            }
+
             UpdateJumpToLatestVisibility();
             if (_isRestoringAnchor || _pendingAnchor is not null || _loadOlderPending || _loadNewerPending)
             {
@@ -235,6 +250,12 @@ internal sealed class TranscriptScrollCoordinator
     {
         if (_isProgrammaticScroll)
         {
+            return;
+        }
+
+        if (_bottomPlacementLockActive)
+        {
+            UpdateJumpToLatestVisibility();
             return;
         }
 
@@ -426,21 +447,87 @@ internal sealed class TranscriptScrollCoordinator
         _shouldAutoScroll = true;
 
         var previousExtentHeight = -1d;
-        for (var pass = 0; pass < 6; pass++)
+        var previousViewportHeight = -1d;
+        var stablePasses = 0;
+        for (var pass = 0; pass < BottomPlacementMaxPasses; pass++)
         {
             await WaitForRenderedContentAsync();
             PinToBottom(updateLayout: false);
 
             var extentHeight = _scrollViewer.Extent.Height;
-            if (pass > 0 && Math.Abs(extentHeight - previousExtentHeight) < 0.5 && IsNearBottom())
+            var viewportHeight = _scrollViewer.Viewport.Height;
+            if (viewportHeight > 0
+                && Math.Abs(extentHeight - previousExtentHeight) < 0.5
+                && Math.Abs(viewportHeight - previousViewportHeight) < 0.5
+                && IsNearBottom())
+            {
+                stablePasses++;
+            }
+            else
+            {
+                stablePasses = 0;
+            }
+
+            if (stablePasses >= BottomPlacementStablePasses)
             {
                 break;
             }
 
             previousExtentHeight = extentHeight;
+            previousViewportHeight = viewportHeight;
         }
 
         ScrollToBottom();
+    }
+
+    private void BeginBottomPlacementLock()
+    {
+        _bottomPlacementLockVersion++;
+        _bottomPlacementLockActive = true;
+        _pendingAnchor = null;
+        _shouldAutoScroll = true;
+        UpdateJumpToLatestVisibility();
+    }
+
+    private void QueueReleaseBottomPlacementLock()
+    {
+        if (_bottomPlacementReleasePending)
+        {
+            return;
+        }
+
+        _bottomPlacementReleasePending = true;
+        var version = _bottomPlacementLockVersion;
+        Dispatcher.UIThread.Post(async () =>
+        {
+            try
+            {
+                for (var pass = 0; pass < BottomPlacementPostRevealPasses; pass++)
+                {
+                    await WaitForRenderedContentAsync();
+                    PinToBottom(updateLayout: false);
+                }
+            }
+            finally
+            {
+                _bottomPlacementReleasePending = false;
+                if (version == _bottomPlacementLockVersion)
+                {
+                    _bottomPlacementLockActive = false;
+                    _shouldAutoScroll = !_hasNewerRows();
+                    if (!_hasNewerRows())
+                    {
+                        _onReachedLatest?.Invoke();
+                    }
+
+                    UpdateJumpToLatestVisibility();
+                }
+                else if (_bottomPlacementLockActive)
+                {
+                    QueueReleaseBottomPlacementLock();
+                }
+            }
+        }, DispatcherPriority.Background);
     }
 
     private void PinToBottom(bool updateLayout)
@@ -689,7 +776,7 @@ internal sealed class TranscriptScrollCoordinator
 
     private void UpdateJumpToLatestVisibility()
     {
-        var isVisible = _hasNewerRows() || !IsNearBottom();
+        var isVisible = !_bottomPlacementLockActive && (_hasNewerRows() || !IsNearBottom());
         if (_isJumpToLatestVisible == isVisible)
         {
             return;

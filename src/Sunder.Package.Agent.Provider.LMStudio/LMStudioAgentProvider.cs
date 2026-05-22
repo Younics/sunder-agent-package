@@ -7,7 +7,7 @@ using AIChatClient = Microsoft.Extensions.AI.IChatClient;
 
 namespace Sunder.Package.Agent.Provider.LMStudio;
 
-public sealed class LMStudioAgentProvider(IPackageContext packageContext) : IAgentChatProvider
+public sealed class LMStudioAgentProvider(IPackageContext packageContext) : IAgentChatProvider, IAgentUtilityModelProvider
 {
     public AgentProviderDescriptor Descriptor { get; } = new(
         "lmstudio",
@@ -54,6 +54,20 @@ public sealed class LMStudioAgentProvider(IPackageContext packageContext) : IAge
         }
     }
 
+    public async ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var configuredModelId = packageContext.Configuration.GetValue(LMStudioProviderConfiguration.UtilityModelKey)?.Trim();
+        if (!string.IsNullOrWhiteSpace(configuredModelId))
+        {
+            return configuredModelId.StartsWith("lmstudio/", StringComparison.OrdinalIgnoreCase)
+                ? configuredModelId
+                : $"lmstudio/{configuredModelId}";
+        }
+
+        return (await GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault()?.ModelId;
+    }
+
     public async ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -96,8 +110,8 @@ public sealed class LMStudioAgentProvider(IPackageContext packageContext) : IAge
         return ValueTask.FromResult(new AgentProviderRunCapabilities(
             SupportsNativeToolCalling: true,
             SupportsStreamingToolCalls: true,
-            SupportsMultipleToolCalls: false,
-            Summary: "LM Studio can expose OpenAI-compatible native tool calls when the loaded model supports them."));
+            SupportsMultipleToolCalls: true,
+            Summary: "LM Studio can expose OpenAI-compatible native tool calls when the loaded model supports them, and Sunder can run parallel-safe tools concurrently."));
     }
 
     public ValueTask<AIChatClient> CreateChatClientAsync(AgentChatClientContext context, CancellationToken cancellationToken = default)

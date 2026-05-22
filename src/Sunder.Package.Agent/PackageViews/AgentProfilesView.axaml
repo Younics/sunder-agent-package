@@ -1,10 +1,11 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:vm="using:Sunder.Package.Agent.PackageViews"
-             xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
-             x:Class="Sunder.Package.Agent.PackageViews.AgentProfilesView"
+              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+              xmlns:vm="using:Sunder.Package.Agent.PackageViews"
+              xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
+              xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
+              x:Class="Sunder.Package.Agent.PackageViews.AgentProfilesView"
              x:DataType="vm:AgentProfilesViewModel"
              mc:Ignorable="d">
 
@@ -310,10 +311,10 @@
                     <StackPanel Spacing="5">
                       <TextBlock Classes="profile-field-label"
                                  Text="Behavior loop" />
-                      <ComboBox ItemsSource="{Binding BehaviorLoops}"
-                                SelectedItem="{Binding SelectedBehaviorLoop, Mode=TwoWay}"
-                                HorizontalAlignment="Stretch">
-                        <ComboBox.ItemTemplate>
+                      <shared:SunderComboBox ItemsSource="{Binding BehaviorLoops}"
+                                            SelectedItem="{Binding SelectedBehaviorLoop, Mode=TwoWay}"
+                                            HorizontalAlignment="Stretch">
+                        <shared:SunderComboBox.ItemTemplate>
                           <DataTemplate x:DataType="vm:BehaviorLoopOption">
                             <StackPanel Spacing="2">
                               <TextBlock Text="{Binding Label}" />
@@ -321,8 +322,8 @@
                                          Text="{Binding Description}" />
                             </StackPanel>
                           </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                      </ComboBox>
+                        </shared:SunderComboBox.ItemTemplate>
+                      </shared:SunderComboBox>
                     </StackPanel>
                   </StackPanel>
                 </Border>
@@ -352,15 +353,15 @@
                                 IsVisible="{Binding ShowChatProviderPicker}">
                       <TextBlock Classes="profile-field-label"
                                  Text="Chat provider" />
-                      <ComboBox ItemsSource="{Binding ChatProviders}"
-                                SelectedItem="{Binding SelectedChatProvider, Mode=TwoWay}"
-                                HorizontalAlignment="Stretch">
-                        <ComboBox.ItemTemplate>
+                      <shared:SunderComboBox ItemsSource="{Binding ChatProviders}"
+                                            SelectedItem="{Binding SelectedChatProvider, Mode=TwoWay}"
+                                            HorizontalAlignment="Stretch">
+                        <shared:SunderComboBox.ItemTemplate>
                           <DataTemplate x:DataType="vm:ProviderOption">
                             <TextBlock Text="{Binding Label}" />
                           </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                      </ComboBox>
+                        </shared:SunderComboBox.ItemTemplate>
+                      </shared:SunderComboBox>
                     </StackPanel>
 
                     <Border Classes="profile-editor-empty-state"
@@ -383,25 +384,25 @@
                                 IsVisible="{Binding ShowChatModelSelection}">
                       <TextBlock Classes="profile-field-label"
                                  Text="Chat model" />
-                      <ComboBox ItemsSource="{Binding ChatModels}"
-                                SelectedItem="{Binding SelectedChatModel, Mode=TwoWay}"
-                                HorizontalAlignment="Stretch">
-                        <ComboBox.ItemTemplate>
+                      <shared:SunderComboBox ItemsSource="{Binding ChatModels}"
+                                            SelectedItem="{Binding SelectedChatModel, Mode=TwoWay}"
+                                            HorizontalAlignment="Stretch">
+                        <shared:SunderComboBox.ItemTemplate>
                           <DataTemplate x:DataType="vm:ModelOption">
                             <TextBlock Text="{Binding Label}" />
                           </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                      </ComboBox>
+                        </shared:SunderComboBox.ItemTemplate>
+                      </shared:SunderComboBox>
                     </StackPanel>
 
                     <StackPanel Spacing="5"
                                 IsVisible="{Binding ShowReasoningOptions}">
                       <TextBlock Classes="profile-field-label"
                                  Text="Reasoning" />
-                      <ComboBox ItemsSource="{Binding ReasoningOptions}"
-                                SelectedItem="{Binding SelectedReasoningOption, Mode=TwoWay}"
-                                HorizontalAlignment="Stretch">
-                        <ComboBox.ItemTemplate>
+                      <shared:SunderComboBox ItemsSource="{Binding ReasoningOptions}"
+                                            SelectedItem="{Binding SelectedReasoningOption, Mode=TwoWay}"
+                                            HorizontalAlignment="Stretch">
+                        <shared:SunderComboBox.ItemTemplate>
                           <DataTemplate x:DataType="vm:ModelReasoningOption">
                             <StackPanel Spacing="2">
                               <TextBlock Text="{Binding Label}" />
@@ -410,8 +411,8 @@
                                          IsVisible="{Binding HasDescription}" />
                             </StackPanel>
                           </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                      </ComboBox>
+                        </shared:SunderComboBox.ItemTemplate>
+                      </shared:SunderComboBox>
                     </StackPanel>
                   </StackPanel>
                 </Border>
@@ -442,15 +443,15 @@
                                 IsVisible="{Binding ShowEmbeddingProviderPicker}">
                       <TextBlock Classes="profile-field-label"
                                  Text="Embedding provider" />
-                      <ComboBox ItemsSource="{Binding EmbeddingProviders}"
-                                SelectedItem="{Binding SelectedEmbeddingProvider, Mode=TwoWay}"
-                                HorizontalAlignment="Stretch">
-                        <ComboBox.ItemTemplate>
+                      <shared:SunderComboBox ItemsSource="{Binding EmbeddingProviders}"
+                                            SelectedItem="{Binding SelectedEmbeddingProvider, Mode=TwoWay}"
+                                            HorizontalAlignment="Stretch">
+                        <shared:SunderComboBox.ItemTemplate>
                           <DataTemplate x:DataType="vm:ProviderOption">
                             <TextBlock Text="{Binding Label}" />
                           </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                      </ComboBox>
+                        </shared:SunderComboBox.ItemTemplate>
+                      </shared:SunderComboBox>
                     </StackPanel>
 
                     <Border Classes="profile-editor-empty-state"
@@ -473,16 +474,16 @@
                                 IsVisible="{Binding ShowEmbeddingModelSelection}">
                       <TextBlock Classes="profile-field-label"
                                  Text="Embedding model" />
-                      <ComboBox ItemsSource="{Binding EmbeddingModels}"
-                                SelectedItem="{Binding SelectedEmbeddingModel, Mode=TwoWay}"
-                                IsEnabled="{Binding CanSelectEmbeddingModel}"
-                                HorizontalAlignment="Stretch">
-                        <ComboBox.ItemTemplate>
+                      <shared:SunderComboBox ItemsSource="{Binding EmbeddingModels}"
+                                            SelectedItem="{Binding SelectedEmbeddingModel, Mode=TwoWay}"
+                                            IsEnabled="{Binding CanSelectEmbeddingModel}"
+                                            HorizontalAlignment="Stretch">
+                        <shared:SunderComboBox.ItemTemplate>
                           <DataTemplate x:DataType="vm:ModelOption">
                             <TextBlock Text="{Binding Label}" />
                           </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                      </ComboBox>
+                        </shared:SunderComboBox.ItemTemplate>
+                      </shared:SunderComboBox>
                     </StackPanel>
                   </StackPanel>
                 </Border>

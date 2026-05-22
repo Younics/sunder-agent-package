@@ -1,10 +1,11 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:vm="using:Sunder.Package.Agent.PackageViews"
-             xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
-             x:Class="Sunder.Package.Agent.PackageViews.AgentWorkspacesView"
+              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+              xmlns:vm="using:Sunder.Package.Agent.PackageViews"
+              xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
+              xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
+              x:Class="Sunder.Package.Agent.PackageViews.AgentWorkspacesView"
              x:DataType="vm:AgentWorkspacesViewModel"
              mc:Ignorable="d">
 
@@ -369,10 +370,10 @@
                             IsVisible="{Binding HasExecutionTargetChoices}">
                   <TextBlock Classes="field-label"
                              Text="Execution target" />
-                  <ComboBox ItemsSource="{Binding ExecutionTargets}"
-                            SelectedItem="{Binding SelectedExecutionTarget, Mode=TwoWay}"
-                            HorizontalAlignment="Stretch">
-                    <ComboBox.ItemTemplate>
+                  <shared:SunderComboBox ItemsSource="{Binding ExecutionTargets}"
+                                         SelectedItem="{Binding SelectedExecutionTarget, Mode=TwoWay}"
+                                         HorizontalAlignment="Stretch">
+                    <shared:SunderComboBox.ItemTemplate>
                       <DataTemplate x:DataType="vm:ExecutionTargetOption">
                         <Grid RowDefinitions="Auto,Auto"
                               RowSpacing="3"
@@ -383,8 +384,8 @@
                                      Classes="field-help" />
                         </Grid>
                       </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
+                    </shared:SunderComboBox.ItemTemplate>
+                  </shared:SunderComboBox>
                 </StackPanel>
 
                 <StackPanel Spacing="5"
@@ -483,11 +484,11 @@
                                       </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                   </Grid>
-                                  <ComboBox ItemsSource="{Binding Options}"
-                                            SelectedItem="{Binding SelectedOption, Mode=TwoWay}"
-                                            HorizontalAlignment="Stretch"
-                                            IsVisible="{Binding HasOptions}">
-                                    <ComboBox.ItemTemplate>
+                                  <shared:SunderComboBox ItemsSource="{Binding Options}"
+                                                        SelectedItem="{Binding SelectedOption, Mode=TwoWay}"
+                                                        HorizontalAlignment="Stretch"
+                                                        IsVisible="{Binding HasOptions}">
+                                    <shared:SunderComboBox.ItemTemplate>
                                       <DataTemplate x:DataType="vm:AgentEditorOptionViewModel">
                                         <StackPanel Spacing="2">
                                           <TextBlock Text="{Binding Label}" />
@@ -496,8 +497,8 @@
                                                      IsVisible="{Binding HasDescription}" />
                                         </StackPanel>
                                       </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                  </ComboBox>
+                                    </shared:SunderComboBox.ItemTemplate>
+                                  </shared:SunderComboBox>
                                 </StackPanel>
                               </DataTemplate>
 

@@ -130,7 +130,9 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
     {
         try
         {
-            var session = _sessionService.CreateSession("New Session");
+            var session = _sessionService.CreateSession(
+                AgentSessionTitleDefaults.CreateNextTitle(ListMainSessions())
+            );
             ReloadSessions(session.SessionId);
             IsEditorActive = true;
             ClearStatus();
@@ -212,6 +214,9 @@ public sealed partial class AgentSessionsViewModel : ObservableObject, IDisposab
     }
 
     private bool CanEditSession() => SelectedSession is not null;
+
+    private IReadOnlyList<AgentSessionRecord> ListMainSessions() =>
+        _sessionService.ListSessions().Where(session => session.ParentSessionId is null).ToArray();
 
     [RelayCommand]
     private void BackToSessionList()

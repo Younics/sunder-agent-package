@@ -25,6 +25,8 @@ internal sealed class AgentBehaviorLoopHost(
     Guid userTurnId,
     Func<bool> isCurrentRun) : IAgentBehaviorLoopRuntime
 {
+    private const int MaxParallelToolExecutions = 4;
+
     private readonly AgentSessionService _sessionService = sessionService;
     private readonly AgentToolService _toolService = toolService;
     private readonly AgentPermissionService _permissionService = permissionService;
@@ -253,7 +255,65 @@ internal sealed class AgentBehaviorLoopHost(
         AgentTurnRecord? assistantTurn,
         CancellationToken cancellationToken = default)
     {
+        var outcomes = await InvokeToolsAsync([toolCall], assistantTurn, cancellationToken);
+        if (outcomes.Count > 0)
+        {
+            return outcomes[0];
+        }
+
+        var failedCheckpoint = SaveCheckpoint(AgentRunStatus.Failed, "Tool invocation produced no outcome.");
+        return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Failed, failedCheckpoint);
+    }
+
+    public async ValueTask<IReadOnlyList<AgentToolCallOutcome>> InvokeToolsAsync(
+        IReadOnlyList<AgentToolCallRequest> toolCalls,
+        AgentTurnRecord? assistantTurn,
+        CancellationToken cancellationToken = default)
+    {
+        if (toolCalls.Count == 0)
+        {
+            return [];
+        }
+
         var availableToolsById = await GetAvailableToolsByIdAsync(cancellationToken);
+        var outcomes = new List<AgentToolCallOutcome>(toolCalls.Count);
+        foreach (var batch in BuildToolExecutionBatches(toolCalls, availableToolsById))
+        {
+            foreach (var toolCall in batch)
+            {
+                var permissionOutcome = await EvaluateToolPermissionAsync(toolCall, assistantTurn, cancellationToken);
+                if (permissionOutcome is not null)
+                {
+                    outcomes.Add(permissionOutcome);
+                    return outcomes;
+                }
+            }
+
+            foreach (var toolCall in batch)
+            {
+                RecordToolCallStart(toolCall);
+            }
+
+            var executedResults = await ExecuteToolBatchAsync(batch, availableToolsById, cancellationToken);
+            foreach (var executedResult in executedResults)
+            {
+                var outcome = await RecordExecutedToolResultAsync(executedResult, cancellationToken);
+                outcomes.Add(outcome);
+                if (outcome.Kind != AgentToolCallOutcomeKind.Executed)
+                {
+                    return outcomes;
+                }
+            }
+        }
+
+        return outcomes;
+    }
+
+    private async Task<AgentToolCallOutcome?> EvaluateToolPermissionAsync(
+        AgentToolCallRequest toolCall,
+        AgentTurnRecord? assistantTurn,
+        CancellationToken cancellationToken)
+    {
         var permissionStopwatch = Stopwatch.StartNew();
         LogEvent(AgentLogLevel.Debug, "tool.permission.start", "Evaluating tool permission.", attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
         {
@@ -346,6 +406,11 @@ internal sealed class AgentBehaviorLoopHost(
             }
         }
 
+        return null;
+    }
+
+    private void RecordToolCallStart(AgentToolCallRequest toolCall)
+    {
         SaveCheckpoint(AgentRunStatus.Running, $"Executing tool '{toolCall.ToolId}'.");
         _sessionService.AppendToolCallTurn(
             _session.SessionId,
@@ -354,16 +419,78 @@ internal sealed class AgentBehaviorLoopHost(
             toolCall.ToolId,
             toolCall.ArgumentsJson);
 
-        var executionStopwatch = Stopwatch.StartNew();
         LogEvent(AgentLogLevel.Information, "tool.execution.start", "Executing tool.", attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["tool.id"] = toolCall.ToolId,
         });
-        var toolResult = await ResolveToolResultAsync(
+    }
+
+    private async Task<IReadOnlyList<ExecutedToolResult>> ExecuteToolBatchAsync(
+        IReadOnlyList<AgentToolCallRequest> batch,
+        IReadOnlyDictionary<string, AgentToolDescriptor> availableToolsById,
+        CancellationToken cancellationToken)
+    {
+        var inFlightReadOnlyResults = new Dictionary<string, Task<AgentToolResult>>(StringComparer.Ordinal);
+        var tasks = new Task<ExecutedToolResult>[batch.Count];
+        for (var index = 0; index < batch.Count; index++)
+        {
+            tasks[index] = ExecuteToolCallForBatchAsync(
+                batch[index],
+                availableToolsById,
+                inFlightReadOnlyResults,
+                cancellationToken);
+        }
+
+        return await Task.WhenAll(tasks);
+    }
+
+    private async Task<ExecutedToolResult> ExecuteToolCallForBatchAsync(
+        AgentToolCallRequest toolCall,
+        IReadOnlyDictionary<string, AgentToolDescriptor> availableToolsById,
+        IDictionary<string, Task<AgentToolResult>> inFlightReadOnlyResults,
+        CancellationToken cancellationToken)
+    {
+        var executionStopwatch = Stopwatch.StartNew();
+
+        var toolResult = await ResolveBatchToolResultAsync(
             toolCall,
             availableToolsById,
-            _readOnlyToolResultCache,
+            inFlightReadOnlyResults,
             cancellationToken);
+        return new ExecutedToolResult(toolCall, toolResult, executionStopwatch.ElapsedMilliseconds);
+    }
+
+    private async Task<AgentToolResult> ResolveBatchToolResultAsync(
+        AgentToolCallRequest toolCall,
+        IReadOnlyDictionary<string, AgentToolDescriptor> availableToolsById,
+        IDictionary<string, Task<AgentToolResult>> inFlightReadOnlyResults,
+        CancellationToken cancellationToken)
+    {
+        if (!IsCacheableReadOnlyTool(toolCall.ToolId, availableToolsById))
+        {
+            return await ResolveToolResultAsync(toolCall, availableToolsById, _readOnlyToolResultCache, cancellationToken);
+        }
+
+        var cacheKey = BuildToolCallCacheKey(toolCall);
+        if (!inFlightReadOnlyResults.TryGetValue(cacheKey, out var primaryResultTask))
+        {
+            primaryResultTask = ResolveToolResultAsync(toolCall, availableToolsById, _readOnlyToolResultCache, cancellationToken);
+            inFlightReadOnlyResults[cacheKey] = primaryResultTask;
+            return await primaryResultTask;
+        }
+
+        var primaryResult = await primaryResultTask;
+        return primaryResult.IsError
+            ? await ResolveToolResultAsync(toolCall, availableToolsById, _readOnlyToolResultCache, cancellationToken)
+            : CreateDuplicateReadOnlyToolResult(toolCall.ToolId, primaryResult);
+    }
+
+    private async Task<AgentToolCallOutcome> RecordExecutedToolResultAsync(
+        ExecutedToolResult executedResult,
+        CancellationToken cancellationToken)
+    {
+        var toolCall = executedResult.ToolCall;
+        var toolResult = executedResult.Result;
         cancellationToken.ThrowIfCancellationRequested();
         if (!IsCurrentRun())
         {
@@ -380,7 +507,7 @@ internal sealed class AgentBehaviorLoopHost(
             toolResult.IsError ? AgentLogLevel.Error : AgentLogLevel.Information,
             toolResult.IsError ? "tool.execution.failed" : "tool.execution.completed",
             toolResult.Summary,
-            executionStopwatch.ElapsedMilliseconds,
+            executedResult.ElapsedMilliseconds,
             new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["tool.id"] = toolCall.ToolId,
@@ -407,6 +534,50 @@ internal sealed class AgentBehaviorLoopHost(
         SaveCheckpoint(AgentRunStatus.Running, $"Tool '{toolCall.ToolId}' completed. Continuing provider execution.");
         return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: toolResult);
     }
+
+    private static IReadOnlyList<IReadOnlyList<AgentToolCallRequest>> BuildToolExecutionBatches(
+        IReadOnlyList<AgentToolCallRequest> toolCalls,
+        IReadOnlyDictionary<string, AgentToolDescriptor> availableToolsById)
+    {
+        var batches = new List<IReadOnlyList<AgentToolCallRequest>>();
+        var parallelBatch = new List<AgentToolCallRequest>();
+
+        foreach (var toolCall in toolCalls)
+        {
+            if (IsParallelSafeTool(toolCall.ToolId, availableToolsById))
+            {
+                parallelBatch.Add(toolCall);
+                if (parallelBatch.Count >= MaxParallelToolExecutions)
+                {
+                    batches.Add(parallelBatch.ToArray());
+                    parallelBatch.Clear();
+                }
+
+                continue;
+            }
+
+            if (parallelBatch.Count > 0)
+            {
+                batches.Add(parallelBatch.ToArray());
+                parallelBatch.Clear();
+            }
+
+            batches.Add([toolCall]);
+        }
+
+        if (parallelBatch.Count > 0)
+        {
+            batches.Add(parallelBatch.ToArray());
+        }
+
+        return batches;
+    }
+
+    private static bool IsParallelSafeTool(
+        string toolId,
+        IReadOnlyDictionary<string, AgentToolDescriptor> availableToolsById)
+        => availableToolsById.TryGetValue(toolId, out var descriptor)
+           && descriptor.ConcurrencyMode == AgentToolConcurrencyMode.ParallelSafe;
 
     public async ValueTask<AgentToolCallOutcome> HandleApprovedToolCallAsync(
         AgentPendingPermissionRequestRecord pending,
@@ -573,5 +744,10 @@ internal sealed class AgentBehaviorLoopHost(
             BackendId: cachedResult.BackendId,
             PresentationPayloadJson: cachedResult.PresentationPayloadJson);
     }
+
+    private sealed record ExecutedToolResult(
+        AgentToolCallRequest ToolCall,
+        AgentToolResult Result,
+        long ElapsedMilliseconds);
 
 }

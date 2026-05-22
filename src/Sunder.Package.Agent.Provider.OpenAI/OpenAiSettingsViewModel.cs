@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -22,6 +23,10 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
         LoadSettings();
     }
 
+    public ObservableCollection<OpenAiUtilityModelOption> UtilityModels { get; } = new(
+        OpenAiProviderConfiguration.UtilityModelOptions.Select(option => new OpenAiUtilityModelOption(option.Value, option.Label))
+    );
+
     public bool HasStoredApiKey => !string.IsNullOrWhiteSpace(_packageContext.Secrets.GetSecret("auth.apiKey"));
 
     public bool CanAuthorize => !IsBusy;
@@ -36,6 +41,9 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
 
     [ObservableProperty]
     private string? _apiKeyValue;
+
+    [ObservableProperty]
+    private OpenAiUtilityModelOption? _selectedUtilityModel;
 
     [ObservableProperty]
     private bool _isBusy;
@@ -233,10 +241,15 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
     private void LoadSettings()
     {
         ApiKeyValue = null;
+        SelectedUtilityModel = ResolveUtilityModelOption(
+            _packageContext.Storage.State.GetValue(OpenAiProviderConfiguration.UtilityModelKey)
+            ?? _packageContext.Configuration.GetValue(OpenAiProviderConfiguration.UtilityModelKey)
+            ?? OpenAiProviderConfiguration.DefaultUtilityModelId
+        );
         _ = RefreshStatusAsync();
     }
 
-    private Task SaveStateAsync()
+    private async Task SaveStateAsync()
     {
         if (!string.IsNullOrWhiteSpace(ApiKeyValue))
         {
@@ -244,6 +257,15 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
             ApiKeyValue = null;
         }
 
-        return Task.CompletedTask;
+        await _packageContext.Storage.State.SetValueAsync(
+            OpenAiProviderConfiguration.UtilityModelKey,
+            SelectedUtilityModel?.ModelId ?? OpenAiProviderConfiguration.DefaultUtilityModelId
+        );
     }
+
+    private OpenAiUtilityModelOption ResolveUtilityModelOption(string? modelId) =>
+        UtilityModels.FirstOrDefault(option => string.Equals(option.ModelId, modelId, StringComparison.OrdinalIgnoreCase))
+        ?? UtilityModels.First(option => option.ModelId == OpenAiProviderConfiguration.DefaultUtilityModelId);
 }
+
+public sealed record OpenAiUtilityModelOption(string ModelId, string DisplayName);

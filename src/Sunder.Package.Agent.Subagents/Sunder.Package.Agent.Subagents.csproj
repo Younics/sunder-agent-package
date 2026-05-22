@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\SunderComboBox.cs" Link="PackageViews\SunderComboBox.cs" />
     <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptScrollCoordinator.cs" Link="PackageViews\TranscriptScrollCoordinator.cs" />
     <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptRowWindow.cs" Link="PackageViews\TranscriptRowWindow.cs" />
     <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptRowPresenter.cs" Link="PackageViews\TranscriptRowPresenter.cs" />

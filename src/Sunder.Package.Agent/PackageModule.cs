@@ -40,6 +40,7 @@ public sealed partial class PackageModule : ISunderPackageModule
         services.AddSingleton<AgentActiveRunRegistry>();
         services.AddSingleton<AgentRunEventLogger>();
         services.AddSingleton<AgentRunProviderResolver>();
+        services.AddSingleton<AgentSessionTitleService>();
         services.AddSingleton<AgentRunStopCoordinator>();
         services.AddSingleton<AgentChildRunSessionService>();
         services.AddSingleton<AgentParentRunContinuationService>();

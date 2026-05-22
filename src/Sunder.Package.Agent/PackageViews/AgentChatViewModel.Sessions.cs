@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Services;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -88,7 +89,7 @@ public sealed partial class AgentChatViewModel
         }
 
         var session = _sessionService.CreateSession(
-            $"{profile.DisplayName} Session {Sessions.Count + 1}",
+            AgentSessionTitleDefaults.CreateNextTitle(ListMainSessions()),
             profileId: profile.ProfileId,
             behaviorLoopId: profile.BehaviorLoopId
         );

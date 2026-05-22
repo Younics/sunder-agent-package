@@ -1,10 +1,11 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:vm="using:Sunder.Package.Agent.Builder"
-             xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
-             x:Class="Sunder.Package.Agent.Builder.BuilderView"
+              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+              xmlns:vm="using:Sunder.Package.Agent.Builder"
+              xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
+              xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
+              x:Class="Sunder.Package.Agent.Builder.BuilderView"
              x:DataType="vm:BuilderViewModel"
              mc:Ignorable="d">
 
@@ -331,17 +332,17 @@
                       <StackPanel Spacing="5">
                         <TextBlock Classes="builder-field-label"
                                    Text="Workspace" />
-                        <ComboBox ItemsSource="{Binding Workspaces}"
-                                  SelectedValue="{Binding SelectedProject.WorkspaceId, Mode=TwoWay}"
-                                  SelectedValueBinding="{Binding WorkspaceId}"
-                                  IsEnabled="{Binding CanEditProjectIdentity}"
-                                  HorizontalAlignment="Stretch">
-                          <ComboBox.ItemTemplate>
+                        <shared:SunderComboBox ItemsSource="{Binding Workspaces}"
+                                              SelectedValue="{Binding SelectedProject.WorkspaceId, Mode=TwoWay}"
+                                              SelectedValueBinding="{Binding WorkspaceId}"
+                                              IsEnabled="{Binding CanEditProjectIdentity}"
+                                              HorizontalAlignment="Stretch">
+                          <shared:SunderComboBox.ItemTemplate>
                             <DataTemplate x:DataType="m:AgentWorkspaceRecord">
                               <TextBlock Text="{Binding DisplayName}" />
                             </DataTemplate>
-                          </ComboBox.ItemTemplate>
-                        </ComboBox>
+                          </shared:SunderComboBox.ItemTemplate>
+                        </shared:SunderComboBox>
                         <TextBlock Classes="builder-field-help"
                                    Text="The project will be created inside the selected workspace's default allowed root." />
                       </StackPanel>

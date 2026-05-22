@@ -1,10 +1,11 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:vm="using:Sunder.Package.Agent.Memory.Semantic.PackageViews"
-             xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
-             x:Class="Sunder.Package.Agent.Memory.Semantic.PackageViews.MemoryInspectorView"
+              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+              xmlns:vm="using:Sunder.Package.Agent.Memory.Semantic.PackageViews"
+              xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
+              xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
+              x:Class="Sunder.Package.Agent.Memory.Semantic.PackageViews.MemoryInspectorView"
              x:DataType="vm:MemoryInspectorViewModel"
              HorizontalAlignment="Stretch"
              VerticalAlignment="Stretch"
@@ -22,14 +23,14 @@
                   FontSize="24"
                   FontWeight="SemiBold"
                   VerticalAlignment="Center" />
-      <ComboBox ItemsSource="{Binding Sessions}"
-                SelectedItem="{Binding SelectedSession, Mode=TwoWay}">
-        <ComboBox.ItemTemplate>
+      <shared:SunderComboBox ItemsSource="{Binding Sessions}"
+                             SelectedItem="{Binding SelectedSession, Mode=TwoWay}">
+        <shared:SunderComboBox.ItemTemplate>
           <DataTemplate x:DataType="m:AgentSessionRecord">
             <TextBlock Text="{Binding Title}" />
           </DataTemplate>
-        </ComboBox.ItemTemplate>
-      </ComboBox>
+        </shared:SunderComboBox.ItemTemplate>
+      </shared:SunderComboBox>
       <TextBox Text="{Binding SearchText, Mode=TwoWay}"
                 PlaceholderText="Search memories" />
       <CheckBox IsChecked="{Binding IncludeInactive, Mode=TwoWay}"
@@ -168,8 +169,8 @@
             <StackPanel Spacing="12"
                         IsVisible="{Binding HasSelection}">
               <TextBlock Text="Category" />
-              <ComboBox ItemsSource="{Binding CategoryOptions}"
-                        SelectedItem="{Binding EditCategory, Mode=TwoWay}" />
+              <shared:SunderComboBox ItemsSource="{Binding CategoryOptions}"
+                                     SelectedItem="{Binding EditCategory, Mode=TwoWay}" />
 
               <TextBlock Text="Content" />
               <TextBox Text="{Binding EditContent, Mode=TwoWay}"

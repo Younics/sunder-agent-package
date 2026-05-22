@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\SunderComboBox.cs" Link="PackageViews\SunderComboBox.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
   </ItemGroup>
 

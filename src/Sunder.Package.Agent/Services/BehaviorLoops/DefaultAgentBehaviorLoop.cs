@@ -46,6 +46,7 @@ public sealed partial class DefaultAgentBehaviorLoop(
                 ? await host.ListReadyToolsAsync(cancellationToken)
                 : [];
             var availableTools = availableRuntimeTools.Select(tool => tool.Descriptor).ToArray();
+            var allowMultipleToolCalls = ShouldAllowMultipleToolCalls(context, availableTools);
             var promptRequest = new AgentSystemPromptRequest(
                 context.Session,
                 context.Profile,
@@ -104,7 +105,7 @@ public sealed partial class DefaultAgentBehaviorLoop(
                 ConversationId = context.Session.SessionId.ToString("N"),
                 Tools = aiTools,
                 ToolMode = aiTools.Count > 0 ? new AutoChatToolMode() : ChatToolMode.None,
-                AllowMultipleToolCalls = ShouldAllowMultipleToolCalls(context),
+                AllowMultipleToolCalls = allowMultipleToolCalls,
                 Reasoning = BuildReasoningOptions(context.ModelVariant),
             };
             var progressGuard = new AgentRunProgressGuard();
@@ -138,7 +139,7 @@ public sealed partial class DefaultAgentBehaviorLoop(
                     break;
                 }
 
-                if (providerCycleResult.ToolCalls.Count > 1 && !ShouldAllowMultipleToolCalls(context))
+                if (providerCycleResult.ToolCalls.Count > 1 && !allowMultipleToolCalls)
                 {
                     assistantTurnState.Turn = host.UpsertAssistantTurn(
                         assistantTurnState.Turn,
@@ -153,10 +154,14 @@ public sealed partial class DefaultAgentBehaviorLoop(
                     return new AgentBehaviorLoopResult(failedCheckpoint, AgentBehaviorLoopCompletionKind.Failed);
                 }
 
-                foreach (var toolCallContent in providerCycleResult.ToolCalls)
+                var toolCalls = providerCycleResult.ToolCalls
+                    .Select(CreateToolCallRequest)
+                    .ToArray();
+                var outcomes = await host.InvokeToolsAsync(toolCalls, assistantTurn: null, cancellationToken);
+                for (var index = 0; index < outcomes.Count; index++)
                 {
-                    var toolCall = CreateToolCallRequest(toolCallContent);
-                    var outcome = await host.InvokeToolAsync(toolCall, assistantTurn: null, cancellationToken);
+                    var toolCall = toolCalls[index];
+                    var outcome = outcomes[index];
                     if (outcome.Kind != AgentToolCallOutcomeKind.Executed)
                     {
                         var terminalResult = new AgentBehaviorLoopResult(
@@ -186,6 +191,19 @@ public sealed partial class DefaultAgentBehaviorLoop(
                             progressFailure.Attributes);
                         return new AgentBehaviorLoopResult(failedCheckpoint, AgentBehaviorLoopCompletionKind.Failed);
                     }
+                }
+
+                if (outcomes.Count < toolCalls.Length)
+                {
+                    var failedTurn = host.UpsertAssistantTurn(null, "### Agent run failed\n\nOne or more requested tool calls did not produce an outcome.");
+                    var failedCheckpoint = host.SaveCheckpoint(AgentRunStatus.Failed, "Tool invocation produced no outcome.");
+                    await host.PublishLifecycleEventAsync(
+                        AgentLifecycleEventKind.RunFailed,
+                        AgentRunStatus.Failed,
+                        triggerTurn: failedTurn,
+                        checkpoint: failedCheckpoint,
+                        cancellationToken: cancellationToken);
+                    return new AgentBehaviorLoopResult(failedCheckpoint, AgentBehaviorLoopCompletionKind.Failed);
                 }
 
                 assistantTurnState.Turn = null;
@@ -574,9 +592,11 @@ public sealed partial class DefaultAgentBehaviorLoop(
         return new AgentBehaviorLoopResult(interruptedCheckpoint, AgentBehaviorLoopCompletionKind.Interrupted);
     }
 
-    private static bool ShouldAllowMultipleToolCalls(AgentBehaviorLoopContext context)
+    private static bool ShouldAllowMultipleToolCalls(
+        AgentBehaviorLoopContext context,
+        IReadOnlyList<AgentToolDescriptor> availableTools)
         => context.RunCapabilities.SupportsMultipleToolCalls
-           && string.Equals(context.Profile.BehaviorLoopId, "orchestrated", StringComparison.OrdinalIgnoreCase);
+           && availableTools.Any(tool => tool.ConcurrencyMode == AgentToolConcurrencyMode.ParallelSafe);
 
     private static bool ShouldFlushAssistantStream(AgentTurnRecord? assistantTurn, TimeSpan elapsed, TimeSpan lastFlushElapsed)
         => assistantTurn is null

@@ -89,7 +89,7 @@ internal sealed class AnthropicChatClient(
         var client = new AnthropicClient { ApiKey = apiKey };
         if (includeTools)
         {
-            await foreach (var update in GetToolAwareResponseAsync(client, parameters, modelId, cancellationToken))
+            await foreach (var update in GetToolAwareResponseAsync(client, parameters, modelId, options?.AllowMultipleToolCalls == true, cancellationToken))
             {
                 yield return update;
             }
@@ -118,6 +118,7 @@ internal sealed class AnthropicChatClient(
         AnthropicClient client,
         MessageCreateParams parameters,
         string modelId,
+        bool allowMultipleToolCalls,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -143,7 +144,7 @@ internal sealed class AnthropicChatClient(
             })
             .ToArray();
 
-        if (toolCalls.Length > 1)
+        if (toolCalls.Length > 1 && !allowMultipleToolCalls)
         {
             throw new AgentChatProviderException(
                 "anthropic-multiple-tool-calls",
@@ -151,15 +152,14 @@ internal sealed class AnthropicChatClient(
                 "anthropic-multiple-tool-calls");
         }
 
-        if (toolCalls.Length == 1)
+        if (toolCalls.Length > 0)
         {
-            var toolCall = toolCalls[0];
             await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", "ToolCallRequested", stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
             yield return new ChatResponseUpdate(AIChatRole.Assistant,
-                [new FunctionCallContent(
+                toolCalls.Select(toolCall => new FunctionCallContent(
                     string.IsNullOrWhiteSpace(toolCall.ID) ? Guid.NewGuid().ToString("N") : toolCall.ID,
                     string.IsNullOrWhiteSpace(toolCall.Name) ? "unknown_tool" : toolCall.Name,
-                    ParseObjectArguments(JsonSerializer.Serialize(toolCall.Input)))])
+                    ParseObjectArguments(JsonSerializer.Serialize(toolCall.Input)))).ToArray())
             {
                 ResponseId = responseId,
                 MessageId = messageId,
@@ -297,11 +297,38 @@ internal sealed class AnthropicChatClient(
 
         if (includeTools && options?.Tools is { Count: > 0 })
         {
-            parameters = parameters with { Tools = BuildTools(options.Tools) };
+            parameters = parameters with
+            {
+                Tools = BuildTools(options.Tools),
+                ToolChoice = new ToolChoiceAuto
+                {
+                    DisableParallelToolUse = options.AllowMultipleToolCalls != true,
+                },
+            };
+        }
+
+        if (BuildOutputConfig(options?.Reasoning) is { } outputConfig)
+        {
+            parameters = parameters with { OutputConfig = outputConfig };
         }
 
         return parameters;
     }
+
+    private static OutputConfig? BuildOutputConfig(ReasoningOptions? reasoning)
+        => ToAnthropicEffort(reasoning?.Effort) is { } effort
+            ? new OutputConfig { Effort = effort }
+            : null;
+
+    private static Effort? ToAnthropicEffort(ReasoningEffort? effort)
+        => effort switch
+        {
+            ReasoningEffort.Low => Effort.Low,
+            ReasoningEffort.Medium => Effort.Medium,
+            ReasoningEffort.High => Effort.High,
+            ReasoningEffort.ExtraHigh => Effort.Xhigh,
+            _ => null,
+        };
 
     private static List<MessageParam> BuildMessages(IEnumerable<AIChatMessage> chatMessages)
     {
@@ -316,6 +343,11 @@ internal sealed class AnthropicChatClient(
 
     private static void AddMessages(ICollection<MessageParam> messages, AIChatMessage message)
     {
+        if (TryAddFunctionCallMessage(messages, message) || TryAddFunctionResultMessage(messages, message))
+        {
+            return;
+        }
+
         var textBuilder = new StringBuilder();
         var userBlocks = message.Role == AIChatRole.User ? new List<ContentBlockParam>() : null;
         foreach (var content in message.Contents)
@@ -373,6 +405,48 @@ internal sealed class AnthropicChatClient(
         }
 
         FlushMessage(messages, message.Role, textBuilder, userBlocks);
+    }
+
+    private static bool TryAddFunctionCallMessage(ICollection<MessageParam> messages, AIChatMessage message)
+    {
+        var functionCalls = message.Contents.OfType<FunctionCallContent>().ToArray();
+        if (functionCalls.Length == 0 || functionCalls.Length != message.Contents.Count)
+        {
+            return false;
+        }
+
+        messages.Add(new MessageParam
+        {
+            Role = Role.Assistant,
+            Content = functionCalls.Select(functionCall => (ContentBlockParam)new ToolUseBlockParam
+            {
+                ID = string.IsNullOrWhiteSpace(functionCall.CallId) ? Guid.NewGuid().ToString("N") : functionCall.CallId,
+                Name = functionCall.Name,
+                Input = ToJsonElementMap(functionCall.Arguments),
+            }).ToList(),
+        });
+        return true;
+    }
+
+    private static bool TryAddFunctionResultMessage(ICollection<MessageParam> messages, AIChatMessage message)
+    {
+        var functionResults = message.Contents.OfType<FunctionResultContent>().ToArray();
+        if (functionResults.Length == 0 || functionResults.Length != message.Contents.Count)
+        {
+            return false;
+        }
+
+        messages.Add(new MessageParam
+        {
+            Role = Role.User,
+            Content = functionResults.Select(functionResult => (ContentBlockParam)new ToolResultBlockParam
+            {
+                ToolUseID = functionResult.CallId,
+                Content = RenderFunctionResult(functionResult.Result),
+                IsError = functionResult.Exception is not null,
+            }).ToList(),
+        });
+        return true;
     }
 
     private static void FlushMessage(

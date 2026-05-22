@@ -37,6 +37,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     );
     private readonly AgentTranscriptTurnWindow _transcriptTurnWindow = new(TranscriptVisibleRowLimit * 2);
     private readonly Dictionary<Guid, AgentTurnRecord> _pendingTranscriptTurnsByTurnId = new();
+    private readonly object _pendingSendSync = new();
+    private readonly HashSet<Guid> _pendingSendSessionIds = [];
     private AgentSessionListItemViewModel? _observedSelectedSession;
     private AgentActivityTranscriptRowViewModel? _activityRow;
     private CancellationTokenSource? _transcriptRefreshCts;
@@ -114,9 +116,12 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     public bool IsSelectedSessionRunActive => SelectedSession?.IsRunActive == true;
 
     public bool IsSelectedSessionRunInactive =>
-        SelectedSession is not null && !IsSelectedSessionRunActive;
+        SelectedSession is not null
+        && !IsSelectedSessionRunActive
+        && !IsSendPending(SelectedSession.SessionId);
 
-    public bool ShowSendAction => IsSelectedSessionRunInactive || IsRollbackPending;
+    public bool ShowSendAction =>
+        !IsSelectedSessionSendPending() && (IsSelectedSessionRunInactive || IsRollbackPending);
 
     public bool ShowStopAction => IsSelectedSessionRunActive && !IsRollbackPending;
 
@@ -380,7 +385,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private bool CanClearComposer() =>
         IsRollbackPending || !string.IsNullOrEmpty(DraftMessage) || PendingAttachments.Count > 0;
 
-    [RelayCommand(CanExecute = nameof(CanSendMessage))]
+    [RelayCommand(CanExecute = nameof(CanSendMessage), AllowConcurrentExecutions = true)]
     private async Task SendMessageAsync()
     {
         var selectedSession = SelectedSession;
@@ -400,8 +405,17 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var message = DraftMessage.Trim();
-        if (string.IsNullOrWhiteSpace(message) && PendingAttachments.Count == 0)
+        var sessionId = selectedSession.SessionId;
+        var workspaceId = workspace.WorkspaceId;
+        var draftSnapshot = DraftMessage;
+        var message = draftSnapshot.Trim();
+        var attachmentIds = PendingAttachments
+            .Select(attachment => attachment.AttachmentId)
+            .ToArray();
+        var attachments = PendingAttachments
+            .Select(attachment => attachment.UploadRequest)
+            .ToArray();
+        if (string.IsNullOrWhiteSpace(message) && attachments.Length == 0)
         {
             return;
         }
@@ -413,6 +427,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             return;
         }
 
+        var profileId = profile.ProfileId;
         var chatBinding = _profileService.GetChatBinding(profile.ProfileId);
         if (
             string.IsNullOrWhiteSpace(chatBinding?.ProviderId)
@@ -426,73 +441,171 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var readiness = await _profileService.GetChatProviderReadinessAsync(chatBinding.ProviderId);
-        if (readiness is null)
+        var rollbackAnchorTurnId = PendingRollbackTurnId;
+        if (!TryBeginPendingSend(sessionId))
         {
             ApplySessionStatus(
                 selectedSession,
-                "The selected provider is unavailable. Review package status and profile configuration before chatting."
+                "A message is already being sent for this session."
             );
             return;
         }
 
-        if (readiness.Status != AgentProviderReadinessStatus.Ready)
+        try
         {
-            ApplySessionStatus(selectedSession, readiness.Message);
-            return;
-        }
-
-        var sessionId = selectedSession.SessionId;
-        var rollbackAnchorTurnId = PendingRollbackTurnId;
-        var attachments = PendingAttachments
-            .Select(attachment => attachment.UploadRequest)
-            .ToArray();
-        selectedSession.DraftMessage = string.Empty;
-        if (SelectedSession?.SessionId == sessionId)
-        {
-            DraftMessage = string.Empty;
-        }
-
-        ClearRollbackStateOnly();
-        ClearPendingAttachments();
-
-        if (rollbackAnchorTurnId is { } anchorTurnId)
-        {
-            await _runCoordinator.RollbackAndQueueUserMessageAsync(
-                sessionId,
-                anchorTurnId,
-                profile.ProfileId,
-                message,
-                workspace.WorkspaceId,
-                attachments
+            var readiness = await _profileService.GetChatProviderReadinessAsync(
+                chatBinding.ProviderId
             );
-        }
-        else
-        {
-            await _runCoordinator.QueueUserMessageAsync(
-                sessionId,
-                profile.ProfileId,
-                message,
-                workspace.WorkspaceId,
-                attachments
-            );
-        }
+            if (readiness is null)
+            {
+                ApplySessionStatus(
+                    selectedSession,
+                    "The selected provider is unavailable. Review package status and profile configuration before chatting."
+                );
+                return;
+            }
 
-        if (SelectedSession?.SessionId == sessionId)
-        {
-            ReloadPendingPermissionRequests();
-            SyncSelectedSessionState(sessionId);
+            if (readiness.Status != AgentProviderReadinessStatus.Ready)
+            {
+                ApplySessionStatus(selectedSession, readiness.Message);
+                return;
+            }
+
+            ClearSubmittedComposerState(
+                selectedSession,
+                sessionId,
+                draftSnapshot,
+                attachmentIds,
+                rollbackAnchorTurnId
+            );
+
+            if (rollbackAnchorTurnId is { } anchorTurnId)
+            {
+                await _runCoordinator.RollbackAndQueueUserMessageAsync(
+                    sessionId,
+                    anchorTurnId,
+                    profileId,
+                    message,
+                    workspaceId,
+                    attachments
+                );
+            }
+            else
+            {
+                await _runCoordinator.QueueUserMessageAsync(
+                    sessionId,
+                    profileId,
+                    message,
+                    workspaceId,
+                    attachments
+                );
+            }
+
+            if (SelectedSession?.SessionId == sessionId)
+            {
+                ReloadPendingPermissionRequests();
+                SyncSelectedSessionState(sessionId);
+            }
+            else
+            {
+                UpdateSessionState(sessionId, markUnread: true);
+            }
         }
-        else
+        finally
         {
-            UpdateSessionState(sessionId, markUnread: true);
+            EndPendingSend(sessionId);
         }
     }
 
     private bool CanSendMessage() =>
         CanUseChat
+        && !IsSelectedSessionSendPending()
         && (IsSelectedSessionRunInactive || IsRollbackPending)
         && (!string.IsNullOrWhiteSpace(DraftMessage) || PendingAttachments.Count > 0);
+
+    private void ClearSubmittedComposerState(
+        AgentSessionListItemViewModel submittedSession,
+        Guid sessionId,
+        string draftSnapshot,
+        IReadOnlyList<Guid> attachmentIds,
+        Guid? rollbackAnchorTurnId
+    )
+    {
+        if (string.Equals(submittedSession.DraftMessage, draftSnapshot, StringComparison.Ordinal))
+        {
+            submittedSession.DraftMessage = string.Empty;
+        }
+
+        if (SelectedSession?.SessionId != sessionId)
+        {
+            return;
+        }
+
+        if (string.Equals(DraftMessage, draftSnapshot, StringComparison.Ordinal))
+        {
+            DraftMessage = string.Empty;
+        }
+
+        if (
+            PendingAttachments.Select(attachment => attachment.AttachmentId)
+                .SequenceEqual(attachmentIds)
+        )
+        {
+            ClearPendingAttachments();
+        }
+
+        if (rollbackAnchorTurnId is not null && PendingRollbackTurnId == rollbackAnchorTurnId)
+        {
+            ClearRollbackStateOnly();
+        }
+    }
+
+    private bool IsSelectedSessionSendPending() =>
+        SelectedSession is not null && IsSendPending(SelectedSession.SessionId);
+
+    private bool IsSendPending(Guid sessionId)
+    {
+        lock (_pendingSendSync)
+        {
+            return _pendingSendSessionIds.Contains(sessionId);
+        }
+    }
+
+    private bool TryBeginPendingSend(Guid sessionId)
+    {
+        lock (_pendingSendSync)
+        {
+            if (!_pendingSendSessionIds.Add(sessionId))
+            {
+                return false;
+            }
+        }
+
+        NotifySendPendingStateChanged(sessionId);
+        return true;
+    }
+
+    private void EndPendingSend(Guid sessionId)
+    {
+        var removed = false;
+        lock (_pendingSendSync)
+        {
+            removed = _pendingSendSessionIds.Remove(sessionId);
+        }
+
+        if (removed)
+        {
+            NotifySendPendingStateChanged(sessionId);
+        }
+    }
+
+    private void NotifySendPendingStateChanged(Guid sessionId)
+    {
+        if (SelectedSession?.SessionId == sessionId)
+        {
+            NotifySelectedSessionRunStateChanged();
+        }
+    }
 
     [RelayCommand]
     private async Task StopRunAsync()

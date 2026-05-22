@@ -37,7 +37,10 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
           "required": ["query"],
           "additionalProperties": false
         }
-        """);
+        """)
+    {
+        ConcurrencyMode = AgentToolConcurrencyMode.Sequential,
+    };
 
     public AgentToolPresentation? ResolveToolPresentation(AgentToolPresentationRequest request)
     {

@@ -5,9 +5,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
     <PackageReference Include="OpenAI" />
     <ProjectReference Include="..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj" Condition="Exists('..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj')" />
     <PackageReference Include="Sunder.Sdk" Condition="!Exists('..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj')" />

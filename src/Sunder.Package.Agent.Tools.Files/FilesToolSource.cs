@@ -15,12 +15,12 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
 
     private static readonly AgentToolDescriptor[] Descriptors =
     [
-        new("read", "Read File", "Read a file or directory from the selected workspace.", IsReadOnly: true, ArgumentsJsonSchema: ReadSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: "Workspace Files", RuntimeInstructions: ReadInstructions, Priority: AgentToolPriority.Medium),
+        new("read", "Read File", "Read a file or directory from the selected workspace.", IsReadOnly: true, ArgumentsJsonSchema: ReadSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: "Workspace Files", RuntimeInstructions: ReadInstructions, Priority: AgentToolPriority.Medium) { ConcurrencyMode = AgentToolConcurrencyMode.ParallelSafe },
         new("write", "Write File", "Create or overwrite a file in the selected workspace.", IsReadOnly: false, ArgumentsJsonSchema: WriteSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: "Workspace Files", RuntimeInstructions: WriteInstructions, Priority: AgentToolPriority.Medium),
         new("edit", "Edit File", "Modify an existing file in the selected workspace using exact string replacement.", IsReadOnly: false, ArgumentsJsonSchema: EditSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: "Workspace Files", RuntimeInstructions: EditInstructions, Priority: AgentToolPriority.Medium),
         new("apply_patch", "Apply Patch", "Apply a structured patch to files in the selected workspace.", IsReadOnly: false, ArgumentsJsonSchema: ApplyPatchSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: "Workspace Files", RuntimeInstructions: ApplyPatchInstructions, Priority: AgentToolPriority.Medium),
-        new("grep", "Grep", "Search file contents in the selected workspace using regular expressions.", IsReadOnly: true, ArgumentsJsonSchema: GrepSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: "Workspace Files", RuntimeInstructions: GrepInstructions, Priority: AgentToolPriority.Medium),
-        new("glob", "Glob", "Find files in the selected workspace by glob pattern.", IsReadOnly: true, ArgumentsJsonSchema: GlobSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: "Workspace Files", RuntimeInstructions: GlobInstructions, Priority: AgentToolPriority.Medium),
+        new("grep", "Grep", "Search file contents in the selected workspace using regular expressions.", IsReadOnly: true, ArgumentsJsonSchema: GrepSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: "Workspace Files", RuntimeInstructions: GrepInstructions, Priority: AgentToolPriority.Medium) { ConcurrencyMode = AgentToolConcurrencyMode.ParallelSafe },
+        new("glob", "Glob", "Find files in the selected workspace by glob pattern.", IsReadOnly: true, ArgumentsJsonSchema: GlobSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: "Workspace Files", RuntimeInstructions: GlobInstructions, Priority: AgentToolPriority.Medium) { ConcurrencyMode = AgentToolConcurrencyMode.ParallelSafe },
     ];
 
     public string SourceId => "workspace-files";

@@ -24,6 +24,7 @@ internal static class CodexResponsesStreamParser
         var toolCallsByIndex = new Dictionary<int, StreamingToolCallAccumulator>();
         var modelId = options?.ModelId ?? context.ModelId;
         var currentResponseId = responseId;
+        var allowMultipleToolCalls = options?.AllowMultipleToolCalls == true;
 
         while (true)
         {
@@ -74,7 +75,7 @@ internal static class CodexResponsesStreamParser
                     break;
 
                 case "response.output_item.added":
-                    RegisterStreamingToolCall(root, toolCallsByIndex, out var tooManyToolCalls);
+                    RegisterStreamingToolCall(root, toolCallsByIndex, allowMultipleToolCalls, out var tooManyToolCalls);
                     if (tooManyToolCalls)
                     {
                         throw new AgentChatProviderException(
@@ -92,7 +93,10 @@ internal static class CodexResponsesStreamParser
                     if (TryBuildCompletedStreamingToolCall(root, toolCallsByIndex, out var completedToolCall))
                     {
                         yield return CreateToolCallUpdate(completedToolCall!, currentResponseId, messageId, modelId);
-                        yield break;
+                        if (!allowMultipleToolCalls)
+                        {
+                            yield break;
+                        }
                     }
                     break;
 
@@ -155,6 +159,7 @@ internal static class CodexResponsesStreamParser
     private static void RegisterStreamingToolCall(
         JsonElement root,
         Dictionary<int, StreamingToolCallAccumulator> toolCallsByIndex,
+        bool allowMultipleToolCalls,
         out bool tooManyToolCalls)
     {
         tooManyToolCalls = false;
@@ -176,7 +181,7 @@ internal static class CodexResponsesStreamParser
 
         if (!toolCallsByIndex.TryGetValue(outputIndex, out var accumulator))
         {
-            if (toolCallsByIndex.Count > 0)
+            if (!allowMultipleToolCalls && toolCallsByIndex.Count > 0)
             {
                 tooManyToolCalls = true;
                 return;
@@ -233,6 +238,13 @@ internal static class CodexResponsesStreamParser
             return false;
         }
 
+        if (accumulator.Completed)
+        {
+            return false;
+        }
+
+        accumulator.Completed = true;
+
         toolCall = new CodexToolCall(
             accumulator.CallId ?? Guid.NewGuid().ToString("N"),
             accumulator.ToolId,
@@ -281,6 +293,8 @@ internal static class CodexResponsesStreamParser
         public string? ToolId { get; set; }
 
         public StringBuilder ArgumentsBuilder { get; } = new();
+
+        public bool Completed { get; set; }
     }
 
     private sealed record CodexToolCall(string CallId, string ToolId, string ArgumentsJson);

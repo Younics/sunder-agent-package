@@ -105,7 +105,7 @@ internal sealed class GeminiChatClient(
 
         if (includeTools)
         {
-            await foreach (var update in GetToolAwareResponseAsync(client, contents, config, modelId, cancellationToken))
+            await foreach (var update in GetToolAwareResponseAsync(client, contents, config, modelId, options?.AllowMultipleToolCalls == true, cancellationToken))
             {
                 yield return update;
             }
@@ -135,6 +135,7 @@ internal sealed class GeminiChatClient(
         List<GenAIContent> contents,
         GenerateContentConfig config,
         string modelId,
+        bool allowMultipleToolCalls,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -155,7 +156,7 @@ internal sealed class GeminiChatClient(
 
         var responseId = Guid.NewGuid().ToString("N");
         var messageId = responseId;
-        if (response.FunctionCalls is { Count: > 1 })
+        if (response.FunctionCalls is { Count: > 1 } && !allowMultipleToolCalls)
         {
             throw new AgentChatProviderException(
                 "gemini-multiple-tool-calls",
@@ -163,15 +164,16 @@ internal sealed class GeminiChatClient(
                 "gemini-multiple-tool-calls");
         }
 
-        if (response.FunctionCalls is { Count: 1 })
+        if (response.FunctionCalls is { Count: > 0 })
         {
-            var functionCall = response.FunctionCalls[0];
-            await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", "ToolCallRequested", stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
-            yield return new ChatResponseUpdate(AIChatRole.Assistant,
-                [new FunctionCallContent(
+            var functionCalls = response.FunctionCalls
+                .Select(functionCall => new FunctionCallContent(
                     functionCall.Id ?? Guid.NewGuid().ToString("N"),
                     functionCall.Name ?? "unknown_tool",
-                    ParseObjectArguments(JsonSerializer.Serialize(functionCall.Args ?? new Dictionary<string, object>())))])
+                    ParseObjectArguments(JsonSerializer.Serialize(functionCall.Args ?? new Dictionary<string, object>()))))
+                .ToArray();
+            await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", "ToolCallRequested", stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
+            yield return new ChatResponseUpdate(AIChatRole.Assistant, functionCalls)
             {
                 ResponseId = responseId,
                 MessageId = messageId,
@@ -294,6 +296,11 @@ internal sealed class GeminiChatClient(
 
     private static void AddContents(ICollection<GenAIContent> contents, AIChatMessage message)
     {
+        if (TryAddFunctionCallContent(contents, message) || TryAddFunctionResultContent(contents, message))
+        {
+            return;
+        }
+
         var textBuilder = new StringBuilder();
         foreach (var content in message.Contents)
         {
@@ -364,6 +371,54 @@ internal sealed class GeminiChatClient(
         FlushTextContent(contents, message.Role, textBuilder);
     }
 
+    private static bool TryAddFunctionCallContent(ICollection<GenAIContent> contents, AIChatMessage message)
+    {
+        var functionCalls = message.Contents.OfType<FunctionCallContent>().ToArray();
+        if (functionCalls.Length == 0 || functionCalls.Length != message.Contents.Count)
+        {
+            return false;
+        }
+
+        contents.Add(new GenAIContent
+        {
+            Role = "model",
+            Parts = functionCalls.Select(functionCall => new Part
+            {
+                FunctionCall = new FunctionCall
+                {
+                    Id = functionCall.CallId,
+                    Name = functionCall.Name,
+                    Args = ToObjectMap(functionCall.Arguments),
+                }
+            }).ToList(),
+        });
+        return true;
+    }
+
+    private static bool TryAddFunctionResultContent(ICollection<GenAIContent> contents, AIChatMessage message)
+    {
+        var functionResults = message.Contents.OfType<FunctionResultContent>().ToArray();
+        if (functionResults.Length == 0 || functionResults.Length != message.Contents.Count)
+        {
+            return false;
+        }
+
+        contents.Add(new GenAIContent
+        {
+            Role = "user",
+            Parts = functionResults.Select(functionResult => new Part
+            {
+                FunctionResponse = new FunctionResponse
+                {
+                    Id = functionResult.CallId,
+                    Name = null,
+                    Response = BuildFunctionResponsePayload(functionResult),
+                }
+            }).ToList(),
+        });
+        return true;
+    }
+
     private static void AppendText(StringBuilder builder, string text)
     {
         if (builder.Length > 0)
@@ -401,6 +456,11 @@ internal sealed class GeminiChatClient(
             };
         }
 
+        if (BuildThinkingConfig(options?.Reasoning) is { } thinkingConfig)
+        {
+            config.ThinkingConfig = thinkingConfig;
+        }
+
         if (includeTools && options?.Tools is { Count: > 0 })
         {
             config.Tools =
@@ -429,6 +489,16 @@ internal sealed class GeminiChatClient(
 
         return config;
     }
+
+    private static ThinkingConfig? BuildThinkingConfig(ReasoningOptions? reasoning)
+        => reasoning?.Effort switch
+        {
+            ReasoningEffort.None => new ThinkingConfig { ThinkingBudget = 0 },
+            ReasoningEffort.Low => new ThinkingConfig { ThinkingLevel = ThinkingLevel.Low },
+            ReasoningEffort.Medium => new ThinkingConfig { ThinkingLevel = ThinkingLevel.Medium },
+            ReasoningEffort.High or ReasoningEffort.ExtraHigh => new ThinkingConfig { ThinkingLevel = ThinkingLevel.High },
+            _ => null,
+        };
 
     private static JsonElement ParseJsonElement(JsonElement schema)
     {

@@ -1,9 +1,10 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:vm="using:Sunder.Package.Agent.PackageViews"
-             x:Class="Sunder.Package.Agent.PackageViews.AgentPermissionsView"
+              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+              xmlns:vm="using:Sunder.Package.Agent.PackageViews"
+              xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
+              x:Class="Sunder.Package.Agent.PackageViews.AgentPermissionsView"
              x:DataType="vm:AgentPermissionsViewModel"
              mc:Ignorable="d">
   <Grid RowDefinitions="Auto,*,Auto"
@@ -50,9 +51,9 @@
                 <TextBlock Grid.Column="2"
                            Text="{Binding DefaultDecision}"
                            VerticalAlignment="Center" />
-                <ComboBox Grid.Column="3"
-                          ItemsSource="{Binding Decisions}"
-                          SelectedItem="{Binding SelectedDecision, Mode=TwoWay}" />
+                <shared:SunderComboBox Grid.Column="3"
+                                       ItemsSource="{Binding Decisions}"
+                                       SelectedItem="{Binding SelectedDecision, Mode=TwoWay}" />
               </Grid>
             </DataTemplate>
           </ListBox.ItemTemplate>

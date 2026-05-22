@@ -17,4 +17,13 @@ public sealed record AgentToolDescriptor(
     string? SelectionGroupDescription = null,
     string? RuntimeInstructions = null,
     AgentToolActivationRequirement? ActivationRequirement = null,
-    AgentToolPriority Priority = AgentToolPriority.Medium);
+    AgentToolPriority Priority = AgentToolPriority.Medium)
+{
+    public AgentToolConcurrencyMode ConcurrencyMode { get; init; } = AgentToolConcurrencyMode.Sequential;
+}
+
+public enum AgentToolConcurrencyMode
+{
+    Sequential = 0,
+    ParallelSafe = 1,
+}

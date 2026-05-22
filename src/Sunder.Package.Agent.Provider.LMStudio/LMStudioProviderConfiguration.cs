@@ -5,6 +5,7 @@ namespace Sunder.Package.Agent.Provider.LMStudio;
 public static class LMStudioProviderConfiguration
 {
     public const string DefaultBaseUrl = "http://127.0.0.1:1234/v1";
+    public const string UtilityModelKey = "utility.modelId";
 
     public static PackageConfigurationSchema Schema { get; } = new(
         "sunder.package.agent.provider.lmstudio",
@@ -31,6 +32,20 @@ public static class LMStudioProviderConfiguration
                         PackageConfigurationFieldKind.Secret,
                         Description: "Optional API key if your LM Studio endpoint requires one.",
                         Placeholder: "lm-studio-key"
+                    )
+                ]
+            ),
+            new PackageConfigurationSection(
+                "utility",
+                "Utility model",
+                "Choose the local model used for background utility work such as session title generation.",
+                [
+                    new PackageConfigurationField(
+                        UtilityModelKey,
+                        "Utility model ID",
+                        PackageConfigurationFieldKind.Text,
+                        Description: "Optional. Use a full model id like lmstudio/model-name. Leave blank to use the first model returned by LM Studio.",
+                        Placeholder: "lmstudio/model-name"
                     )
                 ]
             )

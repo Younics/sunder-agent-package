@@ -15,7 +15,7 @@ public sealed class OpenAiAgentProvider(
     CodexConnectedAuthStrategy codexConnectedAuthStrategy,
     CodexConnectedTransport codexConnectedTransport,
     CodexResponseContinuationStore codexResponseContinuationStore,
-    IPackageContext packageContext) : IAgentChatProvider
+    IPackageContext packageContext) : IAgentChatProvider, IAgentUtilityModelProvider
 {
     private readonly IPackageContext _packageContext = packageContext;
 
@@ -62,6 +62,15 @@ public sealed class OpenAiAgentProvider(
         return ValueTask.FromResult(Models);
     }
 
+    public ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var configuredModelId = _packageContext.Configuration.GetValue(OpenAiProviderConfiguration.UtilityModelKey);
+        return ValueTask.FromResult<string?>(IsKnownModel(configuredModelId)
+            ? configuredModelId!.Trim()
+            : OpenAiProviderConfiguration.DefaultUtilityModelId);
+    }
+
     public async ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -98,8 +107,8 @@ public sealed class OpenAiAgentProvider(
         return ValueTask.FromResult(new AgentProviderRunCapabilities(
             SupportsNativeToolCalling: true,
             SupportsStreamingToolCalls: true,
-            SupportsMultipleToolCalls: false,
-            Summary: "OpenAI chat uses the selected auth mode: API-key mode uses the official OpenAI Responses connector, and ChatGPT Plus/Pro mode uses the Codex-connected transport.",
+            SupportsMultipleToolCalls: true,
+            Summary: "OpenAI chat uses the selected auth mode and Sunder can run parallel-safe tools concurrently.",
             SupportsImageInput: true,
             SupportsPdfInput: true));
     }
@@ -176,4 +185,8 @@ public sealed class OpenAiAgentProvider(
             codexResponseContinuationStore,
             session);
     }
+
+    private static bool IsKnownModel(string? modelId) =>
+        !string.IsNullOrWhiteSpace(modelId)
+        && Models.Any(model => string.Equals(model.ModelId, modelId.Trim(), StringComparison.OrdinalIgnoreCase));
 }

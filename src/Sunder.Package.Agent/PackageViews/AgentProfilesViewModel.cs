@@ -356,6 +356,16 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         );
     }
 
+    partial void OnSelectedBehaviorLoopChanged(BehaviorLoopOption? value)
+    {
+        if (_suppressSelectionHandlers || SelectedProfile is null)
+        {
+            return;
+        }
+
+        _ = RefreshSelectedProfileCapabilitiesAsync();
+    }
+
     [RelayCommand]
     private async Task CreateProfileAsync()
     {
@@ -693,9 +703,10 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         BeginBusy();
         try
         {
+            var capabilityProfile = BuildCapabilityRequestProfile(profile);
             var localToolsTask = _profileService.ListInstalledLocalToolsAsync();
             var packageCapabilitiesTask = _profileService.ListSelectableProfileCapabilitiesAsync(
-                profile
+                capabilityProfile
             );
             await Task.WhenAll(localToolsTask, packageCapabilitiesTask);
             if (!IsCurrentProfileLoad(version, profile.ProfileId))
@@ -703,7 +714,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
                 return;
             }
 
-            ApplyCapabilityOptions(profile, await localToolsTask, await packageCapabilitiesTask);
+            ApplyCapabilityOptions(capabilityProfile, await localToolsTask, await packageCapabilitiesTask);
         }
         catch (Exception ex)
         {
@@ -1276,6 +1287,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         );
         if (string.Equals(_loadedCapabilityProfileId, profile.ProfileId, StringComparison.Ordinal))
         {
+            assignments.AddRange(_preservedSelectableCapabilityAssignments);
             assignments.AddRange(
                 LocalTools
                     .Where(tool => tool.IsEnabled && tool.CanSelect)
@@ -1298,6 +1310,16 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
         return assignments.Distinct().ToArray();
     }
+
+    private AgentProfileRecord BuildCapabilityRequestProfile(AgentProfileRecord profile) =>
+        profile with
+        {
+            SelectableCapabilityAssignments = GetEffectiveSelectableCapabilityAssignments(profile),
+            BehaviorLoopId = SelectedBehaviorLoop?.LoopId ?? profile.BehaviorLoopId,
+            BehaviorLoopSourceId = SelectedBehaviorLoop is null
+                ? profile.BehaviorLoopSourceId
+                : SelectedBehaviorLoop.SourceId,
+        };
 
     private void ReconcileCapabilityOptions(
         ObservableCollection<ProfileCapabilityOptionViewModel> target,

@@ -1,5 +1,6 @@
 using System.Collections.Specialized;
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -15,6 +16,8 @@ using Sunder.Package.Agent.Memory.Semantic;
 using Sunder.Package.Agent.Memory.Semantic.Services;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.PackageViews;
+using Sunder.Package.Agent.Provider.Anthropic;
+using Sunder.Package.Agent.Provider.Gemini;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Package.Agent.Skills.PackageViews;
@@ -26,6 +29,10 @@ using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Package.Agent.Tools.Files;
 using Sunder.Sdk.Abstractions;
 using Xunit;
+using AnthropicEffort = Anthropic.Models.Messages.Effort;
+using AnthropicMessageCreateParams = Anthropic.Models.Messages.MessageCreateParams;
+using GeminiGenerateContentConfig = Google.GenAI.Types.GenerateContentConfig;
+using GeminiThinkingLevel = Google.GenAI.Types.ThinkingLevel;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -1449,8 +1456,8 @@ public sealed class AgentRunCoordinatorTests
                 },
             supportsMultipleToolCalls: true
         );
-        var firstTool = new TestTool(firstToolId);
-        var secondTool = new TestTool(secondToolId);
+        var firstTool = new TestTool(firstToolId, concurrencyMode: AgentToolConcurrencyMode.ParallelSafe);
+        var secondTool = new TestTool(secondToolId, concurrencyMode: AgentToolConcurrencyMode.ParallelSafe);
         using var runtime = AgentTestRuntime.Create(provider, firstTool, secondTool);
         var sessionId = await runtime.CreateSessionAsync(firstToolId);
         var profile = runtime.CurrentProfile;
@@ -1488,6 +1495,77 @@ public sealed class AgentRunCoordinatorTests
         Assert.Equal(1, firstTool.ExecutionCount);
         Assert.Equal(1, secondTool.ExecutionCount);
         Assert.Equal(2, provider.Requests.Count);
+        Assert.Contains(
+            provider.Requests[1].Turns,
+            turn =>
+                turn.Kind == AgentTurnKind.ToolResult
+                && turn.Items.Any(item => item.ToolId == secondToolId && item.CallId == "call-2")
+        );
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_RunsParallelSafeToolCallsConcurrently()
+    {
+        const string firstToolId = "first_parallel_tool";
+        const string secondToolId = "second_parallel_tool";
+
+        var provider = new ScriptedProvider(
+            (request, requestIndex) =>
+                requestIndex switch
+                {
+                    1 =>
+                    [
+                        ToolRequests(
+                            new AgentToolCallRequest("call-1", firstToolId, "{\"value\":1}"),
+                            new AgentToolCallRequest("call-2", secondToolId, "{\"value\":2}")
+                        ),
+                    ],
+                    2 => [AssertAndComplete(request, firstToolId, "call-1")],
+                    _ => throw new Xunit.Sdk.XunitException(
+                        $"Unexpected provider request {requestIndex}."
+                    ),
+                },
+            supportsMultipleToolCalls: true
+        );
+        var tracker = new ConcurrentToolExecutionTracker();
+        var firstTool = new ConcurrentTrackingTool(firstToolId, tracker, AgentToolConcurrencyMode.ParallelSafe);
+        var secondTool = new ConcurrentTrackingTool(secondToolId, tracker, AgentToolConcurrencyMode.ParallelSafe);
+        using var runtime = AgentTestRuntime.Create(provider, firstTool, secondTool);
+        var sessionId = await runtime.CreateSessionAsync(firstToolId);
+        var profile = runtime.CurrentProfile;
+        runtime.ProfileService.SaveProfile(
+            profile.ProfileId,
+            profile.DisplayName,
+            profile.Description,
+            profile.Instructions,
+            profile.ChatProviderId,
+            profile.ChatModelId,
+            profile.EmbeddingProviderId,
+            profile.EmbeddingModelId,
+            selectableCapabilityAssignments:
+            [
+                new AgentProfileSelectableCapabilityAssignmentRecord(
+                    AgentProfileSelectableCapabilityKinds.Tool,
+                    firstToolId
+                ),
+                new AgentProfileSelectableCapabilityAssignmentRecord(
+                    AgentProfileSelectableCapabilityKinds.Tool,
+                    secondToolId
+                ),
+            ]
+        );
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Use both tools.",
+            runtime.CurrentWorkspaceId
+        );
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(1, firstTool.ExecutionCount);
+        Assert.Equal(1, secondTool.ExecutionCount);
+        Assert.True(tracker.MaxConcurrentExecutions >= 2);
         Assert.Contains(
             provider.Requests[1].Turns,
             turn =>
@@ -1894,10 +1972,14 @@ public sealed class AgentRunCoordinatorTests
                 null,
                 []
             );
-            var feature = new SubagentFeature(service, new TestExtensionCatalog());
+            var extensionCatalog = new TestExtensionCatalog();
+            AddSubagentBehaviorLoop(extensionCatalog);
+            var feature = new SubagentFeature(service, extensionCatalog);
 
             var capabilities = await feature.ListCapabilitiesAsync(
-                new AgentProfileSelectableCapabilityRequest(Profile: null)
+                new AgentProfileSelectableCapabilityRequest(
+                    CreateBehaviorLoopProfile(SubagentConstants.OrchestratedBehaviorLoopId)
+                )
             );
 
             Assert.Contains(
@@ -1915,6 +1997,67 @@ public sealed class AgentRunCoordinatorTests
                 incompleteCapability.StatusText,
                 StringComparison.OrdinalIgnoreCase
             );
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(rootPath))
+                {
+                    Directory.Delete(rootPath, recursive: true);
+                }
+            }
+            catch
+            {
+                // Test cleanup should not hide assertion failures.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SubagentFeature_ListCapabilitiesAsync_HidesSubagents_WhenBehaviorLoopDoesNotSupportSubagents()
+    {
+        var rootPath = Path.Combine(
+            Path.GetTempPath(),
+            "sunder-subagent-capability-gating-tests",
+            Guid.NewGuid().ToString("N")
+        );
+
+        try
+        {
+            var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
+            var subagent = service.CreateSubagent("Researcher");
+            service.SaveSubagent(
+                subagent.SubagentId,
+                subagent.DisplayName,
+                "Investigates delegated research tasks.",
+                subagent.Instructions,
+                null,
+                null,
+                []
+            );
+            var extensionCatalog = new TestExtensionCatalog();
+            extensionCatalog.AddExtension(
+                PackageExtensionPoints.BehaviorLoops,
+                new TestBehaviorLoop(AgentBehaviorLoopIds.Default, "Default")
+            );
+            extensionCatalog.AddExtension(
+                PackageExtensionPoints.BehaviorLoops,
+                new TestBehaviorLoop("feature-loop", "Feature Loop", [SubagentConstants.FeatureKind])
+            );
+            var feature = new SubagentFeature(service, extensionCatalog);
+
+            var defaultCapabilities = await feature.ListCapabilitiesAsync(
+                new AgentProfileSelectableCapabilityRequest(
+                    CreateBehaviorLoopProfile(AgentBehaviorLoopIds.Default)
+                )
+            );
+            var featureCapabilities = await feature.ListCapabilitiesAsync(
+                new AgentProfileSelectableCapabilityRequest(CreateBehaviorLoopProfile("feature-loop"))
+            );
+
+            Assert.Empty(defaultCapabilities);
+            Assert.Contains(featureCapabilities, capability => capability.CapabilityId == subagent.SubagentId);
         }
         finally
         {
@@ -1976,7 +2119,9 @@ public sealed class AgentRunCoordinatorTests
                 ],
                 SubagentConstants.OrchestratedBehaviorLoopId
             );
-            var feature = new SubagentFeature(service, new TestExtensionCatalog());
+            var extensionCatalog = new TestExtensionCatalog();
+            AddSubagentBehaviorLoop(extensionCatalog);
+            var feature = new SubagentFeature(service, extensionCatalog);
 
             var tools = await feature.ListToolsAsync(
                 new AgentToolSourceContext(
@@ -2074,6 +2219,7 @@ public sealed class AgentRunCoordinatorTests
             );
             var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
             var extensionCatalog = new TestExtensionCatalog();
+            AddSubagentBehaviorLoop(extensionCatalog);
             extensionCatalog.AddExtension(
                 PackageExtensionPoints.RuntimeCatalogs,
                 new TestRuntimeCatalog([profile], [session], [workspace])
@@ -2230,6 +2376,7 @@ public sealed class AgentRunCoordinatorTests
         var childExecutor = new CapturingChildRunExecutor();
         var runtimeCatalog = new TestRuntimeCatalog([profile], [session], [workspace]);
         var extensionCatalog = new TestExtensionCatalog();
+        AddSubagentBehaviorLoop(extensionCatalog);
         extensionCatalog.AddExtension(PackageExtensionPoints.RuntimeCatalogs, runtimeCatalog);
         extensionCatalog.AddExtension(PackageExtensionPoints.ChildRunExecutors, childExecutor);
         var feature = new SubagentFeature(service, extensionCatalog);
@@ -2347,6 +2494,7 @@ public sealed class AgentRunCoordinatorTests
         var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
         var childExecutor = new CapturingChildRunExecutor();
         var extensionCatalog = new TestExtensionCatalog();
+        AddSubagentBehaviorLoop(extensionCatalog);
         extensionCatalog.AddExtension(
             PackageExtensionPoints.RuntimeCatalogs,
             new TestRuntimeCatalog([profile], [session], [workspace])
@@ -2442,6 +2590,7 @@ public sealed class AgentRunCoordinatorTests
         var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
         var childExecutor = new CapturingChildRunExecutor();
         var extensionCatalog = new TestExtensionCatalog();
+        AddSubagentBehaviorLoop(extensionCatalog);
         extensionCatalog.AddExtension(
             PackageExtensionPoints.RuntimeCatalogs,
             new TestRuntimeCatalog([profile], [session], [workspace])
@@ -2546,6 +2695,7 @@ public sealed class AgentRunCoordinatorTests
             var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
             var childExecutor = new CapturingChildRunExecutor();
             var extensionCatalog = new TestExtensionCatalog();
+            AddSubagentBehaviorLoop(extensionCatalog);
             extensionCatalog.AddExtension(
                 PackageExtensionPoints.RuntimeCatalogs,
                 new TestRuntimeCatalog([profile], [session], [workspace])
@@ -2672,6 +2822,7 @@ public sealed class AgentRunCoordinatorTests
             var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
             var childExecutor = new CapturingChildRunExecutor();
             var extensionCatalog = new TestExtensionCatalog();
+            AddSubagentBehaviorLoop(extensionCatalog);
             extensionCatalog.AddExtension(
                 PackageExtensionPoints.RuntimeCatalogs,
                 new TestRuntimeCatalog([profile], [session], [workspace])
@@ -3391,6 +3542,8 @@ public sealed class AgentRunCoordinatorTests
         viewModel.CreateSessionCommand.Execute(null);
         var sessionId = Assert.Single(viewModel.Sessions).SessionId;
 
+        Assert.Equal("Session 1", runtime.SessionService.GetSession(sessionId)?.Title);
+
         viewModel.Title = "Renamed Session";
         viewModel.SaveSessionCommand.Execute(null);
 
@@ -3400,6 +3553,88 @@ public sealed class AgentRunCoordinatorTests
 
         Assert.Empty(viewModel.Sessions);
         Assert.Null(runtime.SessionService.GetSession(sessionId));
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_CreateSession_UsesNumberedSessionTitles()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done"))
+        );
+        await runtime.ProfileService.CreateProfileAsync("Package Developer");
+        runtime.SessionService.CreateSession("Package Developer Session 2");
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+
+        viewModel.CreateSessionCommand.Execute(null);
+
+        Assert.Equal("Session 3", viewModel.SelectedSession?.Title);
+        Assert.Equal("Session 3", runtime.SessionService.GetSession(viewModel.SelectedSession!.SessionId)?.Title);
+    }
+
+    [Fact]
+    public async Task AgentRunCoordinator_AutoTitlesDefaultSessionFromFirstUserMessage()
+    {
+        var provider = new ScriptedProvider(
+            (request, _) => request.ModelId == "utility-model"
+                ? Complete("Package Publishing Setup")
+                : Complete("done"),
+            utilityModelId: "utility-model"
+        );
+        using var runtime = AgentTestRuntime.Create(provider);
+        var profile = await runtime.ProfileService.CreateProfileAsync("Test Profile");
+        var workspace = runtime.WorkspaceService.CreateWorkspace("Test Workspace");
+        var session = runtime.SessionService.CreateSession(
+            "Session 1",
+            profileId: profile.ProfileId,
+            behaviorLoopId: profile.BehaviorLoopId
+        );
+
+        await runtime.RunCoordinator.QueueUserMessageAsync(
+            session.SessionId,
+            profile.ProfileId,
+            "Help me publish my Sunder package.",
+            workspace.WorkspaceId
+        );
+        await WaitUntilAsync(
+            () => runtime.SessionService.GetSession(session.SessionId)?.Title == "Package Publishing Setup"
+        );
+
+        Assert.Contains(provider.Requests, request => request.ModelId == "utility-model");
+    }
+
+    [Fact]
+    public async Task AgentRunCoordinator_DoesNotAutoTitleCustomSessionName()
+    {
+        var provider = new ScriptedProvider(
+            (request, _) => request.ModelId == "utility-model"
+                ? Complete("Generated Title")
+                : Complete("done"),
+            utilityModelId: "utility-model"
+        );
+        using var runtime = AgentTestRuntime.Create(provider);
+        var profile = await runtime.ProfileService.CreateProfileAsync("Test Profile");
+        var workspace = runtime.WorkspaceService.CreateWorkspace("Test Workspace");
+        var session = runtime.SessionService.CreateSession(
+            "Custom Session Name",
+            profileId: profile.ProfileId,
+            behaviorLoopId: profile.BehaviorLoopId
+        );
+
+        await runtime.RunCoordinator.QueueUserMessageAsync(
+            session.SessionId,
+            profile.ProfileId,
+            "Help me publish my Sunder package.",
+            workspace.WorkspaceId
+        );
+
+        Assert.Equal("Custom Session Name", runtime.SessionService.GetSession(session.SessionId)?.Title);
+        Assert.DoesNotContain(provider.Requests, request => request.ModelId == "utility-model");
     }
 
     [Fact]
@@ -4185,6 +4420,105 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task AgentProfilesViewModel_RefreshesSubagentCapabilities_WhenBehaviorLoopChanges()
+    {
+        const string toolId = "fetch_page";
+        var rootPath = Path.Combine(
+            Path.GetTempPath(),
+            "sunder-subagent-profile-loop-gating-tests",
+            Guid.NewGuid().ToString("N")
+        );
+
+        try
+        {
+            using var runtime = AgentTestRuntime.Create(
+                new ScriptedProvider((_, _) => Complete("done")),
+                new TestTool(toolId)
+            );
+            AddSubagentBehaviorLoop(runtime.ExtensionCatalog);
+            await runtime.CreateSessionAsync(toolId);
+            var subagentService = new SubagentService(
+                new SubagentStore(new TestPackageContext(rootPath))
+            );
+            var subagent = subagentService.CreateSubagent("Researcher");
+            subagentService.SaveSubagent(
+                subagent.SubagentId,
+                subagent.DisplayName,
+                "Investigates delegated research tasks.",
+                subagent.Instructions,
+                null,
+                null,
+                []
+            );
+            runtime.ExtensionCatalog.AddExtension(
+                PackageExtensionPoints.ProfileSelectableCapabilityProviders,
+                new SubagentFeature(subagentService, runtime.ExtensionCatalog)
+            );
+            using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+
+            await WaitUntilAsync(() => viewModel.SelectedProfile is not null && !viewModel.IsBusy);
+            Assert.DoesNotContain(
+                viewModel.PackageCapabilities,
+                capability => capability.CapabilityId == subagent.SubagentId
+            );
+
+            viewModel.SelectedBehaviorLoop = viewModel.BehaviorLoops.Single(loop =>
+                loop.LoopId == SubagentConstants.OrchestratedBehaviorLoopId
+            );
+
+            await WaitUntilAsync(
+                () =>
+                    viewModel.PackageCapabilities.Any(capability =>
+                        capability.CapabilityId == subagent.SubagentId
+                    )
+                    && !viewModel.IsBusy
+            );
+            var subagentOption = viewModel.PackageCapabilities.Single(capability =>
+                capability.CapabilityId == subagent.SubagentId
+            );
+            subagentOption.IsEnabled = true;
+
+            viewModel.SelectedBehaviorLoop = viewModel.BehaviorLoops.Single(loop =>
+                loop.LoopId == AgentBehaviorLoopIds.Default
+            );
+
+            await WaitUntilAsync(
+                () =>
+                    viewModel.PackageCapabilities.All(capability =>
+                        capability.CapabilityId != subagent.SubagentId
+                    )
+                    && !viewModel.IsBusy
+            );
+
+            viewModel.SelectedBehaviorLoop = viewModel.BehaviorLoops.Single(loop =>
+                loop.LoopId == SubagentConstants.OrchestratedBehaviorLoopId
+            );
+
+            await WaitUntilAsync(
+                () =>
+                    viewModel.PackageCapabilities.Any(capability =>
+                        capability.CapabilityId == subagent.SubagentId && capability.IsEnabled
+                    )
+                    && !viewModel.IsBusy
+            );
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(rootPath))
+                {
+                    Directory.Delete(rootPath, recursive: true);
+                }
+            }
+            catch
+            {
+                // Test cleanup should not hide assertion failures.
+            }
+        }
+    }
+
+    [Fact]
     public async Task AgentProfilesViewModel_RefreshesSubagentCapabilities_WhenSubagentChanges()
     {
         const string toolId = "fetch_page";
@@ -4200,7 +4534,13 @@ public sealed class AgentRunCoordinatorTests
                 new ScriptedProvider((_, _) => Complete("done")),
                 new TestTool(toolId)
             );
+            AddSubagentBehaviorLoop(runtime.ExtensionCatalog);
             await runtime.CreateSessionAsync(toolId);
+            SaveProfileBehaviorLoop(
+                runtime.ProfileService,
+                runtime.CurrentProfile,
+                SubagentConstants.OrchestratedBehaviorLoopId
+            );
             var subagentService = new SubagentService(
                 new SubagentStore(new TestPackageContext(rootPath))
             );
@@ -4471,7 +4811,13 @@ public sealed class AgentRunCoordinatorTests
             using var runtime = AgentTestRuntime.Create(
                 new ScriptedProvider((_, _) => Complete("done"))
             );
+            AddSubagentBehaviorLoop(runtime.ExtensionCatalog);
             await runtime.CreateSessionAsync("test_tool");
+            SaveProfileBehaviorLoop(
+                runtime.ProfileService,
+                runtime.CurrentProfile,
+                SubagentConstants.OrchestratedBehaviorLoopId
+            );
             var subagentService = new SubagentService(
                 new SubagentStore(new TestPackageContext(rootPath))
             );
@@ -4961,6 +5307,105 @@ public sealed class AgentRunCoordinatorTests
         );
 
         Assert.Single(provider.Requests);
+    }
+
+    [Fact]
+    public async Task AnthropicAgentProvider_ExposesReasoningVariants_ForSupportedModels()
+    {
+        var rootPath = CreateTempTestRoot();
+        try
+        {
+            var provider = new AnthropicAgentProvider(new TestPackageContext(rootPath));
+
+            var models = await provider.GetAvailableModelsAsync();
+
+            var opus = models.Single(model => model.ModelId == "anthropic/claude-opus-4-7");
+            Assert.Contains(opus.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.ExtraHigh);
+
+            var sonnet = models.Single(model => model.ModelId == "anthropic/claude-sonnet-4-6");
+            Assert.Contains(sonnet.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.High);
+            Assert.DoesNotContain(sonnet.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.ExtraHigh);
+
+            var haiku = models.Single(model => model.ModelId == "anthropic/claude-haiku-4-5");
+            Assert.True(haiku.Variants is null || haiku.Variants.Count == 0);
+        }
+        finally
+        {
+            TryDeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public async Task GeminiAgentProvider_ExposesReasoningVariants_ForThinkingModels()
+    {
+        var rootPath = CreateTempTestRoot();
+        try
+        {
+            var provider = new GeminiAgentProvider(new TestPackageContext(rootPath));
+
+            var models = await provider.GetAvailableModelsAsync();
+
+            var pro = models.Single(model => model.ModelId == "gemini/gemini-2.5-pro");
+            Assert.Contains(pro.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.High);
+
+            var flash = models.Single(model => model.ModelId == "gemini/gemini-2.5-flash");
+            Assert.Contains(flash.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.Medium);
+
+            var flash20 = models.Single(model => model.ModelId == "gemini/gemini-2.0-flash");
+            Assert.True(flash20.Variants is null || flash20.Variants.Count == 0);
+        }
+        finally
+        {
+            TryDeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public void AnthropicChatClient_MapsReasoningEffort_ToOutputConfig()
+    {
+        var parameters = InvokePrivateStatic<AnthropicMessageCreateParams>(
+            typeof(AnthropicAgentProvider).Assembly.GetType(
+                "Sunder.Package.Agent.Provider.Anthropic.AnthropicChatClient",
+                throwOnError: true
+            )!,
+            "BuildMessageCreateParams",
+            [
+                new[] { new ChatMessage(ChatRole.User, "Think carefully.") },
+                new ChatOptions
+                {
+                    MaxOutputTokens = 4096,
+                    Reasoning = new ReasoningOptions { Effort = ReasoningEffort.ExtraHigh },
+                },
+                "anthropic/claude-opus-4-7",
+                false,
+            ]
+        );
+
+        Assert.NotNull(parameters.OutputConfig);
+        Assert.Equal(AnthropicEffort.Xhigh, parameters.OutputConfig!.Effort!.Value());
+        Assert.Null(parameters.Thinking);
+    }
+
+    [Fact]
+    public void GeminiChatClient_MapsReasoningEffort_ToThinkingConfig()
+    {
+        var config = InvokePrivateStatic<GeminiGenerateContentConfig>(
+            typeof(GeminiAgentProvider).Assembly.GetType(
+                "Sunder.Package.Agent.Provider.Gemini.GeminiChatClient",
+                throwOnError: true
+            )!,
+            "BuildConfig",
+            [
+                new ChatOptions
+                {
+                    Reasoning = new ReasoningOptions { Effort = ReasoningEffort.Medium },
+                },
+                false,
+            ]
+        );
+
+        Assert.NotNull(config.ThinkingConfig);
+        Assert.Equal(GeminiThinkingLevel.Medium, config.ThinkingConfig.ThinkingLevel);
     }
 
     [Fact]
@@ -6058,6 +6503,95 @@ public sealed class AgentRunCoordinatorTests
             "Background session is still running.",
             viewModel.StatusText,
             StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_SendMessageCommand_AllowsIdleSessionSendWhileAnotherSessionRuns()
+    {
+        const string toolId = "fetch_page";
+        const string firstMessage = "first background run";
+        const string secondMessage = "second session run";
+
+        var blockingTool = new BlockingTool(toolId);
+        var provider = new ScriptedProvider(
+            (request, _) =>
+            {
+                var hasToolResult = request.Turns.Any(turn =>
+                    turn.Kind == AgentTurnKind.ToolResult
+                );
+                if (RequestContainsUserText(request, firstMessage))
+                {
+                    return hasToolResult
+                        ? Complete("first done")
+                        : ToolRequest("call-1", toolId, "{}");
+                }
+
+                if (RequestContainsUserText(request, secondMessage))
+                {
+                    return Complete("second done");
+                }
+
+                throw new Xunit.Sdk.XunitException("Unexpected provider request.");
+            }
+        );
+
+        using var runtime = AgentTestRuntime.Create(provider, blockingTool);
+        var sessionA = await runtime.CreateSessionAsync(toolId);
+        var sessionB = runtime.SessionService.CreateSession("Test Session B").SessionId;
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+
+        viewModel.SelectedSession = viewModel.Sessions.Single(session =>
+            session.SessionId == sessionA
+        );
+        viewModel.DraftMessage = firstMessage;
+        var firstSendTask = viewModel.SendMessageCommand.ExecuteAsync(null);
+        try
+        {
+            await blockingTool.Started.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.False(firstSendTask.IsCompleted);
+
+            viewModel.DraftMessage = "duplicate same session";
+            Assert.False(viewModel.SendMessageCommand.CanExecute(null));
+
+            viewModel.SelectedSession = viewModel.Sessions.Single(session =>
+                session.SessionId == sessionB
+            );
+            viewModel.DraftMessage = secondMessage;
+
+            Assert.True(viewModel.IsSelectedSessionRunInactive);
+            Assert.True(viewModel.SendMessageCommand.CanExecute(null));
+
+            await viewModel.SendMessageCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.Equal(
+                AgentRunStatus.Completed,
+                runtime.SessionService.GetLatestCheckpoint(sessionB)?.Status
+            );
+            Assert.Contains(
+                runtime.SessionService.ListTurns(sessionB),
+                turn => turn.Role == AgentMessageRole.Assistant && RenderTurnText(turn) == "second done"
+            );
+        }
+        finally
+        {
+            blockingTool.Release();
+        }
+
+        await firstSendTask.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(
+            AgentRunStatus.Completed,
+            runtime.SessionService.GetLatestCheckpoint(sessionA)?.Status
+        );
+        Assert.Contains(
+            runtime.SessionService.ListTurns(sessionA),
+            turn => turn.Role == AgentMessageRole.Assistant && RenderTurnText(turn) == "first done"
         );
     }
 
@@ -8907,6 +9441,12 @@ public sealed class AgentRunCoordinatorTests
             )
         );
 
+    private static bool RequestContainsUserText(AgentProviderRequest request, string text) =>
+        request.Turns.Any(turn =>
+            turn.Role == AgentMessageRole.User
+            && RenderTurnText(turn).Contains(text, StringComparison.Ordinal)
+        );
+
     private static string RenderTurnText(AgentTurnRecord turn) =>
         string.Join(
             "\n\n",
@@ -8945,6 +9485,24 @@ public sealed class AgentRunCoordinatorTests
         }
     }
 
+    private static string CreateTempTestRoot()
+    {
+        var rootPath = Path.Combine(
+            Path.GetTempPath(),
+            "sunder-agent-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(rootPath);
+        return rootPath;
+    }
+
+    private static T InvokePrivateStatic<T>(Type type, string methodName, object?[] parameters)
+    {
+        var method = type.GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+        return Assert.IsType<T>(method.Invoke(null, parameters));
+    }
+
     private static void TryDeleteDirectory(string path)
     {
         try
@@ -8958,6 +9516,56 @@ public sealed class AgentRunCoordinatorTests
         {
             // Test cleanup should not hide assertion failures.
         }
+    }
+
+    private static void AddSubagentBehaviorLoop(TestExtensionCatalog extensionCatalog)
+    {
+        extensionCatalog.AddExtension(
+            PackageExtensionPoints.BehaviorLoops,
+            new OrchestratedAgentBehaviorLoop(extensionCatalog)
+        );
+    }
+
+    private static void SaveProfileBehaviorLoop(
+        AgentProfileService profileService,
+        AgentProfileRecord profile,
+        string behaviorLoopId
+    )
+    {
+        profileService.SaveProfile(
+            profile.ProfileId,
+            profile.DisplayName,
+            profile.Description,
+            profile.Instructions,
+            profile.ChatProviderId,
+            profile.ChatModelId,
+            profile.EmbeddingProviderId,
+            profile.EmbeddingModelId,
+            selectableCapabilityAssignments: profile.SelectableCapabilityAssignments,
+            behaviorLoopId: behaviorLoopId,
+            behaviorLoopSourceId: profile.BehaviorLoopSourceId,
+            behaviorLoopSettingsJson: profile.BehaviorLoopSettingsJson
+        );
+    }
+
+    private static AgentProfileRecord CreateBehaviorLoopProfile(string behaviorLoopId)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new AgentProfileRecord(
+            "profile-1",
+            "Profile",
+            null,
+            null,
+            "provider",
+            "model",
+            null,
+            null,
+            now,
+            now,
+            [],
+            [],
+            behaviorLoopId
+        );
     }
 
     private sealed class AgentTestRuntime : IDisposable
@@ -9089,6 +9697,11 @@ public sealed class AgentRunCoordinatorTests
             var activeRunRegistry = new AgentActiveRunRegistry();
             var runEventLogger = new AgentRunEventLogger(packageContext);
             var providerResolver = new AgentRunProviderResolver(profileService, extensionCatalog);
+            var sessionTitleService = new AgentSessionTitleService(
+                sessionService,
+                providerResolver,
+                runEventLogger
+            );
             var behaviorLoopResolver = new AgentBehaviorLoopResolver(
                 extensionCatalog,
                 defaultBehaviorLoop
@@ -9144,7 +9757,8 @@ public sealed class AgentRunCoordinatorTests
                 runEventLogger,
                 providerResolver,
                 behaviorLoopHostFactory,
-                behaviorLoopResolver
+                behaviorLoopResolver,
+                sessionTitleService
             );
             var runCoordinator = new AgentRunCoordinator(
                 userMessageRunCoordinator,
@@ -9222,7 +9836,7 @@ public sealed class AgentRunCoordinatorTests
         }
     }
 
-    private sealed class ScriptedProvider : IAgentChatProvider
+    private sealed class ScriptedProvider : IAgentChatProvider, IAgentUtilityModelProvider
     {
         private readonly Func<
             AgentProviderRequest,
@@ -9233,6 +9847,7 @@ public sealed class AgentRunCoordinatorTests
         private readonly IReadOnlyList<AgentModelDescriptor> _models;
         private readonly AgentProviderReadinessStatus _readinessStatus;
         private readonly string _readinessMessage;
+        private readonly string? _utilityModelId;
 
         public ScriptedProvider(
             Func<AgentProviderRequest, int, AgentProviderStreamEvent> handler,
@@ -9240,7 +9855,8 @@ public sealed class AgentRunCoordinatorTests
             IReadOnlyList<AgentModelDescriptor>? models = null,
             AgentProviderReadinessStatus readinessStatus = AgentProviderReadinessStatus.Ready,
             string readinessMessage = "Ready.",
-            string? packageId = "test.package"
+            string? packageId = "test.package",
+            string? utilityModelId = null
         )
             : this(
                 (request, requestIndex) => [handler(request, requestIndex)],
@@ -9248,7 +9864,8 @@ public sealed class AgentRunCoordinatorTests
                 models,
                 readinessStatus,
                 readinessMessage,
-                packageId
+                packageId,
+                utilityModelId
             ) { }
 
         public ScriptedProvider(
@@ -9257,7 +9874,8 @@ public sealed class AgentRunCoordinatorTests
             IReadOnlyList<AgentModelDescriptor>? models = null,
             AgentProviderReadinessStatus readinessStatus = AgentProviderReadinessStatus.Ready,
             string readinessMessage = "Ready.",
-            string? packageId = "test.package"
+            string? packageId = "test.package",
+            string? utilityModelId = null
         )
         {
             _handler = handler;
@@ -9276,6 +9894,7 @@ public sealed class AgentRunCoordinatorTests
                 ];
             _readinessStatus = readinessStatus;
             _readinessMessage = readinessMessage;
+            _utilityModelId = utilityModelId;
             Descriptor = new AgentProviderDescriptor(
                 "test-provider",
                 "Test Provider",
@@ -9295,6 +9914,10 @@ public sealed class AgentRunCoordinatorTests
         public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(
             CancellationToken cancellationToken = default
         ) => ValueTask.FromResult(_models);
+
+        public ValueTask<string?> ResolveUtilityModelIdAsync(
+            CancellationToken cancellationToken = default
+        ) => ValueTask.FromResult(_utilityModelId);
 
         public ValueTask<AgentProviderReadiness> GetReadinessAsync(
             CancellationToken cancellationToken = default
@@ -9395,8 +10018,12 @@ public sealed class AgentRunCoordinatorTests
                 cancellationToken.ThrowIfCancellationRequested();
                 var request = BuildProviderRequest(_context, messages, options);
                 var capturedRequest = CloneRequest(request);
-                _provider.Requests.Add(capturedRequest);
-                var requestIndex = _provider.Requests.Count;
+                int requestIndex;
+                lock (_provider.Requests)
+                {
+                    _provider.Requests.Add(capturedRequest);
+                    requestIndex = _provider.Requests.Count;
+                }
                 var responseId = Guid.NewGuid().ToString("N");
                 var messageId = responseId;
                 var modelId = options?.ModelId ?? _context.ModelId;
@@ -9784,7 +10411,10 @@ public sealed class AgentRunCoordinatorTests
         }
     }
 
-    private sealed class TestTool(string toolId, IReadOnlyList<string>? aliases = null) : IAgentTool
+    private sealed class TestTool(
+        string toolId,
+        IReadOnlyList<string>? aliases = null,
+        AgentToolConcurrencyMode concurrencyMode = AgentToolConcurrencyMode.Sequential) : IAgentTool
     {
         private int _executionCount;
 
@@ -9801,7 +10431,10 @@ public sealed class AgentRunCoordinatorTests
                 RequiresNetwork: false,
                 ArgumentsJsonSchema: "{\"type\":\"object\"}",
                 Aliases: aliases
-            );
+            )
+            {
+                ConcurrencyMode = concurrencyMode,
+            };
 
         public ValueTask<AgentToolReadiness> GetReadinessAsync(
             CancellationToken cancellationToken = default
@@ -9825,6 +10458,122 @@ public sealed class AgentRunCoordinatorTests
                     Content: $"Tool output for {request.ArgumentsJson}"
                 )
             );
+        }
+    }
+
+    private sealed class BlockingTool(string toolId) : IAgentTool
+    {
+        private readonly TaskCompletionSource _started = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        private readonly TaskCompletionSource _release = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        public Task Started => _started.Task;
+
+        public AgentToolDescriptor Descriptor { get; } =
+            new(
+                toolId,
+                "Blocking Test Tool",
+                "Blocks until the test releases it.",
+                IsReadOnly: true,
+                RequiresNetwork: false,
+                ArgumentsJsonSchema: "{\"type\":\"object\"}"
+            );
+
+        public ValueTask<AgentToolReadiness> GetReadinessAsync(
+            CancellationToken cancellationToken = default
+        ) =>
+            ValueTask.FromResult(
+                new AgentToolReadiness(Descriptor.ToolId, AgentToolReadinessStatus.Ready, "Ready.")
+            );
+
+        public async ValueTask<AgentToolResult> ExecuteAsync(
+            AgentToolExecutionContext context,
+            AgentToolRequest request,
+            CancellationToken cancellationToken = default
+        )
+        {
+            _started.TrySetResult();
+            await _release.Task.WaitAsync(cancellationToken);
+            return new AgentToolResult(
+                request.ToolId,
+                $"Executed {request.ToolId}.",
+                Content: $"Tool output for {request.ArgumentsJson}"
+            );
+        }
+
+        public void Release() => _release.TrySetResult();
+    }
+
+    private sealed class ConcurrentToolExecutionTracker
+    {
+        private int _currentExecutions;
+        private int _maxConcurrentExecutions;
+
+        public int MaxConcurrentExecutions => Volatile.Read(ref _maxConcurrentExecutions);
+
+        public void Enter()
+        {
+            var current = Interlocked.Increment(ref _currentExecutions);
+            while (true)
+            {
+                var observed = Volatile.Read(ref _maxConcurrentExecutions);
+                if (current <= observed
+                    || Interlocked.CompareExchange(ref _maxConcurrentExecutions, current, observed) == observed)
+                {
+                    return;
+                }
+            }
+        }
+
+        public void Exit() => Interlocked.Decrement(ref _currentExecutions);
+    }
+
+    private sealed class ConcurrentTrackingTool(
+        string toolId,
+        ConcurrentToolExecutionTracker tracker,
+        AgentToolConcurrencyMode concurrencyMode) : IAgentTool
+    {
+        private int _executionCount;
+
+        public int ExecutionCount => Volatile.Read(ref _executionCount);
+
+        public AgentToolDescriptor Descriptor { get; } = new(
+            toolId,
+            "Concurrent Test Tool",
+            "Tracks concurrent tool execution.",
+            IsReadOnly: true,
+            RequiresNetwork: false,
+            ArgumentsJsonSchema: "{\"type\":\"object\"}")
+        {
+            ConcurrencyMode = concurrencyMode,
+        };
+
+        public ValueTask<AgentToolReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentToolReadiness(Descriptor.ToolId, AgentToolReadinessStatus.Ready, "Ready."));
+
+        public async ValueTask<AgentToolResult> ExecuteAsync(
+            AgentToolExecutionContext context,
+            AgentToolRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _executionCount);
+            tracker.Enter();
+            try
+            {
+                await Task.Delay(150, cancellationToken);
+            }
+            finally
+            {
+                tracker.Exit();
+            }
+
+            return new AgentToolResult(
+                request.ToolId,
+                $"Executed {request.ToolId}.",
+                Content: $"Tool output for {request.ArgumentsJson}");
         }
     }
 
@@ -10351,6 +11100,33 @@ public sealed class AgentRunCoordinatorTests
         ) => ValueTask.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
 
         public void RaiseChanged() => SelectableCapabilitiesChanged?.Invoke();
+    }
+
+    private sealed class TestBehaviorLoop : IAgentBehaviorLoop
+    {
+        public TestBehaviorLoop(
+            string loopId,
+            string displayName,
+            IReadOnlyList<string>? featureKinds = null,
+            string? sourceId = null
+        )
+        {
+            Descriptor = new AgentBehaviorLoopDescriptor(
+                loopId,
+                displayName,
+                $"{displayName} test behavior loop.",
+                sourceId,
+                featureKinds
+            );
+        }
+
+        public AgentBehaviorLoopDescriptor Descriptor { get; }
+
+        public ValueTask<AgentBehaviorLoopResult> RunAsync(
+            AgentBehaviorLoopContext context,
+            IAgentBehaviorLoopRuntime host,
+            CancellationToken cancellationToken = default
+        ) => throw new NotSupportedException();
     }
 
     private sealed class TestRuntimeCatalog(

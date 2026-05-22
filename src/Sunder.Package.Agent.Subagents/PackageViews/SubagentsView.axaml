@@ -1,10 +1,11 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:vm="using:Sunder.Package.Agent.Subagents.PackageViews"
-             xmlns:m="using:Sunder.Package.Agent.Subagents.Models"
-             x:Class="Sunder.Package.Agent.Subagents.PackageViews.SubagentsView"
+              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+              xmlns:vm="using:Sunder.Package.Agent.Subagents.PackageViews"
+              xmlns:m="using:Sunder.Package.Agent.Subagents.Models"
+              xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
+              x:Class="Sunder.Package.Agent.Subagents.PackageViews.SubagentsView"
              x:DataType="vm:SubagentsViewModel"
              mc:Ignorable="d">
 
@@ -343,40 +344,40 @@
                                 IsVisible="{Binding ShowChatProviderPicker}">
                       <TextBlock Classes="subagent-field-label"
                                  Text="Chat provider override" />
-                      <ComboBox ItemsSource="{Binding ChatProviders}"
-                                SelectedItem="{Binding SelectedChatProvider, Mode=TwoWay}"
-                                HorizontalAlignment="Stretch">
-                        <ComboBox.ItemTemplate>
+                      <shared:SunderComboBox ItemsSource="{Binding ChatProviders}"
+                                            SelectedItem="{Binding SelectedChatProvider, Mode=TwoWay}"
+                                            HorizontalAlignment="Stretch">
+                        <shared:SunderComboBox.ItemTemplate>
                           <DataTemplate x:DataType="vm:SubagentProviderOption">
                             <TextBlock Text="{Binding Label}" />
                           </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                      </ComboBox>
+                        </shared:SunderComboBox.ItemTemplate>
+                      </shared:SunderComboBox>
                     </StackPanel>
 
                     <StackPanel Spacing="5"
                                 IsVisible="{Binding ShowChatModelSelection}">
                       <TextBlock Classes="subagent-field-label"
                                  Text="Chat model override" />
-                      <ComboBox ItemsSource="{Binding ChatModels}"
-                                SelectedItem="{Binding SelectedChatModel, Mode=TwoWay}"
-                                HorizontalAlignment="Stretch">
-                        <ComboBox.ItemTemplate>
+                      <shared:SunderComboBox ItemsSource="{Binding ChatModels}"
+                                            SelectedItem="{Binding SelectedChatModel, Mode=TwoWay}"
+                                            HorizontalAlignment="Stretch">
+                        <shared:SunderComboBox.ItemTemplate>
                           <DataTemplate x:DataType="vm:SubagentModelOption">
                             <TextBlock Text="{Binding Label}" />
                           </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                      </ComboBox>
+                        </shared:SunderComboBox.ItemTemplate>
+                      </shared:SunderComboBox>
                     </StackPanel>
 
                     <StackPanel Spacing="5"
                                 IsVisible="{Binding ShowReasoningOptions}">
                       <TextBlock Classes="subagent-field-label"
                                  Text="Reasoning" />
-                      <ComboBox ItemsSource="{Binding ReasoningOptions}"
-                                SelectedItem="{Binding SelectedReasoningOption, Mode=TwoWay}"
-                                HorizontalAlignment="Stretch">
-                        <ComboBox.ItemTemplate>
+                      <shared:SunderComboBox ItemsSource="{Binding ReasoningOptions}"
+                                            SelectedItem="{Binding SelectedReasoningOption, Mode=TwoWay}"
+                                            HorizontalAlignment="Stretch">
+                        <shared:SunderComboBox.ItemTemplate>
                           <DataTemplate x:DataType="vm:SubagentReasoningOption">
                             <StackPanel Spacing="2">
                               <TextBlock Text="{Binding Label}" />
@@ -385,8 +386,8 @@
                                          IsVisible="{Binding HasDescription}" />
                             </StackPanel>
                           </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                      </ComboBox>
+                        </shared:SunderComboBox.ItemTemplate>
+                      </shared:SunderComboBox>
                     </StackPanel>
 
                     <Border Classes="subagent-editor-empty-state"

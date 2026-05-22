@@ -9,6 +9,7 @@ public sealed class PackageModule : ISunderPackageModule
 {
     public void ConfigureServices(IServiceCollection services, IPackageContext context)
     {
+        services.AddTransient<LMStudioSettingsViewModel>();
         services.AddSingleton<LMStudioAgentProvider>();
         services.AddSingleton<LMStudioEmbeddingProvider>();
         services.AddSingleton<IAgentChatProvider>(serviceProvider => serviceProvider.GetRequiredService<LMStudioAgentProvider>());
@@ -18,6 +19,7 @@ public sealed class PackageModule : ISunderPackageModule
     public void RegisterContributions(IPackageContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterConfigurationSchema(LMStudioProviderConfiguration.Schema);
+        registry.RegisterSettingsView<LMStudioSettingsView>();
         registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<LMStudioAgentProvider>());
         registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<LMStudioEmbeddingProvider>());
     }
