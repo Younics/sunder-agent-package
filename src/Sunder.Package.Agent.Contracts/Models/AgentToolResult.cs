@@ -9,4 +9,5 @@ public sealed record AgentToolResult(
     bool WasTruncated = false,
     bool IsError = false,
     string? ErrorCode = null,
-    string? BackendId = null);
+    string? BackendId = null,
+    string? PresentationPayloadJson = null);

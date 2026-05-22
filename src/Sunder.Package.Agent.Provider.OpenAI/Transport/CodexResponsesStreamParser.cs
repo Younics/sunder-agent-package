@@ -16,12 +16,14 @@ internal static class CodexResponsesStreamParser
         string responseId,
         string messageId,
         bool toolAware,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+        [EnumeratorCancellation] CancellationToken cancellationToken,
+        Action<string>? responseIdObserver = null)
     {
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);
         var toolCallsByIndex = new Dictionary<int, StreamingToolCallAccumulator>();
         var modelId = options?.ModelId ?? context.ModelId;
+        var currentResponseId = responseId;
 
         while (true)
         {
@@ -45,6 +47,12 @@ internal static class CodexResponsesStreamParser
 
             using var document = JsonDocument.Parse(payload);
             var root = document.RootElement;
+            if (TryGetResponseId(root) is { Length: > 0 } observedResponseId)
+            {
+                currentResponseId = observedResponseId;
+                responseIdObserver?.Invoke(observedResponseId);
+            }
+
             if (!root.TryGetProperty("type", out var typeElement) || typeElement.ValueKind != JsonValueKind.String)
             {
                 continue;
@@ -58,7 +66,7 @@ internal static class CodexResponsesStreamParser
                         var delta = deltaElement.GetString() ?? string.Empty;
                         yield return new ChatResponseUpdate(AIChatRole.Assistant, delta)
                         {
-                            ResponseId = responseId,
+                            ResponseId = currentResponseId,
                             MessageId = messageId,
                             ModelId = modelId,
                         };
@@ -83,7 +91,7 @@ internal static class CodexResponsesStreamParser
                 case "response.function_call_arguments.done":
                     if (TryBuildCompletedStreamingToolCall(root, toolCallsByIndex, out var completedToolCall))
                     {
-                        yield return CreateToolCallUpdate(completedToolCall!, responseId, messageId, modelId);
+                        yield return CreateToolCallUpdate(completedToolCall!, currentResponseId, messageId, modelId);
                         yield break;
                     }
                     break;
@@ -236,6 +244,26 @@ internal static class CodexResponsesStreamParser
         => element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
             ? property.GetString()
             : null;
+
+    private static string? TryGetResponseId(JsonElement root)
+    {
+        var responseId = TryGetString(root, "response_id");
+        if (!string.IsNullOrWhiteSpace(responseId))
+        {
+            return responseId;
+        }
+
+        if (root.TryGetProperty("response", out var responseElement) && responseElement.ValueKind == JsonValueKind.Object)
+        {
+            responseId = TryGetString(responseElement, "id");
+            if (!string.IsNullOrWhiteSpace(responseId))
+            {
+                return responseId;
+            }
+        }
+
+        return null;
+    }
 
     private static int TryGetInt32(JsonElement element, string propertyName)
         => element.TryGetProperty(propertyName, out var property)

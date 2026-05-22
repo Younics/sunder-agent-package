@@ -8,13 +8,11 @@ namespace Sunder.Package.Agent.Memory.Semantic;
 public sealed class MemorySemanticFeature(
     MemoryLocalStore store,
     SemanticMemoryRecallService recallService,
-    SemanticMemoryPromotionService promotionService,
-    MemoryWorkingSummaryBuilder workingSummaryBuilder) : IAgentProfileCapabilityConsumer, IAgentPromptContextContributor, IAgentLifecycleObserver, IAgentSessionDataCleaner
+    SemanticMemoryPromotionService promotionService) : IAgentProfileCapabilityConsumer, IAgentPromptContextContributor, IAgentLifecycleObserver, IAgentSessionDataCleaner
 {
     private readonly MemoryLocalStore _store = store;
     private readonly SemanticMemoryRecallService _recallService = recallService;
     private readonly SemanticMemoryPromotionService _promotionService = promotionService;
-    private readonly MemoryWorkingSummaryBuilder _workingSummaryBuilder = workingSummaryBuilder;
 
     public string FeatureId => "memory.semantic";
 
@@ -80,11 +78,7 @@ public sealed class MemorySemanticFeature(
         CancellationToken cancellationToken = default)
     {
         await _promotionService.PromoteDurableMemoriesAsync(lifecycleEvent, cancellationToken);
-        var workingSummary = _workingSummaryBuilder.Build(lifecycleEvent);
-
-        return string.IsNullOrWhiteSpace(workingSummary)
-            ? null
-            : new AgentLifecycleObserverResult(workingSummary);
+        return null;
     }
 
     public void DeleteSessionData(Guid sessionId)

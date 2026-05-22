@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -20,37 +21,54 @@ internal static class CodexResponsesRequestBuilder
         AgentChatClientContext context,
         IReadOnlyList<AIChatMessage> messages,
         ChatOptions? options,
-        bool toolAware)
+        bool toolAware,
+        CodexResponseContinuationState? continuationState = null,
+        bool disableContinuation = false)
     {
         var modelId = options?.ModelId ?? context.ModelId;
         var model = OpenAiModelIds.Normalize(modelId);
         var serviceTier = GetServiceTier(modelId);
         var isReasoningModel = IsReasoningModel(model);
         var input = BuildNativeInput(messages, isReasoningModel);
+        var conversationItemFingerprints = BuildItemFingerprints(input);
         var tools = toolAware ? BuildFunctionTools(options?.Tools ?? []) : [];
         var promptCacheKey = string.IsNullOrWhiteSpace(options?.ConversationId) ? null : options.ConversationId;
         var instructions = string.IsNullOrWhiteSpace(options?.Instructions) ? null : options.Instructions;
         IReadOnlyList<string>? include = isReasoningModel ? ["reasoning.encrypted_content"] : null;
         var toolChoice = toolAware ? "auto" : null;
+        var reasoning = BuildReasoningOptions(isReasoningModel, options?.Reasoning);
+        var text = ShouldUseLowTextVerbosity(model) ? new CodexTextOptions("low") : null;
+        var shapeFingerprint = BuildShapeFingerprint(model, instructions, tools, toolChoice, include, serviceTier, reasoning, text);
+        var previousResponseId = TryBuildContinuationInput(
+            continuationState,
+            shapeFingerprint,
+            conversationItemFingerprints,
+            input,
+            disableContinuation,
+            out var requestInput)
+            ? continuationState!.ResponseId
+            : null;
         var body = new CodexResponsesRequestBody
         {
             Model = model,
-            Input = input,
+            Input = requestInput,
             Instructions = instructions,
             Tools = toolAware ? tools : null,
             ToolChoice = toolChoice,
             Stream = true,
             Store = false,
+            PreviousResponseId = previousResponseId,
             PromptCacheKey = promptCacheKey,
             Include = include,
             ServiceTier = serviceTier,
-            Reasoning = BuildReasoningOptions(isReasoningModel, options?.Reasoning),
-            Text = ShouldUseLowTextVerbosity(model) ? new CodexTextOptions("low") : null,
+            Reasoning = reasoning,
+            Text = text,
         };
         var bodyJson = JsonSerializer.Serialize(body, JsonOptions);
 
         return new CodexResponsesRequest(
             model,
+            requestInput.Count,
             input.Count,
             tools.Count,
             bodyJson,
@@ -61,7 +79,63 @@ internal static class CodexResponsesRequestBuilder
             HasIncludeOptions: include is { Count: > 0 },
             HasReasoningOptions: body.Reasoning is not null,
             HasTextOptions: body.Text is not null,
-            ToolChoice: toolChoice);
+            ToolChoice: toolChoice,
+            HasPreviousResponseId: previousResponseId is not null,
+            ShapeFingerprint: shapeFingerprint,
+            ConversationItemFingerprints: conversationItemFingerprints);
+    }
+
+    public static IReadOnlyList<string> BuildAssistantOutputFingerprints(
+        string? text,
+        IReadOnlyList<FunctionCallContent> functionCalls)
+    {
+        var output = new List<object>();
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            output.Add(new CodexAssistantTextInput([new CodexTextPart("output_text", text)]));
+        }
+
+        foreach (var functionCall in functionCalls)
+        {
+            output.Add(new CodexFunctionCallInput(
+                functionCall.CallId,
+                functionCall.Name,
+                SerializeArguments(functionCall.Arguments ?? new Dictionary<string, object?>(StringComparer.Ordinal))));
+        }
+
+        return BuildItemFingerprints(output);
+    }
+
+    private static bool TryBuildContinuationInput(
+        CodexResponseContinuationState? continuationState,
+        string shapeFingerprint,
+        IReadOnlyList<string> conversationItemFingerprints,
+        IReadOnlyList<object> input,
+        bool disableContinuation,
+        out IReadOnlyList<object> requestInput)
+    {
+        requestInput = input;
+        if (disableContinuation
+            || continuationState is null
+            || !string.Equals(continuationState.ShapeFingerprint, shapeFingerprint, StringComparison.Ordinal)
+            || continuationState.ConversationItemFingerprints.Count >= conversationItemFingerprints.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < continuationState.ConversationItemFingerprints.Count; index++)
+        {
+            if (!string.Equals(
+                    continuationState.ConversationItemFingerprints[index],
+                    conversationItemFingerprints[index],
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        requestInput = input.Skip(continuationState.ConversationItemFingerprints.Count).ToArray();
+        return requestInput.Count > 0;
     }
 
     private static IReadOnlyList<object> BuildNativeInput(
@@ -272,6 +346,31 @@ internal static class CodexResponsesRequestBuilder
     private static string SerializeArguments(IDictionary<string, object?> arguments)
         => arguments.Count == 0 ? "{}" : JsonSerializer.Serialize(arguments);
 
+    private static IReadOnlyList<string> BuildItemFingerprints(IEnumerable<object> items)
+        => items.Select(BuildItemFingerprint).ToArray();
+
+    private static string BuildItemFingerprint(object item)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(item, JsonOptions))));
+
+    private static string BuildShapeFingerprint(
+        string model,
+        string? instructions,
+        IReadOnlyList<object> tools,
+        string? toolChoice,
+        IReadOnlyList<string>? include,
+        string? serviceTier,
+        CodexReasoningOptions? reasoning,
+        CodexTextOptions? text)
+        => BuildItemFingerprint(new CodexContinuationShape(
+            model,
+            instructions,
+            tools,
+            toolChoice,
+            include,
+            serviceTier,
+            reasoning,
+            text));
+
     private static string RenderFunctionResult(object? result)
         => result switch
         {
@@ -303,6 +402,9 @@ internal static class CodexResponsesRequestBuilder
 
         [JsonPropertyName("store")]
         public required bool Store { get; init; }
+
+        [JsonPropertyName("previous_response_id")]
+        public string? PreviousResponseId { get; init; }
 
         [JsonPropertyName("prompt_cache_key")]
         public string? PromptCacheKey { get; init; }
@@ -411,11 +513,22 @@ internal static class CodexResponsesRequestBuilder
 
     private sealed record CodexTextOptions(
         [property: JsonPropertyName("verbosity")] string Verbosity);
+
+    private sealed record CodexContinuationShape(
+        string Model,
+        string? Instructions,
+        IReadOnlyList<object> Tools,
+        string? ToolChoice,
+        IReadOnlyList<string>? Include,
+        string? ServiceTier,
+        CodexReasoningOptions? Reasoning,
+        CodexTextOptions? Text);
 }
 
 internal sealed record CodexResponsesRequest(
     string Model,
     int InputItemCount,
+    int ConversationInputItemCount,
     int ToolCount,
     string Body,
     bool UsesDeveloperInstructionInput,
@@ -425,4 +538,7 @@ internal sealed record CodexResponsesRequest(
     bool HasIncludeOptions,
     bool HasReasoningOptions,
     bool HasTextOptions,
-    string? ToolChoice);
+    string? ToolChoice,
+    bool HasPreviousResponseId,
+    string ShapeFingerprint,
+    IReadOnlyList<string> ConversationItemFingerprints);

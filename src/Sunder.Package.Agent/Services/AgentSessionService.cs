@@ -15,6 +15,8 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
 
     public event Action<Guid, AgentTurnRecord>? TurnChanged;
 
+    public event Action<Guid>? TranscriptReset;
+
     public IReadOnlyList<AgentSessionRecord> ListSessions() => _store.ListSessions();
 
     public AgentSessionRecord CreateSession(
@@ -99,11 +101,28 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
     public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(Guid sessionId, DateTimeOffset afterCreatedAtUtc, Guid afterTurnId, int limit)
         => _store.ListTurnsAfter(sessionId, afterCreatedAtUtc, afterTurnId, limit);
 
+    public AgentTurnRecord? GetTurn(Guid turnId) => _store.GetTurn(turnId);
+
     public IReadOnlyList<AgentTranscriptMessageRecord> ListMessages(Guid sessionId) => _store.ListMessages(sessionId);
 
     public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => _store.GetLatestCheckpoint(sessionId);
 
-    public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => _store.GetWorkingSummary(sessionId);
+    public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId)
+    {
+        var contextCheckpoint = _store.GetLatestSessionContextCheckpoint(sessionId);
+        if (contextCheckpoint is not null)
+        {
+            return new AgentWorkingSummaryRecord(
+                sessionId,
+                contextCheckpoint.SummaryText,
+                contextCheckpoint.CreatedAtUtc);
+        }
+
+        return _store.GetWorkingSummary(sessionId);
+    }
+
+    public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId)
+        => _store.GetLatestSessionContextCheckpoint(sessionId);
 
     public AgentTranscriptMessageRecord AppendMessage(Guid sessionId, AgentMessageRole role, string content)
     {
@@ -135,6 +154,26 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
         return message;
     }
 
+    public AgentTranscriptRollbackResult RollbackTranscript(Guid sessionId, Guid anchorTurnId)
+    {
+        var result = _store.RollbackTranscript(sessionId, anchorTurnId);
+        var cleanupFailures = DeleteExternalSessionData(result.DeletedSessionIds);
+
+        NotifyTranscriptReset(sessionId);
+        NotifySessionChanged(sessionId);
+        foreach (var deletedSessionId in result.DeletedSessionIds)
+        {
+            NotifySessionChanged(deletedSessionId);
+        }
+
+        if (cleanupFailures.Count > 0)
+        {
+            throw new AggregateException("Transcript was rolled back, but one or more external cleanup steps failed.", cleanupFailures);
+        }
+
+        return result;
+    }
+
     public AgentTurnRecord UpdateTextTurn(Guid turnId, string content)
     {
         var turn = _store.UpdateTextTurn(turnId, content);
@@ -162,7 +201,8 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
         bool wasTruncated,
         bool isError,
         string? errorCode,
-        string? backendId)
+        string? backendId,
+        string? presentationPayloadJson = null)
     {
         var turn = _store.AppendToolResultTurn(
             sessionId,
@@ -176,7 +216,8 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
             wasTruncated,
             isError,
             errorCode,
-            backendId);
+            backendId,
+            presentationPayloadJson);
         NotifyTurnChanged(sessionId, turn);
         NotifySessionChanged(sessionId);
         return turn;
@@ -194,6 +235,25 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
         var summary = _store.SaveWorkingSummary(sessionId, summaryText);
         NotifySessionChanged(sessionId);
         return summary;
+    }
+
+    public AgentSessionContextCheckpointRecord SaveSessionContextCheckpoint(
+        Guid sessionId,
+        Guid? firstOmittedTurnId,
+        Guid? lastOmittedTurnId,
+        int omittedTurnCount,
+        string summaryText,
+        string? detailsJson)
+    {
+        var checkpoint = _store.SaveSessionContextCheckpoint(
+            sessionId,
+            firstOmittedTurnId,
+            lastOmittedTurnId,
+            omittedTurnCount,
+            summaryText,
+            detailsJson);
+        NotifySessionChanged(sessionId);
+        return checkpoint;
     }
 
     public long GetNextRunRevision(Guid sessionId) => _store.GetNextRunRevision(sessionId);
@@ -236,6 +296,27 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
             catch
             {
                 // UI or extension listeners must not break persisted agent turn changes.
+            }
+        }
+    }
+
+    private void NotifyTranscriptReset(Guid sessionId)
+    {
+        var handlers = TranscriptReset;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action<Guid> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(sessionId);
+            }
+            catch
+            {
+                // UI or extension listeners must not break persisted agent state changes.
             }
         }
     }

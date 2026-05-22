@@ -19,6 +19,9 @@
 
   <ItemGroup>
     <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptScrollCoordinator.cs" Link="PackageViews\TranscriptScrollCoordinator.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptRowWindow.cs" Link="PackageViews\TranscriptRowWindow.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptRowPresenter.cs" Link="PackageViews\TranscriptRowPresenter.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\ToolDiffViewModels.cs" Link="PackageViews\ToolDiffViewModels.cs" />
     <AvaloniaResource Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptStyles.axaml" Link="PackageViews\TranscriptStyles.axaml" />
   </ItemGroup>
 

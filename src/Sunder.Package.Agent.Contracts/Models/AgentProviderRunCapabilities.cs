@@ -8,4 +8,6 @@ public sealed record AgentProviderRunCapabilities(
     bool SupportsImageInput = false,
     bool SupportsPdfInput = false,
     bool SupportsAudioInput = false,
-    bool SupportsVideoInput = false);
+    bool SupportsVideoInput = false,
+    int? ContextWindowTokens = null,
+    int? MaxOutputTokens = null);

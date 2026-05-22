@@ -3,14 +3,18 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using LiveMarkdown.Avalonia;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.PackageViews;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-public abstract class AgentTranscriptRowViewModel(Guid rowId, DateTimeOffset createdAtUtc) : ObservableObject
+public abstract class AgentTranscriptRowViewModel(Guid rowId, DateTimeOffset createdAtUtc, object anchorKey)
+    : ObservableObject, ITranscriptRowAnchor
 {
     public Guid RowId { get; } = rowId;
 
     public DateTimeOffset CreatedAtUtc { get; } = createdAtUtc;
+
+    public object AnchorKey { get; } = anchorKey;
 }
 
 public sealed class AgentTextTranscriptRowViewModel : AgentTranscriptRowViewModel
@@ -22,7 +26,7 @@ public sealed class AgentTextTranscriptRowViewModel : AgentTranscriptRowViewMode
         AgentTurnRecord turn,
         string content,
         IReadOnlyList<AgentTranscriptAttachmentViewModel>? attachments = null)
-        : base(turn.TurnId, turn.CreatedAtUtc)
+        : base(turn.TurnId, turn.CreatedAtUtc, TranscriptRowAnchorKey.Text(turn.TurnId))
     {
         Role = turn.Role;
         RoleLabel = turn.Role.ToString().ToUpperInvariant();
@@ -122,7 +126,7 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
     private int _tick = 3;
 
     public AgentActivityTranscriptRowViewModel(string activityTextBase = "Thinking")
-        : base(Guid.Empty, DateTimeOffset.UtcNow)
+        : base(Guid.Empty, DateTimeOffset.UtcNow, TranscriptRowAnchorKey.Activity())
     {
         _activityTextBase = string.IsNullOrWhiteSpace(activityTextBase) ? "Processing" : activityTextBase.Trim();
         _thinkingText = FormatThinkingText(_activityTextBase, _tick);

@@ -15,4 +15,5 @@ public sealed record AgentTurnItemRecord(
     bool WasTruncated,
     bool IsError,
     string? ErrorCode,
-    string? BackendId);
+    string? BackendId,
+    string? PresentationPayloadJson = null);

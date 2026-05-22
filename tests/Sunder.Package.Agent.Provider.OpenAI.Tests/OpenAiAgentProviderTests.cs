@@ -112,6 +112,7 @@ public sealed class OpenAiAgentProviderTests
             new ApiKeyAuthStrategy(packageContext),
             codexConnectedAuthStrategy,
             codexConnectedTransport,
+            new CodexResponseContinuationStore(),
             packageContext);
     }
 

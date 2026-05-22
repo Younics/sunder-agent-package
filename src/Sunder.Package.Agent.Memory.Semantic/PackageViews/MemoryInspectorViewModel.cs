@@ -341,7 +341,9 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
             return;
         }
 
-        WorkingSummaryText = _memoryInspectorService.GetWorkingSummary(SelectedSession.SessionId)?.SummaryText ?? string.Empty;
+        WorkingSummaryText = _memoryInspectorService.GetSessionContextCheckpoint(SelectedSession.SessionId)?.SummaryText
+            ?? _memoryInspectorService.GetWorkingSummary(SelectedSession.SessionId)?.SummaryText
+            ?? string.Empty;
 
         var memories = _memoryInspectorService.ListMemories(SelectedSession.SessionId, SearchText, IncludeInactive)
             .Select(memory => new MemoryListItemViewModel(memory, _memoryInspectorService.GetSemanticIndexStatus(memory, _selectedSessionSemanticContext)))

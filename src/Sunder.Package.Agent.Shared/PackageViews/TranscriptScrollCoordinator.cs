@@ -8,24 +8,28 @@ namespace Sunder.Package.Agent.Shared.PackageViews;
 internal sealed class TranscriptScrollCoordinator
 {
     private const double DefaultAutoScrollThreshold = 24;
-    private const double DefaultLoadOlderThreshold = 36;
+    private const double DefaultLoadOlderThreshold = 96;
+    private const double DefaultLoadNewerThreshold = 96;
+    private const double ViewportLoadThresholdRatio = 0.25;
 
     private readonly ScrollViewer _scrollViewer;
     private readonly ItemsControl? _itemsControl;
     private readonly Func<bool> _canLoadOlderRows;
-    private readonly Func<Task<bool>> _loadOlderRowsAsync;
+    private readonly Func<object?, Task<bool>> _loadOlderRowsAsync;
     private readonly Func<bool> _canLoadNewerRows;
-    private readonly Func<Task<bool>> _loadNewerRowsAsync;
+    private readonly Func<object?, Task<bool>> _loadNewerRowsAsync;
     private readonly Func<bool> _hasNewerRows;
     private readonly Action<bool>? _setJumpToLatestVisible;
+    private readonly Action? _onDetachedFromLatest;
+    private readonly Action? _onReachedLatest;
     private readonly double _autoScrollThreshold;
     private readonly double _loadOlderThreshold;
+    private readonly double _loadNewerThreshold;
     private bool _shouldAutoScroll = true;
     private bool _forceScrollToBottomOnNextTranscriptChanged;
-    private bool _olderLoadArmed = true;
-    private bool _newerLoadArmed = true;
     private bool _isJumpToLatestVisible;
     private bool _isProgrammaticScroll;
+    private bool _isRestoringAnchor;
     private bool _scrollToBottomPending;
     private bool _settledScrollToBottomPending;
     private bool _restoreAnchorPending;
@@ -38,13 +42,16 @@ internal sealed class TranscriptScrollCoordinator
         ScrollViewer scrollViewer,
         ItemsControl? itemsControl,
         Func<bool> canLoadOlderRows,
-        Func<Task<bool>> loadOlderRowsAsync,
+        Func<object?, Task<bool>> loadOlderRowsAsync,
         Func<bool> canLoadNewerRows,
-        Func<Task<bool>> loadNewerRowsAsync,
+        Func<object?, Task<bool>> loadNewerRowsAsync,
         Func<bool> hasNewerRows,
         Action<bool>? setJumpToLatestVisible = null,
+        Action? onDetachedFromLatest = null,
+        Action? onReachedLatest = null,
         double autoScrollThreshold = DefaultAutoScrollThreshold,
-        double loadOlderThreshold = DefaultLoadOlderThreshold)
+        double loadOlderThreshold = DefaultLoadOlderThreshold,
+        double loadNewerThreshold = DefaultLoadNewerThreshold)
     {
         _scrollViewer = scrollViewer;
         _itemsControl = itemsControl;
@@ -54,8 +61,11 @@ internal sealed class TranscriptScrollCoordinator
         _loadNewerRowsAsync = loadNewerRowsAsync;
         _hasNewerRows = hasNewerRows;
         _setJumpToLatestVisible = setJumpToLatestVisible;
+        _onDetachedFromLatest = onDetachedFromLatest;
+        _onReachedLatest = onReachedLatest;
         _autoScrollThreshold = autoScrollThreshold;
         _loadOlderThreshold = loadOlderThreshold;
+        _loadNewerThreshold = loadNewerThreshold;
         _scrollViewer.PropertyChanged += OnScrollViewerPropertyChanged;
         UpdateJumpToLatestVisibility();
     }
@@ -63,13 +73,16 @@ internal sealed class TranscriptScrollCoordinator
     public TranscriptScrollCoordinator(
         ScrollViewer scrollViewer,
         Func<bool> canLoadOlderRows,
-        Func<Task<bool>> loadOlderRowsAsync,
+        Func<object?, Task<bool>> loadOlderRowsAsync,
         Func<bool> canLoadNewerRows,
-        Func<Task<bool>> loadNewerRowsAsync,
+        Func<object?, Task<bool>> loadNewerRowsAsync,
         Func<bool> hasNewerRows,
         Action<bool>? setJumpToLatestVisible = null,
+        Action? onDetachedFromLatest = null,
+        Action? onReachedLatest = null,
         double autoScrollThreshold = DefaultAutoScrollThreshold,
-        double loadOlderThreshold = DefaultLoadOlderThreshold)
+        double loadOlderThreshold = DefaultLoadOlderThreshold,
+        double loadNewerThreshold = DefaultLoadNewerThreshold)
         : this(
             scrollViewer,
             null,
@@ -79,19 +92,22 @@ internal sealed class TranscriptScrollCoordinator
             loadNewerRowsAsync,
             hasNewerRows,
             setJumpToLatestVisible,
+            onDetachedFromLatest,
+            onReachedLatest,
             autoScrollThreshold,
-            loadOlderThreshold)
+            loadOlderThreshold,
+            loadNewerThreshold)
     {
     }
 
     public void BeginTranscriptMutation()
     {
-        _pendingAnchor ??= CaptureScrollAnchor(preserveBottom: true);
+        _pendingAnchor ??= CaptureScrollAnchor(ScrollAnchorMode.LiveTranscriptMutation);
     }
 
     public void BeginViewportMutation()
     {
-        _pendingAnchor ??= CaptureScrollAnchor(preserveBottom: false);
+        _pendingAnchor ??= CaptureScrollAnchor(ScrollAnchorMode.ViewportMutation);
     }
 
     public void OnViewportContentChanged()
@@ -121,7 +137,23 @@ internal sealed class TranscriptScrollCoordinator
 
         if (_pendingAnchor is not null)
         {
+            if (_loadOlderPending || _loadNewerPending)
+            {
+                _pendingAnchor = null;
+                return;
+            }
+
             QueueRestoreScrollAnchor();
+            return;
+        }
+
+        if (_loadOlderPending || _loadNewerPending)
+        {
+            return;
+        }
+
+        if (QueueLoadNewerRowsIfAtBottom(requireActualBottom: true))
+        {
             return;
         }
 
@@ -135,7 +167,6 @@ internal sealed class TranscriptScrollCoordinator
     {
         _forceScrollToBottomOnNextTranscriptChanged = true;
         _shouldAutoScroll = true;
-        _newerLoadArmed = true;
         _pendingAnchor = null;
     }
 
@@ -190,6 +221,13 @@ internal sealed class TranscriptScrollCoordinator
         if (change.Property == ScrollViewer.ExtentProperty || change.Property == ScrollViewer.ViewportProperty)
         {
             UpdateJumpToLatestVisibility();
+            if (_isRestoringAnchor || _pendingAnchor is not null || _loadOlderPending || _loadNewerPending)
+            {
+                return;
+            }
+
+            QueueLoadOlderRowsIfNearTop();
+            QueueLoadNewerRowsIfAtBottom(requireActualBottom: false);
         }
     }
 
@@ -200,108 +238,166 @@ internal sealed class TranscriptScrollCoordinator
             return;
         }
 
+        if (_isRestoringAnchor || _loadOlderPending || _loadNewerPending)
+        {
+            UpdateJumpToLatestVisibility();
+            return;
+        }
+
         var isNearBottom = IsNearBottom();
-        var isNearTop = IsNearTop();
+        var isNearTop = IsNearLoadTop();
+        var isNearLoadBottom = IsNearLoadBottom();
         _shouldAutoScroll = isNearBottom && !_hasNewerRows();
-        if (!isNearTop && !_loadOlderPending)
+        if (!isNearBottom)
         {
-            _olderLoadArmed = true;
+            _onDetachedFromLatest?.Invoke();
         }
 
-        if (!isNearBottom && !_loadNewerPending)
-        {
-            _newerLoadArmed = true;
-        }
-
+        var queuedOlderLoad = false;
         if (isNearTop)
         {
-            QueueLoadOlderRows();
+            queuedOlderLoad = QueueLoadOlderRows();
         }
 
-        if (isNearBottom)
+        if (!queuedOlderLoad && isNearLoadBottom)
         {
             QueueLoadNewerRows();
+            NotifyReachedLatestIfCaughtUp();
         }
 
         UpdateJumpToLatestVisibility();
     }
 
-    private void QueueLoadOlderRows()
+    private bool QueueLoadOlderRows()
     {
-        if (_loadOlderPending || !_olderLoadArmed || !_canLoadOlderRows())
+        if (_loadOlderPending)
         {
-            return;
+            return true;
+        }
+
+        if (_loadNewerPending || _isRestoringAnchor || _restoreAnchorPending || !_canLoadOlderRows())
+        {
+            return false;
         }
 
         _loadOlderPending = true;
-        _olderLoadArmed = false;
-        BeginTranscriptMutation();
 
         Dispatcher.UIThread.Post(async () =>
         {
             var loaded = false;
             try
             {
-                loaded = await _loadOlderRowsAsync();
+                _pendingAnchor = null;
+                var protectedAnchorKey = CaptureCurrentScrollAnchorKey();
+                loaded = await _loadOlderRowsAsync(protectedAnchorKey);
                 if (!loaded)
                 {
-                    _olderLoadArmed = !_canLoadOlderRows() || !IsNearTop();
                     return;
                 }
 
-                await RestorePendingScrollAnchorAfterRenderedContentAsync();
                 _shouldAutoScroll = false;
-                _olderLoadArmed = !IsNearTop();
                 UpdateJumpToLatestVisibility();
             }
             finally
             {
-                _loadOlderPending = false;
-                if (!loaded && !IsNearTop())
+                try
                 {
-                    _olderLoadArmed = true;
+                    await WaitForRenderedContentAsync();
                 }
-
-                if (!loaded)
+                finally
                 {
-                    DiscardPendingTranscriptMutation();
+                    _loadOlderPending = false;
                 }
             }
         }, DispatcherPriority.Background);
+
+        return true;
     }
 
-    private void QueueLoadNewerRows()
+    private bool QueueLoadNewerRows()
     {
-        if (_loadNewerPending || !_newerLoadArmed || !_canLoadNewerRows())
+        if (_loadNewerPending)
         {
-            return;
+            return true;
+        }
+
+        if (_loadOlderPending || _isRestoringAnchor || _restoreAnchorPending || !_canLoadNewerRows())
+        {
+            return false;
         }
 
         _loadNewerPending = true;
-        _newerLoadArmed = false;
-        BeginTranscriptMutation();
         Dispatcher.UIThread.Post(async () =>
         {
             try
             {
-                var loaded = await _loadNewerRowsAsync();
+                _pendingAnchor = null;
+                var protectedAnchorKey = CaptureCurrentScrollAnchorKey();
+                var loaded = await _loadNewerRowsAsync(protectedAnchorKey);
                 if (loaded)
                 {
-                    await RestorePendingScrollAnchorAfterRenderedContentAsync();
-                    _newerLoadArmed = !_hasNewerRows() || !IsNearBottom();
                     UpdateJumpToLatestVisibility();
+                    if (!_hasNewerRows() || !IsNearLoadBottom())
+                    {
+                        NotifyReachedLatestIfCaughtUp();
+                    }
+
                     return;
                 }
 
-                DiscardPendingTranscriptMutation();
-                _newerLoadArmed = !_hasNewerRows() || !IsNearBottom();
                 UpdateJumpToLatestVisibility();
+                NotifyReachedLatestIfCaughtUp();
             }
             finally
             {
-                _loadNewerPending = false;
+                try
+                {
+                    await WaitForRenderedContentAsync();
+                }
+                finally
+                {
+                    _loadNewerPending = false;
+                }
             }
         }, DispatcherPriority.Background);
+
+        return true;
+    }
+
+    private bool QueueLoadOlderRowsIfNearTop()
+    {
+        if (_shouldAutoScroll || !IsNearLoadTop())
+        {
+            return false;
+        }
+
+        return QueueLoadOlderRows();
+    }
+
+    private bool QueueLoadNewerRowsIfAtBottom(bool requireActualBottom)
+    {
+        if (!_hasNewerRows())
+        {
+            NotifyReachedLatestIfCaughtUp();
+            return false;
+        }
+
+        if (requireActualBottom ? !IsNearBottom() : !IsNearLoadBottom())
+        {
+            return false;
+        }
+
+        if (_loadNewerPending)
+        {
+            return true;
+        }
+
+        if (!_canLoadNewerRows())
+        {
+            return false;
+        }
+
+        return QueueLoadNewerRows();
     }
 
     private void ScrollToBottom()
@@ -310,10 +406,18 @@ internal sealed class TranscriptScrollCoordinator
         _shouldAutoScroll = !_hasNewerRows();
         if (!_hasNewerRows())
         {
-            _newerLoadArmed = true;
+            _onReachedLatest?.Invoke();
         }
 
         UpdateJumpToLatestVisibility();
+    }
+
+    private void NotifyReachedLatestIfCaughtUp()
+    {
+        if (!_hasNewerRows() && IsNearBottom())
+        {
+            _onReachedLatest?.Invoke();
+        }
     }
 
     private async Task ScrollToBottomAfterLayoutSettlesAsync()
@@ -367,8 +471,39 @@ internal sealed class TranscriptScrollCoordinator
 
     private async Task RestorePendingScrollAnchorAfterRenderedContentAsync()
     {
-        await WaitForRenderedContentAsync();
-        RestorePendingScrollAnchor();
+        var anchor = _pendingAnchor;
+        if (anchor is null)
+        {
+            return;
+        }
+
+        _isRestoringAnchor = true;
+        try
+        {
+            var previousExtentHeight = -1d;
+            for (var pass = 0; pass < 4; pass++)
+            {
+                await WaitForRenderedContentAsync();
+                RestoreScrollAnchor(anchor);
+
+                var extentHeight = _scrollViewer.Extent.Height;
+                if (pass > 0 && Math.Abs(extentHeight - previousExtentHeight) < 0.5)
+                {
+                    break;
+                }
+
+                previousExtentHeight = extentHeight;
+            }
+        }
+        finally
+        {
+            _isRestoringAnchor = false;
+        }
+
+        if (ReferenceEquals(_pendingAnchor, anchor))
+        {
+            _pendingAnchor = null;
+        }
     }
 
     private async Task WaitForRenderedContentAsync()
@@ -377,57 +512,81 @@ internal sealed class TranscriptScrollCoordinator
         _scrollViewer.UpdateLayout();
     }
 
-    private void RestorePendingScrollAnchor()
+    private void RestoreScrollAnchor(ScrollAnchor anchor)
     {
-        var anchor = _pendingAnchor;
-        if (anchor is null)
-        {
-            return;
-        }
-
-        _pendingAnchor = null;
-        if (anchor.WasNearBottom)
+        if (anchor.Mode == ScrollAnchorMode.LiveTranscriptMutation && anchor.WasNearBottom)
         {
             ScrollToBottom();
             return;
         }
 
-        if (anchor.Item is not null && TryGetItemTop(anchor.Item, out var currentTop))
+        foreach (var itemAnchor in anchor.Items)
         {
-            SetProgrammaticOffset(anchor.OffsetY + currentTop - anchor.ItemTop);
+            if (TryGetItemTop(itemAnchor.Item, out var currentTop))
+            {
+                SetProgrammaticOffset(anchor.OffsetY + currentTop - itemAnchor.Top);
+                _shouldAutoScroll = IsNearBottom() && !_hasNewerRows();
+                UpdateJumpToLatestVisibility();
+                return;
+            }
         }
-        else
+
+        RestoreScrollAnchorFallback(anchor);
+    }
+
+    private void RestoreScrollAnchorFallback(ScrollAnchor anchor)
+    {
+        switch (anchor.Mode)
         {
-            var maxOffsetY = Math.Max(0, _scrollViewer.Extent.Height - _scrollViewer.Viewport.Height);
-            SetProgrammaticOffset(maxOffsetY - anchor.DistanceFromBottom);
+            case ScrollAnchorMode.LiveTranscriptMutation:
+                SetProgrammaticOffset(MaxOffsetY() - anchor.DistanceFromBottom);
+                break;
+            default:
+                SetProgrammaticOffset(anchor.OffsetY);
+                break;
         }
 
         _shouldAutoScroll = IsNearBottom() && !_hasNewerRows();
         UpdateJumpToLatestVisibility();
     }
 
-    private ScrollAnchor CaptureScrollAnchor(bool preserveBottom)
+    private ScrollAnchor CaptureScrollAnchor(ScrollAnchorMode mode)
     {
         var distanceFromBottom = DistanceFromBottom();
-        var itemAnchor = CaptureItemAnchor();
+        var itemAnchors = CaptureItemAnchors();
         return new ScrollAnchor(
-            preserveBottom && IsNearBottom() && !_hasNewerRows(),
+            mode,
+            mode == ScrollAnchorMode.LiveTranscriptMutation && IsNearBottom(),
             distanceFromBottom,
             _scrollViewer.Offset.Y,
-            itemAnchor?.Item,
-            itemAnchor?.Top ?? 0);
+            itemAnchors);
     }
 
-    private ItemAnchor? CaptureItemAnchor()
+    private object? CaptureCurrentScrollAnchorKey()
+    {
+        if (_scrollViewer.CurrentAnchor is Visual currentAnchor)
+        {
+            var rowPresenter = currentAnchor as TranscriptRowPresenter
+                               ?? currentAnchor.GetVisualAncestors().OfType<TranscriptRowPresenter>().FirstOrDefault();
+            if (rowPresenter?.AnchorKey is { } currentAnchorKey)
+            {
+                return currentAnchorKey;
+            }
+        }
+
+        return CaptureItemAnchors().FirstOrDefault()?.Item;
+    }
+
+    private IReadOnlyList<ItemAnchor> CaptureItemAnchors()
     {
         if (_itemsControl is null)
         {
-            return null;
+            return [];
         }
 
         var viewportHeight = _scrollViewer.Viewport.Height;
-        ItemAnchor? best = null;
-        foreach (var (item, visual) in EnumerateRealizedItemVisuals())
+        var anchors = new List<ItemAnchor>();
+        foreach (var (item, visual) in EnumerateRowAnchorVisuals())
         {
             if (!TryGetTop(visual, out var top))
             {
@@ -440,13 +599,13 @@ internal sealed class TranscriptScrollCoordinator
                 continue;
             }
 
-            if (best is null || top < best.Top)
-            {
-                best = new ItemAnchor(item, top);
-            }
+            anchors.Add(new ItemAnchor(item, top, bottom));
         }
 
-        return best;
+        return anchors
+            .OrderBy(anchor => anchor.Top <= 0 && anchor.Bottom > 0 ? 0 : 1)
+            .ThenBy(anchor => anchor.Top <= 0 ? Math.Abs(anchor.Top) : anchor.Top)
+            .ToArray();
     }
 
     private bool TryGetItemTop(object item, out double top)
@@ -457,14 +616,9 @@ internal sealed class TranscriptScrollCoordinator
             return false;
         }
 
-        if (_itemsControl.ContainerFromItem(item) is { } container && TryGetTop(container, out top))
+        foreach (var (candidateItem, visual) in EnumerateRowAnchorVisuals())
         {
-            return true;
-        }
-
-        foreach (var (candidateItem, visual) in EnumerateRealizedItemVisuals())
-        {
-            if (ReferenceEquals(candidateItem, item) && TryGetTop(visual, out top))
+            if (Equals(candidateItem, item) && TryGetTop(visual, out top))
             {
                 return true;
             }
@@ -473,22 +627,44 @@ internal sealed class TranscriptScrollCoordinator
         return false;
     }
 
-    private IEnumerable<(object Item, Control Visual)> EnumerateRealizedItemVisuals()
+    private IEnumerable<(object Item, Control Visual)> EnumerateRowAnchorVisuals()
     {
         if (_itemsControl is null)
         {
             yield break;
         }
 
-        foreach (var container in _itemsControl.GetRealizedContainers())
+        var visualsByItem = new Dictionary<object, Control>();
+        foreach (var visual in _itemsControl.GetVisualDescendants().OfType<TranscriptRowPresenter>())
         {
-            var item = _itemsControl.ItemFromContainer(container);
-            if (item is not null)
+            var item = visual.AnchorKey;
+            if (item is null)
             {
-                yield return (item, container);
+                continue;
+            }
+
+            if (!visualsByItem.TryGetValue(item, out var current) || IsBetterItemAnchorVisual(visual, current))
+            {
+                visualsByItem[item] = visual;
             }
         }
 
+        foreach (var (item, visual) in visualsByItem)
+        {
+            yield return (item, visual);
+        }
+    }
+
+    private static bool IsBetterItemAnchorVisual(Control candidate, Control current)
+    {
+        var candidateArea = candidate.Bounds.Width * candidate.Bounds.Height;
+        var currentArea = current.Bounds.Width * current.Bounds.Height;
+        if (Math.Abs(candidateArea - currentArea) > 0.5)
+        {
+            return candidateArea > currentArea;
+        }
+
+        return candidate.Bounds.Height > current.Bounds.Height;
     }
 
     private bool TryGetTop(Visual visual, out double top)
@@ -500,11 +676,10 @@ internal sealed class TranscriptScrollCoordinator
 
     private void SetProgrammaticOffset(double offsetY)
     {
-        var maxOffsetY = Math.Max(0, _scrollViewer.Extent.Height - _scrollViewer.Viewport.Height);
         _isProgrammaticScroll = true;
         try
         {
-            _scrollViewer.Offset = new Vector(_scrollViewer.Offset.X, Math.Clamp(offsetY, 0, maxOffsetY));
+            _scrollViewer.Offset = new Vector(_scrollViewer.Offset.X, Math.Clamp(offsetY, 0, MaxOffsetY()));
         }
         finally
         {
@@ -526,7 +701,14 @@ internal sealed class TranscriptScrollCoordinator
 
     private bool IsNearTop()
     {
-        return _scrollViewer.Offset.Y <= _loadOlderThreshold;
+        return _scrollViewer.Offset.Y <= ResolveLoadThreshold(_loadOlderThreshold);
+    }
+
+    private bool IsNearLoadTop() => IsNearTop();
+
+    private bool IsNearLoadBottom()
+    {
+        return DistanceFromBottom() <= ResolveLoadThreshold(_loadNewerThreshold);
     }
 
     private bool IsNearBottom()
@@ -537,12 +719,23 @@ internal sealed class TranscriptScrollCoordinator
     private double DistanceFromBottom() =>
         _scrollViewer.Extent.Height - (_scrollViewer.Offset.Y + _scrollViewer.Viewport.Height);
 
+    private double MaxOffsetY() => Math.Max(0, _scrollViewer.Extent.Height - _scrollViewer.Viewport.Height);
+
+    private double ResolveLoadThreshold(double configuredThreshold)
+        => Math.Max(configuredThreshold, _scrollViewer.Viewport.Height * ViewportLoadThresholdRatio);
+
     private sealed record ScrollAnchor(
+        ScrollAnchorMode Mode,
         bool WasNearBottom,
         double DistanceFromBottom,
         double OffsetY,
-        object? Item,
-        double ItemTop);
+        IReadOnlyList<ItemAnchor> Items);
 
-    private sealed record ItemAnchor(object Item, double Top);
+    private sealed record ItemAnchor(object Item, double Top, double Bottom);
+
+    private enum ScrollAnchorMode
+    {
+        LiveTranscriptMutation,
+        ViewportMutation,
+    }
 }

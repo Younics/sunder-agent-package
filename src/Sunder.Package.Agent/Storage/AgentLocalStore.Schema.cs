@@ -114,7 +114,8 @@ public sealed partial class AgentLocalStore
                 WasTruncated INTEGER NOT NULL DEFAULT 0,
                 IsError INTEGER NOT NULL DEFAULT 0,
                 ErrorCode TEXT NULL,
-                BackendId TEXT NULL
+                BackendId TEXT NULL,
+                PresentationPayloadJson TEXT NULL
             );
 
             CREATE TABLE IF NOT EXISTS AgentRunCheckpoints (
@@ -130,6 +131,17 @@ public sealed partial class AgentLocalStore
                 SessionId TEXT PRIMARY KEY,
                 SummaryText TEXT NOT NULL,
                 UpdatedAtUtc TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS AgentSessionContextCheckpoints (
+                ContextCheckpointId TEXT PRIMARY KEY,
+                SessionId TEXT NOT NULL,
+                FirstOmittedTurnId TEXT NULL,
+                LastOmittedTurnId TEXT NULL,
+                OmittedTurnCount INTEGER NOT NULL,
+                SummaryText TEXT NOT NULL,
+                DetailsJson TEXT NULL,
+                CreatedAtUtc TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS AgentPermissionRules (
@@ -196,6 +208,7 @@ public sealed partial class AgentLocalStore
             CREATE INDEX IF NOT EXISTS IX_AgentTurnItems_TurnId_SequenceNumber ON AgentTurnItems (TurnId, SequenceNumber);
             CREATE INDEX IF NOT EXISTS IX_AgentRunCheckpoints_SessionId_CreatedAtUtc ON AgentRunCheckpoints (SessionId, CreatedAtUtc);
             CREATE INDEX IF NOT EXISTS IX_AgentRunCheckpoints_SessionId_RunRevision ON AgentRunCheckpoints (SessionId, RunRevision);
+            CREATE INDEX IF NOT EXISTS IX_AgentSessionContextCheckpoints_SessionId_CreatedAtUtc ON AgentSessionContextCheckpoints (SessionId, CreatedAtUtc);
             CREATE INDEX IF NOT EXISTS IX_AgentSessionPermissionApprovals_SessionId ON AgentSessionPermissionApprovals (SessionId);
             CREATE INDEX IF NOT EXISTS IX_AgentPendingPermissionRequests_SessionId ON AgentPendingPermissionRequests (SessionId);
             """;
@@ -279,6 +292,14 @@ public sealed partial class AgentLocalStore
         using var command = connection.CreateCommand();
         command.CommandText = "DROP TABLE IF EXISTS AgentRunTraceEvents;";
         command.ExecuteNonQuery();
+    }
+
+    private void EnsureTurnItemPresentationMigration()
+    {
+        using var connection = CreateConnection();
+        connection.Open();
+
+        EnsureTableColumnExists(connection, "AgentTurnItems", "PresentationPayloadJson", "TEXT NULL");
     }
 
     private void EnsurePendingPermissionMigration()

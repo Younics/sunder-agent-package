@@ -13,10 +13,12 @@ internal sealed class OpenAiCodexChatClient(
     AgentChatClientContext context,
     string providerDisplayName,
     CodexConnectedTransport transport,
+    CodexResponseContinuationStore continuationStore,
     OpenAiCodexSession session) : IChatClient
 {
     private readonly AgentChatClientContext _context = context;
     private readonly CodexConnectedTransport _transport = transport;
+    private readonly CodexResponseContinuationStore _continuationStore = continuationStore;
     private readonly OpenAiCodexSession _session = session;
 
     public ChatClientMetadata Metadata { get; } = new(providerDisplayName);
@@ -86,6 +88,7 @@ internal sealed class OpenAiCodexChatClient(
             _context,
             messageList,
             options,
+            _continuationStore,
             responseId,
             messageId,
             cancellationToken).GetAsyncEnumerator(cancellationToken);

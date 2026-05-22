@@ -29,6 +29,7 @@ public sealed class CodexResponsesStreamParserTests
 
         Assert.Single(updates);
         Assert.Equal("Hi", updates[0].Text);
+        Assert.Equal("resp-1", updates[0].ResponseId);
     }
 
     [Fact]

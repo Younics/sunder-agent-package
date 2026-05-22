@@ -211,6 +211,17 @@ public partial class AgentChatView : UserControl
             return;
         }
 
+        if (e.Key == Key.Escape && _viewModel?.IsRollbackPending == true)
+        {
+            e.Handled = true;
+            if (_viewModel.CancelRollbackCommand.CanExecute(null))
+            {
+                _viewModel.CancelRollbackCommand.Execute(null);
+            }
+
+            return;
+        }
+
         if (IsSendShortcut(e) && _viewModel?.IsSendOnEnterEnabled == true)
         {
             e.Handled = true;
@@ -404,8 +415,15 @@ public partial class AgentChatView : UserControl
 
     private void OnTranscriptChanging()
     {
-        if (_initialTranscriptPlacementPending || _viewModel?.IsTranscriptLoading == true)
+        var viewModel = _viewModel ?? DataContext as AgentChatViewModel;
+        if (_initialTranscriptPlacementPending || viewModel?.IsTranscriptLoading == true)
         {
+            return;
+        }
+
+        if (viewModel?.IsLoadingOlderTranscriptRows == true || viewModel?.IsLoadingNewerTranscriptRows == true)
+        {
+            _transcriptScrollCoordinator?.DiscardPendingTranscriptMutation();
             return;
         }
 
@@ -428,11 +446,13 @@ public partial class AgentChatView : UserControl
             TranscriptScrollViewer,
             TranscriptItemsControl,
             () => _viewModel?.CanLoadOlderTranscriptRows == true,
-            () => _viewModel?.LoadOlderTranscriptRowsAsync() ?? Task.FromResult(false),
+            anchorKey => _viewModel?.LoadOlderTranscriptRowsAsync(anchorKey) ?? Task.FromResult(false),
             () => _viewModel?.CanLoadNewerTranscriptRows == true,
-            () => _viewModel?.LoadNewerTranscriptRowsAsync() ?? Task.FromResult(false),
+            anchorKey => _viewModel?.LoadNewerTranscriptRowsAsync(anchorKey) ?? Task.FromResult(false),
             () => _viewModel?.HasNewerTranscriptRows == true,
-            isVisible => JumpToLatestTranscriptButton.IsVisible = isVisible);
+            isVisible => JumpToLatestTranscriptButton.IsVisible = isVisible,
+            () => _viewModel?.DetachTranscriptFromLatest(),
+            () => _viewModel?.ResumeTranscriptFollowingLatestIfCaughtUp());
         return true;
     }
 

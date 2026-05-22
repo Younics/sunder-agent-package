@@ -218,6 +218,97 @@ public sealed class CodexResponsesRequestBuilderTests
     }
 
     [Fact]
+    public void Build_MatchingContinuation_UsesPreviousResponseIdAndOnlyNewInput()
+    {
+        var priorRequest = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", "openai/gpt-5.5"),
+            [new ChatMessage(ChatRole.User, "First.")],
+            new ChatOptions
+            {
+                Instructions = "Be brief.",
+                ConversationId = "session-123",
+            },
+            toolAware: false);
+        var priorOutput = CodexResponsesRequestBuilder.BuildAssistantOutputFingerprints("Done.", []);
+        var continuationState = new CodexResponseContinuationState(
+            "session-123",
+            priorRequest.ShapeFingerprint,
+            "resp-previous",
+            priorRequest.ConversationItemFingerprints.Concat(priorOutput).ToArray());
+
+        var request = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", "openai/gpt-5.5"),
+            [
+                new ChatMessage(ChatRole.User, "First."),
+                new ChatMessage(ChatRole.Assistant, "Done."),
+                new ChatMessage(ChatRole.User, "Second.")
+            ],
+            new ChatOptions
+            {
+                Instructions = "Be brief.",
+                ConversationId = "session-123",
+            },
+            toolAware: false,
+            continuationState: continuationState);
+
+        using var document = JsonDocument.Parse(request.Body);
+        var root = document.RootElement;
+        var input = root.GetProperty("input").EnumerateArray().ToArray();
+
+        Assert.True(request.HasPreviousResponseId);
+        Assert.Equal("resp-previous", root.GetProperty("previous_response_id").GetString());
+        Assert.Equal(1, request.InputItemCount);
+        Assert.Equal(3, request.ConversationInputItemCount);
+        Assert.Single(input);
+        Assert.Equal("user", input[0].GetProperty("role").GetString());
+        Assert.Equal("Second.", input[0].GetProperty("content")[0].GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public void Build_DivergedContinuationPrefix_SendsFullInput()
+    {
+        var priorRequest = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", "openai/gpt-5.5"),
+            [new ChatMessage(ChatRole.User, "First.")],
+            new ChatOptions
+            {
+                Instructions = "Be brief.",
+                ConversationId = "session-123",
+            },
+            toolAware: false);
+        var continuationState = new CodexResponseContinuationState(
+            "session-123",
+            priorRequest.ShapeFingerprint,
+            "resp-previous",
+            priorRequest.ConversationItemFingerprints);
+
+        var request = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", "openai/gpt-5.5"),
+            [
+                new ChatMessage(ChatRole.User, "Edited first."),
+                new ChatMessage(ChatRole.User, "Second.")
+            ],
+            new ChatOptions
+            {
+                Instructions = "Be brief.",
+                ConversationId = "session-123",
+            },
+            toolAware: false,
+            continuationState: continuationState);
+
+        using var document = JsonDocument.Parse(request.Body);
+        var root = document.RootElement;
+        var input = root.GetProperty("input").EnumerateArray().ToArray();
+
+        Assert.False(request.HasPreviousResponseId);
+        Assert.False(root.TryGetProperty("previous_response_id", out _));
+        Assert.Equal(2, request.InputItemCount);
+        Assert.Equal(2, request.ConversationInputItemCount);
+        Assert.Equal("Edited first.", input[0].GetProperty("content")[0].GetProperty("text").GetString());
+        Assert.Equal("Second.", input[1].GetProperty("content")[0].GetProperty("text").GetString());
+    }
+
+    [Fact]
     public void Build_UserDataContent_MapsImageAndPdfParts()
     {
         var image = new DataContent(new byte[] { 1, 2, 3 }, "image/png") { Name = "image.png" };

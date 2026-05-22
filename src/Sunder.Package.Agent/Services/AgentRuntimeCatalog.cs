@@ -51,6 +51,9 @@ public sealed class AgentRuntimeCatalog : IAgentRuntimeCatalog
 
     public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => _sessionService.GetWorkingSummary(sessionId);
 
+    public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId)
+        => _sessionService.GetLatestSessionContextCheckpoint(sessionId);
+
     public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => _sessionService.GetLatestCheckpoint(sessionId);
 
     public IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit) => _sessionService.ListRecentTurns(sessionId, limit);

@@ -24,6 +24,8 @@ public interface IAgentRuntimeCatalog
 
     AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId);
 
+    AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId);
+
     AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId);
 
     IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit);

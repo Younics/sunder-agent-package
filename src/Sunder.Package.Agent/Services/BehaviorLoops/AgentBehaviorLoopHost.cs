@@ -464,7 +464,8 @@ internal sealed class AgentBehaviorLoopHost(
             toolResult.WasTruncated,
             toolResult.IsError,
             toolResult.ErrorCode,
-            toolResult.BackendId);
+            toolResult.BackendId,
+            toolResult.PresentationPayloadJson);
 
     private async ValueTask<IReadOnlyDictionary<string, AgentToolDescriptor>> GetAvailableToolsByIdAsync(CancellationToken cancellationToken)
     {
@@ -569,7 +570,8 @@ internal sealed class AgentBehaviorLoopHost(
             WasTruncated: cachedResult.WasTruncated,
             IsError: false,
             ErrorCode: null,
-            BackendId: cachedResult.BackendId);
+            BackendId: cachedResult.BackendId,
+            PresentationPayloadJson: cachedResult.PresentationPayloadJson);
     }
 
 }

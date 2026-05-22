@@ -93,6 +93,8 @@ sunder.package.agent
 
 Extension packages use `Sunder.Package.Agent.Contracts` to register capabilities with the core Agent package. That keeps providers, tools, execution targets, and memory features independently installable.
 
+Core session continuity is owned by `sunder.package.agent`: the default behavior loop projects long transcripts into the provider prompt, stores session context checkpoints for omitted turns, and preserves active tool call/result pairs. Semantic memory remains durable, recallable knowledge and should not own active working summaries.
+
 ## Safety Model
 
 Agent capabilities are split into explicit packages so users can choose what is installed and enabled.

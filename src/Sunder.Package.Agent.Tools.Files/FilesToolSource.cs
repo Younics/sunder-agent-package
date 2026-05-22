@@ -272,7 +272,14 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
         }
 
         var result = await target.WriteFileAsync(context, new AgentFileWriteRequest(args.Path, next), cancellationToken);
-        return new AgentToolResult(request.ToolId, result.Summary, Content: result.Summary, IsError: result.IsError, ErrorCode: result.ErrorCode, BackendId: BackendId(target));
+        return new AgentToolResult(
+            request.ToolId,
+            result.Summary,
+            Content: result.Summary,
+            IsError: result.IsError,
+            ErrorCode: result.ErrorCode,
+            BackendId: BackendId(target),
+            PresentationPayloadJson: result.IsError ? null : BuildEditPresentationPayload(args, current.Content));
     }
 
     private async Task<AgentToolResult> ApplyPatchAsync(IAgentExecutionTarget target, AgentExecutionTargetContext context, AgentToolRequest request, CancellationToken cancellationToken)
@@ -284,6 +291,7 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
 
         var operations = ParsePatch(args.PatchText);
         var summaries = new List<string>();
+        var presentationFiles = new List<FileDiffPayloadFile>();
 
         foreach (var operation in operations)
         {
@@ -297,6 +305,7 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
                     }
 
                     summaries.Add($"Added {operation.Path}");
+                    presentationFiles.Add(BuildAddedFilePayload(operation.Path, operation.Content ?? string.Empty));
                     break;
 
                 case PatchOperationKind.Delete:
@@ -307,11 +316,12 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
                     }
 
                     summaries.Add($"Deleted {operation.Path}");
+                    presentationFiles.Add(new FileDiffPayloadFile(operation.Path, "Delete", 0, 0, [new FileDiffPayloadLine("collapsed", null, "File deleted")]));
                     break;
 
                 case PatchOperationKind.Update:
                     var current = await target.ReadFileAsync(context, new AgentFileReadRequest(operation.Path), cancellationToken);
-                    var next = ApplyHunks(current.Content, operation.Hunks);
+                    var next = ApplyHunks(current.Content, operation.Hunks, out var diffLines);
                     var updateResult = await target.WriteFileAsync(context, new AgentFileWriteRequest(operation.Path, next), cancellationToken);
                     if (updateResult.IsError)
                     {
@@ -319,12 +329,23 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
                     }
 
                     summaries.Add($"Updated {operation.Path}");
+                    presentationFiles.Add(new FileDiffPayloadFile(
+                        operation.Path,
+                        "Update",
+                        diffLines.Count(line => string.Equals(line.Kind, "added", StringComparison.Ordinal)),
+                        diffLines.Count(line => string.Equals(line.Kind, "deleted", StringComparison.Ordinal)),
+                        diffLines));
                     break;
             }
         }
 
         var content = string.Join(Environment.NewLine, summaries);
-        return new AgentToolResult(request.ToolId, BuildPatchSummary(operations), Content: content, BackendId: BackendId(target));
+        return new AgentToolResult(
+            request.ToolId,
+            BuildPatchSummary(operations),
+            Content: content,
+            BackendId: BackendId(target),
+            PresentationPayloadJson: BuildFileDiffPresentationPayload(presentationFiles));
     }
 
     private async Task<AgentToolResult> GrepAsync(IAgentExecutionTarget target, AgentExecutionTargetContext context, AgentToolRequest request, CancellationToken cancellationToken)
@@ -1104,8 +1125,12 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
     }
 
     private static string ApplyHunks(string content, IReadOnlyList<PatchHunk> hunks)
+        => ApplyHunks(content, hunks, out _);
+
+    private static string ApplyHunks(string content, IReadOnlyList<PatchHunk> hunks, out IReadOnlyList<FileDiffPayloadLine> diffLines)
     {
         var next = content.Replace("\r\n", "\n");
+        var lines = new List<FileDiffPayloadLine>();
         foreach (var hunk in hunks)
         {
             var index = next.IndexOf(hunk.OldText, StringComparison.Ordinal);
@@ -1114,11 +1139,134 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
                 throw new InvalidOperationException("Patch hunk did not match the current file content.");
             }
 
+            var startLine = CountLinesBefore(next, index) + 1;
+            AppendReplacementDiffLines(lines, hunk.OldText, hunk.NewText, startLine);
             next = next[..index] + hunk.NewText + next[(index + hunk.OldText.Length)..];
         }
 
+        diffLines = lines;
         return next;
     }
+
+    private static string? BuildEditPresentationPayload(EditArgs args, string currentContent)
+    {
+        var matches = FindMatchIndexes(currentContent, args.OldString, args.ReplaceAll);
+        if (matches.Count == 0)
+        {
+            return null;
+        }
+
+        var lines = new List<FileDiffPayloadLine>();
+        foreach (var index in matches)
+        {
+            AppendReplacementDiffLines(lines, args.OldString, args.NewString, CountLinesBefore(currentContent, index) + 1);
+        }
+
+        var added = lines.Count(line => string.Equals(line.Kind, "added", StringComparison.Ordinal));
+        var deleted = lines.Count(line => string.Equals(line.Kind, "deleted", StringComparison.Ordinal));
+        return BuildFileDiffPresentationPayload([new FileDiffPayloadFile(args.Path, "Edit", added, deleted, lines)]);
+    }
+
+    private static FileDiffPayloadFile BuildAddedFilePayload(string path, string content)
+    {
+        var contentLines = SplitLines(content);
+        var lines = contentLines
+            .Select((line, index) => new FileDiffPayloadLine("added", index + 1, line))
+            .ToArray();
+        return new FileDiffPayloadFile(path, "Add", lines.Length, 0, lines);
+    }
+
+    private static void AppendReplacementDiffLines(List<FileDiffPayloadLine> lines, string oldText, string newText, int startLine)
+    {
+        var oldLines = SplitLines(oldText);
+        var newLines = SplitLines(newText);
+        var prefixLength = 0;
+        while (prefixLength < oldLines.Length
+               && prefixLength < newLines.Length
+               && string.Equals(oldLines[prefixLength], newLines[prefixLength], StringComparison.Ordinal))
+        {
+            lines.Add(new FileDiffPayloadLine("context", startLine + prefixLength, oldLines[prefixLength]));
+            prefixLength++;
+        }
+
+        var suffixLength = 0;
+        while (suffixLength < oldLines.Length - prefixLength
+               && suffixLength < newLines.Length - prefixLength
+               && string.Equals(oldLines[oldLines.Length - 1 - suffixLength], newLines[newLines.Length - 1 - suffixLength], StringComparison.Ordinal))
+        {
+            suffixLength++;
+        }
+
+        var changedOldLength = oldLines.Length - prefixLength - suffixLength;
+        var changedNewLength = newLines.Length - prefixLength - suffixLength;
+        for (var index = 0; index < oldLines.Length; index++)
+        {
+            if (index >= prefixLength && index < prefixLength + changedOldLength)
+            {
+                lines.Add(new FileDiffPayloadLine("deleted", startLine + index, oldLines[index]));
+            }
+        }
+
+        for (var index = 0; index < changedNewLength; index++)
+        {
+            lines.Add(new FileDiffPayloadLine("added", startLine + prefixLength + index, newLines[prefixLength + index]));
+        }
+
+        for (var index = 0; index < suffixLength; index++)
+        {
+            var oldIndex = oldLines.Length - suffixLength + index;
+            lines.Add(new FileDiffPayloadLine("context", startLine + oldIndex, oldLines[oldIndex]));
+        }
+    }
+
+    private static IReadOnlyList<int> FindMatchIndexes(string content, string oldString, bool replaceAll)
+    {
+        if (string.IsNullOrEmpty(oldString))
+        {
+            return [];
+        }
+
+        var matches = new List<int>();
+        var startIndex = 0;
+        while (startIndex <= content.Length)
+        {
+            var index = content.IndexOf(oldString, startIndex, StringComparison.Ordinal);
+            if (index < 0)
+            {
+                break;
+            }
+
+            matches.Add(index);
+            if (!replaceAll)
+            {
+                break;
+            }
+
+            startIndex = index + oldString.Length;
+        }
+
+        return matches;
+    }
+
+    private static int CountLinesBefore(string content, int index)
+    {
+        var count = 0;
+        for (var position = 0; position < Math.Min(index, content.Length); position++)
+        {
+            if (content[position] == '\n')
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private static string[] SplitLines(string value)
+        => value.Length == 0 ? [] : value.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+
+    private static string BuildFileDiffPresentationPayload(IReadOnlyList<FileDiffPayloadFile> files)
+        => JsonSerializer.Serialize(new FileDiffPresentationPayload("sunder.file-diff.v1", files), JsonOptions);
 
     private sealed record ReadArgs(string Path, int? Offset = null, int? Limit = null);
 
@@ -1137,6 +1285,12 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
     private sealed record GlobMatch(string Path);
 
     private sealed record ProcessCommandSpec(string FileName, IReadOnlyList<string> Arguments);
+
+    private sealed record FileDiffPresentationPayload(string Schema, IReadOnlyList<FileDiffPayloadFile> Files);
+
+    private sealed record FileDiffPayloadFile(string Path, string Operation, int AddedLineCount, int DeletedLineCount, IReadOnlyList<FileDiffPayloadLine> Lines);
+
+    private sealed record FileDiffPayloadLine(string Kind, int? LineNumber, string Text);
 
     private sealed record PatchOperation(PatchOperationKind Kind, string Path, string? Content, IReadOnlyList<PatchHunk> Hunks);
 

@@ -55,6 +55,9 @@ public sealed class MemoryInspectorService(
     public IReadOnlyList<AgentSessionRecord> ListSessions() =>
         GetRuntimeCatalog()?.ListSessions() ?? [];
 
+    public AgentSessionContextCheckpointRecord? GetSessionContextCheckpoint(Guid sessionId) =>
+        GetRuntimeCatalog()?.GetLatestSessionContextCheckpoint(sessionId);
+
     public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) =>
         GetRuntimeCatalog()?.GetWorkingSummary(sessionId);
 

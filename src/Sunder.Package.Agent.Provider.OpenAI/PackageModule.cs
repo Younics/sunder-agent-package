@@ -15,6 +15,7 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddSingleton<ApiKeyAuthStrategy>();
         services.AddSingleton<CodexConnectedAuthStrategy>();
         services.AddSingleton(_ => CodexHttpClientFactory.CreateBackendClient());
+        services.AddSingleton<CodexResponseContinuationStore>();
         services.AddSingleton<CodexConnectedTransport>();
         services.AddTransient<OpenAiSettingsViewModel>();
         services.AddSingleton<OpenAiPackageAuthHandler>();
@@ -32,5 +33,6 @@ public sealed class PackageModule : ISunderPackageModule
         registry.RegisterSettingsView<OpenAiSettingsView>();
         registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<OpenAiAgentProvider>());
         registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<OpenAiEmbeddingProvider>());
+        registry.RegisterExtension(PackageExtensionPoints.SessionDataCleaners, services.GetRequiredService<CodexResponseContinuationStore>());
     }
 }

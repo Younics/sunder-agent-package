@@ -1,4 +1,33 @@
-<Styles xmlns="https://github.com/avaloniaui">
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:md="clr-namespace:LiveMarkdown.Avalonia;assembly=LiveMarkdown.Avalonia"
+        xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews">
+  <Style Selector="shared|TranscriptRowPresenter.transcript-row-anchor">
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+  </Style>
+
+  <Style Selector="ItemsControl.transcript-items">
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+  </Style>
+
+  <Style Selector="md|MarkdownRenderer">
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+  </Style>
+
+  <Style Selector="md|MarkdownTextBlock">
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+
+  <Style Selector="md|CodeBlock">
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="IsCodeWrapped" Value="True" />
+  </Style>
+
   <Style Selector="Border.message-avatar">
     <Setter Property="Width" Value="42" />
     <Setter Property="Height" Value="42" />
@@ -42,7 +71,9 @@
   </Style>
 
   <Style Selector="Border.transcript-content">
-    <Setter Property="Padding" Value="30" />
+    <Setter Property="Padding" Value="30,30,42,30" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
   </Style>
 
   <Style Selector="Border.message-bubble">
@@ -51,6 +82,9 @@
     <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
     <Setter Property="Padding" Value="16,12" />
+    <Setter Property="ClipToBounds" Value="True" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
   </Style>
 
   <Style Selector="Border.message-bubble.user">
@@ -92,12 +126,16 @@
   <Style Selector="TextBlock.tool-label">
     <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
     <Setter Property="FontSize" Value="14" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="TextWrapping" Value="Wrap" />
   </Style>
 
   <Style Selector="TextBlock.tool-command">
     <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
     <Setter Property="FontSize" Value="14" />
     <Setter Property="FontFamily" Value="Menlo,Consolas,monospace" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="TextWrapping" Value="Wrap" />
   </Style>
 
   <Style Selector="TextBlock.tool-chevron">
@@ -105,6 +143,111 @@
     <Setter Property="FontSize" Value="14" />
     <Setter Property="HorizontalAlignment" Value="Center" />
     <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-diff-section-title">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="Border.tool-diff-file-card">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+    <Setter Property="ClipToBounds" Value="True" />
+    <Setter Property="MinWidth" Value="0" />
+  </Style>
+
+  <Style Selector="Border.tool-diff-file-header">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+    <Setter Property="BorderThickness" Value="0,0,0,1" />
+    <Setter Property="Padding" Value="10,8" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-diff-path">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    <Setter Property="FontFamily" Value="Menlo,Consolas,monospace" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-diff-operation">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+    <Setter Property="FontSize" Value="11" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-diff-added-count">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Success}" />
+    <Setter Property="FontFamily" Value="Menlo,Consolas,monospace" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-diff-deleted-count">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Danger}" />
+    <Setter Property="FontFamily" Value="Menlo,Consolas,monospace" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="Border.tool-diff-line">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
+    <Setter Property="Padding" Value="8,1" />
+    <Setter Property="MinWidth" Value="0" />
+  </Style>
+
+  <Style Selector="Border.tool-diff-line.added">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Success.Soft}" />
+  </Style>
+
+  <Style Selector="Border.tool-diff-line.deleted">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Danger.Soft}" />
+  </Style>
+
+  <Style Selector="Border.tool-diff-line.hunk, Border.tool-diff-line.collapsed">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-diff-line-number">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+    <Setter Property="FontFamily" Value="Menlo,Consolas,monospace" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="TextAlignment" Value="Right" />
+    <Setter Property="LineHeight" Value="17" />
+  </Style>
+
+  <Style Selector="Border.tool-diff-line-separator">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+    <Setter Property="Opacity" Value="0.75" />
+    <Setter Property="Margin" Value="0,-1,0,-1" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-diff-content.added">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Success}" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-diff-content.deleted">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Danger}" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-diff-content">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+    <Setter Property="FontFamily" Value="Menlo,Consolas,monospace" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="LineHeight" Value="17" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-diff-content.hunk, TextBlock.tool-diff-content.collapsed">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+    <Setter Property="FontStyle" Value="Italic" />
   </Style>
 
   <Style Selector="Button.transcript-jump-latest">

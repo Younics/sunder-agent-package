@@ -18,6 +18,12 @@ public sealed partial class AgentChatViewModel
 
         if (oldValue is not null)
         {
+            if (IsRollbackPending)
+            {
+                ClearRollbackStateOnly();
+                DraftMessage = string.Empty;
+            }
+
             oldValue.DraftMessage = DraftMessage;
             oldValue.IsSelected = false;
         }
@@ -554,6 +560,8 @@ public sealed partial class AgentChatViewModel
     {
         OnPropertyChanged(nameof(IsSelectedSessionRunActive));
         OnPropertyChanged(nameof(IsSelectedSessionRunInactive));
+        OnPropertyChanged(nameof(ShowSendAction));
+        OnPropertyChanged(nameof(ShowStopAction));
         SendMessageCommand.NotifyCanExecuteChanged();
         UpdateActivityRowForCurrentState();
     }
@@ -564,6 +572,8 @@ public sealed partial class AgentChatViewModel
         OnPropertyChanged(nameof(ShowTranscriptSurface));
         OnPropertyChanged(nameof(ShowCollapsedComposer));
         OnPropertyChanged(nameof(ShowExpandedComposer));
+        OnPropertyChanged(nameof(ShowSendAction));
+        OnPropertyChanged(nameof(ShowStopAction));
         OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
         OnPropertyChanged(nameof(CanLoadNewerTranscriptRows));
         SendMessageCommand.NotifyCanExecuteChanged();

@@ -482,6 +482,138 @@ public sealed class AgentRunCoordinatorTests
         Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
     }
 
+    [Fact]
+    public async Task RollbackAndQueueUserMessageAsync_TruncatesTranscriptAndQueuesEditedMessage()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("edited response"))
+        );
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        var firstUserTurn = runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.User,
+            "first request"
+        );
+        var firstAssistantTurn = runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.Assistant,
+            "first response"
+        );
+        var rollbackAnchorTurn = runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.User,
+            "second request"
+        );
+        var removedAssistantTurn = runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.Assistant,
+            "second response"
+        );
+        runtime.SessionService.SaveSessionContextCheckpoint(
+            sessionId,
+            firstUserTurn.TurnId,
+            firstAssistantTurn.TurnId,
+            2,
+            "Continuity that mentions deleted history.",
+            null
+        );
+
+        var checkpoint = await runtime.RunCoordinator.RollbackAndQueueUserMessageAsync(
+            sessionId,
+            rollbackAnchorTurn.TurnId,
+            runtime.CurrentProfileId,
+            "edited second request",
+            runtime.CurrentWorkspaceId,
+            []
+        );
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        var turns = runtime.SessionService.ListTurns(sessionId);
+        Assert.Contains(turns, turn => turn.TurnId == firstUserTurn.TurnId);
+        Assert.Contains(turns, turn => turn.TurnId == firstAssistantTurn.TurnId);
+        Assert.DoesNotContain(turns, turn => turn.TurnId == rollbackAnchorTurn.TurnId);
+        Assert.DoesNotContain(turns, turn => turn.TurnId == removedAssistantTurn.TurnId);
+        Assert.Contains(turns, turn => turn.Role == AgentMessageRole.User && RenderTurnText(turn) == "edited second request");
+        Assert.Contains(turns, turn => turn.Role == AgentMessageRole.Assistant && RenderTurnText(turn) == "edited response");
+        Assert.Null(runtime.SessionService.GetLatestSessionContextCheckpoint(sessionId));
+    }
+
+    [Fact]
+    public async Task RollbackAndQueueUserMessageAsync_RemovesChildSessionsFromDeletedToolCalls()
+    {
+        const string taskCallId = "task-call-1";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("replacement response"))
+        );
+        var sessionId = await runtime.CreateSessionAsync("task");
+        var parentSession = runtime.SessionService.GetSession(sessionId)!;
+        var rollbackAnchorTurn = runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.User,
+            "run a task"
+        );
+        runtime.SessionService.AppendToolCallTurn(
+            sessionId,
+            AgentMessageRole.Assistant,
+            taskCallId,
+            "task",
+            "{}"
+        );
+        var childSession = runtime.SessionService.CreateSession(
+            "Task child",
+            parentSessionId: sessionId,
+            rootSessionId: parentSession.RootSessionId ?? parentSession.SessionId,
+            parentToolCallId: taskCallId,
+            profileId: runtime.CurrentProfileId,
+            agentKind: "subagent"
+        );
+        runtime.PermissionService.SavePendingRequest(
+            new AgentPendingPermissionRequestRecord(
+                "request-rollback-child",
+                childSession.SessionId,
+                Guid.NewGuid(),
+                1,
+                runtime.CurrentProfileId,
+                Guid.NewGuid(),
+                "Child needs approval.",
+                "call-approval",
+                "approval_action",
+                "approval_boundary",
+                "Approve child tool use.",
+                "approval_tool",
+                "{}",
+                null,
+                null,
+                runtime.CurrentWorkspaceId,
+                null,
+                null,
+                null,
+                true,
+                DateTimeOffset.UtcNow,
+                childSession.ParentSessionId,
+                childSession.RootSessionId
+            )
+        );
+
+        var checkpoint = await runtime.RunCoordinator.RollbackAndQueueUserMessageAsync(
+            sessionId,
+            rollbackAnchorTurn.TurnId,
+            runtime.CurrentProfileId,
+            "edited task request",
+            runtime.CurrentWorkspaceId,
+            []
+        );
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Null(runtime.SessionService.GetSession(childSession.SessionId));
+        Assert.Empty(runtime.PermissionService.ListPendingRequests(childSession.SessionId));
+        Assert.DoesNotContain(
+            runtime.SessionService.ListTurns(sessionId),
+            turn => turn.Items.Any(item => item.CallId == taskCallId)
+        );
+    }
+
     [Theory]
     [InlineData(AgentToolResultErrorCodes.ShellNonZeroExit)]
     [InlineData(AgentToolResultErrorCodes.ShellTimeout)]
@@ -1028,6 +1160,165 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task QueueUserMessageAsync_IncludesCoreContinuitySummary_ForOmittedHistory()
+    {
+        const string toolId = "fetch_page";
+        const string currentUserMessage = "Current request: continue from the compacted context.";
+        var provider = new ScriptedProvider(
+            (request, _) =>
+            {
+                var systemInstructions = request.SystemInstructions ?? string.Empty;
+                Assert.Contains("## Session Working Summary", systemInstructions, StringComparison.Ordinal);
+                Assert.Contains("old-000", systemInstructions, StringComparison.Ordinal);
+                Assert.Contains("old-023", systemInstructions, StringComparison.Ordinal);
+                Assert.DoesNotContain(request.Turns, turn => RenderTurnText(turn) == "old-000");
+                Assert.Contains(request.Turns, turn => RenderTurnText(turn) == "old-039");
+                Assert.Contains(request.Turns, turn => RenderTurnText(turn) == currentUserMessage);
+                return Complete("continued");
+            }
+        );
+        using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        for (var index = 0; index < 40; index++)
+        {
+            var role = index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant;
+            runtime.SessionService.AppendTextTurn(sessionId, role, $"old-{index:000}");
+        }
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            currentUserMessage,
+            runtime.CurrentWorkspaceId
+        );
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        var checkpointSummary = runtime.SessionService.GetLatestSessionContextCheckpoint(sessionId);
+        Assert.NotNull(checkpointSummary);
+        Assert.Contains("old-000", checkpointSummary!.SummaryText, StringComparison.Ordinal);
+        Assert.Contains("old-023", checkpointSummary.SummaryText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_RecordsFileOperations_InSessionContextCheckpoint()
+    {
+        const string toolId = "fetch_page";
+        var provider = new ScriptedProvider((_, _) => Complete("done"));
+        using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+
+        runtime.SessionService.AppendToolCallTurn(sessionId, AgentMessageRole.Assistant, "read-call", "read", "{\"path\":\"src/Old.cs\"}");
+        runtime.SessionService.AppendToolCallTurn(sessionId, AgentMessageRole.Assistant, "write-call", "write", "{\"path\":\"src/New.cs\",\"content\":\"updated\"}");
+        runtime.SessionService.AppendToolCallTurn(
+            sessionId,
+            AgentMessageRole.Assistant,
+            "patch-call",
+            "apply_patch",
+            "{\"patchText\":\"*** Begin Patch\\n*** Update File: src/Patch.cs\\n*** End Patch\"}");
+        for (var index = 0; index < 28; index++)
+        {
+            runtime.SessionService.AppendTextTurn(sessionId, AgentMessageRole.User, $"filler-{index:00}");
+        }
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Continue with file context.",
+            runtime.CurrentWorkspaceId
+        );
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        var contextCheckpoint = runtime.SessionService.GetLatestSessionContextCheckpoint(sessionId);
+        Assert.NotNull(contextCheckpoint);
+        Assert.Contains("src/Old.cs", contextCheckpoint!.SummaryText, StringComparison.Ordinal);
+        Assert.Contains("src/New.cs", contextCheckpoint.SummaryText, StringComparison.Ordinal);
+        Assert.Contains("src/Patch.cs", contextCheckpoint.SummaryText, StringComparison.Ordinal);
+        var detailsJson = contextCheckpoint.DetailsJson ?? string.Empty;
+        Assert.Contains("filesReadOrSearched", detailsJson, StringComparison.Ordinal);
+        Assert.Contains("filesModified", detailsJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_CompactsOversizedActiveToolResults_ForPromptBudget()
+    {
+        const string toolId = "large_output";
+        var provider = new ScriptedProvider(
+            (request, requestIndex) =>
+                requestIndex switch
+                {
+                    1 => ToolRequest("call-1", toolId, "{}"),
+                    2 => AssertCompactedToolResultAndComplete(request, toolId),
+                    _ => throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}."),
+                },
+            models:
+            [
+                new AgentModelDescriptor("test-model", "Small Test Model", 10_000, 1_000, IsRecommended: true),
+            ]
+        );
+
+        using var runtime = AgentTestRuntime.Create(provider, new LargeOutputTool(toolId));
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Run the large output tool.",
+            runtime.CurrentWorkspaceId
+        );
+
+        Assert.True(checkpoint.Status == AgentRunStatus.Completed, checkpoint.Summary);
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_OrchestratedLoopUsesCoreSessionProjection()
+    {
+        const string toolId = "fetch_page";
+        var provider = new ScriptedProvider(
+            (request, _) =>
+            {
+                Assert.Contains("## Session Working Summary", request.SystemInstructions ?? string.Empty, StringComparison.Ordinal);
+                Assert.DoesNotContain(request.Turns, turn => RenderTurnText(turn) == "orchestrated-old-000");
+                return Complete("orchestrated");
+            }
+        );
+
+        using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
+        runtime.ExtensionCatalog.AddExtension(
+            PackageExtensionPoints.BehaviorLoops,
+            new OrchestratedAgentBehaviorLoop(runtime.ExtensionCatalog)
+        );
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        var profile = runtime.CurrentProfile;
+        runtime.ProfileService.SaveProfile(
+            profile.ProfileId,
+            profile.DisplayName,
+            profile.Description,
+            profile.Instructions,
+            profile.ChatProviderId,
+            profile.ChatModelId,
+            profile.EmbeddingProviderId,
+            profile.EmbeddingModelId,
+            profile.SelectableCapabilityAssignments,
+            behaviorLoopId: SubagentConstants.OrchestratedBehaviorLoopId
+        );
+
+        for (var index = 0; index < 40; index++)
+        {
+            var role = index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant;
+            runtime.SessionService.AppendTextTurn(sessionId, role, $"orchestrated-old-{index:000}");
+        }
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Use the orchestrated loop.",
+            runtime.CurrentWorkspaceId
+        );
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+    }
+
+    [Fact]
     public async Task QueueUserMessageAsync_ReusesDuplicateReadOnlyToolCallsWithoutReExecutingTool()
     {
         const string toolId = "fetch_page";
@@ -1058,6 +1349,80 @@ public sealed class AgentRunCoordinatorTests
 
         Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
         Assert.Equal(1, tool.ExecutionCount);
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_AllowsManyLegitimateToolCallsInOneRun()
+    {
+        const string toolId = "read_file";
+        const int toolCallCount = 150;
+        const string userMessage = "Inspect many files before answering.";
+
+        var provider = new ScriptedProvider(
+            (request, requestIndex) =>
+            {
+                if (requestIndex <= toolCallCount)
+                {
+                    AssertActiveExchange(request, requestIndex, userMessage);
+                    return ToolRequest(
+                        $"call-{requestIndex}",
+                        toolId,
+                        $"{{\"path\":\"src/File{requestIndex:000}.cs\"}}");
+                }
+
+                if (requestIndex == toolCallCount + 1)
+                {
+                    AssertAndComplete(request, toolId, $"call-{toolCallCount}");
+                    return Complete("Finished after inspecting many files.");
+                }
+
+                throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}.");
+            }
+        );
+        var tool = new TestTool(toolId);
+        using var runtime = AgentTestRuntime.Create(provider, tool);
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            userMessage,
+            runtime.CurrentWorkspaceId
+        );
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(toolCallCount, tool.ExecutionCount);
+        Assert.Equal(toolCallCount + 1, provider.Requests.Count);
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_StopsPathologicalRepeatedToolResultLoop()
+    {
+        const string toolId = "read_file";
+
+        var provider = new ScriptedProvider(
+            (request, requestIndex) => requestIndex <= 32
+                ? ToolRequest($"call-{requestIndex}", toolId, "{\"path\":\"src/Same.cs\"}")
+                : throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}.")
+        );
+        var tool = new TestTool(toolId);
+        using var runtime = AgentTestRuntime.Create(provider, tool);
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Keep reading the same file forever.",
+            runtime.CurrentWorkspaceId
+        );
+
+        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
+        Assert.Equal("Agent repeated the same tool call result without progress.", checkpoint.Summary);
+        Assert.Equal(1, tool.ExecutionCount);
+        Assert.True(provider.Requests.Count < 32);
+        Assert.Contains(
+            runtime.SessionService.ListTurns(sessionId),
+            turn => RenderTurnText(turn).Contains("The agent repeated the same tool call", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1183,6 +1548,103 @@ public sealed class AgentRunCoordinatorTests
                 && turn.Kind == AgentTurnKind.Message
                 && RenderTurnText(turn).Contains("Used the tool result", StringComparison.Ordinal)
         );
+    }
+
+    [Fact]
+    public async Task ApprovePendingPermissionAsync_UsesCoreSessionProjection_WhenContinuingProvider()
+    {
+        const string toolId = "approval_tool";
+        var provider = new ScriptedProvider(
+            (request, requestIndex) =>
+                requestIndex switch
+                {
+                    1 => ToolRequest("call-1", toolId, "{\"path\":\"~\"}"),
+                    2 => AssertPermissionResumeContextAndComplete(request),
+                    _ => throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}."),
+                }
+        );
+
+        using var runtime = AgentTestRuntime.Create(provider);
+        var toolSource = new PermissionedToolSource(toolId);
+        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, toolSource);
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        for (var index = 0; index < 40; index++)
+        {
+            var role = index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant;
+            runtime.SessionService.AppendTextTurn(sessionId, role, $"approval-old-{index:000}");
+        }
+
+        var waitingCheckpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Use the approval tool with old context.",
+            runtime.CurrentWorkspaceId
+        );
+
+        Assert.Equal(AgentRunStatus.WaitingForApproval, waitingCheckpoint.Status);
+        var pending = Assert.Single(runtime.PermissionService.ListPendingRequests(sessionId));
+        var completedCheckpoint = await runtime.RunCoordinator.ApprovePendingPermissionAsync(sessionId, pending.RequestId);
+
+        Assert.NotNull(completedCheckpoint);
+        Assert.Equal(AgentRunStatus.Completed, completedCheckpoint!.Status);
+    }
+
+    [Fact]
+    public async Task ParentRunContinuation_UsesCoreSessionProjection_WhenChildCompletes()
+    {
+        const string toolId = "fetch_page";
+        var provider = new ScriptedProvider(
+            (request, _) =>
+            {
+                var systemInstructions = request.SystemInstructions ?? string.Empty;
+                Assert.Contains("parent-old-000", systemInstructions, StringComparison.Ordinal);
+                Assert.DoesNotContain(request.Turns, turn => RenderTurnText(turn) == "parent-old-000");
+                Assert.Contains(
+                    request.Turns,
+                    turn => turn.Kind == AgentTurnKind.ToolResult
+                            && turn.Items.Any(item => item.CallId == "task-call"));
+                return Complete("parent resumed");
+            }
+        );
+
+        using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
+        var parentSessionId = await runtime.CreateSessionAsync(toolId);
+        var parentSession = runtime.SessionService.GetSession(parentSessionId)!;
+        runtime.SessionService.UpdateSession(parentSession with { ProfileId = runtime.CurrentProfileId });
+        for (var index = 0; index < 40; index++)
+        {
+            var role = index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant;
+            runtime.SessionService.AppendTextTurn(parentSessionId, role, $"parent-old-{index:000}");
+        }
+
+        var parentUserTurn = runtime.SessionService.AppendTextTurn(
+            parentSessionId,
+            AgentMessageRole.User,
+            "Parent task that delegated work.");
+        var parentRunId = Guid.NewGuid();
+        const long parentRunRevision = 1;
+        runtime.SessionService.AppendToolCallTurn(parentSessionId, AgentMessageRole.Assistant, "task-call", "task", "{}");
+        var childSession = runtime.SessionService.CreateSession(
+            "Child task",
+            parentSessionId: parentSessionId,
+            rootSessionId: parentSessionId,
+            parentRunId: parentRunId,
+            parentRunRevision: parentRunRevision,
+            parentToolCallId: "task-call",
+            profileId: runtime.CurrentProfileId);
+        runtime.SessionService.AppendTextTurn(childSession.SessionId, AgentMessageRole.Assistant, "Child task result.");
+        var childCheckpoint = runtime.SessionService.SaveCheckpoint(childSession.SessionId, 1, AgentRunStatus.Completed, "Child completed.");
+
+        var resumedCheckpoint = await runtime.ParentRunContinuationService.TryResumeAfterChildCompletionAsync(
+            childSession,
+            childCheckpoint,
+            runtime.CurrentWorkspaceId,
+            CancellationToken.None);
+
+        Assert.NotNull(resumedCheckpoint);
+        Assert.Equal(AgentRunStatus.Completed, resumedCheckpoint!.Status);
+        Assert.Contains(runtime.SessionService.ListTurns(parentSessionId), turn => turn.TurnId == parentUserTurn.TurnId);
     }
 
     [Fact]
@@ -2701,6 +3163,105 @@ public sealed class AgentRunCoordinatorTests
         Assert.False(viewModel.ShowExpandedComposer);
         Assert.False(viewModel.IsSelectedSessionRunInactive);
         Assert.Equal("Create an agent before chatting", viewModel.SetupTitle);
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_StartRollback_PopulatesComposerAndRestoresAttachments()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done"))
+        );
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        var storedAttachment = await runtime.AttachmentService.StoreAttachmentAsync(
+            sessionId,
+            new AgentAttachmentUploadRequest(
+                "note.txt",
+                "text/plain",
+                Encoding.UTF8.GetBytes("attachment body")
+            )
+        );
+        var userTurn = runtime.SessionService.AppendUserTurn(
+            sessionId,
+            AgentMessageRole.User,
+            "original message",
+            [storedAttachment]
+        );
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator,
+            attachmentService: runtime.AttachmentService
+        );
+        var row = viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>()
+            .Single(message => message.RowId == userTurn.TurnId);
+        Assert.False(viewModel.IsComposerExpanded);
+
+        await viewModel.StartRollbackFromMessageCommand.ExecuteAsync(row);
+
+        Assert.True(viewModel.IsRollbackPending);
+        Assert.False(viewModel.IsComposerExpanded);
+        Assert.Equal(userTurn.TurnId, viewModel.PendingRollbackTurnId);
+        Assert.Equal("original message", viewModel.DraftMessage);
+        Assert.Equal("Cancel Rollback", viewModel.ClearComposerButtonText);
+        var pendingAttachment = Assert.Single(viewModel.PendingAttachments);
+        Assert.Equal("note.txt", pendingAttachment.FileName);
+        Assert.Equal("attachment body", Encoding.UTF8.GetString(pendingAttachment.UploadRequest.Content));
+
+        viewModel.CancelRollbackCommand.Execute(null);
+
+        Assert.False(viewModel.IsRollbackPending);
+        Assert.Null(viewModel.PendingRollbackTurnId);
+        Assert.Empty(viewModel.DraftMessage);
+        Assert.Empty(viewModel.PendingAttachments);
+        Assert.Equal("Clear", viewModel.ClearComposerButtonText);
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_SendWhileRollbackPending_ReplacesSelectedMessage()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("new response"))
+        );
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        var retainedTurn = runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.User,
+            "keep this"
+        );
+        var rollbackTurn = runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.User,
+            "replace this"
+        );
+        var removedTurn = runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.Assistant,
+            "old response"
+        );
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator,
+            attachmentService: runtime.AttachmentService
+        );
+        var row = viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>()
+            .Single(message => message.RowId == rollbackTurn.TurnId);
+        await viewModel.StartRollbackFromMessageCommand.ExecuteAsync(row);
+        viewModel.DraftMessage = "replacement message";
+
+        await viewModel.SendMessageCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsRollbackPending);
+        var turns = runtime.SessionService.ListTurns(sessionId);
+        Assert.Contains(turns, turn => turn.TurnId == retainedTurn.TurnId);
+        Assert.DoesNotContain(turns, turn => turn.TurnId == rollbackTurn.TurnId);
+        Assert.DoesNotContain(turns, turn => turn.TurnId == removedTurn.TurnId);
+        Assert.Contains(turns, turn => turn.Role == AgentMessageRole.User && RenderTurnText(turn) == "replacement message");
+        Assert.Contains(turns, turn => turn.Role == AgentMessageRole.Assistant && RenderTurnText(turn) == "new response");
     }
 
     [Fact]
@@ -5187,6 +5748,82 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task SubsessionsViewModel_DetachedTranscriptBuffersLiveRowsUntilNewerRowsLoad()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var parentSessionId = await runtime.CreateSessionAsync(toolId);
+        var parentSession = runtime.SessionService.GetSession(parentSessionId)!;
+        var childSession = runtime.SessionService.CreateSession(
+            "Explore current repository state",
+            parentSessionId: parentSessionId,
+            rootSessionId: parentSession.RootSessionId ?? parentSession.SessionId,
+            profileId: runtime.CurrentProfileId,
+            agentKind: "subagent"
+        );
+        runtime.SessionService.AppendTextTurn(
+            childSession.SessionId,
+            AgentMessageRole.Assistant,
+            "Initial child transcript."
+        );
+        using var viewModel = new SubsessionsViewModel(runtime.ExtensionCatalog);
+        await viewModel.OnNavigatedToAsync(
+            new PackageViewNavigationContext(
+                SubagentConstants.SubsessionsViewId,
+                new Dictionary<string, string?>
+                {
+                    [SubagentConstants.SubsessionNavigationSessionIdKey] =
+                        childSession.SessionId.ToString("D"),
+                }
+            )
+        );
+        var initialRow = Assert.Single(
+            viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>()
+        );
+
+        viewModel.DetachTranscriptFromLatest();
+        runtime.SessionService.AppendTextTurn(
+            childSession.SessionId,
+            AgentMessageRole.Assistant,
+            "Live child update while detached."
+        );
+
+        Assert.Same(
+            initialRow,
+            Assert.Single(viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>())
+        );
+        Assert.True(viewModel.HasNewerTranscriptRows);
+        Assert.DoesNotContain(
+            viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
+            row => row.Content == "Live child update while detached."
+        );
+
+        var loaded = await viewModel.LoadNewerTranscriptRowsAsync();
+
+        Assert.True(loaded);
+        Assert.False(viewModel.HasNewerTranscriptRows);
+        Assert.Contains(
+            viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
+            row => row.Content == "Live child update while detached."
+        );
+
+        runtime.SessionService.AppendTextTurn(
+            childSession.SessionId,
+            AgentMessageRole.Assistant,
+            "Live child update after resume."
+        );
+
+        Assert.Contains(
+            viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
+            row => row.Content == "Live child update after resume."
+        );
+    }
+
+    [Fact]
     public async Task SubsessionsViewModel_PreservesExpandedToolRowsWhenSelectedSubsessionReorders()
     {
         const string toolId = "fetch_page";
@@ -5506,10 +6143,10 @@ public sealed class AgentRunCoordinatorTests
             runtime.RunCoordinator
         );
 
-        Assert.Equal(100, viewModel.Messages.Count);
+        Assert.Equal(60, viewModel.Messages.Count);
         Assert.True(viewModel.HasOlderTranscriptRows);
         Assert.Equal(
-            "message-065",
+            "message-105",
             Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
         );
         Assert.Equal(
@@ -5520,22 +6157,176 @@ public sealed class AgentRunCoordinatorTests
         var loaded = await viewModel.LoadOlderTranscriptRowsAsync();
 
         Assert.True(loaded);
-        Assert.Equal(160, viewModel.Messages.Count);
+        Assert.Equal(60, viewModel.Messages.Count);
         Assert.True(viewModel.HasOlderTranscriptRows);
+        Assert.True(viewModel.HasNewerTranscriptRows);
         Assert.Equal(
-            "message-005",
+            "message-075",
             Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
         );
-
-        loaded = await viewModel.LoadOlderTranscriptRowsAsync();
-
-        Assert.True(loaded);
-        Assert.Equal(165, viewModel.Messages.Count);
-        Assert.False(viewModel.HasOlderTranscriptRows);
         Assert.Equal(
-            "message-000",
+            "message-134",
+            Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content
+        );
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_PagingOlderAndNewerKeepsWindowCappedAndDirectional()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        for (var index = 0; index < 260; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                AgentMessageRole.User,
+                $"message-{index:000}"
+            );
+        }
+
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+
+        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.Equal(
+            "message-200",
             Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
         );
+        Assert.Equal(
+            "message-259",
+            Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content
+        );
+
+        Assert.True(await viewModel.LoadOlderTranscriptRowsAsync());
+
+        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.True(viewModel.HasOlderTranscriptRows);
+        Assert.True(viewModel.HasNewerTranscriptRows);
+        Assert.Equal(
+            "message-170",
+            Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
+        );
+        Assert.Equal(
+            "message-229",
+            Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content
+        );
+
+        Assert.True(await viewModel.LoadNewerTranscriptRowsAsync());
+
+        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.True(viewModel.HasOlderTranscriptRows);
+        Assert.False(viewModel.HasNewerTranscriptRows);
+        Assert.Equal(
+            "message-200",
+            Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
+        );
+        Assert.Equal(
+            "message-259",
+            Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content
+        );
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_LoadOlderTranscriptRows_PreservesProtectedAnchorKey()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        for (var index = 0; index < 260; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                AgentMessageRole.User,
+                $"message-{index:000}"
+            );
+        }
+
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+        var protectedRow = viewModel.Messages
+            .OfType<AgentTextTranscriptRowViewModel>()
+            .Single(row => row.Content == "message-240");
+        var protectedAnchorKey = protectedRow.AnchorKey;
+
+        Assert.True(await viewModel.LoadOlderTranscriptRowsAsync(protectedAnchorKey));
+
+        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.Contains(
+            viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>(),
+            row => row.Content == "message-240" && Equals(row.AnchorKey, protectedAnchorKey)
+        );
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_RepeatedPagingOlderAndNewerNeverExceedsVisibleRowLimit()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        for (var index = 0; index < 400; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                AgentMessageRole.User,
+                $"message-{index:000}"
+            );
+        }
+
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+
+        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.Equal("message-340", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content);
+        Assert.Equal("message-399", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content);
+
+        Assert.True(await viewModel.LoadOlderTranscriptRowsAsync());
+        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.Equal("message-310", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content);
+        Assert.Equal("message-369", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content);
+
+        Assert.True(await viewModel.LoadOlderTranscriptRowsAsync());
+        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.Equal("message-280", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content);
+        Assert.Equal("message-339", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content);
+
+        Assert.True(await viewModel.LoadNewerTranscriptRowsAsync());
+        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.Equal("message-310", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content);
+        Assert.Equal("message-369", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content);
+
+        Assert.True(await viewModel.LoadNewerTranscriptRowsAsync());
+        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.Equal("message-340", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content);
+        Assert.Equal("message-399", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content);
+        Assert.False(viewModel.HasNewerTranscriptRows);
     }
 
     [Fact]
@@ -5570,13 +6361,13 @@ public sealed class AgentRunCoordinatorTests
             await viewModel.LoadOlderTranscriptRowsAsync();
         }
 
-        Assert.InRange(viewModel.Messages.Count, 1, 240);
+        Assert.InRange(viewModel.Messages.Count, 1, 60);
         Assert.True(viewModel.HasNewerTranscriptRows);
 
         var loadedNewer = await viewModel.LoadNewerTranscriptRowsAsync();
 
         Assert.True(loadedNewer);
-        Assert.InRange(viewModel.Messages.Count, 1, 240);
+        Assert.InRange(viewModel.Messages.Count, 1, 60);
         Assert.True(viewModel.HasOlderTranscriptRows);
     }
 
@@ -5605,7 +6396,7 @@ public sealed class AgentRunCoordinatorTests
 
         var retainedRow = viewModel.Messages
             .OfType<AgentTextTranscriptRowViewModel>()
-            .Single(row => row.Content == "message-050");
+            .Single(row => row.Content == "message-200");
         var resetCount = 0;
         viewModel.Messages.CollectionChanged += (_, args) =>
         {
@@ -5618,16 +6409,58 @@ public sealed class AgentRunCoordinatorTests
         runtime.SessionService.AppendTextTurn(sessionId, AgentMessageRole.User, "message-240");
 
         Assert.Equal(0, resetCount);
-        Assert.Equal(240, viewModel.Messages.Count);
+        Assert.Equal(60, viewModel.Messages.Count);
         Assert.True(viewModel.HasOlderTranscriptRows);
         Assert.DoesNotContain(
             viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>(),
-            row => row.Content == "message-000"
+            row => row.Content == "message-180"
         );
         Assert.Same(
             retainedRow,
-            viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>().Single(row => row.Content == "message-050")
+            viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>().Single(row => row.Content == "message-200")
         );
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_KeepsToolHeavyLiveTranscriptAtVisibleRowLimit()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+
+        for (var index = 0; index < 140; index++)
+        {
+            var callId = $"call-{index:000}";
+            runtime.SessionService.AppendToolCallTurn(sessionId, AgentMessageRole.Assistant, callId, toolId, "{}");
+            runtime.SessionService.AppendToolResultTurn(
+                sessionId,
+                callId,
+                toolId,
+                "{}",
+                $"done-{index:000}",
+                $"done-{index:000}",
+                structuredPayloadJson: null,
+                sourcesJson: null,
+                wasTruncated: false,
+                isError: false,
+                errorCode: null,
+                backendId: null);
+        }
+
+        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.True(viewModel.HasOlderTranscriptRows);
+        Assert.All(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>(), row => Assert.NotNull(row.ResultTurnId));
     }
 
     [Fact]
@@ -5666,6 +6499,124 @@ public sealed class AgentRunCoordinatorTests
 
         Assert.Equal(messageCount, viewModel.Messages.Count);
         Assert.True(viewModel.HasNewerTranscriptRows);
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_DetachedTranscriptBuffersLiveRowsUntilNewerRowsLoad()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        runtime.SessionService.AppendTextTurn(sessionId, AgentMessageRole.User, "initial message");
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+        var initialRow = Assert.Single(viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>());
+
+        viewModel.DetachTranscriptFromLatest();
+        runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.Assistant,
+            "live while detached"
+        );
+
+        Assert.Same(
+            initialRow,
+            Assert.Single(viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>())
+        );
+        Assert.True(viewModel.HasNewerTranscriptRows);
+        Assert.DoesNotContain(
+            viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>(),
+            row => row.Content == "live while detached"
+        );
+
+        var loaded = await viewModel.LoadNewerTranscriptRowsAsync();
+
+        Assert.True(loaded);
+        Assert.False(viewModel.HasNewerTranscriptRows);
+        Assert.Contains(
+            viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>(),
+            row => row.Content == "live while detached"
+        );
+
+        runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.Assistant,
+            "live after resume"
+        );
+
+        Assert.Contains(
+            viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>(),
+            row => row.Content == "live after resume"
+        );
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_JumpToLatestReloadsDetachedTranscriptAndResumesLiveRows()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        for (var index = 0; index < 130; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                AgentMessageRole.User,
+                $"message-{index:000}"
+            );
+        }
+
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+
+        viewModel.DetachTranscriptFromLatest();
+        runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.Assistant,
+            "live while detached"
+        );
+
+        Assert.DoesNotContain(
+            viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>(),
+            row => row.Content == "live while detached"
+        );
+        Assert.True(viewModel.HasNewerTranscriptRows);
+
+        viewModel.JumpToLatestTranscriptCommand.Execute(null);
+
+        Assert.False(viewModel.HasNewerTranscriptRows);
+        Assert.Equal(
+            "live while detached",
+            Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content
+        );
+
+        runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.Assistant,
+            "live after jump"
+        );
+
+        Assert.Equal(
+            "live after jump",
+            Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content
+        );
     }
 
     [Fact]
@@ -7635,8 +8586,7 @@ public sealed class AgentRunCoordinatorTests
         return new MemorySemanticFeature(
             store,
             new SemanticMemoryRecallService(store, retrievalBackend, metrics),
-            new SemanticMemoryPromotionService(store, indexingBackgroundService, metrics),
-            new MemoryWorkingSummaryBuilder(store)
+            new SemanticMemoryPromotionService(store, indexingBackgroundService, metrics)
         );
     }
 
@@ -7859,6 +8809,33 @@ public sealed class AgentRunCoordinatorTests
         return Complete("Finished after reusing the cached read-only result.");
     }
 
+    private static AgentProviderStreamEvent AssertCompactedToolResultAndComplete(
+        AgentProviderRequest request,
+        string toolId
+    )
+    {
+        var toolResult = request.Turns
+            .Where(turn => turn.Kind == AgentTurnKind.ToolResult)
+            .SelectMany(turn => turn.Items)
+            .Single(item => item.Kind == AgentTurnItemKind.ToolResult && item.ToolId == toolId);
+        Assert.NotNull(toolResult.TextContent);
+        Assert.Contains("[compacted for prompt budget", toolResult.TextContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("chunk-1999", toolResult.TextContent, StringComparison.Ordinal);
+        return Complete("Used compacted tool result.");
+    }
+
+    private static AgentProviderStreamEvent AssertPermissionResumeContextAndComplete(AgentProviderRequest request)
+    {
+        var systemInstructions = request.SystemInstructions ?? string.Empty;
+        Assert.Contains("approval-old-000", systemInstructions, StringComparison.Ordinal);
+        Assert.DoesNotContain(request.Turns, turn => RenderTurnText(turn) == "approval-old-000");
+        Assert.Contains(
+            request.Turns,
+            turn => turn.Kind == AgentTurnKind.ToolResult
+                    && turn.Items.Any(item => item.CallId == "call-1"));
+        return Complete("Used the tool result with projected context.");
+    }
+
     private static void AssertActiveExchange(
         AgentProviderRequest request,
         int requestIndex,
@@ -7997,7 +8974,8 @@ public sealed class AgentRunCoordinatorTests
             AgentWorkspaceService workspaceService,
             AgentPermissionService permissionService,
             AgentProfileService profileService,
-            AgentAttachmentService attachmentService
+            AgentAttachmentService attachmentService,
+            AgentParentRunContinuationService parentRunContinuationService
         )
         {
             _rootPath = rootPath;
@@ -8009,6 +8987,7 @@ public sealed class AgentRunCoordinatorTests
             PermissionService = permissionService;
             ProfileService = profileService;
             AttachmentService = attachmentService;
+            ParentRunContinuationService = parentRunContinuationService;
         }
 
         public AgentRunCoordinator RunCoordinator { get; }
@@ -8024,6 +9003,8 @@ public sealed class AgentRunCoordinatorTests
         public AgentProfileService ProfileService { get; }
 
         public AgentAttachmentService AttachmentService { get; }
+
+        public AgentParentRunContinuationService ParentRunContinuationService { get; }
 
         public TestExtensionCatalog ExtensionCatalog => _extensionCatalog;
 
@@ -8084,6 +9065,7 @@ public sealed class AgentRunCoordinatorTests
                 new AgentRuntimeCatalog(sessionService, profileService, workspaceService)
             );
             var memoryCoordinator = new AgentMemoryCoordinator(sessionService, extensionCatalog);
+            var sessionContextProjectionService = new AgentSessionContextProjectionService(sessionService);
             var promptComposer = new AgentSystemPromptComposer(extensionCatalog);
             var attachmentService = new AgentAttachmentService(packageContext);
             extensionCatalog.AddExtension(
@@ -8096,7 +9078,8 @@ public sealed class AgentRunCoordinatorTests
             );
             var defaultBehaviorLoop = new DefaultAgentBehaviorLoop(
                 promptComposer,
-                attachmentService
+                attachmentService,
+                sessionContextProjectionService
             );
             extensionCatalog.AddExtension(
                 PackageExtensionPoints.BehaviorLoops,
@@ -8179,7 +9162,8 @@ public sealed class AgentRunCoordinatorTests
                 workspaceService,
                 permissionService,
                 profileService,
-                attachmentService
+                attachmentService,
+                parentRunContinuationService
             );
         }
 
@@ -8844,6 +9828,33 @@ public sealed class AgentRunCoordinatorTests
         }
     }
 
+    private sealed class LargeOutputTool(string toolId) : IAgentTool
+    {
+        public AgentToolDescriptor Descriptor { get; } = new(
+            toolId,
+            "Large Output Tool",
+            "Returns output large enough to force prompt compaction.",
+            IsReadOnly: true,
+            RequiresNetwork: false,
+            ArgumentsJsonSchema: "{\"type\":\"object\"}");
+
+        public ValueTask<AgentToolReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentToolReadiness(Descriptor.ToolId, AgentToolReadinessStatus.Ready, "Ready."));
+
+        public ValueTask<AgentToolResult> ExecuteAsync(
+            AgentToolExecutionContext context,
+            AgentToolRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            var content = string.Join("\n", Enumerable.Range(0, 2_000).Select(index => $"chunk-{index:0000}: {new string('x', 40)}"));
+            return ValueTask.FromResult(new AgentToolResult(
+                request.ToolId,
+                "Large output generated.",
+                Content: content,
+                StructuredPayloadJson: JsonSerializer.Serialize(new { content })));
+        }
+    }
+
     private sealed class MetadataTool(string toolId, string sourceDisplayName) : IAgentTool
     {
         public AgentToolDescriptor Descriptor { get; } =
@@ -9393,6 +10404,8 @@ public sealed class AgentRunCoordinatorTests
         public AgentProfileRecord? GetSessionProfile(Guid sessionId) => null;
 
         public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
+
+        public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;
 
         public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => null;
 

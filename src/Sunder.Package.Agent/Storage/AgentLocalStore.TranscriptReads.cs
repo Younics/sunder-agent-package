@@ -219,7 +219,7 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT i.ItemId, i.TurnId, i.SequenceNumber, i.Kind, i.TextContent, i.CallId, i.ToolId, i.ArgumentsJson, i.ResultSummary, i.StructuredPayloadJson, i.SourcesJson, i.WasTruncated, i.IsError, i.ErrorCode, i.BackendId
+            SELECT i.ItemId, i.TurnId, i.SequenceNumber, i.Kind, i.TextContent, i.CallId, i.ToolId, i.ArgumentsJson, i.ResultSummary, i.StructuredPayloadJson, i.SourcesJson, i.WasTruncated, i.IsError, i.ErrorCode, i.BackendId, i.PresentationPayloadJson
             FROM AgentTurnItems i
             INNER JOIN AgentTurns t ON t.TurnId = i.TurnId
             WHERE t.SessionId = $sessionId
@@ -253,7 +253,7 @@ public sealed partial class AgentLocalStore
             command.Parameters.AddWithValue(parameterName, turnIds[index].ToString());
         }
 
-        command.CommandText = $"SELECT ItemId, TurnId, SequenceNumber, Kind, TextContent, CallId, ToolId, ArgumentsJson, ResultSummary, StructuredPayloadJson, SourcesJson, WasTruncated, IsError, ErrorCode, BackendId FROM AgentTurnItems WHERE TurnId IN ({string.Join(", ", parameterNames)}) ORDER BY TurnId, SequenceNumber;";
+        command.CommandText = $"SELECT ItemId, TurnId, SequenceNumber, Kind, TextContent, CallId, ToolId, ArgumentsJson, ResultSummary, StructuredPayloadJson, SourcesJson, WasTruncated, IsError, ErrorCode, BackendId, PresentationPayloadJson FROM AgentTurnItems WHERE TurnId IN ({string.Join(", ", parameterNames)}) ORDER BY TurnId, SequenceNumber;";
 
         using var reader = command.ExecuteReader();
         var items = new List<AgentTurnItemRecord>();
@@ -309,5 +309,6 @@ public sealed partial class AgentLocalStore
             reader.GetInt64(11) != 0,
             reader.GetInt64(12) != 0,
             reader.IsDBNull(13) ? null : reader.GetString(13),
-            reader.IsDBNull(14) ? null : reader.GetString(14));
+            reader.IsDBNull(14) ? null : reader.GetString(14),
+            reader.IsDBNull(15) ? null : reader.GetString(15));
 }

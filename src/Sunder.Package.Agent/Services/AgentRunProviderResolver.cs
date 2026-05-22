@@ -27,23 +27,24 @@ public sealed class AgentRunProviderResolver(
         CancellationToken cancellationToken)
     {
         var runCapabilities = await provider.GetRunCapabilitiesAsync(chatBinding.ModelId, cancellationToken).ConfigureAwait(false);
-        var modelVariant = await ResolveModelVariantAsync(provider, chatBinding, cancellationToken).ConfigureAwait(false);
+        var model = await ResolveModelDescriptorAsync(provider, chatBinding.ModelId, cancellationToken).ConfigureAwait(false);
+        runCapabilities = EnrichRunCapabilities(runCapabilities, model);
+        var modelVariant = ResolveModelVariant(model, chatBinding);
         return new AgentRunProviderMetadata(runCapabilities, modelVariant);
     }
 
-    public ValueTask<AgentProviderRunCapabilities> ResolveRunCapabilitiesAsync(
+    public async ValueTask<AgentProviderRunCapabilities> ResolveRunCapabilitiesAsync(
         IAgentChatProvider provider,
         AgentProfileModelBindingRecord chatBinding,
         CancellationToken cancellationToken)
-        => provider.GetRunCapabilitiesAsync(chatBinding.ModelId, cancellationToken);
+        => (await ResolveRunMetadataAsync(provider, chatBinding, cancellationToken).ConfigureAwait(false)).RunCapabilities;
 
-    private static async ValueTask<AgentModelVariantDescriptor?> ResolveModelVariantAsync(
+    private static async ValueTask<AgentModelDescriptor?> ResolveModelDescriptorAsync(
         IAgentChatProvider provider,
-        AgentProfileModelBindingRecord chatBinding,
+        string? modelId,
         CancellationToken cancellationToken)
     {
-        var settings = AgentChatModelSettingsJson.Parse(chatBinding.SettingsJson);
-        if (string.IsNullOrWhiteSpace(settings.ReasoningVariantId))
+        if (string.IsNullOrWhiteSpace(modelId))
         {
             return null;
         }
@@ -51,10 +52,8 @@ public sealed class AgentRunProviderResolver(
         try
         {
             var models = await provider.GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false);
-            var model = models.FirstOrDefault(candidate =>
-                string.Equals(candidate.ModelId, chatBinding.ModelId, StringComparison.OrdinalIgnoreCase));
-            return model?.Variants?.FirstOrDefault(variant =>
-                string.Equals(variant.VariantId, settings.ReasoningVariantId, StringComparison.OrdinalIgnoreCase));
+            return models.FirstOrDefault(candidate =>
+                string.Equals(candidate.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
         }
         catch (OperationCanceledException)
         {
@@ -64,6 +63,31 @@ public sealed class AgentRunProviderResolver(
         {
             return null;
         }
+    }
+
+    private static AgentProviderRunCapabilities EnrichRunCapabilities(
+        AgentProviderRunCapabilities runCapabilities,
+        AgentModelDescriptor? model)
+        => model is null
+            ? runCapabilities
+            : runCapabilities with
+            {
+                ContextWindowTokens = runCapabilities.ContextWindowTokens ?? model.ContextWindow,
+                MaxOutputTokens = runCapabilities.MaxOutputTokens ?? model.MaxOutputTokens,
+            };
+
+    private static AgentModelVariantDescriptor? ResolveModelVariant(
+        AgentModelDescriptor? model,
+        AgentProfileModelBindingRecord chatBinding)
+    {
+        var settings = AgentChatModelSettingsJson.Parse(chatBinding.SettingsJson);
+        if (string.IsNullOrWhiteSpace(settings.ReasoningVariantId))
+        {
+            return null;
+        }
+
+        return model?.Variants?.FirstOrDefault(variant =>
+            string.Equals(variant.VariantId, settings.ReasoningVariantId, StringComparison.OrdinalIgnoreCase));
     }
 }
 

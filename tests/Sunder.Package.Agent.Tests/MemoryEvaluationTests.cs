@@ -346,8 +346,7 @@ public sealed class MemoryEvaluationTests
             _feature = new MemorySemanticFeature(
                 Store,
                 new SemanticMemoryRecallService(Store, RetrievalBackend, metrics),
-                new SemanticMemoryPromotionService(Store, _indexingBackgroundService, metrics),
-                new MemoryWorkingSummaryBuilder(Store));
+                new SemanticMemoryPromotionService(Store, _indexingBackgroundService, metrics));
         }
 
         public Guid SessionId { get; }
@@ -527,6 +526,8 @@ public sealed class MemoryEvaluationTests
             => requestedSessionId == _session.SessionId ? profile : null;
 
         public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
+
+        public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;
 
         public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => null;
 

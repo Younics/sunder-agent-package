@@ -89,8 +89,8 @@
               CornerRadius="10"
               IsVisible="{Binding HasWorkingSummary}">
         <StackPanel Spacing="6">
-          <TextBlock Text="Session Working Summary"
-                     FontWeight="SemiBold" />
+          <TextBlock Text="Session Continuity Summary"
+                      FontWeight="SemiBold" />
           <TextBlock Text="{Binding WorkingSummaryText}"
                      TextWrapping="Wrap" />
         </StackPanel>

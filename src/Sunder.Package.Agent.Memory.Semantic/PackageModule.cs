@@ -19,7 +19,6 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddSingleton<SemanticMemoryIndexingBackgroundService>();
         services.AddSingleton<SemanticMemoryRecallService>();
         services.AddSingleton<SemanticMemoryPromotionService>();
-        services.AddSingleton<MemoryWorkingSummaryBuilder>();
         services.AddSingleton<MemoryInspectorService>();
         services.AddSingleton<MemorySemanticFeature>();
     }

@@ -131,8 +131,16 @@ public sealed partial class AgentLocalStore
     {
         using var connection = CreateConnection();
         connection.Open();
+        return GetLatestCheckpoint(connection, sessionId, null);
+    }
 
+    private static AgentRunCheckpointRecord? GetLatestCheckpoint(
+        SqliteConnection connection,
+        Guid sessionId,
+        SqliteTransaction? transaction)
+    {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "SELECT CheckpointId, SessionId, RunRevision, Status, Summary, CreatedAtUtc FROM AgentRunCheckpoints WHERE SessionId = $sessionId ORDER BY CreatedAtUtc DESC LIMIT 1;";
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
 
@@ -164,6 +172,46 @@ public sealed partial class AgentLocalStore
                 reader.GetString(1),
                 DateTimeOffset.Parse(reader.GetString(2)))
             : null;
+    }
+
+    public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId)
+    {
+        using var connection = CreateConnection();
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT ContextCheckpointId, SessionId, FirstOmittedTurnId, LastOmittedTurnId, OmittedTurnCount, SummaryText, DetailsJson, CreatedAtUtc FROM AgentSessionContextCheckpoints WHERE SessionId = $sessionId ORDER BY CreatedAtUtc DESC LIMIT 1;";
+        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
+
+        using var reader = command.ExecuteReader();
+        return reader.Read()
+            ? ReadSessionContextCheckpoint(reader)
+            : null;
+    }
+
+    public AgentSessionContextCheckpointRecord SaveSessionContextCheckpoint(
+        Guid sessionId,
+        Guid? firstOmittedTurnId,
+        Guid? lastOmittedTurnId,
+        int omittedTurnCount,
+        string summaryText,
+        string? detailsJson)
+    {
+        var checkpoint = new AgentSessionContextCheckpointRecord(
+            Guid.NewGuid(),
+            sessionId,
+            firstOmittedTurnId,
+            lastOmittedTurnId,
+            omittedTurnCount,
+            summaryText.Trim(),
+            string.IsNullOrWhiteSpace(detailsJson) ? null : detailsJson,
+            DateTimeOffset.UtcNow);
+
+        using var connection = CreateConnection();
+        connection.Open();
+        InsertSessionContextCheckpoint(connection, checkpoint);
+        TouchSession(connection, sessionId, null, checkpoint.CreatedAtUtc, transaction: null);
+        return checkpoint;
     }
 
     public AgentWorkingSummaryRecord? SaveWorkingSummary(Guid sessionId, string? summaryText)
@@ -340,6 +388,12 @@ public sealed partial class AgentLocalStore
         deleteWorkingSummaries.Parameters.AddWithValue("$sessionId", sessionId);
         deleteWorkingSummaries.ExecuteNonQuery();
 
+        using var deleteSessionContextCheckpoints = connection.CreateCommand();
+        deleteSessionContextCheckpoints.Transaction = transaction;
+        deleteSessionContextCheckpoints.CommandText = "DELETE FROM AgentSessionContextCheckpoints WHERE SessionId = $sessionId;";
+        deleteSessionContextCheckpoints.Parameters.AddWithValue("$sessionId", sessionId);
+        deleteSessionContextCheckpoints.ExecuteNonQuery();
+
         using var deletePermissionStates = connection.CreateCommand();
         deletePermissionStates.Transaction = transaction;
         deletePermissionStates.CommandText = "DELETE FROM AgentSessionPermissionStates WHERE SessionId = $sessionId;";
@@ -377,6 +431,32 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$created", checkpoint.CreatedAtUtc.ToString("O"));
         command.ExecuteNonQuery();
     }
+
+    private static void InsertSessionContextCheckpoint(SqliteConnection connection, AgentSessionContextCheckpointRecord checkpoint)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "INSERT INTO AgentSessionContextCheckpoints (ContextCheckpointId, SessionId, FirstOmittedTurnId, LastOmittedTurnId, OmittedTurnCount, SummaryText, DetailsJson, CreatedAtUtc) VALUES ($id, $sessionId, $firstOmittedTurnId, $lastOmittedTurnId, $omittedTurnCount, $summaryText, $detailsJson, $created);";
+        command.Parameters.AddWithValue("$id", checkpoint.ContextCheckpointId.ToString());
+        command.Parameters.AddWithValue("$sessionId", checkpoint.SessionId.ToString());
+        command.Parameters.AddWithValue("$firstOmittedTurnId", checkpoint.FirstOmittedTurnId?.ToString() ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$lastOmittedTurnId", checkpoint.LastOmittedTurnId?.ToString() ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$omittedTurnCount", checkpoint.OmittedTurnCount);
+        command.Parameters.AddWithValue("$summaryText", checkpoint.SummaryText);
+        command.Parameters.AddWithValue("$detailsJson", (object?)checkpoint.DetailsJson ?? DBNull.Value);
+        command.Parameters.AddWithValue("$created", checkpoint.CreatedAtUtc.ToString("O"));
+        command.ExecuteNonQuery();
+    }
+
+    private static AgentSessionContextCheckpointRecord ReadSessionContextCheckpoint(SqliteDataReader reader)
+        => new(
+            Guid.Parse(reader.GetString(0)),
+            Guid.Parse(reader.GetString(1)),
+            reader.IsDBNull(2) ? null : Guid.Parse(reader.GetString(2)),
+            reader.IsDBNull(3) ? null : Guid.Parse(reader.GetString(3)),
+            Convert.ToInt32(reader.GetInt64(4)),
+            reader.GetString(5),
+            reader.IsDBNull(6) ? null : reader.GetString(6),
+            DateTimeOffset.Parse(reader.GetString(7)));
 
     private static void TouchSession(
         SqliteConnection connection,

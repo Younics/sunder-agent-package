@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using LiveMarkdown.Avalonia;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Theming;
 
@@ -26,13 +27,14 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
     private string _outputText = string.Empty;
     private string _errorCodeText = string.Empty;
     private string _backendText = string.Empty;
+    private ToolDiffViewModel? _toolDiff;
 
     public AgentToolInvocationRowViewModel(
         AgentTurnRecord turn,
         AgentTurnItemRecord item,
         AgentToolPresentationService presentationService,
         Func<AgentTurnRecord, AgentTurnItemRecord, IReadOnlyList<AgentChildSessionLinkViewModel>>? childSessionLinksResolver = null)
-        : base(turn.TurnId, turn.CreatedAtUtc)
+        : base(turn.TurnId, turn.CreatedAtUtc, TranscriptRowAnchorKey.Tool(turn, item))
     {
         _turn = turn;
         _toolId = item.ToolId ?? "unknown_tool";
@@ -151,6 +153,29 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
 
     public bool HasMarkdownDetails => HasDetails;
 
+    public bool ShowMarkdownDetails => HasMarkdownDetails && (ToolDiff?.ShowMarkdownDetails ?? true);
+
+    public ToolDiffViewModel? ToolDiff
+    {
+        get => _toolDiff;
+        private set
+        {
+            if (SetProperty(ref _toolDiff, value))
+            {
+                OnPropertyChanged(nameof(HasToolDiff));
+                OnPropertyChanged(nameof(ToolDiffFiles));
+                OnPropertyChanged(nameof(ToolDiffSectionTitle));
+                OnPropertyChanged(nameof(ShowMarkdownDetails));
+            }
+        }
+    }
+
+    public bool HasToolDiff => ToolDiff?.HasFiles == true;
+
+    public IReadOnlyList<ToolDiffFileViewModel> ToolDiffFiles => ToolDiff?.Files ?? [];
+
+    public string ToolDiffSectionTitle => ToolDiff?.SectionTitle ?? string.Empty;
+
     public Guid? ResultTurnId => _resultTurnId;
 
     public ObservableCollection<AgentChildSessionLinkViewModel> ChildSessionLinks { get; } = [];
@@ -200,6 +225,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
         OnPropertyChanged(nameof(HasDetails));
         OnPropertyChanged(nameof(ShowDetails));
         OnPropertyChanged(nameof(HasMarkdownDetails));
+        OnPropertyChanged(nameof(ShowMarkdownDetails));
         OnPropertyChanged(nameof(IsFailed));
         OnPropertyChanged(nameof(IsRunning));
         OnPropertyChanged(nameof(IsCompleted));
@@ -212,7 +238,14 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
             ? item with { ArgumentsJson = _argumentsJson }
             : item;
         var presentation = _presentationService.Resolve(presentationItem);
-        HeaderDetailText = presentation.HeaderText?.Trim() ?? string.Empty;
+        ToolDiff = ToolDiffViewModel.TryCreate(
+            _toolId,
+            presentationItem.ArgumentsJson ?? _argumentsJson,
+            item.ResultSummary,
+            item.TextContent,
+            item.IsError,
+            item.PresentationPayloadJson);
+        HeaderDetailText = ToolDiff?.HeaderText ?? presentation.HeaderText?.Trim() ?? string.Empty;
         SummaryText = BuildSummaryLine(ToolLabel, HeaderDetailText);
         DetailMarkdownBuilder.Clear();
         DetailMarkdownBuilder.Append(presentation.DetailMarkdown?.Trim() ?? string.Empty);
@@ -223,6 +256,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
         OnPropertyChanged(nameof(HasDetails));
         OnPropertyChanged(nameof(ShowDetails));
         OnPropertyChanged(nameof(HasMarkdownDetails));
+        OnPropertyChanged(nameof(ShowMarkdownDetails));
     }
 
     public void RefreshChildSessionLink()

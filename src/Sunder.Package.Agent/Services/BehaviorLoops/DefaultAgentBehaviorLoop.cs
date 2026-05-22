@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Text;
-using Microsoft.Agents.AI;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -8,15 +8,18 @@ using Sunder.Package.Agent.Services;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
-public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer promptComposer, IAgentAttachmentContentStore? attachmentStore = null) : IAgentBehaviorLoop
+public sealed partial class DefaultAgentBehaviorLoop(
+    AgentSystemPromptComposer promptComposer,
+    IAgentAttachmentContentStore? attachmentStore = null,
+    AgentSessionContextProjectionService? sessionContextProjectionService = null) : IAgentBehaviorLoop
 {
     public const string LoopId = AgentBehaviorLoopIds.Default;
 
     private const int MaxHistoricalTurnsWithInstructionContext = 16;
     private const int MaxPromptContextTurns = 64;
-    private const int MaxFunctionInvokingIterationsPerRequest = 128;
     private static readonly TimeSpan AssistantStreamFlushInterval = TimeSpan.FromMilliseconds(150);
     private readonly IAgentAttachmentContentStore? _attachmentStore = attachmentStore;
+    private readonly AgentSessionContextProjectionService? _sessionContextProjectionService = sessionContextProjectionService;
 
     public AgentBehaviorLoopDescriptor Descriptor { get; } = new(
         LoopId,
@@ -33,16 +36,16 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
         {
             ["behavior.loop_id"] = Descriptor.LoopId,
         });
-        var instructionContext = await host.BuildInstructionContextAsync(cancellationToken);
-        AgentTurnRecord? assistantTurn = null;
+        var assistantTurnState = new AssistantTurnState();
 
         try
         {
+            var promptProjection = BuildPromptProjection(host, context, excludedTurnId: null);
+            var instructionContext = await host.BuildInstructionContextAsync(cancellationToken);
             var availableRuntimeTools = context.RunCapabilities.SupportsNativeToolCalling
                 ? await host.ListReadyToolsAsync(cancellationToken)
                 : [];
             var availableTools = availableRuntimeTools.Select(tool => tool.Descriptor).ToArray();
-            var promptContextTurns = host.ListRecentTurns(MaxPromptContextTurns);
             var promptRequest = new AgentSystemPromptRequest(
                 context.Session,
                 context.Profile,
@@ -52,7 +55,7 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
                 context.Workspace,
                 context.ExecutionBinding,
                 availableTools,
-                promptContextTurns,
+                promptProjection.PromptTurns,
                 context.RunId,
                 context.RunRevision,
                 context.RunStartedAtUtc,
@@ -63,6 +66,19 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
                 promptRequest,
                 instructionContext.SystemInstructions,
                 cancellationToken);
+            var promptOverheadTokens = EstimatePromptOverheadTokens(runtimeSystemInstructions, availableTools);
+            promptProjection = BuildPromptProjection(host, context, excludedTurnId: null, promptOverheadTokens);
+            if (promptProjection.SummaryUpdated)
+            {
+                instructionContext = await host.BuildInstructionContextAsync(cancellationToken);
+                promptRequest = promptRequest with { Turns = promptProjection.PromptTurns };
+                runtimeSystemInstructions = await promptComposer.ComposeAsync(
+                    promptRequest,
+                    instructionContext.SystemInstructions,
+                    cancellationToken);
+                promptOverheadTokens = EstimatePromptOverheadTokens(runtimeSystemInstructions, availableTools);
+                promptProjection = BuildPromptProjection(host, context, excludedTurnId: null, promptOverheadTokens);
+            }
             host.LogEvent(
                 AgentLogLevel.Debug,
                 "system_prompt.compose.completed",
@@ -76,180 +92,125 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
                     ["workspace.id"] = context.Workspace?.WorkspaceId,
                     ["workspace.binding_id"] = context.ExecutionBinding?.BindingId,
             });
-            var toolInvoker = new SunderAgentToolInvoker(
-                context,
-                host);
             var aiTools = availableRuntimeTools
-                .Select(tool => (AITool)new SunderAgentToolFunction(tool, toolInvoker))
+                .Select(tool => (AITool)tool.Declaration)
                 .ToList();
             var rawChatClient = await host.CreateChatClientAsync(
                 new AgentChatClientContext(context.ProviderId, context.ModelId),
                 cancellationToken);
-            var chatClient = new FunctionInvokingChatClient(rawChatClient)
+            var chatOptions = new ChatOptions
             {
-                FunctionInvoker = toolInvoker.InvokeAsync,
-                MaximumIterationsPerRequest = MaxFunctionInvokingIterationsPerRequest,
-                MaximumConsecutiveErrorsPerRequest = 0,
+                Instructions = runtimeSystemInstructions,
+                ConversationId = context.Session.SessionId.ToString("N"),
+                Tools = aiTools,
+                ToolMode = aiTools.Count > 0 ? new AutoChatToolMode() : ChatToolMode.None,
+                AllowMultipleToolCalls = ShouldAllowMultipleToolCalls(context),
+                Reasoning = BuildReasoningOptions(context.ModelVariant),
             };
-            var agentOptions = new ChatClientAgentOptions
+            var progressGuard = new AgentRunProgressGuard();
+            AgentProviderCycleResult providerCycleResult;
+            while (true)
             {
-                ChatOptions = new ChatOptions
-                {
-                    Instructions = runtimeSystemInstructions,
-                    ConversationId = context.Session.SessionId.ToString("N"),
-                    Tools = aiTools,
-                    ToolMode = aiTools.Count > 0 ? new AutoChatToolMode() : ChatToolMode.None,
-                    AllowMultipleToolCalls = ShouldAllowMultipleToolCalls(context),
-                    Reasoning = BuildReasoningOptions(context.ModelVariant),
-                },
-                UseProvidedChatClientAsIs = true,
-            };
-            var agent = chatClient.AsAIAgent(agentOptions);
-            var promptMessages = await BuildPromptMessagesAsync(
-                host.ListRecentTurns(MaxPromptContextTurns),
-                context.UserTurnId,
-                useBoundedHistoricalWindow: true,
-                context.RunCapabilities,
-                excludedTurnId: null,
-                cancellationToken);
-            var contentBuilder = new StringBuilder();
-            var lastAssistantFlushElapsed = TimeSpan.MinValue;
-            var observedToolBoundaryVersion = toolInvoker.ToolBoundaryVersion;
-            AgentBehaviorLoopResult? interruptedResult = null;
-            var streamAttempt = 0;
-            var retryPipeline = AgentProviderResilience.CreatePipeline(notification =>
-            {
-                host.LogEvent(
-                    AgentLogLevel.Warning,
-                    "provider.stream.retrying",
-                    $"Transient provider stream interruption. Retrying in {notification.Delay.TotalSeconds:0.#}s (attempt {notification.AttemptNumber}/{notification.MaxRetryAttempts}).",
-                    loopStopwatch.ElapsedMilliseconds,
-                    new Dictionary<string, object?>(StringComparer.Ordinal)
-                    {
-                        ["retry.attempt"] = notification.AttemptNumber,
-                        ["retry.max_attempts"] = notification.MaxRetryAttempts,
-                        ["retry.delay_ms"] = notification.Delay.TotalMilliseconds,
-                        ["retry.exception_type"] = notification.Exception.GetType().FullName,
-                    },
-                    notification.Exception);
-            });
+                var promptMessages = await BuildPromptMessagesAsync(
+                    promptProjection.PromptTurns,
+                    context.UserTurnId,
+                    useBoundedHistoricalWindow: _sessionContextProjectionService is null,
+                    context.RunCapabilities,
+                    excludedTurnId: null,
+                    cancellationToken);
+                providerCycleResult = await RunProviderCycleAsync(
+                    host,
+                    context,
+                    rawChatClient,
+                    promptMessages,
+                    chatOptions,
+                    assistantTurnState,
+                    loopStopwatch,
+                    cancellationToken);
 
-            await retryPipeline.ExecuteAsync(async attemptCancellationToken =>
-            {
-                if (streamAttempt > 0)
+                if (providerCycleResult.TerminalResult is not null)
                 {
-                    if (assistantTurn is not null && contentBuilder.Length > 0)
-                    {
-                        assistantTurn = host.UpsertAssistantTurn(assistantTurn, string.Empty);
-                    }
-
-                    contentBuilder.Clear();
-                    lastAssistantFlushElapsed = TimeSpan.MinValue;
-                    observedToolBoundaryVersion = toolInvoker.ToolBoundaryVersion;
-                    promptMessages = await BuildPromptMessagesAsync(
-                        host.ListRecentTurns(MaxPromptContextTurns),
-                        context.UserTurnId,
-                        useBoundedHistoricalWindow: true,
-                        context.RunCapabilities,
-                        assistantTurn?.TurnId,
-                        attemptCancellationToken);
-                    host.LogEvent(
-                        AgentLogLevel.Debug,
-                        "behavior.loop.retry.start",
-                        "Retrying provider execution from persisted transcript.",
-                        loopStopwatch.ElapsedMilliseconds,
-                        new Dictionary<string, object?>(StringComparer.Ordinal)
-                        {
-                            ["retry.attempt"] = streamAttempt,
-                            ["prompt.turn_count"] = promptMessages.Count,
-                        });
+                    return providerCycleResult.TerminalResult;
                 }
 
-                streamAttempt++;
-                var agentSession = await agent.CreateSessionAsync(attemptCancellationToken);
-                await foreach (var streamUpdate in agent.RunStreamingAsync(promptMessages, agentSession, cancellationToken: attemptCancellationToken))
+                if (providerCycleResult.ToolCalls.Count == 0)
                 {
-                    if (!host.IsCurrentRun())
+                    break;
+                }
+
+                if (providerCycleResult.ToolCalls.Count > 1 && !ShouldAllowMultipleToolCalls(context))
+                {
+                    assistantTurnState.Turn = host.UpsertAssistantTurn(
+                        assistantTurnState.Turn,
+                        "### Agent run failed\n\nThe provider requested multiple tool calls, but this profile/provider combination does not allow parallel tool calls.");
+                    var failedCheckpoint = host.SaveCheckpoint(AgentRunStatus.Failed, "Provider requested multiple tool calls.");
+                    await host.PublishLifecycleEventAsync(
+                        AgentLifecycleEventKind.RunFailed,
+                        AgentRunStatus.Failed,
+                        triggerTurn: assistantTurnState.Turn,
+                        checkpoint: failedCheckpoint,
+                        cancellationToken: cancellationToken);
+                    return new AgentBehaviorLoopResult(failedCheckpoint, AgentBehaviorLoopCompletionKind.Failed);
+                }
+
+                foreach (var toolCallContent in providerCycleResult.ToolCalls)
+                {
+                    var toolCall = CreateToolCallRequest(toolCallContent);
+                    var outcome = await host.InvokeToolAsync(toolCall, assistantTurn: null, cancellationToken);
+                    if (outcome.Kind != AgentToolCallOutcomeKind.Executed)
                     {
-                        interruptedResult = new AgentBehaviorLoopResult(context.RunningCheckpoint, AgentBehaviorLoopCompletionKind.Interrupted);
-                        return;
+                        var terminalResult = new AgentBehaviorLoopResult(
+                            outcome.Checkpoint ?? context.RunningCheckpoint,
+                            outcome.Kind == AgentToolCallOutcomeKind.WaitingForApproval
+                                ? AgentBehaviorLoopCompletionKind.WaitingForApproval
+                                : AgentBehaviorLoopCompletionKind.Failed);
+                        host.LogEvent(AgentLogLevel.Information, "behavior.loop.suspended", terminalResult.CompletionKind.ToString(), loopStopwatch.ElapsedMilliseconds);
+                        return terminalResult;
                     }
 
-                    if (toolInvoker.ToolBoundaryVersion != observedToolBoundaryVersion)
+                    if (progressGuard.RecordToolOutcome(toolCall, outcome, out var progressFailure))
                     {
-                        observedToolBoundaryVersion = toolInvoker.ToolBoundaryVersion;
-                        assistantTurn = null;
-                        contentBuilder.Clear();
-                        lastAssistantFlushElapsed = TimeSpan.MinValue;
-                    }
-
-                    if (toolInvoker.TerminalResult is not null)
-                    {
-                        break;
-                    }
-
-                    if (!string.IsNullOrEmpty(streamUpdate.Text))
-                    {
-                        contentBuilder.Append(streamUpdate.Text);
-                        if (AgentVisibleResponseGuard.ContainsProtocolLeak(contentBuilder.ToString()))
-                        {
-                            assistantTurn = host.UpsertAssistantTurn(
-                                assistantTurn,
-                                AgentVisibleResponseGuard.BlockedResponseContent);
-                            var failedCheckpoint = host.SaveCheckpoint(
-                                AgentRunStatus.Failed,
-                                "Assistant response contained internal protocol syntax.");
-                            await host.PublishLifecycleEventAsync(
-                                AgentLifecycleEventKind.RunFailed,
-                                AgentRunStatus.Failed,
-                                triggerTurn: assistantTurn,
-                                checkpoint: failedCheckpoint,
-                                cancellationToken: attemptCancellationToken);
-                            host.LogEvent(
-                                AgentLogLevel.Warning,
-                                "assistant.response.protocol_leak_blocked",
-                                "Assistant response contained internal protocol syntax.",
-                                loopStopwatch.ElapsedMilliseconds,
-                                new Dictionary<string, object?>(StringComparer.Ordinal)
-                                {
-                                    ["assistant.response_length"] = contentBuilder.Length,
-                                });
-                            interruptedResult = new AgentBehaviorLoopResult(
-                                failedCheckpoint,
-                                AgentBehaviorLoopCompletionKind.Failed);
-                            return;
-                        }
-
-                        if (ShouldFlushAssistantStream(assistantTurn, loopStopwatch.Elapsed, lastAssistantFlushElapsed))
-                        {
-                            assistantTurn = host.UpsertAssistantTurn(assistantTurn, contentBuilder.ToString());
-                            lastAssistantFlushElapsed = loopStopwatch.Elapsed;
-                        }
+                        assistantTurnState.Turn = host.UpsertAssistantTurn(null, progressFailure.VisibleMessage);
+                        var failedCheckpoint = host.SaveCheckpoint(AgentRunStatus.Failed, progressFailure.CheckpointSummary);
+                        await host.PublishLifecycleEventAsync(
+                            AgentLifecycleEventKind.RunFailed,
+                            AgentRunStatus.Failed,
+                            triggerTurn: assistantTurnState.Turn,
+                            checkpoint: failedCheckpoint,
+                            cancellationToken: cancellationToken);
+                        host.LogEvent(
+                            AgentLogLevel.Warning,
+                            "behavior.loop.no_progress_detected",
+                            progressFailure.CheckpointSummary,
+                            loopStopwatch.ElapsedMilliseconds,
+                            progressFailure.Attributes);
+                        return new AgentBehaviorLoopResult(failedCheckpoint, AgentBehaviorLoopCompletionKind.Failed);
                     }
                 }
-            }, cancellationToken);
 
-            if (interruptedResult is not null)
-            {
-                return interruptedResult;
+                assistantTurnState.Turn = null;
+                promptProjection = BuildPromptProjection(host, context, excludedTurnId: null, promptOverheadTokens);
+                if (promptProjection.SummaryUpdated)
+                {
+                    instructionContext = await host.BuildInstructionContextAsync(cancellationToken);
+                    promptRequest = promptRequest with { Turns = promptProjection.PromptTurns };
+                    runtimeSystemInstructions = await promptComposer.ComposeAsync(
+                        promptRequest,
+                        instructionContext.SystemInstructions,
+                        cancellationToken);
+                    promptOverheadTokens = EstimatePromptOverheadTokens(runtimeSystemInstructions, availableTools);
+                    chatOptions.Instructions = runtimeSystemInstructions;
+                    promptProjection = BuildPromptProjection(host, context, excludedTurnId: null, promptOverheadTokens);
+                }
             }
 
-            if (toolInvoker.TerminalResult is not null)
-            {
-                if (assistantTurn is not null && contentBuilder.Length > 0)
-                {
-                    assistantTurn = host.UpsertAssistantTurn(assistantTurn, contentBuilder.ToString());
-                }
-
-                host.LogEvent(AgentLogLevel.Information, "behavior.loop.suspended", toolInvoker.TerminalResult.CompletionKind.ToString(), loopStopwatch.ElapsedMilliseconds);
-                return toolInvoker.TerminalResult;
-            }
+            var contentBuilder = new StringBuilder(providerCycleResult.Text);
 
             if (contentBuilder.Length == 0)
             {
-                if (assistantTurn is not null)
+                if (assistantTurnState.Turn is not null)
                 {
-                    assistantTurn = host.UpsertAssistantTurn(assistantTurn, "No visible assistant response was produced.");
+                    assistantTurnState.Turn = host.UpsertAssistantTurn(assistantTurnState.Turn, "No visible assistant response was produced.");
                 }
 
                 var completedCheckpoint = host.SaveCheckpoint(
@@ -265,7 +226,7 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
             }
 
             var responseContent = contentBuilder.ToString();
-            assistantTurn = host.UpsertAssistantTurn(assistantTurn, responseContent);
+            assistantTurnState.Turn = host.UpsertAssistantTurn(assistantTurnState.Turn, responseContent);
             host.LogEvent(
                 AgentLogLevel.Information,
                 "assistant.response.completed",
@@ -283,7 +244,7 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
             await host.PublishLifecycleEventAsync(
                 AgentLifecycleEventKind.AssistantTurnCompleted,
                 AgentRunStatus.Completed,
-                triggerTurn: assistantTurn,
+                triggerTurn: assistantTurnState.Turn,
                 checkpoint: finalCheckpoint,
                 cancellationToken: cancellationToken);
             var result = new AgentBehaviorLoopResult(finalCheckpoint, ToCompletionKind(finalCheckpoint.Status));
@@ -297,7 +258,7 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
                 return await HandleProviderInterruptedAsync(
                     host,
                     context,
-                    assistantTurn,
+                    assistantTurnState.Turn,
                     ex.Message,
                     loopStopwatch.ElapsedMilliseconds,
                     ex,
@@ -314,7 +275,7 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
                 return await HandleProviderInterruptedAsync(
                     host,
                     context,
-                    assistantTurn,
+                    assistantTurnState.Turn,
                     ex.Message,
                     loopStopwatch.ElapsedMilliseconds,
                     ex,
@@ -327,12 +288,12 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
                 return new AgentBehaviorLoopResult(context.RunningCheckpoint, AgentBehaviorLoopCompletionKind.Interrupted);
             }
 
-            assistantTurn = host.UpsertAssistantTurn(assistantTurn, ex.Content);
+            assistantTurnState.Turn = host.UpsertAssistantTurn(assistantTurnState.Turn, ex.Content);
             var failedCheckpoint = host.SaveCheckpoint(AgentRunStatus.Failed, ex.ErrorCode ?? ex.Message);
             await host.PublishLifecycleEventAsync(
                 AgentLifecycleEventKind.RunFailed,
                 AgentRunStatus.Failed,
-                triggerTurn: assistantTurn,
+                triggerTurn: assistantTurnState.Turn,
                 checkpoint: failedCheckpoint,
                 cancellationToken: CancellationToken.None);
             host.LogEvent(AgentLogLevel.Error, "provider.request.failed", ex.ErrorCode ?? ex.Message, loopStopwatch.ElapsedMilliseconds, exception: ex);
@@ -345,7 +306,7 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
                 return await HandleProviderInterruptedAsync(
                     host,
                     context,
-                    assistantTurn,
+                    assistantTurnState.Turn,
                     ex.Message,
                     loopStopwatch.ElapsedMilliseconds,
                     ex,
@@ -358,19 +319,217 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
                 return new AgentBehaviorLoopResult(context.RunningCheckpoint, AgentBehaviorLoopCompletionKind.Interrupted);
             }
 
-            assistantTurn = host.UpsertAssistantTurn(
-                assistantTurn,
+            assistantTurnState.Turn = host.UpsertAssistantTurn(
+                assistantTurnState.Turn,
                 $"### Agent run failed\n\n{ex.Message}");
             var failedCheckpoint = host.SaveCheckpoint(AgentRunStatus.Failed, ex.Message);
             await host.PublishLifecycleEventAsync(
                 AgentLifecycleEventKind.RunFailed,
                 AgentRunStatus.Failed,
-                triggerTurn: assistantTurn,
+                triggerTurn: assistantTurnState.Turn,
                 checkpoint: failedCheckpoint,
                 cancellationToken: CancellationToken.None);
             host.LogEvent(AgentLogLevel.Error, "behavior.loop.failed", ex.Message, loopStopwatch.ElapsedMilliseconds, exception: ex);
             return new AgentBehaviorLoopResult(failedCheckpoint, AgentBehaviorLoopCompletionKind.Failed);
         }
+    }
+
+    private async Task<AgentProviderCycleResult> RunProviderCycleAsync(
+        IAgentBehaviorLoopRuntime host,
+        AgentBehaviorLoopContext context,
+        IChatClient chatClient,
+        IReadOnlyList<ChatMessage> promptMessages,
+        ChatOptions chatOptions,
+        AssistantTurnState assistantTurnState,
+        Stopwatch loopStopwatch,
+        CancellationToken cancellationToken)
+    {
+        var contentBuilder = new StringBuilder();
+        var toolCalls = new List<FunctionCallContent>();
+        var lastAssistantFlushElapsed = TimeSpan.MinValue;
+        AgentBehaviorLoopResult? terminalResult = null;
+        var streamAttempt = 0;
+        var retryPipeline = AgentProviderResilience.CreatePipeline(notification =>
+        {
+            host.LogEvent(
+                AgentLogLevel.Warning,
+                "provider.stream.retrying",
+                $"Transient provider stream interruption. Retrying in {notification.Delay.TotalSeconds:0.#}s (attempt {notification.AttemptNumber}/{notification.MaxRetryAttempts}).",
+                loopStopwatch.ElapsedMilliseconds,
+                new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["retry.attempt"] = notification.AttemptNumber,
+                    ["retry.max_attempts"] = notification.MaxRetryAttempts,
+                    ["retry.delay_ms"] = notification.Delay.TotalMilliseconds,
+                    ["retry.exception_type"] = notification.Exception.GetType().FullName,
+                },
+                notification.Exception);
+        });
+
+        await retryPipeline.ExecuteAsync(async attemptCancellationToken =>
+        {
+            if (streamAttempt > 0)
+            {
+                if (assistantTurnState.Turn is not null && contentBuilder.Length > 0)
+                {
+                    assistantTurnState.Turn = host.UpsertAssistantTurn(assistantTurnState.Turn, string.Empty);
+                }
+
+                contentBuilder.Clear();
+                toolCalls.Clear();
+                lastAssistantFlushElapsed = TimeSpan.MinValue;
+                host.LogEvent(
+                    AgentLogLevel.Debug,
+                    "behavior.loop.retry.start",
+                    "Retrying provider execution from persisted transcript.",
+                    loopStopwatch.ElapsedMilliseconds,
+                    new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["retry.attempt"] = streamAttempt,
+                        ["prompt.turn_count"] = promptMessages.Count,
+                    });
+            }
+
+            streamAttempt++;
+            await foreach (var streamUpdate in chatClient.GetStreamingResponseAsync(promptMessages, chatOptions, attemptCancellationToken))
+            {
+                if (!host.IsCurrentRun())
+                {
+                    terminalResult = new AgentBehaviorLoopResult(context.RunningCheckpoint, AgentBehaviorLoopCompletionKind.Interrupted);
+                    return;
+                }
+
+                foreach (var functionCall in streamUpdate.Contents.OfType<FunctionCallContent>())
+                {
+                    toolCalls.Add(functionCall);
+                }
+
+                if (!string.IsNullOrEmpty(streamUpdate.Text))
+                {
+                    contentBuilder.Append(streamUpdate.Text);
+                    if (AgentVisibleResponseGuard.ContainsProtocolLeak(contentBuilder.ToString()))
+                    {
+                        assistantTurnState.Turn = host.UpsertAssistantTurn(
+                            assistantTurnState.Turn,
+                            AgentVisibleResponseGuard.BlockedResponseContent);
+                        var failedCheckpoint = host.SaveCheckpoint(
+                            AgentRunStatus.Failed,
+                            "Assistant response contained internal protocol syntax.");
+                        await host.PublishLifecycleEventAsync(
+                            AgentLifecycleEventKind.RunFailed,
+                            AgentRunStatus.Failed,
+                            triggerTurn: assistantTurnState.Turn,
+                            checkpoint: failedCheckpoint,
+                            cancellationToken: attemptCancellationToken);
+                        host.LogEvent(
+                            AgentLogLevel.Warning,
+                            "assistant.response.protocol_leak_blocked",
+                            "Assistant response contained internal protocol syntax.",
+                            loopStopwatch.ElapsedMilliseconds,
+                            new Dictionary<string, object?>(StringComparer.Ordinal)
+                            {
+                                ["assistant.response_length"] = contentBuilder.Length,
+                            });
+                        terminalResult = new AgentBehaviorLoopResult(
+                            failedCheckpoint,
+                            AgentBehaviorLoopCompletionKind.Failed);
+                        return;
+                    }
+
+                    if (ShouldFlushAssistantStream(assistantTurnState.Turn, loopStopwatch.Elapsed, lastAssistantFlushElapsed))
+                    {
+                        assistantTurnState.Turn = host.UpsertAssistantTurn(assistantTurnState.Turn, contentBuilder.ToString());
+                        lastAssistantFlushElapsed = loopStopwatch.Elapsed;
+                    }
+                }
+            }
+        }, cancellationToken);
+
+        if (terminalResult is not null)
+        {
+            return new AgentProviderCycleResult(contentBuilder.ToString(), toolCalls, terminalResult);
+        }
+
+        if (contentBuilder.Length > 0)
+        {
+            assistantTurnState.Turn = host.UpsertAssistantTurn(assistantTurnState.Turn, contentBuilder.ToString());
+        }
+
+        return new AgentProviderCycleResult(contentBuilder.ToString(), toolCalls, TerminalResult: null);
+    }
+
+    private static AgentToolCallRequest CreateToolCallRequest(FunctionCallContent functionCall)
+        => new(
+            string.IsNullOrWhiteSpace(functionCall.CallId) ? Guid.NewGuid().ToString("N") : functionCall.CallId,
+            functionCall.Name,
+            SerializeArguments(functionCall.Arguments));
+
+    private static string SerializeArguments(IDictionary<string, object?>? arguments)
+    {
+        if (arguments is null || arguments.Count == 0)
+        {
+            return "{}";
+        }
+
+        var values = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var argument in arguments)
+        {
+            values[argument.Key] = argument.Value;
+        }
+
+        return JsonSerializer.Serialize(values);
+    }
+
+    private AgentSessionPromptProjection BuildPromptProjection(
+        IAgentBehaviorLoopRuntime host,
+        AgentBehaviorLoopContext context,
+        Guid? excludedTurnId,
+        int promptOverheadTokens = 0)
+    {
+        if (_sessionContextProjectionService is null)
+        {
+            return new AgentSessionPromptProjection(
+                host.ListRecentTurns(MaxPromptContextTurns),
+                SummaryUpdated: false,
+                OmittedHistoricalTurnCount: 0);
+        }
+
+        var projection = _sessionContextProjectionService.BuildProjection(
+            context.Session.SessionId,
+            host.ListTurns(),
+            context.UserTurnId,
+            context.RunCapabilities,
+            excludedTurnId,
+            promptOverheadTokens);
+        if (projection.SummaryUpdated)
+        {
+            host.LogEvent(
+                AgentLogLevel.Debug,
+                "session.context.summary.updated",
+                "Updated core session continuity summary.",
+                attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["session.context.omitted_turn_count"] = projection.OmittedHistoricalTurnCount,
+                    ["session.context.prompt_turn_count"] = projection.PromptTurns.Count,
+                });
+        }
+
+        return projection;
+    }
+
+    private static int EstimatePromptOverheadTokens(string? systemInstructions, IReadOnlyList<AgentToolDescriptor> availableTools)
+    {
+        var chars = systemInstructions?.Length ?? 0;
+        foreach (var tool in availableTools)
+        {
+            chars += tool.ToolId.Length;
+            chars += tool.DisplayName.Length;
+            chars += tool.Description.Length;
+            chars += tool.ArgumentsJsonSchema?.Length ?? 0;
+            chars += tool.RuntimeInstructions?.Length ?? 0;
+        }
+
+        return 512 + (chars / 4);
     }
 
     private static AgentBehaviorLoopCompletionKind ToCompletionKind(AgentRunStatus status)
@@ -442,5 +601,15 @@ public sealed partial class DefaultAgentBehaviorLoop(AgentSystemPromptComposer p
             AgentReasoningEffort.ExtraHigh => ReasoningEffort.ExtraHigh,
             _ => ReasoningEffort.Medium,
         };
+
+    private sealed record AgentProviderCycleResult(
+        string Text,
+        IReadOnlyList<FunctionCallContent> ToolCalls,
+        AgentBehaviorLoopResult? TerminalResult);
+
+    private sealed class AssistantTurnState
+    {
+        public AgentTurnRecord? Turn { get; set; }
+    }
 
 }

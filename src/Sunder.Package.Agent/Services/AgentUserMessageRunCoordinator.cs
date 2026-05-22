@@ -44,6 +44,15 @@ public sealed partial class AgentUserMessageRunCoordinator(
         string userMessage,
         string workspaceId,
         IReadOnlyList<AgentAttachmentUploadRequest> attachments
+    ) => await QueueAsync(sessionId, profileId, userMessage, workspaceId, attachments, rollbackAnchorTurnId: null).ConfigureAwait(false);
+
+    public async Task<AgentRunCheckpointRecord> QueueAsync(
+        Guid sessionId,
+        string profileId,
+        string userMessage,
+        string workspaceId,
+        IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+        Guid? rollbackAnchorTurnId
     )
     {
         var session =
@@ -321,6 +330,13 @@ public sealed partial class AgentUserMessageRunCoordinator(
 
         interruptedRun?.CancellationTokenSource.Cancel();
         interruptedRun?.CancellationTokenSource.Dispose();
+
+        if (rollbackAnchorTurnId is { } anchorTurnId)
+        {
+            _sessionService.RollbackTranscript(sessionId, anchorTurnId);
+            session = _sessionService.GetSession(sessionId)
+                ?? throw new InvalidOperationException($"Session '{sessionId}' was not found after rollback.");
+        }
 
         var userTurn =
             storedAttachments.Count == 0

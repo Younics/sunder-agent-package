@@ -119,6 +119,13 @@ public partial class SubsessionsView : UserControl
             return;
         }
 
+        var viewModel = _viewModel ?? DataContext as SubsessionsViewModel;
+        if (viewModel?.IsLoadingOlderTranscriptRows == true || viewModel?.IsLoadingNewerTranscriptRows == true)
+        {
+            _transcriptScrollCoordinator?.DiscardPendingTranscriptMutation();
+            return;
+        }
+
         if (!EnsureTranscriptScrollCoordinator())
         {
             return;
@@ -161,11 +168,13 @@ public partial class SubsessionsView : UserControl
             TranscriptScrollViewer,
             TranscriptItemsControl,
             () => _viewModel?.CanLoadOlderTranscriptRows == true,
-            () => _viewModel?.LoadOlderTranscriptRowsAsync() ?? Task.FromResult(false),
+            anchorKey => _viewModel?.LoadOlderTranscriptRowsAsync(anchorKey) ?? Task.FromResult(false),
             () => _viewModel?.CanLoadNewerTranscriptRows == true,
-            () => _viewModel?.LoadNewerTranscriptRowsAsync() ?? Task.FromResult(false),
+            anchorKey => _viewModel?.LoadNewerTranscriptRowsAsync(anchorKey) ?? Task.FromResult(false),
             () => _viewModel?.HasNewerTranscriptRows == true,
-            isVisible => JumpToLatestTranscriptButton.IsVisible = isVisible);
+            isVisible => JumpToLatestTranscriptButton.IsVisible = isVisible,
+            () => _viewModel?.DetachTranscriptFromLatest(),
+            () => _viewModel?.ResumeTranscriptFollowingLatestIfCaughtUp());
         return true;
     }
 

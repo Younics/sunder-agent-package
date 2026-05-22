@@ -14,6 +14,7 @@ public sealed class OpenAiAgentProvider(
     ApiKeyAuthStrategy apiKeyAuthStrategy,
     CodexConnectedAuthStrategy codexConnectedAuthStrategy,
     CodexConnectedTransport codexConnectedTransport,
+    CodexResponseContinuationStore codexResponseContinuationStore,
     IPackageContext packageContext) : IAgentChatProvider
 {
     private readonly IPackageContext _packageContext = packageContext;
@@ -172,6 +173,7 @@ public sealed class OpenAiAgentProvider(
             context,
             Descriptor.DisplayName,
             codexConnectedTransport,
+            codexResponseContinuationStore,
             session);
     }
 }

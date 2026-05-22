@@ -265,6 +265,37 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
+    public void AgentSessionService_AppendToolResultTurn_PersistsPresentationPayloadJson()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var sessionService = new AgentSessionService(store);
+        var workspace = CreateWorkspace();
+        var payloadJson = JsonSerializer.Serialize(new { schema = "sunder.file-diff.v1" });
+        store.SaveWorkspace(workspace);
+        var session = store.CreateSession("Tool Payload");
+
+        sessionService.AppendToolResultTurn(
+            session.SessionId,
+            "call-1",
+            "edit",
+            argumentsJson: null,
+            content: "Wrote 42 character(s).",
+            resultSummary: "Wrote 42 character(s).",
+            structuredPayloadJson: null,
+            sourcesJson: null,
+            wasTruncated: false,
+            isError: false,
+            errorCode: null,
+            backendId: null,
+            presentationPayloadJson: payloadJson);
+
+        var reopenedStore = new AgentLocalStore(scope.Context);
+        var resultItem = Assert.Single(reopenedStore.ListTurns(session.SessionId).SelectMany(turn => turn.Items), item => item.Kind == AgentTurnItemKind.ToolResult);
+        Assert.Equal(payloadJson, resultItem.PresentationPayloadJson);
+    }
+
+    [Fact]
     public async Task AgentToolService_AllowsMcpToolGroupAssignmentBySourceKind()
     {
         using var scope = TestScope.Create();
@@ -1665,6 +1696,87 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
+    public async Task FilesToolSource_Edit_EmitsPresentationPayloadWithActualLineNumbers()
+    {
+        var catalog = new TestExtensionCatalog();
+        var target = new MutableFileExecutionTarget("one\ntwo\nold\nsame\nfive");
+        catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target);
+        var source = new FilesToolSource(catalog);
+        var workspace = CreateWorkspace();
+        var binding = CreateBinding(workspace.WorkspaceId);
+        var argumentsJson = JsonSerializer.Serialize(new
+        {
+            path = "notes.txt",
+            oldString = "old\nsame",
+            newString = "new\nsame",
+        });
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding),
+            new AgentToolRequest("edit", argumentsJson));
+
+        Assert.False(result.IsError, result.Content);
+        Assert.NotNull(result.PresentationPayloadJson);
+
+        var row = new AgentToolInvocationRowViewModel(
+            CreateToolTurn(),
+            CreateToolItem("edit", argumentsJson, textContent: result.Content, resultSummary: result.Summary, presentationPayloadJson: result.PresentationPayloadJson),
+            new AgentToolPresentationService());
+        var file = Assert.Single(row.ToolDiffFiles);
+
+        Assert.Equal("Updated notes.txt (+1 -1)", row.HeaderDetailText);
+        Assert.Contains(file.Lines, line => line.IsDeleted && line.LineNumberText == "3" && line.Text == "old");
+        Assert.Contains(file.Lines, line => line.IsAdded && line.LineNumberText == "3" && line.Text == "new");
+        Assert.Contains(file.Lines, line => line.IsContext && line.LineNumberText == "4" && line.Text == "same");
+        Assert.DoesNotContain(file.Lines, line => line.MarkerText is "+" or "-" or "@@");
+    }
+
+    [Fact]
+    public async Task FilesToolSource_ApplyPatch_EmitsPresentationPayloadWithActualLineNumbers()
+    {
+        var catalog = new TestExtensionCatalog();
+        var target = new MutableFileExecutionTarget("one\ntwo\nold\nsame\nfive");
+        catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target);
+        var source = new FilesToolSource(catalog);
+        var workspace = CreateWorkspace();
+        var binding = CreateBinding(workspace.WorkspaceId);
+        var patchText = """
+            *** Begin Patch
+            *** Update File: notes.txt
+            @@
+             two
+            -old
+            +new
+             same
+            *** End Patch
+            """;
+        var argumentsJson = ApplyPatchArgs(patchText);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding),
+            new AgentToolRequest("apply_patch", argumentsJson));
+
+        Assert.False(result.IsError, result.Content);
+        Assert.NotNull(result.PresentationPayloadJson);
+        Assert.Equal("one\ntwo\nnew\nsame\nfive", target.Content);
+
+        var row = new AgentToolInvocationRowViewModel(
+            CreateToolTurn(),
+            CreateToolItem("apply_patch", argumentsJson, textContent: result.Content, resultSummary: result.Summary, presentationPayloadJson: result.PresentationPayloadJson),
+            new AgentToolPresentationService());
+        var file = Assert.Single(row.ToolDiffFiles);
+
+        Assert.Equal("Updated notes.txt (+1 -1)", row.HeaderDetailText);
+        Assert.Equal("Patch", row.ToolDiffSectionTitle);
+        Assert.False(row.ShowMarkdownDetails);
+        Assert.Contains(file.Lines, line => line.IsContext && line.LineNumberText == "2" && line.Text == "two");
+        Assert.Contains(file.Lines, line => line.IsDeleted && line.LineNumberText == "3" && line.Text == "old");
+        Assert.Contains(file.Lines, line => line.IsAdded && line.LineNumberText == "3" && line.Text == "new");
+        Assert.Contains(file.Lines, line => line.IsContext && line.LineNumberText == "4" && line.Text == "same");
+        Assert.DoesNotContain(file.Lines, line => line.MarkerText is "+" or "-" or "@@");
+    }
+
+    [Fact]
     public async Task FilesToolSource_Edit_InvalidReplaceAll_ReturnsToolError()
     {
         var catalog = new TestExtensionCatalog();
@@ -2207,9 +2319,121 @@ public sealed class WorkspaceTests
             CreateToolTurn(),
             CreateToolItem("apply_patch", null, textContent: "Updated index.html", resultSummary: "Applied 1 patch operation to 1 file."));
 
-        Assert.Equal("Applied 1 patch operation to 1 file", row.HeaderDetailText);
+        Assert.Equal("Updated index.html (+1 -1)", row.HeaderDetailText);
         Assert.Contains("*** Update File: index.html", row.DetailMarkdownBuilder.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("Arguments", row.DetailMarkdownBuilder.ToString(), StringComparison.Ordinal);
+        Assert.True(row.HasToolDiff);
+        Assert.False(row.ShowMarkdownDetails);
+    }
+
+    [Fact]
+    public void AgentToolInvocationRowViewModel_ApplyPatch_BuildsVisualDiffAndImprovedHeader()
+    {
+        var catalog = new TestExtensionCatalog();
+        var source = new FilesToolSource(catalog);
+        catalog.AddExtension(PackageExtensionPoints.ToolSources, source);
+        var service = new AgentToolPresentationService(extensionCatalog: catalog);
+        var patchText = """
+            *** Begin Patch
+            *** Update File: /workspace/src/Foo.cs
+            @@
+            -old
+            +new
+            *** End Patch
+            """;
+
+        var row = new AgentToolInvocationRowViewModel(
+            CreateToolTurn(),
+            CreateToolItem("apply_patch", ApplyPatchArgs(patchText), textContent: "Updated /workspace/src/Foo.cs", resultSummary: "Applied 1 patch operation to 1 file."),
+            service);
+
+        var file = Assert.Single(row.ToolDiffFiles);
+        Assert.Equal("Updated src/Foo.cs (+1 -1)", row.HeaderDetailText);
+        Assert.Equal("Patch", row.ToolDiffSectionTitle);
+        Assert.True(row.HasToolDiff);
+        Assert.False(row.ShowMarkdownDetails);
+        Assert.Equal("/workspace/src/Foo.cs", file.Path);
+        Assert.Equal(1, file.AddedLineCount);
+        Assert.Equal(1, file.DeletedLineCount);
+        Assert.DoesNotContain(file.Lines, line => line.IsHunk || line.Text.Contains("@@", StringComparison.Ordinal));
+        Assert.Contains(file.Lines, line => line.IsDeleted && line.Text == "old");
+        Assert.Contains(file.Lines, line => line.IsAdded && line.Text == "new");
+    }
+
+    [Fact]
+    public void AgentToolInvocationRowViewModel_ApplyPatchFailure_ImprovesHeaderAndKeepsVisualDiff()
+    {
+        var catalog = new TestExtensionCatalog();
+        var source = new FilesToolSource(catalog);
+        catalog.AddExtension(PackageExtensionPoints.ToolSources, source);
+        var service = new AgentToolPresentationService(extensionCatalog: catalog);
+        var patchText = """
+            *** Begin Patch
+            *** Update File: /workspace/src/Foo.cs
+            @@
+            -old
+            +new
+            *** End Patch
+            """;
+
+        var row = new AgentToolInvocationRowViewModel(
+            CreateToolTurn(),
+            CreateToolItem(
+                "apply_patch",
+                ApplyPatchArgs(patchText),
+                textContent: "### File tool failed\n\nPatch hunk did not match the current file content.",
+                resultSummary: "Patch hunk did not match the current file content.",
+                isError: true),
+            service);
+
+        Assert.Equal("Patch failed: hunk did not match the current file content", row.HeaderDetailText);
+        Assert.True(row.HasToolDiff);
+        Assert.False(row.ShowMarkdownDetails);
+    }
+
+    [Fact]
+    public void AgentToolInvocationRowViewModel_Edit_BuildsFocusedDiffAndImprovedHeader()
+    {
+        var service = new AgentToolPresentationService();
+        var argumentsJson = JsonSerializer.Serialize(new
+        {
+            path = "/workspace/src/Foo.cs",
+            oldString = "old\nline",
+            newString = "new\nline",
+            replaceAll = false,
+        });
+
+        var row = new AgentToolInvocationRowViewModel(
+            CreateToolTurn(),
+            CreateToolItem("edit", argumentsJson, textContent: "Wrote 42 character(s).", resultSummary: "Wrote 42 character(s)."),
+            service);
+
+        var file = Assert.Single(row.ToolDiffFiles);
+        Assert.Equal("Updated src/Foo.cs (+2 -2)", row.HeaderDetailText);
+        Assert.Equal("Diff", row.ToolDiffSectionTitle);
+        Assert.True(row.HasToolDiff);
+        Assert.True(row.ShowMarkdownDetails);
+        Assert.DoesNotContain(file.Lines, line => line.IsHunk || line.Text.Contains("@@", StringComparison.Ordinal));
+        Assert.Contains(file.Lines, line => line.IsDeleted && line.Text == "old");
+        Assert.Contains(file.Lines, line => line.IsAdded && line.Text == "new");
+    }
+
+    [Fact]
+    public void AgentToolInvocationRowViewModel_MalformedApplyPatch_FallsBackToMarkdownDetails()
+    {
+        var catalog = new TestExtensionCatalog();
+        var source = new FilesToolSource(catalog);
+        catalog.AddExtension(PackageExtensionPoints.ToolSources, source);
+        var service = new AgentToolPresentationService(extensionCatalog: catalog);
+
+        var row = new AgentToolInvocationRowViewModel(
+            CreateToolTurn(),
+            CreateToolItem("apply_patch", ApplyPatchArgs("not a patch"), textContent: "failed", resultSummary: null),
+            service);
+
+        Assert.False(row.HasToolDiff);
+        Assert.True(row.ShowMarkdownDetails);
+        Assert.Contains("not a patch", row.DetailMarkdownBuilder.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2385,7 +2609,9 @@ public sealed class WorkspaceTests
         string? argumentsJson,
         string? textContent = null,
         string? resultSummary = null,
-        AgentTurnItemKind kind = AgentTurnItemKind.ToolResult)
+        AgentTurnItemKind kind = AgentTurnItemKind.ToolResult,
+        bool isError = false,
+        string? presentationPayloadJson = null)
     {
         var turnId = Guid.NewGuid();
         return new AgentTurnItemRecord(
@@ -2401,9 +2627,10 @@ public sealed class WorkspaceTests
             StructuredPayloadJson: null,
             SourcesJson: null,
             WasTruncated: false,
-            IsError: false,
+            IsError: isError,
             ErrorCode: null,
-            BackendId: null);
+            BackendId: null,
+            PresentationPayloadJson: presentationPayloadJson);
     }
 
     private static WorkspaceViewServices CreateWorkspaceViewServices(TestPackageContext context)

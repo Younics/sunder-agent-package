@@ -32,6 +32,7 @@ public sealed partial class PackageModule : ISunderPackageModule
         services.AddSingleton<AgentToolService>();
         services.AddSingleton<AgentPermissionService>();
         services.AddSingleton<AgentMemoryCoordinator>();
+        services.AddSingleton<AgentSessionContextProjectionService>();
         services.AddSingleton<AgentSystemPromptComposer>();
         services.AddSingleton<DefaultAgentBehaviorLoop>();
         services.AddSingleton<AgentBehaviorLoopResolver>();

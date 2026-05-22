@@ -14,6 +14,7 @@ public sealed partial class AgentLocalStore
         DatabasePath = Path.Combine(packageContext.Storage.DataRootPath, "agent.db");
         Directory.CreateDirectory(packageContext.Storage.DataRootPath);
         EnsureSchema();
+        EnsureTurnItemPresentationMigration();
         EnsureTraceTelemetryRemoved();
         EnsureSessionHierarchyMigration();
         EnsureSessionWorkspaceDecoupledMigration();

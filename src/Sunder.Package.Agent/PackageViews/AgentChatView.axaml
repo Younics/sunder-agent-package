@@ -5,6 +5,7 @@
              xmlns:vm="using:Sunder.Package.Agent.PackageViews"
              xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
              xmlns:agentModels="using:Sunder.Package.Agent.Models"
+             xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
              xmlns:md="clr-namespace:LiveMarkdown.Avalonia;assembly=LiveMarkdown.Avalonia"
              x:Class="Sunder.Package.Agent.PackageViews.AgentChatView"
              x:DataType="vm:AgentChatViewModel"
@@ -380,6 +381,65 @@
   </UserControl.Styles>
 
   <UserControl.DataTemplates>
+    <DataTemplate x:DataType="shared:ToolDiffFileViewModel">
+      <Border Classes="tool-diff-file-card"
+              Margin="0,0,0,8">
+        <Grid RowDefinitions="Auto,Auto">
+          <Border Classes="tool-diff-file-header">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto"
+                  ColumnSpacing="10">
+              <TextBlock Grid.Column="0"
+                         Classes="tool-diff-operation"
+                         Text="{Binding OperationText}"
+                         VerticalAlignment="Center" />
+              <TextBlock Grid.Column="1"
+                         Classes="tool-diff-path"
+                         Text="{Binding Path}"
+                         ToolTip.Tip="{Binding Path}"
+                         VerticalAlignment="Center" />
+              <TextBlock Grid.Column="2"
+                         Classes="tool-diff-added-count"
+                         Text="{Binding AddedLineCountText}"
+                         IsVisible="{Binding HasAddedLines}"
+                         VerticalAlignment="Center" />
+              <TextBlock Grid.Column="3"
+                         Classes="tool-diff-deleted-count"
+                         Text="{Binding DeletedLineCountText}"
+                         IsVisible="{Binding HasDeletedLines}"
+                         VerticalAlignment="Center" />
+            </Grid>
+          </Border>
+          <ItemsControl Grid.Row="1"
+                        ItemsSource="{Binding Lines}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="shared:ToolDiffLineViewModel">
+                <Border Classes="tool-diff-line"
+                        Classes.added="{Binding IsAdded}"
+                        Classes.deleted="{Binding IsDeleted}"
+                        Classes.hunk="{Binding IsHunk}"
+                        Classes.collapsed="{Binding IsCollapsed}">
+                  <Grid ColumnDefinitions="56,1,*"
+                        ColumnSpacing="8">
+                    <TextBlock Classes="tool-diff-line-number"
+                               Text="{Binding LineNumberText}" />
+                    <Border Grid.Column="1"
+                            Classes="tool-diff-line-separator" />
+                    <TextBlock Grid.Column="2"
+                               Classes="tool-diff-content"
+                               Classes.added="{Binding IsAdded}"
+                               Classes.deleted="{Binding IsDeleted}"
+                               Classes.hunk="{Binding IsHunk}"
+                               Classes.collapsed="{Binding IsCollapsed}"
+                               Text="{Binding Text}" />
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </Grid>
+      </Border>
+    </DataTemplate>
+
     <DataTemplate x:DataType="vm:AgentPendingAttachmentViewModel">
       <Border Classes="attachment-chip"
               Margin="0,0,8,0">
@@ -423,6 +483,7 @@
       <Grid ColumnDefinitions="42,*"
             ColumnSpacing="16"
             Margin="0,0,0,22"
+            MinWidth="0"
             HorizontalAlignment="Stretch">
         <Border Classes="message-avatar"
                 VerticalAlignment="Top">
@@ -439,9 +500,11 @@
 
     <DataTemplate x:DataType="vm:AgentTextTranscriptRowViewModel">
       <Grid Margin="0,0,0,30"
+            MinWidth="0"
             HorizontalAlignment="Stretch">
         <Grid ColumnDefinitions="42,*"
               ColumnSpacing="16"
+              MinWidth="0"
               HorizontalAlignment="Stretch"
               IsVisible="{Binding IsNotUser}">
           <Border Classes="message-avatar"
@@ -451,13 +514,20 @@
           </Border>
 
           <Border Grid.Column="1"
+                  MinWidth="0"
                   Classes="message-copy-host">
-            <StackPanel Spacing="4">
-              <Border Classes="message-bubble">
-                <StackPanel Spacing="10">
+            <StackPanel Spacing="4"
+                        MinWidth="0">
+              <Border Classes="message-bubble"
+                      MinWidth="0">
+                <StackPanel Spacing="10"
+                            MinWidth="0">
                   <md:MarkdownRenderer MarkdownBuilder="{Binding MarkdownBuilder}"
+                                       MinWidth="0"
+                                       HorizontalAlignment="Stretch"
                                        IsVisible="{Binding HasContent}" />
                   <ItemsControl ItemsSource="{Binding Attachments}"
+                                MinWidth="0"
                                 IsVisible="{Binding HasAttachments}">
                     <ItemsControl.ItemsPanel>
                       <ItemsPanelTemplate>
@@ -508,15 +578,23 @@
         </Grid>
 
         <Grid ColumnDefinitions="*"
+              MinWidth="0"
               HorizontalAlignment="Stretch"
               IsVisible="{Binding IsUser}">
-          <Border Classes="message-copy-host">
-            <StackPanel Spacing="4">
-              <Border Classes="message-bubble user">
-                <StackPanel Spacing="10">
+          <Border Classes="message-copy-host"
+                  MinWidth="0">
+            <StackPanel Spacing="4"
+                        MinWidth="0">
+              <Border Classes="message-bubble user"
+                      MinWidth="0">
+                <StackPanel Spacing="10"
+                            MinWidth="0">
                   <md:MarkdownRenderer MarkdownBuilder="{Binding MarkdownBuilder}"
+                                       MinWidth="0"
+                                       HorizontalAlignment="Stretch"
                                        IsVisible="{Binding HasContent}" />
                   <ItemsControl ItemsSource="{Binding Attachments}"
+                                MinWidth="0"
                                 IsVisible="{Binding HasAttachments}">
                     <ItemsControl.ItemsPanel>
                       <ItemsPanelTemplate>
@@ -556,12 +634,21 @@
                   </ItemsControl>
                 </StackPanel>
               </Border>
-              <Button Classes="message-copy-action user"
-                      Content="⧉"
-                      Tag="{Binding Content}"
-                      Click="CopyTranscriptText_OnClick"
-                      ToolTip.Tip="Copy message"
-                      IsVisible="{Binding HasContent}" />
+              <StackPanel Orientation="Horizontal"
+                          HorizontalAlignment="Right"
+                          Spacing="4">
+                <Button Classes="message-copy-action user"
+                        Content="↩"
+                        Command="{Binding $parent[UserControl].DataContext.StartRollbackFromMessageCommand}"
+                        CommandParameter="{Binding}"
+                        ToolTip.Tip="Rollback" />
+                <Button Classes="message-copy-action user"
+                        Content="⧉"
+                        Tag="{Binding Content}"
+                        Click="CopyTranscriptText_OnClick"
+                        ToolTip.Tip="Copy message"
+                        IsVisible="{Binding HasContent}" />
+              </StackPanel>
             </StackPanel>
           </Border>
         </Grid>
@@ -572,18 +659,22 @@
       <Grid ColumnDefinitions="42,*"
             ColumnSpacing="16"
             Margin="0,0,0,20"
+            MinWidth="0"
             HorizontalAlignment="Stretch">
         <Border Classes="timeline-spine"
                 Margin="0,-22,0,-6" />
 
         <StackPanel Grid.Column="1"
+                    MinWidth="0"
                     HorizontalAlignment="Stretch">
           <Button Classes="tool-step-header"
+                  MinWidth="0"
                   Click="ToolStepHeader_OnClick">
             <Grid RowDefinitions="Auto,Auto"
                   ColumnDefinitions="Auto,*,Auto"
                   RowSpacing="3"
                   ColumnSpacing="8"
+                  MinWidth="0"
                   HorizontalAlignment="Stretch">
               <Border Grid.Row="0"
                       Grid.Column="0"
@@ -598,16 +689,18 @@
                          Grid.Column="1"
                          Classes="tool-label"
                          Text="{Binding ToolLabel}"
+                         MinWidth="0"
                          VerticalAlignment="Center" />
               <TextBlock Grid.Row="0"
                          Grid.Column="2"
                          Classes="tool-chevron"
                          Text="{Binding ExpandGlyph}" />
               <TextBlock Grid.Row="1"
-                          Grid.Column="1"
-                          Classes="tool-command"
-                          Text="{Binding HeaderDetailText}"
-                          TextWrapping="Wrap"
+                           Grid.Column="1"
+                           Classes="tool-command"
+                           Text="{Binding HeaderDetailText}"
+                           MinWidth="0"
+                           TextWrapping="Wrap"
                           MaxLines="2"
                           TextTrimming="CharacterEllipsis"
                           Margin="0,-1,8,0"
@@ -617,6 +710,7 @@
 
           <ItemsControl ItemsSource="{Binding ChildSessionLinks}"
                         IsVisible="{Binding HasChildSessionLinks}"
+                        MinWidth="0"
                         Margin="28,8,0,0">
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate>
@@ -650,8 +744,10 @@
 
           <Border Classes="tool-output-card"
                   Margin="28,10,0,0"
+                  MinWidth="0"
                   IsVisible="{Binding ShowDetails}">
-            <Grid RowDefinitions="Auto,Auto,Auto,Auto">
+            <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                  MinWidth="0">
               <Border Classes="tool-output-header"
                       IsVisible="{Binding HasOutput}">
                 <TextBlock Text="Output"
@@ -664,16 +760,31 @@
                       Classes="tool-output-body"
                       IsVisible="{Binding HasOutput}">
                 <TextBlock Classes="output-text"
+                           MinWidth="0"
                            Text="{Binding OutputText}" />
               </Border>
 
-              <Border Grid.Row="2"
-                      Padding="16"
-                      IsVisible="{Binding HasMarkdownDetails}">
-                <md:MarkdownRenderer MarkdownBuilder="{Binding DetailMarkdownBuilder}" />
-              </Border>
+              <StackPanel Grid.Row="2"
+                          Margin="16,14,16,0"
+                          Spacing="6"
+                          MinWidth="0"
+                          IsVisible="{Binding HasToolDiff}">
+                <TextBlock Classes="tool-diff-section-title"
+                           Text="{Binding ToolDiffSectionTitle}" />
+                <ItemsControl ItemsSource="{Binding ToolDiffFiles}"
+                              MinWidth="0" />
+              </StackPanel>
 
               <Border Grid.Row="3"
+                      Padding="16"
+                      MinWidth="0"
+                      IsVisible="{Binding ShowMarkdownDetails}">
+                <md:MarkdownRenderer MarkdownBuilder="{Binding DetailMarkdownBuilder}"
+                                     MinWidth="0"
+                                     HorizontalAlignment="Stretch" />
+              </Border>
+
+              <Border Grid.Row="4"
                       Classes="metadata-bar"
                       IsVisible="{Binding HasMetadata}">
                 <StackPanel Orientation="Horizontal"
@@ -888,7 +999,16 @@
                           IsVisible="{Binding !ShowSetupInstructions}">
               <Border Classes="transcript-content">
                 <ItemsControl x:Name="TranscriptItemsControl"
-                              ItemsSource="{Binding Messages}" />
+                              Classes="transcript-items"
+                              ItemsSource="{Binding Messages}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:AgentTranscriptRowViewModel">
+                      <shared:TranscriptRowPresenter Classes="transcript-row-anchor"
+                                                     AnchorKey="{Binding AnchorKey}"
+                                                     Content="{Binding}" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
               </Border>
             </ScrollViewer>
 
@@ -1028,10 +1148,10 @@
                           Click="OnAttachFilesClick"
                           ToolTip.Tip="Attach files or paste copied files"
                           IsEnabled="{Binding IsSelectedSessionRunInactive}" />
-                  <Button Classes="secondary-action composer-action clear"
-                          Content="Clear"
-                          Command="{Binding ClearComposerCommand}"
-                          ToolTip.Tip="Clear message and attachments" />
+                   <Button Classes="secondary-action composer-action clear"
+                           Content="{Binding ClearComposerButtonText}"
+                           Command="{Binding ClearComposerCommand}"
+                           ToolTip.Tip="{Binding ClearComposerToolTipText}" />
                 </StackPanel>
                 <ToggleButton Grid.Column="1"
                               Classes="composer-action subtle"
@@ -1050,16 +1170,16 @@
                                 Content="↵"
                                 IsChecked="{Binding IsSendOnEnterEnabled, Mode=TwoWay}"
                                 ToolTip.Tip="Send with Enter" />
-                  <Button Classes="primary-action composer-action"
-                          Content="↑"
-                          Command="{Binding SendMessageCommand}"
-                          ToolTip.Tip="Send"
-                          IsVisible="{Binding IsSelectedSessionRunInactive}" />
-                  <Button Classes="secondary-action composer-action"
-                          Content="■"
-                          Command="{Binding StopRunCommand}"
-                          ToolTip.Tip="Stop"
-                          IsVisible="{Binding IsSelectedSessionRunActive}" />
+                   <Button Classes="primary-action composer-action"
+                           Content="↑"
+                           Command="{Binding SendMessageCommand}"
+                           ToolTip.Tip="Send"
+                           IsVisible="{Binding ShowSendAction}" />
+                   <Button Classes="secondary-action composer-action"
+                           Content="■"
+                           Command="{Binding StopRunCommand}"
+                           ToolTip.Tip="Stop"
+                           IsVisible="{Binding ShowStopAction}" />
                 </StackPanel>
               </Grid>
             </Grid>
@@ -1158,10 +1278,10 @@
                           Click="OnAttachFilesClick"
                           ToolTip.Tip="Attach files or paste copied files"
                           IsEnabled="{Binding IsSelectedSessionRunInactive}" />
-                  <Button Classes="secondary-action composer-action clear"
-                          Content="Clear"
-                          Command="{Binding ClearComposerCommand}"
-                          ToolTip.Tip="Clear message and attachments" />
+                   <Button Classes="secondary-action composer-action clear"
+                           Content="{Binding ClearComposerButtonText}"
+                           Command="{Binding ClearComposerCommand}"
+                           ToolTip.Tip="{Binding ClearComposerToolTipText}" />
                 </StackPanel>
                 <ToggleButton Grid.Column="1"
                               Classes="composer-action subtle"
@@ -1180,16 +1300,16 @@
                                 Content="↵"
                                 IsChecked="{Binding IsSendOnEnterEnabled, Mode=TwoWay}"
                                 ToolTip.Tip="Send with Enter" />
-                  <Button Classes="primary-action composer-action"
-                          Content="↑"
-                          Command="{Binding SendMessageCommand}"
-                          ToolTip.Tip="Send"
-                          IsVisible="{Binding IsSelectedSessionRunInactive}" />
-                  <Button Classes="secondary-action composer-action"
-                          Content="■"
-                          Command="{Binding StopRunCommand}"
-                          ToolTip.Tip="Stop"
-                          IsVisible="{Binding IsSelectedSessionRunActive}" />
+                   <Button Classes="primary-action composer-action"
+                           Content="↑"
+                           Command="{Binding SendMessageCommand}"
+                           ToolTip.Tip="Send"
+                           IsVisible="{Binding ShowSendAction}" />
+                   <Button Classes="secondary-action composer-action"
+                           Content="■"
+                           Command="{Binding StopRunCommand}"
+                           ToolTip.Tip="Stop"
+                           IsVisible="{Binding ShowStopAction}" />
                 </StackPanel>
               </Grid>
             </Grid>

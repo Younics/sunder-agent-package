@@ -3,7 +3,8 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Sunder.Package.Agent.Subagents.PackageViews"
-              xmlns:md="clr-namespace:LiveMarkdown.Avalonia;assembly=LiveMarkdown.Avalonia"
+             xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
+             xmlns:md="clr-namespace:LiveMarkdown.Avalonia;assembly=LiveMarkdown.Avalonia"
              x:Class="Sunder.Package.Agent.Subagents.PackageViews.SubsessionsView"
              x:DataType="vm:SubsessionsViewModel"
              mc:Ignorable="d">
@@ -95,10 +96,70 @@
   </UserControl.Styles>
 
   <UserControl.DataTemplates>
+    <DataTemplate x:DataType="shared:ToolDiffFileViewModel">
+      <Border Classes="tool-diff-file-card"
+              Margin="0,0,0,8">
+        <Grid RowDefinitions="Auto,Auto">
+          <Border Classes="tool-diff-file-header">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto"
+                  ColumnSpacing="10">
+              <TextBlock Grid.Column="0"
+                         Classes="tool-diff-operation"
+                         Text="{Binding OperationText}"
+                         VerticalAlignment="Center" />
+              <TextBlock Grid.Column="1"
+                         Classes="tool-diff-path"
+                         Text="{Binding Path}"
+                         ToolTip.Tip="{Binding Path}"
+                         VerticalAlignment="Center" />
+              <TextBlock Grid.Column="2"
+                         Classes="tool-diff-added-count"
+                         Text="{Binding AddedLineCountText}"
+                         IsVisible="{Binding HasAddedLines}"
+                         VerticalAlignment="Center" />
+              <TextBlock Grid.Column="3"
+                         Classes="tool-diff-deleted-count"
+                         Text="{Binding DeletedLineCountText}"
+                         IsVisible="{Binding HasDeletedLines}"
+                         VerticalAlignment="Center" />
+            </Grid>
+          </Border>
+          <ItemsControl Grid.Row="1"
+                        ItemsSource="{Binding Lines}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="shared:ToolDiffLineViewModel">
+                <Border Classes="tool-diff-line"
+                        Classes.added="{Binding IsAdded}"
+                        Classes.deleted="{Binding IsDeleted}"
+                        Classes.hunk="{Binding IsHunk}"
+                        Classes.collapsed="{Binding IsCollapsed}">
+                  <Grid ColumnDefinitions="56,1,*"
+                        ColumnSpacing="8">
+                    <TextBlock Classes="tool-diff-line-number"
+                               Text="{Binding LineNumberText}" />
+                    <Border Grid.Column="1"
+                            Classes="tool-diff-line-separator" />
+                    <TextBlock Grid.Column="2"
+                               Classes="tool-diff-content"
+                               Classes.added="{Binding IsAdded}"
+                               Classes.deleted="{Binding IsDeleted}"
+                               Classes.hunk="{Binding IsHunk}"
+                               Classes.collapsed="{Binding IsCollapsed}"
+                               Text="{Binding Text}" />
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </Grid>
+      </Border>
+    </DataTemplate>
+
     <DataTemplate x:DataType="vm:SubsessionActivityTranscriptRowViewModel">
       <Grid ColumnDefinitions="42,*"
             ColumnSpacing="16"
             Margin="0,0,0,22"
+            MinWidth="0"
             HorizontalAlignment="Stretch">
         <Border Classes="message-avatar"
                 VerticalAlignment="Top">
@@ -115,9 +176,11 @@
 
     <DataTemplate x:DataType="vm:SubsessionTextTranscriptRowViewModel">
       <Grid Margin="0,0,0,30"
+            MinWidth="0"
             HorizontalAlignment="Stretch">
         <Grid ColumnDefinitions="42,*"
               ColumnSpacing="16"
+              MinWidth="0"
               HorizontalAlignment="Stretch"
               IsVisible="{Binding IsNotUser}">
           <Border Classes="message-avatar"
@@ -126,15 +189,22 @@
                        Text="{Binding RoleGlyph}" />
           </Border>
           <Border Grid.Column="1"
+                  MinWidth="0"
                   Classes="message-bubble">
-            <md:MarkdownRenderer MarkdownBuilder="{Binding MarkdownBuilder}" />
+            <md:MarkdownRenderer MarkdownBuilder="{Binding MarkdownBuilder}"
+                                 MinWidth="0"
+                                 HorizontalAlignment="Stretch" />
           </Border>
         </Grid>
         <Grid ColumnDefinitions="*"
+              MinWidth="0"
               HorizontalAlignment="Stretch"
               IsVisible="{Binding IsUser}">
-          <Border Classes="message-bubble user">
-            <md:MarkdownRenderer MarkdownBuilder="{Binding MarkdownBuilder}" />
+          <Border Classes="message-bubble user"
+                  MinWidth="0">
+            <md:MarkdownRenderer MarkdownBuilder="{Binding MarkdownBuilder}"
+                                 MinWidth="0"
+                                 HorizontalAlignment="Stretch" />
           </Border>
         </Grid>
       </Grid>
@@ -144,17 +214,21 @@
       <Grid ColumnDefinitions="42,*"
             ColumnSpacing="16"
             Margin="0,0,0,20"
+            MinWidth="0"
             HorizontalAlignment="Stretch">
         <Border Classes="timeline-spine"
                 Margin="0,-22,0,-6" />
         <StackPanel Grid.Column="1"
+                    MinWidth="0"
                     HorizontalAlignment="Stretch">
           <Button Classes="tool-step-header"
+                  MinWidth="0"
                   Click="ToolStepHeader_OnClick">
             <Grid RowDefinitions="Auto,Auto"
                   ColumnDefinitions="Auto,*,Auto"
                   RowSpacing="3"
                   ColumnSpacing="8"
+                  MinWidth="0"
                   HorizontalAlignment="Stretch">
               <Border Grid.Row="0"
                       Grid.Column="0"
@@ -169,16 +243,18 @@
                          Grid.Column="1"
                          Classes="tool-label"
                          Text="{Binding ToolLabel}"
+                         MinWidth="0"
                          VerticalAlignment="Center" />
               <TextBlock Grid.Row="0"
                          Grid.Column="2"
                          Classes="tool-chevron"
                          Text="{Binding ExpandGlyph}" />
               <TextBlock Grid.Row="1"
-                          Grid.Column="1"
-                          Classes="tool-command"
-                          Text="{Binding HeaderDetailText}"
-                          TextWrapping="Wrap"
+                           Grid.Column="1"
+                           Classes="tool-command"
+                           Text="{Binding HeaderDetailText}"
+                           MinWidth="0"
+                           TextWrapping="Wrap"
                           MaxLines="2"
                           TextTrimming="CharacterEllipsis"
                           Margin="0,-1,8,0"
@@ -188,6 +264,7 @@
 
           <ItemsControl ItemsSource="{Binding ChildSessionLinks}"
                         IsVisible="{Binding HasChildSessionLinks}"
+                        MinWidth="0"
                         Margin="28,8,0,0">
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate>
@@ -219,21 +296,32 @@
             </ItemsControl.ItemTemplate>
           </ItemsControl>
 
-          <Border Margin="28,10,0,0"
-                  Background="{DynamicResource Sunder.Brush.Surface.Popover}"
-                  BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
-                  BorderThickness="1"
-                  CornerRadius="{DynamicResource Sunder.Radius.Small}"
-                  Padding="16"
+          <Border Classes="tool-output-card"
+                  Margin="28,10,0,0"
+                  ClipToBounds="True"
+                  MinWidth="0"
                   IsVisible="{Binding ShowDetails}">
-            <StackPanel Spacing="12">
+            <StackPanel Spacing="12"
+                        Margin="16"
+                        MinWidth="0">
               <TextBlock Text="{Binding OutputText}"
                          FontFamily="Menlo,Consolas,monospace"
                          FontSize="13"
+                         MinWidth="0"
                          TextWrapping="Wrap"
                          IsVisible="{Binding HasOutput}" />
+              <StackPanel Spacing="6"
+                          MinWidth="0"
+                          IsVisible="{Binding HasToolDiff}">
+                <TextBlock Classes="tool-diff-section-title"
+                           Text="{Binding ToolDiffSectionTitle}" />
+                <ItemsControl ItemsSource="{Binding ToolDiffFiles}"
+                              MinWidth="0" />
+              </StackPanel>
               <md:MarkdownRenderer MarkdownBuilder="{Binding DetailMarkdownBuilder}"
-                                   IsVisible="{Binding HasMarkdownDetails}" />
+                                   MinWidth="0"
+                                   HorizontalAlignment="Stretch"
+                                   IsVisible="{Binding ShowMarkdownDetails}" />
             </StackPanel>
           </Border>
         </StackPanel>
@@ -324,7 +412,16 @@
                           Classes="transcript-scroll">
               <Border Classes="transcript-content">
                 <ItemsControl x:Name="TranscriptItemsControl"
-                              ItemsSource="{Binding Messages}" />
+                              Classes="transcript-items"
+                              ItemsSource="{Binding Messages}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:SubsessionTranscriptRowViewModel">
+                      <shared:TranscriptRowPresenter Classes="transcript-row-anchor"
+                                                     AnchorKey="{Binding AnchorKey}"
+                                                     Content="{Binding}" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
               </Border>
             </ScrollViewer>
             <TextBlock Text="Loading older messages..."

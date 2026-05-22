@@ -39,6 +39,24 @@ public sealed class AgentRunCoordinator(
         IReadOnlyList<AgentAttachmentUploadRequest> attachments)
         => _userMessageRunCoordinator.QueueAsync(sessionId, profileId, userMessage, workspaceId, attachments);
 
+    public async Task<AgentRunCheckpointRecord> RollbackAndQueueUserMessageAsync(
+        Guid sessionId,
+        Guid rollbackAnchorTurnId,
+        string profileId,
+        string userMessage,
+        string workspaceId,
+        IReadOnlyList<AgentAttachmentUploadRequest> attachments)
+    {
+        await StopAsync(sessionId).ConfigureAwait(false);
+        return await _userMessageRunCoordinator.QueueAsync(
+            sessionId,
+            profileId,
+            userMessage,
+            workspaceId,
+            attachments,
+            rollbackAnchorTurnId).ConfigureAwait(false);
+    }
+
     public Task<AgentRunCheckpointRecord?> StopAsync(Guid sessionId)
         => _stopCoordinator.StopAsync(sessionId);
 

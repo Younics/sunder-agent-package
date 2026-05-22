@@ -68,11 +68,7 @@ public sealed class AgentMemoryCoordinator(
         {
             try
             {
-                var result = await observer.HandleLifecycleEventAsync(genericLifecycleEvent, cancellationToken);
-                if (!string.IsNullOrWhiteSpace(result?.WorkingSummary))
-                {
-                    _sessionService.SaveWorkingSummary(session.SessionId, result.WorkingSummary);
-                }
+                await observer.HandleLifecycleEventAsync(genericLifecycleEvent, cancellationToken);
             }
             catch (OperationCanceledException)
             {
