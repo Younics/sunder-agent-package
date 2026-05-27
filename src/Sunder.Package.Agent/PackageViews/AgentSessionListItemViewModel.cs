@@ -36,6 +36,12 @@ public sealed partial class AgentSessionListItemViewModel : ObservableObject
     [ObservableProperty]
     private bool _isRunActive;
 
+    [ObservableProperty]
+    private bool _isRenameActive;
+
+    [ObservableProperty]
+    private string _renameTitle = string.Empty;
+
     public Guid SessionId => _session.SessionId;
 
     public AgentSessionRecord Session => _session;
@@ -92,6 +98,18 @@ public sealed partial class AgentSessionListItemViewModel : ObservableObject
     public void SetTransientStatus(string statusText)
     {
         StatusText = statusText;
+    }
+
+    public void BeginRename()
+    {
+        RenameTitle = Title;
+        IsRenameActive = true;
+    }
+
+    public void CancelRename()
+    {
+        IsRenameActive = false;
+        RenameTitle = string.Empty;
     }
 
     public void ClearUnreadActivity()

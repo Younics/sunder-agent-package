@@ -16,60 +16,145 @@
         <ResourceInclude Source="avares://LiveMarkdown.Avalonia/Defaults.axaml" />
       </ResourceDictionary.MergedDictionaries>
 
-      <DataTemplate x:Key="SessionSelectionBoxTemplate"
-                    x:DataType="vm:AgentSessionListItemViewModel">
-        <Grid ColumnDefinitions="*,Auto,Auto"
+      <StreamGeometry x:Key="AgentChat.Icon.Workspace">M3.25 3.25 L7.25 3.25 L7.25 7.25 L3.25 7.25 Z M8.75 3.25 L12.75 3.25 L12.75 7.25 L8.75 7.25 Z M3.25 8.75 L7.25 8.75 L7.25 12.75 L3.25 12.75 Z M8.75 8.75 L12.75 8.75 L12.75 12.75 L8.75 12.75 Z</StreamGeometry>
+      <StreamGeometry x:Key="AgentChat.Icon.Path">M2.75 5.25 L6.25 5.25 L7.3 6.45 L13.25 6.45 L13.25 12.25 L2.75 12.25 Z</StreamGeometry>
+
+      <DataTemplate x:Key="WorkspaceSelectionBoxTemplate"
+                    x:DataType="m:AgentWorkspaceRecord">
+        <Grid ColumnDefinitions="Auto,*"
               ColumnSpacing="8"
-              MinWidth="0"
-              ToolTip.Tip="{Binding StatusText}">
-          <TextBlock Text="{Binding Title}"
+              MinWidth="0">
+          <Path Classes="header-select-icon fill"
+                Data="{StaticResource AgentChat.Icon.Workspace}" />
+          <TextBlock Grid.Column="1"
+                     Text="{Binding DisplayName}"
                      MinWidth="0"
                      MaxLines="1"
                      TextTrimming="CharacterEllipsis"
                      VerticalAlignment="Center" />
-          <Ellipse Grid.Column="1"
-                   Width="8"
-                   Height="8"
-                   Fill="{DynamicResource Sunder.Brush.Accent}"
-                   VerticalAlignment="Center"
-                   IsVisible="{Binding HasUnreadActivity}" />
-          <TextBlock Grid.Column="2"
-                     Text="{Binding StatusBadgeText}"
-                     Foreground="{Binding StatusBrush}"
-                     FontSize="11"
-                     FontWeight="SemiBold"
+        </Grid>
+      </DataTemplate>
+
+      <DataTemplate x:Key="WorkspaceDropDownItemTemplate"
+                    x:DataType="m:AgentWorkspaceRecord">
+        <Grid ColumnDefinitions="Auto,*"
+              ColumnSpacing="9"
+              MinWidth="0">
+          <Path Classes="header-select-icon fill"
+                Data="{StaticResource AgentChat.Icon.Workspace}" />
+          <TextBlock Grid.Column="1"
+                     Text="{Binding DisplayName}"
+                     MinWidth="0"
+                     MaxLines="2"
+                     TextTrimming="CharacterEllipsis"
+                     VerticalAlignment="Center" />
+        </Grid>
+      </DataTemplate>
+
+      <DataTemplate x:Key="AgentSelectionBoxTemplate"
+                    x:DataType="m:AgentProfileRecord">
+        <Grid ColumnDefinitions="Auto,*"
+              ColumnSpacing="8"
+              MinWidth="0">
+          <Image Classes="header-select-image"
+                 Source="avares://Sunder.Package.Agent/Assets/profile-icon.png" />
+          <TextBlock Grid.Column="1"
+                     Text="{Binding DisplayName}"
+                     MinWidth="0"
+                     MaxLines="1"
+                     TextTrimming="CharacterEllipsis"
+                     VerticalAlignment="Center" />
+        </Grid>
+      </DataTemplate>
+
+      <DataTemplate x:Key="AgentDropDownItemTemplate"
+                    x:DataType="m:AgentProfileRecord">
+        <Grid ColumnDefinitions="Auto,*"
+              ColumnSpacing="9"
+              MinWidth="0">
+          <Image Classes="header-select-image"
+                 Source="avares://Sunder.Package.Agent/Assets/profile-icon.png" />
+          <TextBlock Grid.Column="1"
+                     Text="{Binding DisplayName}"
+                     MinWidth="0"
+                     MaxLines="2"
+                     TextTrimming="CharacterEllipsis"
+                     VerticalAlignment="Center" />
+        </Grid>
+      </DataTemplate>
+
+      <DataTemplate x:Key="SessionSelectionBoxTemplate"
+                    x:DataType="vm:AgentSessionListItemViewModel">
+        <Grid ColumnDefinitions="Auto,*"
+              ColumnSpacing="8"
+              MinWidth="0">
+          <Border Classes="session-status-icon"
+                  Background="{Binding StatusBrush}"
+                  ToolTip.Tip="{Binding StatusBadgeText}">
+            <Border.OpacityMask>
+              <ImageBrush Source="avares://Sunder.Package.Agent/Assets/session-icon.png"
+                          Stretch="Uniform" />
+            </Border.OpacityMask>
+          </Border>
+          <TextBlock Grid.Column="1"
+                     Text="{Binding Title}"
+                     MinWidth="0"
+                     MaxLines="1"
+                     TextTrimming="CharacterEllipsis"
                      VerticalAlignment="Center" />
         </Grid>
       </DataTemplate>
 
       <DataTemplate x:Key="SessionDropDownItemTemplate"
                     x:DataType="vm:AgentSessionListItemViewModel">
-        <Grid ColumnDefinitions="*,Auto"
+        <Grid ColumnDefinitions="Auto,*,Auto,Auto"
               ColumnSpacing="10"
               MinWidth="0"
-              Margin="0,2"
-              ToolTip.Tip="{Binding StatusText}">
-          <TextBlock Text="{Binding Title}"
+              Margin="0,2">
+          <Border Classes="session-status-icon"
+                  Background="{Binding StatusBrush}"
+                  ToolTip.Tip="{Binding StatusBadgeText}">
+            <Border.OpacityMask>
+              <ImageBrush Source="avares://Sunder.Package.Agent/Assets/session-icon.png"
+                          Stretch="Uniform" />
+            </Border.OpacityMask>
+          </Border>
+          <TextBlock Grid.Column="1"
+                     Text="{Binding Title}"
                      MinWidth="0"
-                     MaxLines="3"
-                     TextWrapping="Wrap"
+                     MaxLines="1"
                      TextTrimming="CharacterEllipsis"
-                     VerticalAlignment="Center" />
-          <StackPanel Grid.Column="1"
-                      Orientation="Horizontal"
-                      Spacing="8"
-                      VerticalAlignment="Center">
-            <Ellipse Width="8"
-                     Height="8"
-                     Fill="{DynamicResource Sunder.Brush.Accent}"
                      VerticalAlignment="Center"
-                     IsVisible="{Binding HasUnreadActivity}" />
-            <TextBlock Text="{Binding StatusBadgeText}"
-                       Foreground="{Binding StatusBrush}"
-                       FontSize="11"
-                       FontWeight="SemiBold"
-                       VerticalAlignment="Center" />
-          </StackPanel>
+                     IsVisible="{Binding !IsRenameActive}" />
+          <TextBox Grid.Column="1"
+                   Classes="session-rename-input"
+                   Text="{Binding RenameTitle, Mode=TwoWay}"
+                   AttachedToVisualTree="OnSessionRenameTextBoxAttachedToVisualTree"
+                   LayoutUpdated="OnSessionRenameTextBoxLayoutUpdated"
+                   KeyDown="OnSessionRenameKeyDown"
+                   PointerReleased="OnSessionRenameInputInteraction"
+                   Tapped="OnSessionRenameInputInteraction"
+                   IsVisible="{Binding IsRenameActive}" />
+          <Button Grid.Column="2"
+                  Classes="session-row-action"
+                  Content="⋯"
+                  Click="OnSessionActionsClick"
+                  ToolTip.Tip="Session actions"
+                  IsVisible="{Binding !IsRenameActive}" />
+          <Button Grid.Column="2"
+                  Classes="session-row-action confirm"
+                  Content="✓"
+                  Command="{Binding $parent[UserControl].DataContext.SaveSessionRenameCommand}"
+                  CommandParameter="{Binding}"
+                  ToolTip.Tip="Save session name"
+                  IsVisible="{Binding IsRenameActive}" />
+          <Button Grid.Column="3"
+                  Classes="session-row-action"
+                  Content="×"
+                  Command="{Binding $parent[UserControl].DataContext.CancelSessionRenameCommand}"
+                  CommandParameter="{Binding}"
+                  ToolTip.Tip="Cancel rename"
+                  IsVisible="{Binding IsRenameActive}" />
         </Grid>
       </DataTemplate>
     </ResourceDictionary>
@@ -88,7 +173,65 @@
     <Style Selector="Border.agent-chat-header">
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,0,0,1" />
-      <Setter Property="Padding" Value="30,24,30,20" />
+      <Setter Property="Padding" Value="14,10,14,8" />
+    </Style>
+
+    <Style Selector="Path.header-select-icon">
+      <Setter Property="Width" Value="14" />
+      <Setter Property="Height" Value="14" />
+      <Setter Property="Stretch" Value="Uniform" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Path.header-select-icon.fill">
+      <Setter Property="Fill" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+
+    <Style Selector="Path.header-select-icon.stroke">
+      <Setter Property="Stroke" Value="{DynamicResource Sunder.Brush.Accent}" />
+      <Setter Property="StrokeThickness" Value="1.7" />
+      <Setter Property="StrokeLineCap" Value="Round" />
+    </Style>
+
+    <Style Selector="Path.header-select-icon.stroke.muted">
+      <Setter Property="Stroke" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+    </Style>
+
+    <Style Selector="Image.header-select-image">
+      <Setter Property="Width" Value="16" />
+      <Setter Property="Height" Value="16" />
+      <Setter Property="Stretch" Value="Uniform" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Border.session-status-icon">
+      <Setter Property="Width" Value="16" />
+      <Setter Property="Height" Value="16" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="ComboBox.header-select, ComboBox.composer-agent-select">
+      <Setter Property="MinHeight" Value="36" />
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    </Style>
+
+    <Style Selector="ComboBox.header-select:pointerover, ComboBox.composer-agent-select:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+    </Style>
+
+    <Style Selector="ComboBox.header-select:focus, ComboBox.header-select:focus-within, ComboBox.header-select:focus-visible, ComboBox.composer-agent-select:focus, ComboBox.composer-agent-select:focus-within, ComboBox.composer-agent-select:focus-visible">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+    </Style>
+
+    <Style Selector="ComboBox.composer-agent-select">
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="MaxWidth" Value="360" />
+      <Setter Property="HorizontalAlignment" Value="Right" />
     </Style>
 
     <Style Selector="TextBlock.agent-title">
@@ -97,17 +240,95 @@
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
     </Style>
 
-    <Style Selector="TextBlock.control-label">
-      <Setter Property="FontSize" Value="12" />
+    <Style Selector="Button.header-action">
+      <Setter Property="Width" Value="36" />
+      <Setter Property="Height" Value="36" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="FontSize" Value="18" />
       <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-      <Setter Property="LetterSpacing" Value="0.4" />
-      <Setter Property="Margin" Value="0,0,0,4" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
 
-    <Style Selector="Button.header-action">
-      <Setter Property="Margin" Value="0,18,0,0" />
-      <Setter Property="VerticalAlignment" Value="Bottom" />
+    <Style Selector="Button.session-row-action">
+      <Setter Property="Width" Value="28" />
+      <Setter Property="MinWidth" Value="28" />
+      <Setter Property="Height" Value="28" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Button.session-row-action:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    </Style>
+
+    <Style Selector="Button.session-row-action.confirm">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+
+    <Style Selector="TextBox.session-rename-input">
+      <Setter Property="MinHeight" Value="30" />
+      <Setter Property="Padding" Value="8,3" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Grid.context-path-row">
+      <Setter Property="Margin" Value="0,8,0,0" />
+      <Setter Property="MinWidth" Value="0" />
+    </Style>
+
+    <Style Selector="Border.context-path-chip">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="8,4" />
+      <Setter Property="MaxWidth" Value="180" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Border.context-path-chip.more">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+    </Style>
+
+    <Style Selector="Path.context-path-icon">
+      <Setter Property="Width" Value="12" />
+      <Setter Property="Height" Value="12" />
+      <Setter Property="Stretch" Value="Uniform" />
+      <Setter Property="Stroke" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="StrokeThickness" Value="1.4" />
+      <Setter Property="StrokeLineCap" Value="Round" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="0,1,0,0" />
+    </Style>
+
+    <Style Selector="TextBlock.context-path-text">
+      <Setter Property="FontFamily" Value="Menlo,Consolas,monospace" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+      <Setter Property="MaxLines" Value="1" />
+      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="TextBlock.context-path-more-text">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
 
     <Style Selector="Border.status-pill">
@@ -209,6 +430,8 @@
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
       <Setter Property="ClipToBounds" Value="True" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
     </Style>
 
     <Style Selector="Border.tool-output-header">
@@ -217,17 +440,20 @@
       <Setter Property="BorderThickness" Value="0,0,0,1" />
       <Setter Property="CornerRadius" Value="7,7,0,0" />
       <Setter Property="Padding" Value="16,10" />
+      <Setter Property="MinWidth" Value="0" />
     </Style>
 
     <Style Selector="Border.tool-output-body">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Workspace}" />
       <Setter Property="Padding" Value="16,14" />
+      <Setter Property="MinWidth" Value="0" />
     </Style>
 
     <Style Selector="TextBlock.output-text">
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
       <Setter Property="FontFamily" Value="Menlo,Consolas,monospace" />
       <Setter Property="FontSize" Value="13" />
+      <Setter Property="MinWidth" Value="0" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
@@ -236,12 +462,15 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,1,0,0" />
       <Setter Property="Padding" Value="14,10" />
+      <Setter Property="MinWidth" Value="0" />
     </Style>
 
     <Style Selector="Border.metadata-pill">
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
       <Setter Property="Padding" Value="8,4" />
+      <Setter Property="Margin" Value="0,0,8,8" />
+      <Setter Property="MinWidth" Value="0" />
     </Style>
 
     <Style Selector="Border.metadata-pill.error">
@@ -331,27 +560,6 @@
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
     </Style>
 
-    <Style Selector="ToggleButton.composer-action.subtle">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-      <Setter Property="FontSize" Value="16" />
-      <Setter Property="Width" Value="34" />
-      <Setter Property="Height" Value="32" />
-    </Style>
-
-    <Style Selector="ToggleButton.composer-action.subtle:pointerover">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
-    </Style>
-
-    <Style Selector="ToggleButton.composer-action.subtle:checked">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
-    </Style>
-
     <Style Selector="Border.attachment-chip">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
@@ -432,11 +640,16 @@
   <UserControl.DataTemplates>
     <DataTemplate x:DataType="shared:ToolDiffFileViewModel">
       <Border Classes="tool-diff-file-card"
-              Margin="0,0,0,8">
-        <Grid RowDefinitions="Auto,Auto">
+              Margin="0,0,0,8"
+              MinWidth="0"
+              HorizontalAlignment="Stretch">
+        <Grid RowDefinitions="Auto,Auto"
+              MinWidth="0"
+              HorizontalAlignment="Stretch">
           <Border Classes="tool-diff-file-header">
             <Grid ColumnDefinitions="Auto,*,Auto,Auto"
-                  ColumnSpacing="10">
+                  ColumnSpacing="10"
+                  MinWidth="0">
               <TextBlock Grid.Column="0"
                          Classes="tool-diff-operation"
                          Text="{Binding OperationText}"
@@ -459,7 +672,9 @@
             </Grid>
           </Border>
           <ItemsControl Grid.Row="1"
-                        ItemsSource="{Binding Lines}">
+                        ItemsSource="{Binding Lines}"
+                        MinWidth="0"
+                        HorizontalAlignment="Stretch">
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="shared:ToolDiffLineViewModel">
                 <Border Classes="tool-diff-line"
@@ -468,7 +683,8 @@
                         Classes.hunk="{Binding IsHunk}"
                         Classes.collapsed="{Binding IsCollapsed}">
                   <Grid ColumnDefinitions="56,1,*"
-                        ColumnSpacing="8">
+                        ColumnSpacing="8"
+                        MinWidth="0">
                     <TextBlock Classes="tool-diff-line-number"
                                Text="{Binding LineNumberText}" />
                     <Border Grid.Column="1"
@@ -814,60 +1030,73 @@
               </Border>
 
               <StackPanel Grid.Row="2"
-                          Margin="16,14,16,0"
-                          Spacing="6"
-                          MinWidth="0"
-                          IsVisible="{Binding HasToolDiff}">
+                           Margin="16,14,16,0"
+                           Spacing="6"
+                           MinWidth="0"
+                           IsVisible="{Binding HasToolDiff}">
                 <TextBlock Classes="tool-diff-section-title"
                            Text="{Binding ToolDiffSectionTitle}" />
                 <ItemsControl ItemsSource="{Binding ToolDiffFiles}"
-                              MinWidth="0" />
+                              MinWidth="0"
+                              HorizontalAlignment="Stretch" />
               </StackPanel>
 
               <Border Grid.Row="3"
                       Padding="16"
                       MinWidth="0"
+                      HorizontalAlignment="Stretch"
                       IsVisible="{Binding ShowMarkdownDetails}">
                 <md:MarkdownRenderer MarkdownBuilder="{Binding DetailMarkdownBuilder}"
-                                     MinWidth="0"
-                                     HorizontalAlignment="Stretch" />
+                                      MinWidth="0"
+                                      HorizontalAlignment="Stretch" />
               </Border>
 
               <Border Grid.Row="4"
                       Classes="metadata-bar"
                       IsVisible="{Binding HasMetadata}">
-                <StackPanel Orientation="Horizontal"
-                            Spacing="8">
+                <WrapPanel>
                   <Border Classes="metadata-pill error"
-                          IsVisible="{Binding HasErrorCode}">
-                    <StackPanel Orientation="Horizontal"
-                                Spacing="5">
+                           IsVisible="{Binding HasErrorCode}">
+                    <Grid ColumnDefinitions="Auto,*"
+                          ColumnSpacing="5"
+                          MinWidth="0">
                       <TextBlock Text="Error code:"
-                                 FontSize="12"
-                                 FontWeight="SemiBold"
-                                 Foreground="{DynamicResource Sunder.Brush.Danger}" />
-                      <TextBlock Text="{Binding ErrorCodeText}"
+                                  FontSize="12"
+                                  FontWeight="SemiBold"
+                                  Foreground="{DynamicResource Sunder.Brush.Danger}" />
+                      <TextBlock Grid.Column="1"
+                                 Text="{Binding ErrorCodeText}"
                                  FontSize="12"
                                  FontFamily="Menlo,Consolas,monospace"
-                                 Foreground="{DynamicResource Sunder.Brush.Danger}" />
-                    </StackPanel>
+                                 Foreground="{DynamicResource Sunder.Brush.Danger}"
+                                 MinWidth="0"
+                                 TextWrapping="Wrap"
+                                 MaxLines="2"
+                                 TextTrimming="CharacterEllipsis" />
+                    </Grid>
                   </Border>
 
                   <Border Classes="metadata-pill neutral"
-                          IsVisible="{Binding HasBackend}">
-                    <StackPanel Orientation="Horizontal"
-                                Spacing="5">
+                           IsVisible="{Binding HasBackend}">
+                    <Grid ColumnDefinitions="Auto,*"
+                          ColumnSpacing="5"
+                          MinWidth="0">
                       <TextBlock Text="Backend:"
-                                 FontSize="12"
-                                 FontWeight="SemiBold"
-                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-                      <TextBlock Text="{Binding BackendText}"
+                                  FontSize="12"
+                                  FontWeight="SemiBold"
+                                  Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+                      <TextBlock Grid.Column="1"
+                                 Text="{Binding BackendText}"
                                  FontSize="12"
                                  FontFamily="Menlo,Consolas,monospace"
-                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
-                    </StackPanel>
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Secondary}"
+                                 MinWidth="0"
+                                 TextWrapping="Wrap"
+                                 MaxLines="2"
+                                 TextTrimming="CharacterEllipsis" />
+                    </Grid>
                   </Border>
-                </StackPanel>
+                </WrapPanel>
               </Border>
             </Grid>
           </Border>
@@ -882,58 +1111,82 @@
         <Border Grid.Row="0"
                 Classes="agent-chat-header">
           <Grid>
-          <Grid x:Name="HeaderWideLayout"
-                ColumnDefinitions="*,*,2*,Auto"
-                ColumnSpacing="12">
-            <StackPanel Grid.Column="0"
-                        MinWidth="0">
-              <TextBlock Classes="control-label"
-                         Text="Workspace" />
-              <shared:SunderComboBox ItemsSource="{Binding Workspaces}"
-                                     SelectedItem="{Binding SelectedWorkspace, Mode=TwoWay}"
-                                     IsEnabled="{Binding HasWorkspaces}"
-                                     HorizontalAlignment="Stretch">
-                <shared:SunderComboBox.ItemTemplate>
-                  <DataTemplate x:DataType="m:AgentWorkspaceRecord">
-                    <TextBlock Text="{Binding DisplayName}" />
-                  </DataTemplate>
-                </shared:SunderComboBox.ItemTemplate>
-              </shared:SunderComboBox>
-            </StackPanel>
+            <Grid x:Name="HeaderWideLayout"
+                  RowDefinitions="Auto,Auto">
+              <Grid Grid.Row="0"
+                    ColumnDefinitions="240,*,Auto"
+                    ColumnSpacing="10">
+                <shared:SunderComboBox Grid.Column="0"
+                                        Classes="header-select"
+                                        ItemsSource="{Binding Workspaces}"
+                                        SelectedItem="{Binding SelectedWorkspace, Mode=TwoWay}"
+                                        IsEnabled="{Binding HasWorkspaces}"
+                                        SelectionBoxItemTemplate="{StaticResource WorkspaceSelectionBoxTemplate}"
+                                        ItemTemplate="{StaticResource WorkspaceDropDownItemTemplate}"
+                                        HorizontalAlignment="Stretch" />
 
-            <StackPanel Grid.Column="1"
-                        MinWidth="0">
-              <TextBlock Classes="control-label"
-                         Text="Agent" />
-              <shared:SunderComboBox ItemsSource="{Binding Profiles}"
-                                     SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
-                                     IsEnabled="{Binding HasProfiles}"
-                                     HorizontalAlignment="Stretch">
-                <shared:SunderComboBox.ItemTemplate>
-                  <DataTemplate x:DataType="m:AgentProfileRecord">
-                    <TextBlock Text="{Binding DisplayName}" />
-                  </DataTemplate>
-                </shared:SunderComboBox.ItemTemplate>
-              </shared:SunderComboBox>
-            </StackPanel>
+                <shared:SunderComboBox x:Name="WideSessionComboBox"
+                                        Grid.Column="1"
+                                        Classes="header-select"
+                                        ItemsSource="{Binding Sessions}"
+                                        SelectedItem="{Binding SelectedSession, Mode=TwoWay}"
+                                        SelectionBoxItemTemplate="{StaticResource SessionSelectionBoxTemplate}"
+                                        ItemTemplate="{StaticResource SessionDropDownItemTemplate}"
+                                        HorizontalAlignment="Stretch" />
 
-            <StackPanel Grid.Column="2"
-                        MinWidth="0">
-              <TextBlock Classes="control-label"
-                         Text="Session" />
-              <shared:SunderComboBox ItemsSource="{Binding Sessions}"
-                                      SelectedItem="{Binding SelectedSession, Mode=TwoWay}"
-                                      SelectionBoxItemTemplate="{StaticResource SessionSelectionBoxTemplate}"
-                                      ItemTemplate="{StaticResource SessionDropDownItemTemplate}"
-                                      HorizontalAlignment="Stretch">
-              </shared:SunderComboBox>
-            </StackPanel>
+                <Button Grid.Column="2"
+                        Classes="secondary-action header-action"
+                        Content="+"
+                        Command="{Binding CreateSessionCommand}"
+                        ToolTip.Tip="New session" />
+              </Grid>
 
-            <Button Grid.Column="3"
-                    Classes="secondary-action compact-action header-action"
-                    Content="New Session"
-                    Command="{Binding CreateSessionCommand}" />
-          </Grid>
+              <Grid Grid.Row="1"
+                    Classes="context-path-row"
+                    ColumnDefinitions="*,Auto"
+                    ColumnSpacing="8">
+                <StackPanel Orientation="Horizontal"
+                            Spacing="6"
+                            MinWidth="0"
+                            ClipToBounds="True">
+                  <Border Classes="context-path-chip">
+                    <Grid ColumnDefinitions="Auto,*"
+                          ColumnSpacing="6">
+                      <Path Classes="context-path-icon"
+                            Data="{StaticResource AgentChat.Icon.Path}" />
+                      <TextBlock Grid.Column="1"
+                                 Classes="context-path-text"
+                                 Text="~/Projects/sunder" />
+                    </Grid>
+                  </Border>
+                  <Border Classes="context-path-chip">
+                    <Grid ColumnDefinitions="Auto,*"
+                          ColumnSpacing="6">
+                      <Path Classes="context-path-icon"
+                            Data="{StaticResource AgentChat.Icon.Path}" />
+                      <TextBlock Grid.Column="1"
+                                 Classes="context-path-text"
+                                 Text="/app/workspace" />
+                    </Grid>
+                  </Border>
+                  <Border Classes="context-path-chip">
+                    <Grid ColumnDefinitions="Auto,*"
+                          ColumnSpacing="6">
+                      <Path Classes="context-path-icon"
+                            Data="{StaticResource AgentChat.Icon.Path}" />
+                      <TextBlock Grid.Column="1"
+                                 Classes="context-path-text"
+                                 Text="/Documents/context" />
+                    </Grid>
+                  </Border>
+                </StackPanel>
+                <Border Grid.Column="1"
+                        Classes="context-path-chip more">
+                  <TextBlock Classes="context-path-more-text"
+                             Text="+2 more" />
+                </Border>
+              </Grid>
+            </Grid>
 
           <Grid x:Name="HeaderNarrowLayout"
                 RowDefinitions="Auto,Auto,Auto"
@@ -941,58 +1194,69 @@
                 RowSpacing="8"
                 ColumnSpacing="12"
                 IsVisible="False">
-            <StackPanel Grid.Row="0"
-                        Grid.ColumnSpan="2"
-                        MinWidth="0">
-              <TextBlock Classes="control-label"
-                         Text="Workspace" />
-              <shared:SunderComboBox ItemsSource="{Binding Workspaces}"
-                                     SelectedItem="{Binding SelectedWorkspace, Mode=TwoWay}"
-                                     IsEnabled="{Binding HasWorkspaces}"
-                                     HorizontalAlignment="Stretch">
-                <shared:SunderComboBox.ItemTemplate>
-                  <DataTemplate x:DataType="m:AgentWorkspaceRecord">
-                    <TextBlock Text="{Binding DisplayName}" />
-                  </DataTemplate>
-                </shared:SunderComboBox.ItemTemplate>
-              </shared:SunderComboBox>
-            </StackPanel>
+            <shared:SunderComboBox Grid.Row="0"
+                                    Grid.ColumnSpan="2"
+                                    Classes="header-select"
+                                    ItemsSource="{Binding Workspaces}"
+                                    SelectedItem="{Binding SelectedWorkspace, Mode=TwoWay}"
+                                    IsEnabled="{Binding HasWorkspaces}"
+                                    SelectionBoxItemTemplate="{StaticResource WorkspaceSelectionBoxTemplate}"
+                                    ItemTemplate="{StaticResource WorkspaceDropDownItemTemplate}"
+                                    HorizontalAlignment="Stretch" />
 
-            <StackPanel Grid.Row="1"
-                        Grid.Column="0"
-                        MinWidth="0">
-              <TextBlock Classes="control-label"
-                         Text="Agent" />
-              <shared:SunderComboBox ItemsSource="{Binding Profiles}"
-                                     SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
-                                     IsEnabled="{Binding HasProfiles}"
-                                     HorizontalAlignment="Stretch">
-                <shared:SunderComboBox.ItemTemplate>
-                  <DataTemplate x:DataType="m:AgentProfileRecord">
-                    <TextBlock Text="{Binding DisplayName}" />
-                  </DataTemplate>
-                </shared:SunderComboBox.ItemTemplate>
-              </shared:SunderComboBox>
-            </StackPanel>
+            <shared:SunderComboBox x:Name="NarrowSessionComboBox"
+                                    Grid.Row="1"
+                                    Grid.Column="0"
+                                    Classes="header-select"
+                                    ItemsSource="{Binding Sessions}"
+                                    SelectedItem="{Binding SelectedSession, Mode=TwoWay}"
+                                    SelectionBoxItemTemplate="{StaticResource SessionSelectionBoxTemplate}"
+                                    ItemTemplate="{StaticResource SessionDropDownItemTemplate}"
+                                    HorizontalAlignment="Stretch" />
 
-            <StackPanel Grid.Row="2"
-                        Grid.Column="0"
-                        MinWidth="0">
-              <TextBlock Classes="control-label"
-                         Text="Session" />
-              <shared:SunderComboBox ItemsSource="{Binding Sessions}"
-                                      SelectedItem="{Binding SelectedSession, Mode=TwoWay}"
-                                      SelectionBoxItemTemplate="{StaticResource SessionSelectionBoxTemplate}"
-                                      ItemTemplate="{StaticResource SessionDropDownItemTemplate}"
-                                      HorizontalAlignment="Stretch">
-              </shared:SunderComboBox>
-            </StackPanel>
-
-            <Button Grid.Row="2"
+            <Button Grid.Row="1"
                     Grid.Column="1"
-                    Classes="secondary-action compact-action header-action"
-                    Content="New Session"
-                    Command="{Binding CreateSessionCommand}" />
+                    Classes="secondary-action header-action"
+                    Content="+"
+                    Command="{Binding CreateSessionCommand}"
+                    ToolTip.Tip="New session" />
+
+            <Grid Grid.Row="2"
+                  Grid.ColumnSpan="2"
+                  Classes="context-path-row"
+                  ColumnDefinitions="*,Auto"
+                  ColumnSpacing="8">
+              <StackPanel Orientation="Horizontal"
+                          Spacing="6"
+                          MinWidth="0"
+                          ClipToBounds="True">
+                <Border Classes="context-path-chip">
+                  <Grid ColumnDefinitions="Auto,*"
+                        ColumnSpacing="6">
+                    <Path Classes="context-path-icon"
+                          Data="{StaticResource AgentChat.Icon.Path}" />
+                    <TextBlock Grid.Column="1"
+                               Classes="context-path-text"
+                               Text="~/Projects/sunder" />
+                  </Grid>
+                </Border>
+                <Border Classes="context-path-chip">
+                  <Grid ColumnDefinitions="Auto,*"
+                        ColumnSpacing="6">
+                    <Path Classes="context-path-icon"
+                          Data="{StaticResource AgentChat.Icon.Path}" />
+                    <TextBlock Grid.Column="1"
+                               Classes="context-path-text"
+                               Text="/app/workspace" />
+                  </Grid>
+                </Border>
+              </StackPanel>
+              <Border Grid.Column="1"
+                      Classes="context-path-chip more">
+                <TextBlock Classes="context-path-more-text"
+                           Text="+3 more" />
+              </Border>
+            </Grid>
           </Grid>
           </Grid>
         </Border>
@@ -1004,7 +1268,8 @@
             <ScrollViewer x:Name="TranscriptScrollViewer"
                           Classes="transcript-scroll"
                           IsVisible="{Binding !ShowSetupInstructions}">
-              <Border Classes="transcript-content">
+              <Border Classes="transcript-content"
+                      Width="{Binding Viewport.Width, ElementName=TranscriptScrollViewer}">
                 <ItemsControl x:Name="TranscriptItemsControl"
                               Classes="transcript-items"
                               ItemsSource="{Binding Messages}">
@@ -1145,7 +1410,8 @@
                 </Grid>
               </Border>
               <Grid Grid.Row="1"
-                    ColumnDefinitions="*,Auto,*">
+                    ColumnDefinitions="Auto,*"
+                    ColumnSpacing="8">
                 <StackPanel Grid.Column="0"
                             Orientation="Horizontal"
                             HorizontalAlignment="Left"
@@ -1155,39 +1421,51 @@
                           Click="OnAttachFilesClick"
                           ToolTip.Tip="Attach files or paste copied files"
                           IsEnabled="{Binding IsSelectedSessionRunInactive}" />
-                   <Button Classes="secondary-action composer-action clear"
-                           Content="{Binding ClearComposerButtonText}"
-                           Command="{Binding ClearComposerCommand}"
-                           ToolTip.Tip="{Binding ClearComposerToolTipText}" />
-                </StackPanel>
-                <ToggleButton Grid.Column="1"
-                              Classes="composer-action subtle"
-                              Content="⛶"
-                              IsChecked="{Binding IsComposerExpanded, Mode=TwoWay}"
-                              ToolTip.Tip="Collapse composer" />
-                <StackPanel Grid.Column="2"
-                            Orientation="Horizontal"
-                            HorizontalAlignment="Right"
-                            Spacing="8">
                   <ToggleButton Classes="composer-action"
+                                Content="⛶"
+                                IsChecked="{Binding IsComposerExpanded, Mode=TwoWay}"
+                                ToolTip.Tip="Collapse composer" />
+                  <Button Classes="secondary-action composer-action clear"
+                          Content="{Binding ClearComposerButtonText}"
+                          Command="{Binding ClearComposerCommand}"
+                          ToolTip.Tip="{Binding ClearComposerToolTipText}" />
+                </StackPanel>
+                <Grid Grid.Column="1"
+                      ColumnDefinitions="*,Auto,Auto,Auto"
+                      ColumnSpacing="8"
+                      MinWidth="0"
+                      HorizontalAlignment="Stretch">
+                  <shared:SunderComboBox Grid.Column="0"
+                                         Classes="composer-agent-select"
+                                         ItemsSource="{Binding Profiles}"
+                                         SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
+                                         IsEnabled="{Binding HasProfiles}"
+                                         SelectionBoxItemTemplate="{StaticResource AgentSelectionBoxTemplate}"
+                                         ItemTemplate="{StaticResource AgentDropDownItemTemplate}"
+                                         ToolTip.Tip="Agent" />
+                  <ToggleButton Grid.Column="1"
+                                Classes="composer-action"
                                 Content="∞"
                                 IsChecked="{Binding IsUnrestrictedModeEnabled, Mode=TwoWay}"
                                 ToolTip.Tip="Unrestricted Mode" />
-                  <ToggleButton Classes="composer-action"
+                  <ToggleButton Grid.Column="2"
+                                Classes="composer-action"
                                 Content="↵"
                                 IsChecked="{Binding IsSendOnEnterEnabled, Mode=TwoWay}"
                                 ToolTip.Tip="Send with Enter" />
-                   <Button Classes="primary-action composer-action"
-                           Content="↑"
-                           Command="{Binding SendMessageCommand}"
-                           ToolTip.Tip="Send"
-                           IsVisible="{Binding ShowSendAction}" />
-                   <Button Classes="secondary-action composer-action"
-                           Content="■"
-                           Command="{Binding StopRunCommand}"
-                           ToolTip.Tip="Stop"
-                           IsVisible="{Binding ShowStopAction}" />
-                </StackPanel>
+                  <Button Grid.Column="3"
+                          Classes="primary-action composer-action"
+                          Content="↑"
+                          Command="{Binding SendMessageCommand}"
+                          ToolTip.Tip="Send"
+                          IsVisible="{Binding ShowSendAction}" />
+                  <Button Grid.Column="3"
+                          Classes="secondary-action composer-action"
+                          Content="■"
+                          Command="{Binding StopRunCommand}"
+                          ToolTip.Tip="Stop"
+                          IsVisible="{Binding ShowStopAction}" />
+                </Grid>
               </Grid>
             </Grid>
           </Grid>
@@ -1275,7 +1553,8 @@
                 </Grid>
               </Border>
               <Grid Grid.Row="2"
-                    ColumnDefinitions="*,Auto,*">
+                    ColumnDefinitions="Auto,*"
+                    ColumnSpacing="8">
                 <StackPanel Grid.Column="0"
                             Orientation="Horizontal"
                             HorizontalAlignment="Left"
@@ -1285,39 +1564,51 @@
                           Click="OnAttachFilesClick"
                           ToolTip.Tip="Attach files or paste copied files"
                           IsEnabled="{Binding IsSelectedSessionRunInactive}" />
-                   <Button Classes="secondary-action composer-action clear"
-                           Content="{Binding ClearComposerButtonText}"
-                           Command="{Binding ClearComposerCommand}"
-                           ToolTip.Tip="{Binding ClearComposerToolTipText}" />
-                </StackPanel>
-                <ToggleButton Grid.Column="1"
-                              Classes="composer-action subtle"
-                              Content="⛶"
-                              IsChecked="{Binding IsComposerExpanded, Mode=TwoWay}"
-                              ToolTip.Tip="Expand composer" />
-                <StackPanel Grid.Column="2"
-                            Orientation="Horizontal"
-                            HorizontalAlignment="Right"
-                            Spacing="8">
                   <ToggleButton Classes="composer-action"
+                                Content="⛶"
+                                IsChecked="{Binding IsComposerExpanded, Mode=TwoWay}"
+                                ToolTip.Tip="Expand composer" />
+                  <Button Classes="secondary-action composer-action clear"
+                          Content="{Binding ClearComposerButtonText}"
+                          Command="{Binding ClearComposerCommand}"
+                          ToolTip.Tip="{Binding ClearComposerToolTipText}" />
+                </StackPanel>
+                <Grid Grid.Column="1"
+                      ColumnDefinitions="*,Auto,Auto,Auto"
+                      ColumnSpacing="8"
+                      MinWidth="0"
+                      HorizontalAlignment="Stretch">
+                  <shared:SunderComboBox Grid.Column="0"
+                                         Classes="composer-agent-select"
+                                         ItemsSource="{Binding Profiles}"
+                                         SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
+                                         IsEnabled="{Binding HasProfiles}"
+                                         SelectionBoxItemTemplate="{StaticResource AgentSelectionBoxTemplate}"
+                                         ItemTemplate="{StaticResource AgentDropDownItemTemplate}"
+                                         ToolTip.Tip="Agent" />
+                  <ToggleButton Grid.Column="1"
+                                Classes="composer-action"
                                 Content="∞"
                                 IsChecked="{Binding IsUnrestrictedModeEnabled, Mode=TwoWay}"
                                 ToolTip.Tip="Unrestricted Mode" />
-                  <ToggleButton Classes="composer-action"
+                  <ToggleButton Grid.Column="2"
+                                Classes="composer-action"
                                 Content="↵"
                                 IsChecked="{Binding IsSendOnEnterEnabled, Mode=TwoWay}"
                                 ToolTip.Tip="Send with Enter" />
-                   <Button Classes="primary-action composer-action"
-                           Content="↑"
-                           Command="{Binding SendMessageCommand}"
-                           ToolTip.Tip="Send"
-                           IsVisible="{Binding ShowSendAction}" />
-                   <Button Classes="secondary-action composer-action"
-                           Content="■"
-                           Command="{Binding StopRunCommand}"
-                           ToolTip.Tip="Stop"
-                           IsVisible="{Binding ShowStopAction}" />
-                </StackPanel>
+                  <Button Grid.Column="3"
+                          Classes="primary-action composer-action"
+                          Content="↑"
+                          Command="{Binding SendMessageCommand}"
+                          ToolTip.Tip="Send"
+                          IsVisible="{Binding ShowSendAction}" />
+                  <Button Grid.Column="3"
+                          Classes="secondary-action composer-action"
+                          Content="■"
+                          Command="{Binding StopRunCommand}"
+                          ToolTip.Tip="Stop"
+                          IsVisible="{Binding ShowStopAction}" />
+                </Grid>
               </Grid>
             </Grid>
           </StackPanel>

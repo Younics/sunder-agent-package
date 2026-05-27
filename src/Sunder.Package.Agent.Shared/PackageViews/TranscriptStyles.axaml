@@ -89,13 +89,16 @@
 
   <Style Selector="md|MarkdownTableGrid">
     <Setter Property="MinWidth" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
     <Setter Property="ColumnSpacing" Value="0" />
     <Setter Property="RowSpacing" Value="0" />
   </Style>
 
   <Style Selector="ScrollViewer.Table">
     <Setter Property="Margin" Value="0,12,0,14" />
-    <Setter Property="HorizontalScrollBarVisibility" Value="Auto" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
     <Setter Property="VerticalScrollBarVisibility" Value="Disabled" />
   </Style>
 
@@ -105,12 +108,15 @@
     <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
     <Setter Property="Padding" Value="0" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
   </Style>
 
   <Style Selector="Border.TableCell">
     <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
     <Setter Property="BorderThickness" Value="0,0,1,1" />
     <Setter Property="Padding" Value="12,9" />
+    <Setter Property="MinWidth" Value="0" />
   </Style>
 
   <Style Selector="Border.TableCell.Header">
@@ -230,7 +236,7 @@
               <ScrollViewer x:Name="PART_ScrollViewer"
                             Grid.Row="1"
                             Background="{DynamicResource Sunder.Brush.Transparent}"
-                            HorizontalScrollBarVisibility="{TemplateBinding HorizontalScrollBarVisibility}"
+                            HorizontalScrollBarVisibility="Disabled"
                             VerticalScrollBarVisibility="Auto">
                 <md:MarkdownTextBlock x:Name="PART_CodeTextBlock"
                                       Margin="14,12"
@@ -248,6 +254,7 @@
 
   <Style Selector="md|CodeBlock /template/ ScrollViewer#PART_ScrollViewer">
     <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
+    <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
   </Style>
 
   <Style Selector="md|CodeBlock /template/ md|MarkdownTextBlock#PART_CodeTextBlock">
@@ -256,6 +263,8 @@
     <Setter Property="FontFamily" Value="Menlo,Consolas,monospace" />
     <Setter Property="FontSize" Value="13" />
     <Setter Property="LineHeight" Value="21" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="TextWrapping" Value="Wrap" />
     <Setter Property="SelectionBrush" Value="{DynamicResource Sunder.Brush.Selection}" />
     <Setter Property="SelectionForegroundBrush" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
   </Style>
@@ -357,6 +366,7 @@
     <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
     <Setter Property="Padding" Value="14,10" />
+    <Setter Property="MinWidth" Value="0" />
     <Setter Property="HorizontalAlignment" Value="Stretch" />
     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
     <Setter Property="VerticalContentAlignment" Value="Stretch" />
@@ -411,6 +421,7 @@
     <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
     <Setter Property="ClipToBounds" Value="True" />
     <Setter Property="MinWidth" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
   </Style>
 
   <Style Selector="Border.tool-diff-file-header">
@@ -418,6 +429,7 @@
     <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
     <Setter Property="BorderThickness" Value="0,0,0,1" />
     <Setter Property="Padding" Value="10,8" />
+    <Setter Property="MinWidth" Value="0" />
   </Style>
 
   <Style Selector="TextBlock.tool-diff-path">
@@ -452,6 +464,7 @@
     <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
     <Setter Property="Padding" Value="8,1" />
     <Setter Property="MinWidth" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
   </Style>
 
   <Style Selector="Border.tool-diff-line.added">

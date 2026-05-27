@@ -6,6 +6,7 @@ using Avalonia.Interactivity;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Services;
@@ -17,6 +18,7 @@ namespace Sunder.Package.Agent.PackageViews;
 public partial class AgentChatView : UserControl
 {
     private const double WideHeaderMinimumWidth = 520;
+    private const int SessionRenameFocusRetryLimit = 12;
     private static readonly FilePickerFileType SupportedAttachmentFileType = new("Supported attachments")
     {
         Patterns =
@@ -35,6 +37,7 @@ public partial class AgentChatView : UserControl
     private bool _initialTranscriptPlacementPending = true;
     private bool _initialTranscriptPlacementQueued;
     private int _initialTranscriptPlacementVersion;
+    private Guid? _pendingSessionRenameFocusId;
     private IPackageNotificationService _notificationService = NullPackageNotificationService.Instance;
 
     public AgentChatView()
@@ -182,6 +185,238 @@ public partial class AgentChatView : UserControl
 
         await _viewModel.AddAttachmentPathsAsync(paths);
     }
+
+    private void OnSessionActionsClick(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is not Button button || button.DataContext is not AgentSessionListItemViewModel session)
+        {
+            return;
+        }
+
+        var viewModel = _viewModel ?? DataContext as AgentChatViewModel;
+        if (viewModel is null)
+        {
+            return;
+        }
+
+        var renameItem = new MenuItem { Header = "Rename" };
+        var shouldFocusRename = false;
+        renameItem.Click += (_, _) =>
+        {
+            shouldFocusRename = true;
+            _pendingSessionRenameFocusId = session.SessionId;
+            viewModel.BeginRenameSessionCommand.Execute(session);
+        };
+
+        var deleteItem = new MenuItem { Header = "Delete" };
+        deleteItem.Click += (_, _) => viewModel.DeleteSessionCommand.Execute(session);
+
+        var flyout = new MenuFlyout();
+        flyout.Closed += (_, _) =>
+        {
+            if (!shouldFocusRename || !session.IsRenameActive)
+            {
+                return;
+            }
+
+            _pendingSessionRenameFocusId = session.SessionId;
+            QueueFocusInlineSessionRenameTextBox(session, reopenDropdown: true);
+        };
+        flyout.Items.Add(renameItem);
+        flyout.Items.Add(deleteItem);
+        flyout.ShowAt(button);
+    }
+
+    private void OnSessionRenameKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Handled || sender is not TextBox { DataContext: AgentSessionListItemViewModel session })
+        {
+            return;
+        }
+
+        var viewModel = _viewModel ?? DataContext as AgentChatViewModel;
+        if (viewModel is null)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            viewModel.SaveSessionRenameCommand.Execute(session);
+            return;
+        }
+
+        if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            viewModel.CancelSessionRenameCommand.Execute(session);
+        }
+    }
+
+    private static void OnSessionRenameInputInteraction(object? sender, RoutedEventArgs e)
+    {
+        // Keep clicks and text selection inside the inline editor from selecting the ComboBox row.
+        e.Handled = true;
+    }
+
+    private void OnSessionRenameTextBoxAttachedToVisualTree(
+        object? sender,
+        VisualTreeAttachmentEventArgs e
+    )
+    {
+        QueueFocusInlineSessionRenameTextBoxIfPending(sender as TextBox);
+    }
+
+    private void OnSessionRenameTextBoxLayoutUpdated(object? sender, EventArgs e)
+    {
+        QueueFocusInlineSessionRenameTextBoxIfPending(sender as TextBox);
+    }
+
+    private void QueueFocusInlineSessionRenameTextBoxIfPending(TextBox? textBox)
+    {
+        if (
+            textBox?.DataContext is not AgentSessionListItemViewModel session
+            || !session.IsRenameActive
+            || _pendingSessionRenameFocusId != session.SessionId
+            || !textBox.IsEffectivelyVisible
+        )
+        {
+            return;
+        }
+
+        QueueFocusInlineSessionRenameTextBox(textBox, session);
+    }
+
+    private void QueueFocusInlineSessionRenameTextBox(
+        AgentSessionListItemViewModel session,
+        bool reopenDropdown,
+        int attempt = 0
+    )
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_pendingSessionRenameFocusId != session.SessionId || !session.IsRenameActive)
+            {
+                return;
+            }
+
+            if (reopenDropdown)
+            {
+                OpenVisibleSessionDropDown();
+            }
+
+            var textBox = FindInlineSessionRenameTextBox(session);
+            if (textBox is not null)
+            {
+                QueueFocusInlineSessionRenameTextBox(textBox, session, attempt);
+                return;
+            }
+
+            if (attempt < SessionRenameFocusRetryLimit)
+            {
+                QueueFocusInlineSessionRenameTextBox(session, reopenDropdown: false, attempt + 1);
+            }
+        }, DispatcherPriority.Background);
+    }
+
+    private void OpenVisibleSessionDropDown()
+    {
+        var comboBox = HeaderWideLayout.IsVisible ? WideSessionComboBox : NarrowSessionComboBox;
+        comboBox.IsDropDownOpen = true;
+    }
+
+    private void QueueFocusInlineSessionRenameTextBox(
+        TextBox textBox,
+        AgentSessionListItemViewModel session,
+        int attempt = 0
+    )
+    {
+        Dispatcher.UIThread.Post(
+            () => FocusInlineSessionRenameTextBox(textBox, session, attempt),
+            DispatcherPriority.ContextIdle
+        );
+    }
+
+    private void FocusInlineSessionRenameTextBox(
+        TextBox textBox,
+        AgentSessionListItemViewModel session,
+        int attempt
+    )
+    {
+        if (_pendingSessionRenameFocusId != session.SessionId || !session.IsRenameActive)
+        {
+            return;
+        }
+
+        if (textBox.IsEffectivelyVisible)
+        {
+            TopLevel.GetTopLevel(textBox)?.FocusManager?.Focus(
+                textBox,
+                NavigationMethod.Unspecified,
+                KeyModifiers.None
+            );
+            textBox.Focus();
+            var caretIndex = textBox.Text?.Length ?? 0;
+            textBox.CaretIndex = caretIndex;
+            textBox.SelectionStart = caretIndex;
+            textBox.SelectionEnd = caretIndex;
+        }
+
+        Dispatcher.UIThread.Post(
+            () => VerifyInlineSessionRenameTextBoxFocus(textBox, session, attempt),
+            DispatcherPriority.ContextIdle
+        );
+    }
+
+    private void VerifyInlineSessionRenameTextBoxFocus(
+        TextBox textBox,
+        AgentSessionListItemViewModel session,
+        int attempt
+    )
+    {
+        if (_pendingSessionRenameFocusId != session.SessionId || !session.IsRenameActive)
+        {
+            return;
+        }
+
+        if (textBox.IsKeyboardFocusWithin)
+        {
+            _pendingSessionRenameFocusId = null;
+            return;
+        }
+
+        if (attempt < SessionRenameFocusRetryLimit)
+        {
+            QueueFocusInlineSessionRenameTextBox(textBox, session, attempt + 1);
+        }
+    }
+
+    private TextBox? FindInlineSessionRenameTextBox(AgentSessionListItemViewModel session)
+    {
+        if (TopLevel.GetTopLevel(this) is { } topLevel)
+        {
+            var textBox = FindInlineSessionRenameTextBox(topLevel, session);
+            if (textBox is not null)
+            {
+                return textBox;
+            }
+        }
+
+        return FindInlineSessionRenameTextBox(this, session);
+    }
+
+    private static TextBox? FindInlineSessionRenameTextBox(
+        Visual root,
+        AgentSessionListItemViewModel session
+    )
+        => root.GetVisualDescendants()
+            .OfType<TextBox>()
+            .FirstOrDefault(textBox =>
+                ReferenceEquals(textBox.DataContext, session)
+                && textBox.Classes.Contains("session-rename-input")
+            );
 
     private void ConfigureComposerDropTarget(Control control)
     {

@@ -410,7 +410,8 @@
           <Grid Grid.Row="1">
             <ScrollViewer x:Name="TranscriptScrollViewer"
                           Classes="transcript-scroll">
-              <Border Classes="transcript-content">
+              <Border Classes="transcript-content"
+                      Width="{Binding Viewport.Width, ElementName=TranscriptScrollViewer}">
                 <ItemsControl x:Name="TranscriptItemsControl"
                               Classes="transcript-items"
                               ItemsSource="{Binding Messages}">

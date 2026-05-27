@@ -97,6 +97,65 @@ public sealed partial class AgentChatViewModel
     }
 
     [RelayCommand]
+    private void BeginRenameSession(AgentSessionListItemViewModel? session)
+    {
+        if (session is null)
+        {
+            return;
+        }
+
+        foreach (var item in Sessions)
+        {
+            if (!ReferenceEquals(item, session) && item.IsRenameActive)
+            {
+                item.CancelRename();
+            }
+        }
+
+        session.BeginRename();
+    }
+
+    [RelayCommand]
+    private void SaveSessionRename(AgentSessionListItemViewModel? session)
+    {
+        if (session is null)
+        {
+            return;
+        }
+
+        var updated = session.Session with
+        {
+            Title = string.IsNullOrWhiteSpace(session.RenameTitle)
+                ? "Unnamed Session"
+                : session.RenameTitle.Trim(),
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+        };
+
+        _sessionService.UpdateSession(updated);
+        ReloadSessions(updated.SessionId);
+        session.CancelRename();
+    }
+
+    [RelayCommand]
+    private static void CancelSessionRename(AgentSessionListItemViewModel? session)
+    {
+        session?.CancelRename();
+    }
+
+    [RelayCommand]
+    private void DeleteSession(AgentSessionListItemViewModel? session)
+    {
+        if (session is null)
+        {
+            return;
+        }
+
+        session.CancelRename();
+        _sessionService.DeleteSession(session.SessionId);
+        ReloadSessions(selectSessionId: null);
+    }
+
+    [RelayCommand]
     private async Task OpenChildSessionAsync(AgentChildSessionLinkViewModel? childSession)
     {
         if (childSession is null)

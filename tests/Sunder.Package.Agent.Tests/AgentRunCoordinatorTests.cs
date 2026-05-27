@@ -3500,6 +3500,67 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task AgentChatViewModel_RenamesSessionInline()
+    {
+        const string toolId = "noop";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+
+        viewModel.BeginRenameSessionCommand.Execute(viewModel.SelectedSession);
+        viewModel.SelectedSession!.RenameTitle = "Renamed Session";
+        viewModel.SaveSessionRenameCommand.Execute(viewModel.SelectedSession);
+
+        Assert.False(viewModel.SelectedSession.IsRenameActive);
+        Assert.Empty(viewModel.SelectedSession.RenameTitle);
+        Assert.Equal("Renamed Session", viewModel.SelectedSession?.Title);
+        Assert.Equal("Renamed Session", runtime.SessionService.GetSession(sessionId)?.Title);
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_DeleteSessionCommand_RemovesSessionAndCancelsInlineRename()
+    {
+        const string toolId = "noop";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var deletedSessionId = await runtime.CreateSessionAsync(toolId);
+        var fallbackSession = runtime.SessionService.CreateSession("Fallback Session");
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+        var deletedSession = viewModel.Sessions.Single(session =>
+            session.SessionId == deletedSessionId
+        );
+        viewModel.SelectedSession = deletedSession;
+        viewModel.BeginRenameSessionCommand.Execute(deletedSession);
+
+        viewModel.DeleteSessionCommand.Execute(deletedSession);
+
+        Assert.False(deletedSession.IsRenameActive);
+        Assert.Empty(deletedSession.RenameTitle);
+        Assert.Null(runtime.SessionService.GetSession(deletedSessionId));
+        Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == deletedSessionId);
+        Assert.Equal(fallbackSession.SessionId, viewModel.SelectedSession?.SessionId);
+    }
+
+    [Fact]
     public async Task QueueUserMessageAsync_UsesProvidedWorkspaceContext()
     {
         const string toolId = "fetch_page";
