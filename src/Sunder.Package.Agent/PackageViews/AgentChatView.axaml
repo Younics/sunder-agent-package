@@ -371,6 +371,21 @@
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
     </Style>
 
+    <Style Selector="TextBlock.message-header">
+      <Setter Property="Margin" Value="2,0,0,1" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="MaxLines" Value="1" />
+      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+      <Setter Property="Opacity" Value="0.78" />
+    </Style>
+
+    <Style Selector="TextBlock.message-header.user">
+      <Setter Property="HorizontalAlignment" Value="Right" />
+      <Setter Property="Margin" Value="0,0,2,1" />
+    </Style>
+
     <Style Selector="Border.message-copy-host">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
     </Style>
@@ -783,6 +798,9 @@
                   Classes="message-copy-host">
             <StackPanel Spacing="4"
                         MinWidth="0">
+              <TextBlock Classes="message-header"
+                         Text="{Binding MessageHeaderText}"
+                         IsVisible="{Binding ShowMessageHeader}" />
               <Border Classes="message-bubble"
                       MinWidth="0">
                 <StackPanel Spacing="10"
@@ -850,6 +868,9 @@
                   MinWidth="0">
             <StackPanel Spacing="4"
                         MinWidth="0">
+              <TextBlock Classes="message-header user"
+                         Text="{Binding MessageHeaderText}"
+                         IsVisible="{Binding ShowMessageHeader}" />
               <Border Classes="message-bubble user"
                       MinWidth="0">
                 <StackPanel Spacing="10"

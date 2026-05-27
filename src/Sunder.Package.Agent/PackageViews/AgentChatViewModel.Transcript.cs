@@ -604,7 +604,11 @@ public sealed partial class AgentChatViewModel
                     break;
                 }
 
-                var textRow = new AgentTextTranscriptRowViewModel(turn, textContent, attachmentRows);
+                var textRow = new AgentTextTranscriptRowViewModel(
+                    turn,
+                    textContent,
+                    attachmentRows,
+                    ResolveTurnSenderDisplayName(turn));
                 _textRowsByTurnId[turn.TurnId] = textRow;
                 InsertTranscriptRow(textRow, insertMode, prependIndex + insertedRows);
                 insertedRows++;
@@ -780,13 +784,51 @@ public sealed partial class AgentChatViewModel
                 }
                 else
                 {
-                    textRow = new AgentTextTranscriptRowViewModel(turn, textContent, attachmentRows);
+                    textRow = new AgentTextTranscriptRowViewModel(
+                        turn,
+                        textContent,
+                        attachmentRows,
+                        ResolveTurnSenderDisplayName(turn));
                 }
 
                 _textRowsByTurnId[turn.TurnId] = textRow;
                 desiredRows.Add(textRow);
                 break;
         }
+    }
+
+    private string ResolveTurnSenderDisplayName(AgentTurnRecord turn)
+    {
+        var session = _sessionService.GetSession(turn.SessionId);
+        var profileId = session?.ProfileId;
+        if (!string.IsNullOrWhiteSpace(profileId))
+        {
+            var profile = Profiles.FirstOrDefault(profile =>
+                string.Equals(profile.ProfileId, profileId, StringComparison.OrdinalIgnoreCase))
+                ?? _profileService.GetProfile(profileId);
+            if (!string.IsNullOrWhiteSpace(profile?.DisplayName))
+            {
+                return profile.DisplayName.Trim();
+            }
+        }
+
+        var hasSpecificAgentKind = !string.IsNullOrWhiteSpace(session?.AgentKind)
+            && !string.Equals(session.AgentKind, "agent", StringComparison.OrdinalIgnoreCase);
+        if (SelectedProfile is not null
+            && !hasSpecificAgentKind
+            && (session is null
+                || string.IsNullOrWhiteSpace(session.ProfileId)
+                || string.Equals(session.ProfileId, SelectedProfile.ProfileId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return SelectedProfile.DisplayName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(session?.AgentKind))
+        {
+            return session.AgentKind.Trim();
+        }
+
+        return "Agent";
     }
 
     private void ReconcileTranscriptRows(IReadOnlyList<AgentTranscriptRowViewModel> desiredRows)

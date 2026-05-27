@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using LiveMarkdown.Avalonia;
@@ -25,12 +26,15 @@ public sealed class AgentTextTranscriptRowViewModel : AgentTranscriptRowViewMode
     public AgentTextTranscriptRowViewModel(
         AgentTurnRecord turn,
         string content,
-        IReadOnlyList<AgentTranscriptAttachmentViewModel>? attachments = null)
+        IReadOnlyList<AgentTranscriptAttachmentViewModel>? attachments = null,
+        string? senderDisplayName = null)
         : base(turn.TurnId, turn.CreatedAtUtc, TranscriptRowAnchorKey.Text(turn.TurnId))
     {
         Role = turn.Role;
         RoleLabel = turn.Role.ToString().ToUpperInvariant();
         RoleGlyph = ResolveRoleGlyph(turn.Role);
+        SenderDisplayName = ResolveSenderDisplayName(turn.Role, senderDisplayName);
+        SentAtText = FormatSentAtText(turn.CreatedAtUtc);
         _content = content;
         _markdownBuilder = new ObservableStringBuilder().Append(content);
         if (attachments is not null)
@@ -53,6 +57,14 @@ public sealed class AgentTextTranscriptRowViewModel : AgentTranscriptRowViewMode
     public bool IsNotUser => !IsUser;
 
     public bool IsAssistant => Role == AgentMessageRole.Assistant;
+
+    public bool ShowMessageHeader => IsUser || IsAssistant;
+
+    public string SenderDisplayName { get; }
+
+    public string SentAtText { get; }
+
+    public string MessageHeaderText => $"{SenderDisplayName} · {SentAtText}";
 
     public ObservableCollection<AgentTranscriptAttachmentViewModel> Attachments { get; } = [];
 
@@ -117,6 +129,35 @@ public sealed class AgentTextTranscriptRowViewModel : AgentTranscriptRowViewMode
             AgentMessageRole.Tool => "T",
             _ => "?"
         };
+
+    private static string ResolveSenderDisplayName(AgentMessageRole role, string? senderDisplayName)
+        => role switch
+        {
+            AgentMessageRole.User => "You",
+            AgentMessageRole.Assistant => string.IsNullOrWhiteSpace(senderDisplayName) ? "Agent" : senderDisplayName.Trim(),
+            _ => role.ToString()
+        };
+
+    private static string FormatSentAtText(DateTimeOffset createdAtUtc)
+    {
+        var localCreatedAt = createdAtUtc.ToLocalTime();
+        var today = DateTimeOffset.Now.Date;
+        var createdDate = localCreatedAt.Date;
+        var timeText = localCreatedAt.ToString("t", CultureInfo.CurrentCulture);
+
+        if (createdDate == today)
+        {
+            return $"Today, {timeText}";
+        }
+
+        if (createdDate == today.AddDays(-1))
+        {
+            return $"Yesterday, {timeText}";
+        }
+
+        var dateFormat = localCreatedAt.Year == today.Year ? "MMM d" : "MMM d, yyyy";
+        return $"{localCreatedAt.ToString(dateFormat, CultureInfo.CurrentCulture)}, {timeText}";
+    }
 }
 
 public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscriptRowViewModel, IDisposable

@@ -1,5 +1,6 @@
 using System.Collections.Specialized;
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -7286,6 +7287,94 @@ public sealed class AgentRunCoordinatorTests
 
         Assert.NotSame(markdownBuilder, row.MarkdownBuilder);
         Assert.Equal("replacement", row.Content);
+    }
+
+    [Fact]
+    public void AgentTextTranscriptRowViewModel_FormatsAssistantMessageHeaderInLocalTime()
+    {
+        var localCreatedAt = DateTime.Today.AddHours(14).AddMinutes(35);
+        var createdAt = new DateTimeOffset(
+            localCreatedAt,
+            TimeZoneInfo.Local.GetUtcOffset(localCreatedAt)).ToUniversalTime();
+        var turn = new AgentTurnRecord(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            AgentMessageRole.Assistant,
+            AgentTurnKind.Message,
+            [],
+            createdAt,
+            createdAt);
+
+        var row = new AgentTextTranscriptRowViewModel(
+            turn,
+            "hello",
+            senderDisplayName: "Package Developer");
+
+        Assert.True(row.ShowMessageHeader);
+        Assert.Equal("Package Developer", row.SenderDisplayName);
+        Assert.Contains("Today", row.SentAtText, StringComparison.Ordinal);
+        Assert.Contains(
+            createdAt.ToLocalTime().ToString("t", CultureInfo.CurrentCulture),
+            row.SentAtText,
+            StringComparison.Ordinal);
+        Assert.Equal($"Package Developer · {row.SentAtText}", row.MessageHeaderText);
+    }
+
+    [Fact]
+    public void AgentTextTranscriptRowViewModel_FormatsUserMessageHeaderInLocalTime()
+    {
+        var localCreatedAt = DateTime.Today.AddHours(9).AddMinutes(5);
+        var createdAt = new DateTimeOffset(
+            localCreatedAt,
+            TimeZoneInfo.Local.GetUtcOffset(localCreatedAt)).ToUniversalTime();
+        var turn = new AgentTurnRecord(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            AgentMessageRole.User,
+            AgentTurnKind.Message,
+            [],
+            createdAt,
+            createdAt);
+
+        var row = new AgentTextTranscriptRowViewModel(
+            turn,
+            "hello",
+            senderDisplayName: "Ignored Agent Name");
+
+        Assert.True(row.ShowMessageHeader);
+        Assert.Equal("You", row.SenderDisplayName);
+        Assert.Contains("Today", row.SentAtText, StringComparison.Ordinal);
+        Assert.Contains(
+            createdAt.ToLocalTime().ToString("t", CultureInfo.CurrentCulture),
+            row.SentAtText,
+            StringComparison.Ordinal);
+        Assert.Equal($"You · {row.SentAtText}", row.MessageHeaderText);
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_UsesProfileNameForAssistantMessageHeader()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done"))
+        );
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+
+        runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.Assistant,
+            "response"
+        );
+
+        var row = Assert.IsType<AgentTextTranscriptRowViewModel>(Assert.Single(viewModel.Messages));
+        Assert.Equal("Test Profile", row.SenderDisplayName);
+        Assert.True(row.ShowMessageHeader);
     }
 
     [Fact]
