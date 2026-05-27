@@ -150,15 +150,6 @@
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
     </Style>
 
-    <Style Selector="md|MarkdownTextBlock">
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-    </Style>
-
-    <Style Selector="md|CodeBlock">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-    </Style>
-
     <Style Selector="Border.message-copy-host">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
     </Style>
@@ -213,7 +204,7 @@
     </Style>
 
     <Style Selector="Border.tool-output-card">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Workspace}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
@@ -221,14 +212,15 @@
     </Style>
 
     <Style Selector="Border.tool-output-header">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,0,0,1" />
+      <Setter Property="CornerRadius" Value="7,7,0,0" />
       <Setter Property="Padding" Value="16,10" />
     </Style>
 
     <Style Selector="Border.tool-output-body">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Workspace}" />
       <Setter Property="Padding" Value="16,14" />
     </Style>
 
