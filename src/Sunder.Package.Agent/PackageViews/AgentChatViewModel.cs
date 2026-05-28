@@ -106,7 +106,13 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<AgentSessionListItemViewModel> Sessions { get; } = [];
 
+    public ObservableCollection<AgentWorkspacePathChipViewModel> WideWorkspacePathChips { get; } = [];
+
+    public ObservableCollection<AgentWorkspacePathChipViewModel> NarrowWorkspacePathChips { get; } = [];
+
     public ObservableCollection<AgentTranscriptRowViewModel> Messages { get; } = [];
+
+    public IReadOnlyList<string> WorkspacePathChipLabels => _workspacePathChipLabels;
 
     public ObservableCollection<AgentPendingPermissionRequestRecord> PendingPermissionRequests { get; } =
         [];
@@ -139,6 +145,12 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     public bool HasWorkspaces => Workspaces.Count > 0;
 
     public bool HasNoWorkspaces => !HasWorkspaces;
+
+    public bool HasWorkspacePathChips => _workspacePathChipLabels.Length > 0;
+
+    public bool HasWideWorkspacePathOverflow => !string.IsNullOrWhiteSpace(WideWorkspacePathOverflowText);
+
+    public bool HasNarrowWorkspacePathOverflow => !string.IsNullOrWhiteSpace(NarrowWorkspacePathOverflowText);
 
     public bool HasProfiles => Profiles.Count > 0;
 
@@ -179,6 +191,14 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     private AgentSessionListItemViewModel? _displayedSession;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasWideWorkspacePathOverflow))]
+    private string _wideWorkspacePathOverflowText = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasNarrowWorkspacePathOverflow))]
+    private string _narrowWorkspacePathOverflowText = string.Empty;
 
     [ObservableProperty]
     private string _draftMessage = string.Empty;
@@ -672,3 +692,5 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     }
 
 }
+
+public sealed record AgentWorkspacePathChipViewModel(string Label);

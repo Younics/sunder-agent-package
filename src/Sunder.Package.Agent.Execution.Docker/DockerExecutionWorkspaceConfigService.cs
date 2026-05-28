@@ -1,58 +1,79 @@
-using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
 public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packageContext, DockerImageCatalogService? imageCatalogService = null)
+    : IAgentWorkspacePathMigrationContributor
 {
     internal const string DefaultImageReference = "agent0ai/agent-zero:latest";
     internal const string DefaultContainerRoot = "/workspace";
     internal const string DefaultShellPath = "/bin/sh";
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private static readonly char[] AliasSeparators = [' ', '.', '_'];
     private readonly DockerImageCatalogService _imageCatalogService = imageCatalogService ?? new DockerImageCatalogService(packageContext);
+
+    public string ContributorId => "sunder.package.agent.execution.docker.workspace-path-migration";
 
     public DockerExecutionWorkspaceConfig GetConfig(string bindingId)
     {
         var json = packageContext.Storage.State.GetValue(BuildKey(bindingId));
         if (string.IsNullOrWhiteSpace(json))
         {
-            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(null, [DefaultContainerRoot], DefaultContainerRoot, null, DefaultShellPath, null, []));
+            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(null, null, DefaultShellPath, []));
         }
 
         try
         {
             return Normalize(bindingId, JsonSerializer.Deserialize<DockerExecutionWorkspaceConfig>(json, JsonOptions)
-                                        ?? new DockerExecutionWorkspaceConfig(null, [], null, null, null, null, []));
+                                         ?? new DockerExecutionWorkspaceConfig(null, null, null, []));
         }
         catch
         {
-            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(null, [DefaultContainerRoot], DefaultContainerRoot, null, DefaultShellPath, null, []));
+            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(null, null, DefaultShellPath, []));
         }
     }
 
     public void SaveConfig(string bindingId, DockerExecutionWorkspaceConfig config)
     {
         var normalized = Normalize(bindingId, config);
-        EnsureHostRoots(normalized);
         packageContext.Storage.State.SetValueAsync(BuildKey(bindingId), JsonSerializer.Serialize(normalized, JsonOptions)).GetAwaiter().GetResult();
     }
 
-    public IReadOnlyList<DockerExecutionMount> ResolveMounts(DockerExecutionWorkspaceConfig config)
+    internal DockerExecutionRuntimeConfig BuildRuntimeConfig(
+        string bindingId,
+        AgentWorkspaceRecord workspace,
+        DockerExecutionWorkspaceConfig config)
     {
-        var normalized = Normalize("mount-resolution", config);
-        return normalized.AllowedRoots
-            .Select(root => new DockerExecutionMount(ResolveHostPathCore(normalized, root), root))
-            .ToArray();
+        var normalized = Normalize(bindingId, config);
+        var mounts = BuildMounts(workspace.Paths);
+        var defaultHostPath = workspace.Paths
+            .OrderBy(path => path.SortOrder)
+            .FirstOrDefault(path => path.IsDefault && !string.IsNullOrWhiteSpace(path.HostPath))
+            ?.HostPath;
+        var defaultWorkingDirectory = ResolveDefaultContainerPath(mounts, defaultHostPath) ?? mounts.FirstOrDefault()?.ContainerPath;
+        return new DockerExecutionRuntimeConfig(
+            normalized.ImageReference,
+            normalized.ContainerName,
+            normalized.ShellPath,
+            normalized.PathEntries,
+            mounts,
+            defaultWorkingDirectory);
     }
 
-    public string ResolveHostPath(DockerExecutionWorkspaceConfig config, string containerRoot)
+    internal IReadOnlyList<DockerExecutionMount> ResolveMounts(DockerExecutionRuntimeConfig config)
+        => config.Mounts;
+
+    internal string ResolveHostPath(DockerExecutionRuntimeConfig config, string containerRoot)
     {
-        var normalized = Normalize("host-path-resolution", config);
         var root = NormalizeContainerPath(containerRoot, allowRoot: false);
-        return ResolveHostPathCore(normalized, root);
+        return config.Mounts.FirstOrDefault(mount => string.Equals(mount.ContainerPath, root, StringComparison.Ordinal))?.HostPath
+               ?? throw new InvalidOperationException($"Docker workspace path is not mounted: {root}");
     }
 
     public string ResolveDefaultHostPath(string containerRoot)
@@ -61,7 +82,7 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
         return ValidateHostPath(Path.GetFullPath(packageContext.Storage.Files.GetPath(relativePath)));
     }
 
-    public void EnsureHostRoots(DockerExecutionWorkspaceConfig config)
+    internal void EnsureHostMountPaths(DockerExecutionRuntimeConfig config)
     {
         foreach (var mount in ResolveMounts(config))
         {
@@ -70,39 +91,77 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
                 throw new InvalidOperationException($"Docker host mount path points to a file: {mount.HostPath}");
             }
 
-            Directory.CreateDirectory(mount.HostPath);
+            if (!Directory.Exists(mount.HostPath))
+            {
+                throw new InvalidOperationException($"Workspace path does not exist: {mount.HostPath}");
+            }
         }
     }
 
+    public bool CanMigrate(AgentWorkspacePathMigrationContext context)
+        => string.Equals(context.Binding.ContributionId, "docker", StringComparison.OrdinalIgnoreCase);
+
+    public IReadOnlyList<AgentWorkspacePathMigrationItem> GetLegacyWorkspacePaths(AgentWorkspacePathMigrationContext context)
+    {
+        var json = packageContext.Storage.State.GetValue(BuildKey(context.Binding.BindingId));
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("AllowedRoots", out var rootsElement) || rootsElement.ValueKind != JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            var hostRoots = ReadLegacyHostRoots(root);
+            var defaultWorkingDirectory = TryGetString(root, "DefaultWorkingDirectory");
+            var normalizedDefault = string.IsNullOrWhiteSpace(defaultWorkingDirectory)
+                ? null
+                : NormalizeContainerPath(defaultWorkingDirectory, allowRoot: false);
+            var items = new List<AgentWorkspacePathMigrationItem>();
+            var index = 0;
+            foreach (var item in rootsElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var value = item.GetString();
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    continue;
+                }
+
+                var containerRoot = NormalizeContainerPath(value, allowRoot: false);
+                var hostPath = hostRoots.TryGetValue(containerRoot, out var configuredHostPath)
+                    ? configuredHostPath
+                    : ResolveDefaultHostPath(containerRoot);
+                var isDefault = normalizedDefault is not null && IsSameOrChildPath(normalizedDefault, containerRoot);
+                items.Add(new AgentWorkspacePathMigrationItem(hostPath, isDefault, index++));
+            }
+
+            return items;
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    public void CompleteWorkspacePathMigration(AgentWorkspacePathMigrationContext context)
+        => SaveConfig(context.Binding.BindingId, GetConfig(context.Binding.BindingId));
+
     private DockerExecutionWorkspaceConfig Normalize(string bindingId, DockerExecutionWorkspaceConfig config)
     {
-        var configuredRoots = config.AllowedRoots is { Count: > 0 }
-            ? config.AllowedRoots
-            : [DefaultContainerRoot];
-        var roots = configuredRoots
-            .Where(root => !string.IsNullOrWhiteSpace(root))
-            .Select(root => NormalizeContainerPath(root, allowRoot: false))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        if (roots.Length == 0)
-        {
-            roots = [DefaultContainerRoot];
-        }
-
-        ValidateNoNestedRoots(roots);
-
-        var defaultWorkingDirectory = string.IsNullOrWhiteSpace(config.DefaultWorkingDirectory)
-            ? roots.FirstOrDefault()
-            : NormalizeContainerPath(config.DefaultWorkingDirectory, allowRoot: false);
-        if (defaultWorkingDirectory is not null && !roots.Any(root => IsSameOrChildPath(defaultWorkingDirectory, root)))
-        {
-            defaultWorkingDirectory = roots.FirstOrDefault();
-        }
-
         var shellPath = string.IsNullOrWhiteSpace(config.ShellPath)
             ? DefaultShellPath
             : NormalizeContainerPath(config.ShellPath, allowRoot: false);
-        var hostRoots = NormalizeHostRoots(config.HostRoots, roots);
         var pathEntries = (config.PathEntries ?? [])
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(path => NormalizeContainerPath(path.Trim(), allowRoot: false))
@@ -111,11 +170,8 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
 
         return new DockerExecutionWorkspaceConfig(
             string.IsNullOrWhiteSpace(config.ImageReference) ? _imageCatalogService.GetDefaultImageReference() : DockerImageCatalogService.NormalizeImageReference(config.ImageReference),
-            roots,
-            defaultWorkingDirectory,
             ResolveContainerName(bindingId, config.ContainerName),
             shellPath,
-            hostRoots,
             pathEntries);
     }
 
@@ -151,49 +207,114 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
     internal static string NormalizeHostPath(string hostPath)
         => ValidateHostPath(Path.GetFullPath(Environment.ExpandEnvironmentVariables(hostPath.Trim())));
 
-    private static IReadOnlyDictionary<string, string> NormalizeHostRoots(IReadOnlyDictionary<string, string>? hostRoots, IReadOnlyList<string> allowedRoots)
-    {
-        var normalized = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (hostRoots is null)
-        {
-            return normalized;
-        }
-
-        foreach (var pair in hostRoots)
-        {
-            if (string.IsNullOrWhiteSpace(pair.Key) || string.IsNullOrWhiteSpace(pair.Value))
-            {
-                continue;
-            }
-
-            var root = NormalizeContainerPath(pair.Key, allowRoot: false);
-            if (!allowedRoots.Contains(root, StringComparer.Ordinal))
-            {
-                continue;
-            }
-
-            normalized[root] = NormalizeHostPath(pair.Value);
-        }
-
-        return normalized;
-    }
-
-    private string ResolveHostPathCore(DockerExecutionWorkspaceConfig config, string containerRoot)
-    {
-        if (config.HostRoots?.TryGetValue(containerRoot, out var hostPath) == true
-            && !string.IsNullOrWhiteSpace(hostPath))
-        {
-            return hostPath;
-        }
-
-        return ResolveDefaultHostPath(containerRoot);
-    }
-
     internal static string ToFileStoreRelativePath(string containerRoot)
     {
         var normalized = NormalizeContainerPath(containerRoot, allowRoot: false);
         var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         return Path.Combine(segments);
+    }
+
+    internal static string BuildContainerName(string bindingId)
+    {
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(bindingId))).ToLowerInvariant();
+        return $"sunder-agent-{hash[..16]}";
+    }
+
+    private static IReadOnlyList<DockerExecutionMount> BuildMounts(IReadOnlyList<AgentWorkspacePathRecord> workspacePaths)
+    {
+        var mounts = new List<DockerExecutionMount>();
+        foreach (var workspacePath in workspacePaths.OrderBy(path => path.SortOrder))
+        {
+            if (string.IsNullOrWhiteSpace(workspacePath.HostPath))
+            {
+                continue;
+            }
+
+            var hostPath = NormalizeHostPath(workspacePath.HostPath);
+            if (mounts.Any(mount => string.Equals(mount.HostPath, hostPath, GetHostPathStringComparison())))
+            {
+                continue;
+            }
+
+            mounts.Add(new DockerExecutionMount(hostPath, BuildContainerPath(hostPath)));
+        }
+
+        return mounts;
+    }
+
+    private static string? ResolveDefaultContainerPath(IReadOnlyList<DockerExecutionMount> mounts, string? defaultHostPath)
+    {
+        if (string.IsNullOrWhiteSpace(defaultHostPath))
+        {
+            return null;
+        }
+
+        var normalized = NormalizeHostPath(defaultHostPath);
+        return mounts.FirstOrDefault(mount => string.Equals(mount.HostPath, normalized, GetHostPathStringComparison()))?.ContainerPath;
+    }
+
+    private static string BuildContainerPath(string hostPath)
+    {
+        var normalized = Path.GetFullPath(hostPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var leaf = Path.GetFileName(normalized);
+        if (string.IsNullOrWhiteSpace(leaf))
+        {
+            leaf = "workspace";
+        }
+
+        var slug = BuildAliasSlug(leaf);
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized))).ToLowerInvariant()[..8];
+        return $"{DefaultContainerRoot}/{slug}-{hash}";
+    }
+
+    private static string BuildAliasSlug(string value)
+    {
+        var builder = new StringBuilder(value.Length);
+        var previousDash = false;
+        foreach (var ch in value.Trim().ToLowerInvariant())
+        {
+            if (char.IsAsciiLetterOrDigit(ch))
+            {
+                builder.Append(ch);
+                previousDash = false;
+                continue;
+            }
+
+            if ((AliasSeparators.Contains(ch) || ch == '-') && !previousDash && builder.Length > 0)
+            {
+                builder.Append('-');
+                previousDash = true;
+            }
+        }
+
+        return builder.ToString().Trim('-') is { Length: > 0 } slug ? slug : "workspace";
+    }
+
+    private static IReadOnlyDictionary<string, string> ReadLegacyHostRoots(JsonElement root)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (!root.TryGetProperty("HostRoots", out var hostRootsElement) || hostRootsElement.ValueKind != JsonValueKind.Object)
+        {
+            return result;
+        }
+
+        foreach (var property in hostRootsElement.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var value = property.Value.GetString();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            result[NormalizeContainerPath(property.Name, allowRoot: false)] = NormalizeHostPath(value);
+        }
+
+        return result;
     }
 
     private static void ValidateContainerPath(string normalized, bool allowRoot)
@@ -210,7 +331,7 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
 
         if (!allowRoot && string.Equals(normalized, "/", StringComparison.Ordinal))
         {
-            throw new InvalidOperationException("Docker workspace roots cannot be '/'. Configure a subdirectory such as /workspace.");
+            throw new InvalidOperationException("Docker workspace paths cannot be '/'. Configure a subdirectory such as /workspace.");
         }
 
         var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -220,23 +341,14 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
         }
     }
 
-    private static void ValidateNoNestedRoots(IReadOnlyList<string> roots)
+    private static string ValidateHostPath(string hostPath)
     {
-        foreach (var root in roots)
+        if (hostPath.Contains(',', StringComparison.Ordinal))
         {
-            foreach (var other in roots)
-            {
-                if (string.Equals(root, other, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                if (IsSameOrChildPath(other, root))
-                {
-                    throw new InvalidOperationException($"Docker workspace root '{other}' is nested inside '{root}'. Configure non-overlapping roots.");
-                }
-            }
+            throw new InvalidOperationException("Docker host mount paths cannot contain commas.");
         }
+
+        return hostPath;
     }
 
     private static string ResolveContainerName(string bindingId, string? configuredName)
@@ -249,26 +361,20 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
         return BuildContainerName(bindingId);
     }
 
-    internal static string BuildContainerName(string bindingId)
-    {
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(bindingId))).ToLowerInvariant();
-        return $"sunder-agent-{hash[..16]}";
-    }
-
     private static bool IsValidContainerName(string containerName)
         => containerName.Length > 0
            && char.IsLetterOrDigit(containerName[0])
            && containerName.All(ch => char.IsLetterOrDigit(ch) || ch is '_' or '.' or '-');
 
-    private static string ValidateHostPath(string hostPath)
-    {
-        if (hostPath.Contains(',', StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException("Docker host mount paths cannot contain commas.");
-        }
+    private static string? TryGetString(JsonElement element, string propertyName)
+        => element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
 
-        return hostPath;
-    }
+    private static StringComparison GetHostPathStringComparison()
+        => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
 
     private static string BuildKey(string bindingId) => $"workspace-bindings:{bindingId}:config";
 }

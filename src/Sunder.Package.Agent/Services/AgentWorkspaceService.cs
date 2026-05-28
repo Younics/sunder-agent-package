@@ -1,20 +1,30 @@
 using Sunder.Package.Agent.Contracts;
+using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Storage;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentWorkspaceService(AgentLocalStore store)
+public sealed class AgentWorkspaceService(AgentLocalStore store, IPackageExtensionCatalog? extensionCatalog = null)
 {
     private readonly AgentLocalStore _store = store;
+    private readonly IPackageExtensionCatalog? _extensionCatalog = extensionCatalog;
+    private bool _isMigratingWorkspacePaths;
 
     public event Action? WorkspacesChanged;
 
     public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces()
-        => _store.ListWorkspaces();
+    {
+        EnsureLegacyWorkspacePathMigration();
+        return _store.ListWorkspaces();
+    }
 
     public AgentWorkspaceRecord? GetWorkspace(string workspaceId)
-        => _store.GetWorkspace(workspaceId);
+    {
+        EnsureLegacyWorkspacePathMigration();
+        return _store.GetWorkspace(workspaceId);
+    }
 
     public AgentWorkspaceRecord CreateWorkspace(string displayName)
     {
@@ -47,6 +57,24 @@ public sealed class AgentWorkspaceService(AgentLocalStore store)
         };
 
         _store.SaveWorkspace(next);
+        WorkspacesChanged?.Invoke();
+    }
+
+    public IReadOnlyList<AgentWorkspacePathRecord> ListWorkspacePaths(string workspaceId)
+        => _store.ListWorkspacePaths(workspaceId);
+
+    public void SaveWorkspacePaths(string workspaceId, IReadOnlyList<AgentWorkspacePathRecord> paths)
+    {
+        SaveWorkspacePathsCore(workspaceId, paths);
+        WorkspacesChanged?.Invoke();
+    }
+
+    public IReadOnlyList<AgentWorkspaceDocumentRecord> ListWorkspaceDocuments(string workspaceId)
+        => _store.ListWorkspaceDocuments(workspaceId);
+
+    public void SaveWorkspaceDocuments(string workspaceId, IReadOnlyList<AgentWorkspaceDocumentRecord> documents)
+    {
+        SaveWorkspaceDocumentsCore(workspaceId, documents);
         WorkspacesChanged?.Invoke();
     }
 
@@ -106,6 +134,220 @@ public sealed class AgentWorkspaceService(AgentLocalStore store)
 
         WorkspacesChanged?.Invoke();
     }
+
+    private void EnsureLegacyWorkspacePathMigration()
+    {
+        if (_isMigratingWorkspacePaths || _extensionCatalog is null)
+        {
+            return;
+        }
+
+        var migrators = _extensionCatalog.GetExtensions(PackageExtensionPoints.WorkspacePathMigrationContributors).ToArray();
+        if (migrators.Length == 0)
+        {
+            return;
+        }
+
+        _isMigratingWorkspacePaths = true;
+        try
+        {
+            foreach (var workspace in _store.ListWorkspaces())
+            {
+                if (workspace.Paths.Count > 0)
+                {
+                    continue;
+                }
+
+                var binding = _store.ListWorkspaceBindings(workspace.WorkspaceId)
+                    .FirstOrDefault(item => item.IsEnabled
+                                            && string.Equals(item.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase));
+                if (binding is null)
+                {
+                    continue;
+                }
+
+                var context = new AgentWorkspacePathMigrationContext(workspace, binding);
+                var completedMigrators = new List<IAgentWorkspacePathMigrationContributor>();
+                var migrationItems = new List<AgentWorkspacePathMigrationItem>();
+                foreach (var migrator in migrators)
+                {
+                    try
+                    {
+                        if (!migrator.CanMigrate(context))
+                        {
+                            continue;
+                        }
+
+                        var items = migrator.GetLegacyWorkspacePaths(context)
+                            .Where(item => !string.IsNullOrWhiteSpace(item.HostPath))
+                            .ToArray();
+                        if (items.Length == 0)
+                        {
+                            continue;
+                        }
+
+                        migrationItems.AddRange(items);
+                        completedMigrators.Add(migrator);
+                    }
+                    catch
+                    {
+                        // Legacy migration should never prevent the workspace list from loading.
+                    }
+                }
+
+                if (migrationItems.Count == 0)
+                {
+                    continue;
+                }
+
+                SaveWorkspacePathsCore(workspace.WorkspaceId, BuildPathRecords(workspace.WorkspaceId, migrationItems));
+                foreach (var migrator in completedMigrators)
+                {
+                    try
+                    {
+                        migrator.CompleteWorkspacePathMigration(context);
+                    }
+                    catch
+                    {
+                        // A completed path migration is still valid if cleanup of legacy config fails.
+                    }
+                }
+            }
+        }
+        finally
+        {
+            _isMigratingWorkspacePaths = false;
+        }
+    }
+
+    private void SaveWorkspacePathsCore(string workspaceId, IReadOnlyList<AgentWorkspacePathRecord> paths)
+        => _store.SaveWorkspacePaths(workspaceId, NormalizePathRecords(workspaceId, paths));
+
+    private void SaveWorkspaceDocumentsCore(string workspaceId, IReadOnlyList<AgentWorkspaceDocumentRecord> documents)
+        => _store.SaveWorkspaceDocuments(workspaceId, NormalizeDocumentRecords(workspaceId, documents));
+
+    private static IReadOnlyList<AgentWorkspacePathRecord> BuildPathRecords(
+        string workspaceId,
+        IReadOnlyList<AgentWorkspacePathMigrationItem> items)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return items
+            .OrderBy(item => item.SortOrder)
+            .Select((item, index) => new AgentWorkspacePathRecord(
+                Guid.NewGuid().ToString("N"),
+                workspaceId,
+                item.HostPath,
+                item.IsDefault,
+                index,
+                now,
+                now))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<AgentWorkspacePathRecord> NormalizePathRecords(
+        string workspaceId,
+        IReadOnlyList<AgentWorkspacePathRecord> paths)
+    {
+        var comparer = GetPathStringComparer();
+        var now = DateTimeOffset.UtcNow;
+        var normalized = new List<AgentWorkspacePathRecord>();
+        foreach (var path in paths)
+        {
+            if (string.IsNullOrWhiteSpace(path.HostPath))
+            {
+                continue;
+            }
+
+            var hostPath = Path.GetFullPath(ExpandPath(path.HostPath.Trim()));
+            if (normalized.Any(item => comparer.Equals(item.HostPath, hostPath)))
+            {
+                continue;
+            }
+
+            normalized.Add(path with
+            {
+                PathId = string.IsNullOrWhiteSpace(path.PathId) ? Guid.NewGuid().ToString("N") : path.PathId,
+                WorkspaceId = workspaceId,
+                HostPath = hostPath,
+                SortOrder = normalized.Count,
+                CreatedAtUtc = path.CreatedAtUtc == default ? now : path.CreatedAtUtc,
+                UpdatedAtUtc = now,
+            });
+        }
+
+        var defaultIndex = normalized.FindIndex(path => path.IsDefault);
+        if (defaultIndex < 0 && normalized.Count > 0)
+        {
+            defaultIndex = 0;
+        }
+
+        for (var index = 0; index < normalized.Count; index++)
+        {
+            normalized[index] = normalized[index] with
+            {
+                IsDefault = index == defaultIndex,
+                SortOrder = index,
+            };
+        }
+
+        return normalized;
+    }
+
+    private static IReadOnlyList<AgentWorkspaceDocumentRecord> NormalizeDocumentRecords(
+        string workspaceId,
+        IReadOnlyList<AgentWorkspaceDocumentRecord> documents)
+    {
+        var comparer = GetPathStringComparer();
+        var now = DateTimeOffset.UtcNow;
+        var normalized = new List<AgentWorkspaceDocumentRecord>();
+        foreach (var document in documents)
+        {
+            if (string.IsNullOrWhiteSpace(document.FilePath))
+            {
+                continue;
+            }
+
+            var filePath = Path.GetFullPath(ExpandPath(document.FilePath.Trim()));
+            if (normalized.Any(item => comparer.Equals(item.FilePath, filePath)))
+            {
+                continue;
+            }
+
+            normalized.Add(document with
+            {
+                DocumentId = string.IsNullOrWhiteSpace(document.DocumentId) ? Guid.NewGuid().ToString("N") : document.DocumentId,
+                WorkspaceId = workspaceId,
+                FilePath = filePath,
+                SortOrder = normalized.Count,
+                CreatedAtUtc = document.CreatedAtUtc == default ? now : document.CreatedAtUtc,
+                UpdatedAtUtc = now,
+            });
+        }
+
+        return normalized;
+    }
+
+    private static string ExpandPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return path;
+        }
+
+        if (path == "~")
+        {
+            return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        }
+
+        return path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith("~\\", StringComparison.Ordinal)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path[2..])
+            : Environment.ExpandEnvironmentVariables(path);
+    }
+
+    private static StringComparer GetPathStringComparer()
+        => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
 }
 
 public static class AgentWorkspaceBindingRoles

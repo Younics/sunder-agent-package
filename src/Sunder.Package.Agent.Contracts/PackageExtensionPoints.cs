@@ -56,6 +56,9 @@ public static class PackageExtensionPoints
     public static readonly PackageExtensionPoint<IAgentWorkspaceEditorContributor> WorkspaceEditorContributors =
         new("sunder.package.agent:workspace-editor-contributors");
 
+    public static readonly PackageExtensionPoint<IAgentWorkspacePathMigrationContributor> WorkspacePathMigrationContributors =
+        new("sunder.package.agent:workspace-path-migration-contributors");
+
     public static readonly PackageExtensionPoint<IAgentProfileEditorContributor> ProfileEditorContributors =
         new("sunder.package.agent:profile-editor-contributors");
 

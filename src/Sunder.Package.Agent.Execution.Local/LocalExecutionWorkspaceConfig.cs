@@ -1,7 +1,11 @@
 namespace Sunder.Package.Agent.Execution.Local;
 
 public sealed record LocalExecutionWorkspaceConfig(
-    IReadOnlyList<string> AllowedRoots,
+    string? SelectedShellId = null,
+    IReadOnlyList<string>? PathEntries = null);
+
+internal sealed record LocalExecutionRuntimeConfig(
+    IReadOnlyList<string> WorkspacePaths,
     string? DefaultWorkingDirectory,
     string? SelectedShellId = null,
     IReadOnlyList<string>? PathEntries = null);

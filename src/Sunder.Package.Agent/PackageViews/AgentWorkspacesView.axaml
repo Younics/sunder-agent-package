@@ -201,12 +201,6 @@
       <Setter Property="Height" Value="28" />
     </Style>
 
-    <Style Selector="TextBlock.path-row-label">
-      <Setter Property="FontSize" Value="11" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-      <Setter Property="Margin" Value="0,0,0,2" />
-    </Style>
-
     <Style Selector="Button.path-icon-action">
       <Setter Property="Width" Value="36" />
       <Setter Property="MinWidth" Value="36" />
@@ -214,6 +208,12 @@
       <Setter Property="Padding" Value="0" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="TextBlock.path-row-label">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="Margin" Value="0,0,0,2" />
     </Style>
 
     <Style Selector="Button.field-icon-action">
@@ -267,6 +267,88 @@
 
     <Style Selector="ListBox.path-list ListBoxItem:selected">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+    </Style>
+
+    <Style Selector="Border.path-list">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="MinHeight" Value="36" />
+    </Style>
+
+    <Style Selector="Border.path-row">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="10,8" />
+      <Setter Property="Margin" Value="0,0,0,6" />
+    </Style>
+
+    <Style Selector="Border.path-row:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+    </Style>
+
+    <Style Selector="Border.path-row.editing">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+      <Setter Property="Padding" Value="0" />
+    </Style>
+
+    <Style Selector="TextBlock.path-row-text">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="TextTrimming" Value="LeadingCharacterEllipsis" />
+    </Style>
+
+    <Style Selector="TextBox.path-edit-input">
+      <Setter Property="MinHeight" Value="30" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="Padding" Value="10,8" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="VerticalAlignment" Value="Stretch" />
+    </Style>
+
+    <Style Selector="Border.default-badge">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Full}" />
+      <Setter Property="Width" Value="22" />
+      <Setter Property="Height" Value="22" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="TextBlock.default-badge-text">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="HorizontalAlignment" Value="Center" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Button.path-menu-action">
+      <Setter Property="Width" Value="28" />
+      <Setter Property="MinWidth" Value="28" />
+      <Setter Property="Height" Value="28" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Button.path-menu-action:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
     </Style>
   </UserControl.Styles>
 
@@ -364,6 +446,137 @@
                              Text="Description" />
                   <TextBox Text="{Binding Description, Mode=TwoWay}"
                            PlaceholderText="Description" />
+                </StackPanel>
+
+                <StackPanel Spacing="10">
+                  <Grid ColumnDefinitions="*,Auto"
+                        RowDefinitions="Auto,Auto"
+                        ColumnSpacing="10"
+                        RowSpacing="4">
+                    <TextBlock Classes="field-label"
+                               Text="Workspace Docs" />
+                    <Button Grid.Column="1"
+                            Classes="secondary-action compact-action path-icon-action"
+                            Content="+"
+                            ToolTip.Tip="Add file"
+                            Click="OnAddWorkspaceDocumentClick" />
+                    <TextBlock Grid.Row="1"
+                               Classes="field-help"
+                               Text="Explicit docs are global read-only context. Auto docs are discovered from each workspace path under .sunder/docs." />
+                  </Grid>
+
+                  <Border Classes="path-list"
+                          IsVisible="{Binding HasWorkspaceDocuments}"
+                          DragDrop.AllowDrop="True"
+                          DragDrop.DragOver="OnWorkspaceDocumentDragOver"
+                          DragDrop.Drop="OnWorkspaceDocumentDrop">
+                    <ItemsControl ItemsSource="{Binding WorkspaceDocuments}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:AgentWorkspaceDocumentItemViewModel">
+                          <Border Classes="path-row"
+                                  Classes.editing="{Binding IsEditActive}">
+                            <Grid ColumnDefinitions="*,Auto"
+                                  ColumnSpacing="8">
+                              <TextBlock Classes="path-row-text"
+                                         Text="{Binding FilePath}"
+                                         ToolTip.Tip="{Binding FilePath}"
+                                         IsVisible="{Binding IsNotEditActive}" />
+                              <TextBox Grid.ColumnSpan="2"
+                                       Classes="path-edit-input workspace-document-edit-input"
+                                       Text="{Binding EditFilePath, Mode=TwoWay}"
+                                       AttachedToVisualTree="OnWorkspaceDocumentEditTextBoxAttachedToVisualTree"
+                                       LayoutUpdated="OnWorkspaceDocumentEditTextBoxLayoutUpdated"
+                                       KeyDown="OnWorkspaceDocumentEditKeyDown"
+                                       PointerReleased="OnWorkspaceInlineEditInputInteraction"
+                                       Tapped="OnWorkspaceInlineEditInputInteraction"
+                                       IsVisible="{Binding IsEditActive}" />
+                              <Button Grid.Column="1"
+                                      Classes="path-menu-action"
+                                      Content="⋯"
+                                      Click="OnWorkspaceDocumentActionsClick"
+                                      ToolTip.Tip="Document actions"
+                                      IsVisible="{Binding IsNotEditActive}" />
+                            </Grid>
+                          </Border>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </Border>
+
+                  <Border Classes="editor-empty-state"
+                          IsVisible="{Binding !HasWorkspaceDocuments}">
+                    <TextBlock Classes="field-help"
+                               Text="No explicit workspace docs. Add docs here or place markdown/text files under each workspace path's .sunder/docs folder." />
+                  </Border>
+                </StackPanel>
+
+                <StackPanel Spacing="10">
+                  <Grid ColumnDefinitions="*,Auto"
+                        RowDefinitions="Auto,Auto"
+                        ColumnSpacing="10"
+                        RowSpacing="4">
+                    <TextBlock Classes="field-label"
+                               Text="Workspace Paths" />
+                    <Button Grid.Column="1"
+                            Classes="secondary-action compact-action path-icon-action"
+                            Content="+"
+                            ToolTip.Tip="Add folder"
+                            Click="OnAddWorkspacePathClick" />
+                    <TextBlock Grid.Row="1"
+                               Classes="field-help"
+                               Text="Folders the agent can use for local file access and Docker mounts. Set one path as the default working directory." />
+                  </Grid>
+
+                  <Border Classes="path-list"
+                          IsVisible="{Binding HasWorkspacePaths}"
+                          DragDrop.AllowDrop="True"
+                          DragDrop.DragOver="OnWorkspacePathDragOver"
+                          DragDrop.Drop="OnWorkspacePathDrop">
+                    <ItemsControl ItemsSource="{Binding WorkspacePaths}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:AgentWorkspacePathItemViewModel">
+                          <Border Classes="path-row"
+                                  Classes.editing="{Binding IsEditActive}">
+                            <Grid ColumnDefinitions="*,Auto,Auto"
+                                  ColumnSpacing="8">
+                              <TextBlock Classes="path-row-text"
+                                         Text="{Binding HostPath}"
+                                         ToolTip.Tip="{Binding HostPath}"
+                                         IsVisible="{Binding IsNotEditActive}" />
+                              <TextBox Grid.ColumnSpan="3"
+                                       Classes="path-edit-input workspace-path-edit-input"
+                                       Text="{Binding EditHostPath, Mode=TwoWay}"
+                                       AttachedToVisualTree="OnWorkspacePathEditTextBoxAttachedToVisualTree"
+                                       LayoutUpdated="OnWorkspacePathEditTextBoxLayoutUpdated"
+                                       KeyDown="OnWorkspacePathEditKeyDown"
+                                       PointerReleased="OnWorkspaceInlineEditInputInteraction"
+                                       Tapped="OnWorkspaceInlineEditInputInteraction"
+                                       IsVisible="{Binding IsEditActive}" />
+                              <Border Grid.Column="1"
+                                      Classes="default-badge"
+                                      IsVisible="{Binding IsDefault}"
+                                      ToolTip.Tip="Default working directory">
+                                <TextBlock Classes="default-badge-text"
+                                           Text="D" />
+                              </Border>
+                              <Button Grid.Column="2"
+                                      Classes="path-menu-action"
+                                      Content="⋯"
+                                      Click="OnWorkspacePathActionsClick"
+                                      ToolTip.Tip="Path actions"
+                                      IsVisible="{Binding IsNotEditActive}" />
+                            </Grid>
+                          </Border>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </Border>
+
+                  <Border Classes="editor-empty-state"
+                          IsVisible="{Binding !HasWorkspacePaths}">
+                    <TextBlock Classes="field-help"
+                               Text="No workspace paths configured. Chat can still work, but file and shell tools need at least one path." />
+                  </Border>
                 </StackPanel>
 
                 <StackPanel Spacing="5"

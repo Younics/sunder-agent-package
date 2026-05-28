@@ -158,8 +158,8 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
     private static IReadOnlyList<AgentPermissionBoundaryDescriptor> FileBoundaries()
         =>
         [
-            new(AgentPermissionBoundaryIds.ConfiguredScope, "Files inside configured workspace roots", "Paths resolved by the selected execution target inside configured roots.", AgentPermissionDecision.Allow),
-            new(AgentPermissionBoundaryIds.OutsideConfiguredScope, "Files outside configured workspace roots", "Paths resolved by the selected execution target outside configured roots.", AgentPermissionDecision.Ask),
+            new(AgentPermissionBoundaryIds.ConfiguredScope, "Files inside configured workspace paths", "Paths resolved by the selected execution target inside configured workspace paths.", AgentPermissionDecision.Allow),
+            new(AgentPermissionBoundaryIds.OutsideConfiguredScope, "Files outside configured workspace paths", "Paths resolved by the selected execution target outside configured workspace paths.", AgentPermissionDecision.Ask),
             new(AgentPermissionBoundaryIds.Unknown, "Files whose workspace scope is unknown", "Requests that could not be classified by the selected execution target.", AgentPermissionDecision.Ask),
         ];
 
@@ -184,7 +184,7 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
         var scope = await scopeProvider.GetExecutionScopeAsync(
             new AgentExecutionTargetContext(request.Session.SessionId, request.Profile.ProfileId, request.Workspace, request.ExecutionBinding),
             cancellationToken);
-        if (scope.AllowedRoots.Count == 0)
+        if (scope.WorkspacePaths.Count == 0)
         {
             return [];
         }
@@ -194,8 +194,8 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
             .Append(scope.DisplayName)
             .AppendLine(" workspace.")
             .AppendLine()
-            .AppendLine("Configured allowed roots:");
-        foreach (var root in scope.AllowedRoots)
+            .AppendLine("Configured workspace paths:");
+        foreach (var root in scope.WorkspacePaths)
         {
             content.Append("- ").AppendLine(root);
         }
@@ -214,7 +214,7 @@ public sealed partial class FilesToolSource(IPackageExtensionCatalog extensionCa
         }
 
         content.AppendLine()
-            .AppendLine("Use these exact configured roots when an absolute path is needed. Prefer relative paths from the default working directory when possible. Do not invent paths from other user profiles or machines. Paths outside the configured roots require permission.");
+            .AppendLine("Use these exact workspace paths when an absolute path is needed. Prefer relative paths from the default working directory when possible. Do not invent paths from other user profiles or machines. Paths outside the configured workspace paths require permission.");
 
         return
         [

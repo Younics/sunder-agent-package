@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -20,6 +21,12 @@ public partial class AgentChatView : UserControl
 {
     private const double WideHeaderMinimumWidth = 520;
     private const int SessionRenameFocusRetryLimit = 12;
+    private const double WorkspacePathChipTextFontSize = 11;
+    private const double WorkspacePathChipSpacing = 6;
+    private const double WorkspacePathOverflowSpacing = 8;
+    private const double WorkspacePathChipChromeWidth = 36;
+    private const double WorkspacePathOverflowChromeWidth = 18;
+    private static readonly FontFamily WorkspacePathChipFontFamily = new("Menlo,Consolas,monospace");
     private static readonly FilePickerFileType SupportedAttachmentFileType = new("Supported attachments")
     {
         Patterns =
@@ -101,6 +108,7 @@ public partial class AgentChatView : UserControl
         _viewModel.TranscriptChanging += OnTranscriptChanging;
         _viewModel.TranscriptChanged += OnTranscriptChanged;
         _viewModel.PropertyChanging += OnViewModelPropertyChanging;
+        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         DataContext = _viewModel;
     }
 
@@ -109,6 +117,14 @@ public partial class AgentChatView : UserControl
         if (string.Equals(e.PropertyName, nameof(AgentChatViewModel.DisplayedSession), StringComparison.Ordinal))
         {
             MarkInitialTranscriptPlacementPending();
+        }
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (string.Equals(e.PropertyName, nameof(AgentChatViewModel.WorkspacePathChipLabels), StringComparison.Ordinal))
+        {
+            QueueWorkspacePathChipLayoutUpdate();
         }
     }
 
@@ -820,5 +836,87 @@ public partial class AgentChatView : UserControl
         var useWideLayout = Bounds.Width >= WideHeaderMinimumWidth;
         HeaderWideLayout.IsVisible = useWideLayout;
         HeaderNarrowLayout.IsVisible = !useWideLayout;
+        QueueWorkspacePathChipLayoutUpdate();
+    }
+
+    private void OnWorkspacePathRowSizeChanged(object? sender, SizeChangedEventArgs e)
+        => QueueWorkspacePathChipLayoutUpdate();
+
+    private void QueueWorkspacePathChipLayoutUpdate()
+        => Dispatcher.UIThread.Post(UpdateWorkspacePathChipLayout, DispatcherPriority.Loaded);
+
+    private void UpdateWorkspacePathChipLayout()
+    {
+        var viewModel = _viewModel ?? DataContext as AgentChatViewModel;
+        if (viewModel is null)
+        {
+            return;
+        }
+
+        var labels = viewModel.WorkspacePathChipLabels;
+        var wideVisibleCount = CalculateVisibleWorkspacePathChipCount(labels, WideWorkspacePathRow.Bounds.Width);
+        var narrowVisibleCount = CalculateVisibleWorkspacePathChipCount(labels, NarrowWorkspacePathRow.Bounds.Width);
+        viewModel.UpdateWorkspacePathChipLayout(wideVisibleCount, narrowVisibleCount);
+    }
+
+    private static int CalculateVisibleWorkspacePathChipCount(IReadOnlyList<string> labels, double availableWidth)
+    {
+        if (labels.Count == 0)
+        {
+            return 0;
+        }
+
+        if (double.IsNaN(availableWidth) || double.IsInfinity(availableWidth) || availableWidth <= 0)
+        {
+            return labels.Count;
+        }
+
+        for (var count = labels.Count; count >= 0; count--)
+        {
+            var overflowCount = labels.Count - count;
+            var width = MeasureWorkspacePathChipsWidth(labels, count);
+            if (overflowCount > 0)
+            {
+                width += WorkspacePathOverflowSpacing + MeasureWorkspacePathOverflowWidth(overflowCount);
+            }
+
+            if (width <= availableWidth)
+            {
+                return count;
+            }
+        }
+
+        return 0;
+    }
+
+    private static double MeasureWorkspacePathChipsWidth(IReadOnlyList<string> labels, int count)
+    {
+        var width = 0d;
+        for (var index = 0; index < count; index++)
+        {
+            if (index > 0)
+            {
+                width += WorkspacePathChipSpacing;
+            }
+
+            width += MeasureWorkspacePathTextWidth(labels[index]) + WorkspacePathChipChromeWidth;
+        }
+
+        return width;
+    }
+
+    private static double MeasureWorkspacePathOverflowWidth(int overflowCount)
+        => MeasureWorkspacePathTextWidth($"+{overflowCount} more") + WorkspacePathOverflowChromeWidth;
+
+    private static double MeasureWorkspacePathTextWidth(string text)
+    {
+        var textBlock = new TextBlock
+        {
+            Text = text,
+            FontFamily = WorkspacePathChipFontFamily,
+            FontSize = WorkspacePathChipTextFontSize,
+        };
+        textBlock.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        return Math.Ceiling(textBlock.DesiredSize.Width);
     }
 }

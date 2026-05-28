@@ -18,10 +18,10 @@ internal static class LocalResourceResolver
                 resource.Metadata))
             .ToArray();
 
-    public static AgentResolvedResource ResolveFileResource(LocalExecutionWorkspaceConfig config, string path, bool allowOutsideConfiguredScope)
+    public static AgentResolvedResource ResolveFileResource(LocalExecutionRuntimeConfig config, string path, bool allowOutsideConfiguredScope)
     {
         var resolved = LocalPathResolver.ResolvePath(config, path, allowOutsideConfiguredScope);
-        var boundary = LocalPathResolver.IsInsideAllowedRoot(config, resolved)
+        var boundary = LocalPathResolver.IsInsideWorkspacePath(config, resolved)
             ? AgentPermissionBoundaryIds.ConfiguredScope
             : AgentPermissionBoundaryIds.OutsideConfiguredScope;
         return new AgentResolvedResource(
@@ -32,9 +32,9 @@ internal static class LocalResourceResolver
             File.Exists(resolved) || Directory.Exists(resolved));
     }
 
-    public static AgentExecutionPathMapping MapToHostPath(LocalExecutionWorkspaceConfig config, string executionPath)
+    public static AgentExecutionPathMapping MapToHostPath(LocalExecutionRuntimeConfig config, string executionPath)
     {
         var resolved = LocalPathResolver.ResolvePath(config, executionPath, allowOutsideConfiguredScope: false);
-        return new AgentExecutionPathMapping(resolved, resolved, LocalPathResolver.IsInsideAllowedRoot(config, resolved));
+        return new AgentExecutionPathMapping(resolved, resolved, LocalPathResolver.IsInsideWorkspacePath(config, resolved));
     }
 }

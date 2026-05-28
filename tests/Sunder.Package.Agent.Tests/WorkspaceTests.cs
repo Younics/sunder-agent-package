@@ -35,6 +35,72 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
+    public void AgentWorkspaceService_SaveWorkspacePathsAndDocuments_PersistsHydratedWorkspace()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var service = new AgentWorkspaceService(store);
+        var root = Path.Combine(scope.RootPath, "workspace");
+        var documentPath = Path.Combine(scope.RootPath, "README.md");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(documentPath, "Workspace docs.");
+        var workspace = service.CreateWorkspace("Docs Workspace");
+
+        service.SaveWorkspacePaths(workspace.WorkspaceId,
+        [
+            new AgentWorkspacePathRecord(string.Empty, workspace.WorkspaceId, root, IsDefault: false, 10, default, default),
+        ]);
+        service.SaveWorkspaceDocuments(workspace.WorkspaceId,
+        [
+            new AgentWorkspaceDocumentRecord(string.Empty, workspace.WorkspaceId, documentPath, 10, default, default),
+        ]);
+
+        var hydrated = service.GetWorkspace(workspace.WorkspaceId);
+
+        Assert.NotNull(hydrated);
+        var path = Assert.Single(hydrated!.Paths);
+        Assert.Equal(Path.GetFullPath(root), path.HostPath);
+        Assert.True(path.IsDefault);
+        Assert.Equal(0, path.SortOrder);
+        var document = Assert.Single(hydrated.Documents);
+        Assert.Equal(Path.GetFullPath(documentPath), document.FilePath);
+        Assert.Equal(0, document.SortOrder);
+    }
+
+    [Fact]
+    public async Task WorkspaceDocumentationContextService_ContributeAsync_LoadsExplicitAndAutoDocs()
+    {
+        using var scope = TestScope.Create();
+        var workspaceRoot = Path.Combine(scope.RootPath, "repo");
+        var docsRoot = Path.Combine(workspaceRoot, ".sunder", "docs");
+        var explicitDocumentPath = Path.Combine(scope.RootPath, "project-guide.md");
+        var autoDocumentPath = Path.Combine(docsRoot, "guide.md");
+        Directory.CreateDirectory(docsRoot);
+        File.WriteAllText(explicitDocumentPath, "Explicit project guidance.");
+        File.WriteAllText(autoDocumentPath, "Auto workspace guidance.");
+        var now = DateTimeOffset.UtcNow;
+        var workspace = new AgentWorkspaceRecord(
+            "workspace.docs",
+            "Docs Workspace",
+            null,
+            now,
+            now,
+            [new AgentWorkspacePathRecord("path", "workspace.docs", workspaceRoot, true, 0, now, now)],
+            [new AgentWorkspaceDocumentRecord("doc", "workspace.docs", explicitDocumentPath, 0, now, now)]);
+        var service = new WorkspaceDocumentationContextService();
+
+        var blocks = await service.ContributeAsync(CreateSystemPromptRequest(workspace));
+
+        var block = Assert.Single(blocks);
+        Assert.Equal("workspace-documentation", block.BlockId);
+        Assert.Contains("project-guide.md", block.Content, StringComparison.Ordinal);
+        Assert.Contains("Explicit project guidance.", block.Content, StringComparison.Ordinal);
+        Assert.Contains("guide.md", block.Content, StringComparison.Ordinal);
+        Assert.Contains("Auto workspace guidance.", block.Content, StringComparison.Ordinal);
+        Assert.Contains($"Workspace path scope: {Path.GetFullPath(workspaceRoot).Replace(Path.DirectorySeparatorChar, '/')}", block.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AgentLocalStore_PreservesSessions_WhenStoreReopens()
     {
         using var scope = TestScope.Create();
@@ -426,9 +492,8 @@ public sealed class WorkspaceTests
 
         Assert.Equal("agent0ai/agent-zero:latest", config.ImageReference);
         Assert.Equal(DockerExecutionWorkspaceConfigService.BuildContainerName("workspace:primary-execution-target"), config.ContainerName);
-        Assert.Equal(["/workspace"], config.AllowedRoots);
-        Assert.Equal("/workspace", config.DefaultWorkingDirectory);
         Assert.Equal("/bin/sh", config.ShellPath);
+        Assert.Empty(config.PathEntries ?? []);
     }
 
     [Fact]
@@ -524,11 +589,11 @@ public sealed class WorkspaceTests
         });
         var configService = new DockerExecutionWorkspaceConfigService(scope.Context);
         var target = new DockerExecutionTarget(scope.Context, configService, lifecycle, dockerCliRunner: runner);
-        var workspace = CreateWorkspace();
+        var (workspace, _) = CreateDockerWorkspace(scope);
         var binding = CreateBinding(workspace.WorkspaceId, "docker");
         configService.SaveConfig(
             binding.BindingId,
-            new DockerExecutionWorkspaceConfig("test-image:latest", ["/workspace"], "/workspace", "sunder-agent-test", "/bin/sh"));
+            new DockerExecutionWorkspaceConfig("test-image:latest", "sunder-agent-test", "/bin/sh"));
         var content = string.Join("\n", Enumerable.Range(0, 5000).Select(index => $"line-{index}"));
         var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
 
@@ -567,17 +632,18 @@ public sealed class WorkspaceTests
         });
         var configService = new DockerExecutionWorkspaceConfigService(scope.Context);
         var target = new DockerExecutionTarget(scope.Context, configService, lifecycle, dockerCliRunner: runner);
-        var workspace = CreateWorkspace();
+        var (workspace, _) = CreateDockerWorkspace(scope);
         var binding = CreateBinding(workspace.WorkspaceId, "docker");
-        configService.SaveConfig(binding.BindingId, new DockerExecutionWorkspaceConfig("test-image:latest", ["/workspace"], "/workspace", "sunder-agent-test", "/bin/sh"));
+        configService.SaveConfig(binding.BindingId, new DockerExecutionWorkspaceConfig("test-image:latest", "sunder-agent-test", "/bin/sh"));
+        var containerRoot = (await target.GetExecutionScopeAsync(new AgentExecutionTargetContext(null, null, workspace, binding))).DefaultWorkingDirectory!;
 
         var result = await target.ReadFileAsync(
             new AgentExecutionTargetContext(null, null, workspace, binding),
             new AgentFileReadRequest("missing.txt"));
 
         Assert.False(result.IsDirectory);
-        Assert.Equal("/workspace/missing.txt", result.Path);
-        Assert.Equal("File not found: /workspace/missing.txt", result.Content);
+        Assert.Equal($"{containerRoot}/missing.txt", result.Path);
+        Assert.Equal($"File not found: {containerRoot}/missing.txt", result.Content);
     }
 
     [Fact]
@@ -601,9 +667,9 @@ public sealed class WorkspaceTests
         });
         var configService = new DockerExecutionWorkspaceConfigService(scope.Context);
         var target = new DockerExecutionTarget(scope.Context, configService, lifecycle, dockerCliRunner: runner);
-        var workspace = CreateWorkspace();
+        var (workspace, _) = CreateDockerWorkspace(scope);
         var binding = CreateBinding(workspace.WorkspaceId, "docker");
-        configService.SaveConfig(binding.BindingId, new DockerExecutionWorkspaceConfig("test-image:latest", ["/workspace"], "/workspace", "sunder-agent-test", "/bin/sh"));
+        configService.SaveConfig(binding.BindingId, new DockerExecutionWorkspaceConfig("test-image:latest", "sunder-agent-test", "/bin/sh"));
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await target.ReadFileAsync(
@@ -632,9 +698,10 @@ public sealed class WorkspaceTests
         });
         var configService = new DockerExecutionWorkspaceConfigService(scope.Context);
         var target = new DockerExecutionTarget(scope.Context, configService, lifecycle, dockerCliRunner: runner);
-        var workspace = CreateWorkspace();
+        var (workspace, _) = CreateDockerWorkspace(scope);
         var binding = CreateBinding(workspace.WorkspaceId, "docker");
-        configService.SaveConfig(binding.BindingId, new DockerExecutionWorkspaceConfig("test-image:latest", ["/workspace"], "/workspace", "sunder-agent-test", "/bin/sh"));
+        configService.SaveConfig(binding.BindingId, new DockerExecutionWorkspaceConfig("test-image:latest", "sunder-agent-test", "/bin/sh"));
+        var containerRoot = (await target.GetExecutionScopeAsync(new AgentExecutionTargetContext(null, null, workspace, binding))).DefaultWorkingDirectory!;
 
         var result = await target.DeleteFileAsync(
             new AgentExecutionTargetContext(null, null, workspace, binding),
@@ -643,7 +710,7 @@ public sealed class WorkspaceTests
         Assert.True(result.IsError);
         Assert.Equal("path-not-found", result.ErrorCode);
         Assert.Equal("Path does not exist.", result.Summary);
-        Assert.Equal("/workspace/missing.txt", result.Path);
+        Assert.Equal($"{containerRoot}/missing.txt", result.Path);
     }
 
     [Fact]
@@ -726,100 +793,85 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void DockerExecutionWorkspaceConfigService_SaveConfig_CreatesPackageFileRootsAndShellPath()
+    public void DockerExecutionWorkspaceConfigService_BuildRuntimeConfig_MountsWorkspacePathsAndShellPath()
     {
         using var scope = TestScope.Create();
         var configService = new DockerExecutionWorkspaceConfigService(scope.Context);
+        var (workspace, hostRoot) = CreateDockerWorkspace(scope, "test");
+        var bindingId = "workspace:primary-execution-target";
 
         configService.SaveConfig(
-            "workspace:primary-execution-target",
-            new DockerExecutionWorkspaceConfig(
-                "test-image:latest",
-                ["/workspace/test"],
-                "/workspace/test",
-                null,
-                "/bin/bash"));
+            bindingId,
+            new DockerExecutionWorkspaceConfig("test-image:latest", null, "/bin/bash"));
 
-        var config = configService.GetConfig("workspace:primary-execution-target");
+        var config = configService.GetConfig(bindingId);
+        var runtimeConfig = configService.BuildRuntimeConfig(bindingId, workspace, config);
 
         Assert.Equal("/bin/bash", config.ShellPath);
-        Assert.Equal(["/workspace/test"], config.AllowedRoots);
-        Assert.Equal("/workspace/test", config.DefaultWorkingDirectory);
         Assert.NotNull(config.ContainerName);
         Assert.DoesNotContain(':', config.ContainerName!);
-        var defaultHostRoot = Path.Combine(scope.RootPath, "files", "workspace", "test");
-        var mount = Assert.Single(configService.ResolveMounts(config));
-        Assert.Equal(Path.GetFullPath(defaultHostRoot), mount.HostPath);
-        Assert.Equal("/workspace/test", mount.ContainerPath);
-        Assert.True(Directory.Exists(defaultHostRoot));
+        var mount = Assert.Single(configService.ResolveMounts(runtimeConfig));
+        Assert.Equal(Path.GetFullPath(hostRoot), mount.HostPath);
+        Assert.StartsWith("/workspace/test-", mount.ContainerPath, StringComparison.Ordinal);
+        Assert.Equal(mount.ContainerPath, runtimeConfig.DefaultWorkingDirectory);
     }
 
     [Fact]
-    public void DockerExecutionWorkspaceConfigService_SaveConfig_UsesCustomHostRoot()
+    public void DockerExecutionWorkspaceConfigService_BuildRuntimeConfig_UsesWorkspacePathHostRoot()
     {
         using var scope = TestScope.Create();
         var configService = new DockerExecutionWorkspaceConfigService(scope.Context);
         var hostRoot = Path.Combine(scope.RootPath, "custom-docker-root");
+        Directory.CreateDirectory(hostRoot);
+        var workspace = CreateWorkspace(hostRoot);
+        var bindingId = "workspace:primary-execution-target";
 
         configService.SaveConfig(
-            "workspace:primary-execution-target",
-            new DockerExecutionWorkspaceConfig(
-                "test-image:latest",
-                ["/workspace"],
-                "/workspace",
-                null,
-                "/bin/sh",
-                new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["/workspace"] = hostRoot,
-                }));
+            bindingId,
+            new DockerExecutionWorkspaceConfig("test-image:latest", null, "/bin/sh"));
 
-        var config = configService.GetConfig("workspace:primary-execution-target");
-        var mount = Assert.Single(configService.ResolveMounts(config));
+        var config = configService.GetConfig(bindingId);
+        var runtimeConfig = configService.BuildRuntimeConfig(bindingId, workspace, config);
+        var mount = Assert.Single(configService.ResolveMounts(runtimeConfig));
 
-        Assert.Equal(Path.GetFullPath(hostRoot), config.HostRoots!["/workspace"]);
         Assert.Equal(Path.GetFullPath(hostRoot), mount.HostPath);
-        Assert.Equal("/workspace", mount.ContainerPath);
-        Assert.True(Directory.Exists(hostRoot));
+        Assert.StartsWith("/workspace/custom-docker-root-", mount.ContainerPath, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void DockerExecutionWorkspaceConfigService_SaveConfig_RejectsHostRootWithComma()
+    public void DockerExecutionWorkspaceConfigService_BuildRuntimeConfig_RejectsWorkspacePathWithComma()
     {
         using var scope = TestScope.Create();
         var configService = new DockerExecutionWorkspaceConfigService(scope.Context);
         var hostRoot = Path.Combine(scope.RootPath, "docker,workspace");
+        var workspace = CreateWorkspace(hostRoot);
+        var bindingId = "workspace:primary-execution-target";
+        var config = new DockerExecutionWorkspaceConfig("test-image:latest", null, "/bin/sh");
 
-        var exception = Assert.Throws<InvalidOperationException>(() => configService.SaveConfig(
-            "workspace:primary-execution-target",
-            new DockerExecutionWorkspaceConfig(
-                "test-image:latest",
-                ["/workspace"],
-                "/workspace",
-                null,
-                "/bin/sh",
-                new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["/workspace"] = hostRoot,
-                })));
+        var exception = Assert.Throws<InvalidOperationException>(() => configService.BuildRuntimeConfig(bindingId, workspace, config));
 
         Assert.Contains("cannot contain commas", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void DockerExecutionWorkspaceConfigService_RejectsNestedContainerRoots()
+    public void DockerExecutionWorkspaceConfigService_BuildRuntimeConfig_UsesStableAliasesForNestedWorkspacePaths()
     {
         using var scope = TestScope.Create();
         var configService = new DockerExecutionWorkspaceConfigService(scope.Context);
+        var outerRoot = Path.Combine(scope.RootPath, "workspace");
+        var innerRoot = Path.Combine(outerRoot, "test");
+        Directory.CreateDirectory(innerRoot);
+        var workspace = CreateWorkspace(outerRoot, innerRoot);
+        var bindingId = "workspace:primary-execution-target";
 
-        Assert.Throws<InvalidOperationException>(() => configService.SaveConfig(
-            "workspace:primary-execution-target",
-            new DockerExecutionWorkspaceConfig(
-                "test-image:latest",
-                ["/workspace", "/workspace/test"],
-                "/workspace",
-                null,
-                "/bin/sh")));
+        var runtimeConfig = configService.BuildRuntimeConfig(
+            bindingId,
+            workspace,
+            new DockerExecutionWorkspaceConfig("test-image:latest", null, "/bin/sh"));
+
+        Assert.Equal(2, runtimeConfig.Mounts.Count);
+        Assert.Equal(runtimeConfig.Mounts.Select(mount => mount.ContainerPath).Distinct(StringComparer.Ordinal).Count(), runtimeConfig.Mounts.Count);
+        Assert.All(runtimeConfig.Mounts, mount => Assert.StartsWith("/workspace/", mount.ContainerPath, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -840,7 +892,7 @@ public sealed class WorkspaceTests
         var bindingId = AgentWorkspaceService.BuildPrimaryBindingId(workspace.WorkspaceId);
         configService.SaveConfig(
             bindingId,
-            new DockerExecutionWorkspaceConfig("custom:latest", ["/workspace"], "/workspace", null, "/bin/sh"));
+            new DockerExecutionWorkspaceConfig("custom:latest", null, "/bin/sh"));
 
         var sections = await contributor.GetSectionsAsync(new AgentWorkspaceEditorContext(workspace, "docker", bindingId));
 
@@ -896,13 +948,6 @@ public sealed class WorkspaceTests
                 {
                     ["image"] = new("missing:latest"),
                     ["shell-path"] = new("/bin/sh"),
-                    ["allowed-roots"] = new(Items:
-                    [
-                        new AgentEditorListItem("0", "/workspace", true)
-                        {
-                            SecondaryValue = Path.Combine(scope.RootPath, "docker-workspace"),
-                        },
-                    ]),
                 }));
 
         Assert.False(result.Success);
@@ -929,13 +974,6 @@ public sealed class WorkspaceTests
                 {
                     ["image"] = new("custom:latest"),
                     ["shell-path"] = new("/bin/sh"),
-                    ["allowed-roots"] = new(Items:
-                    [
-                        new AgentEditorListItem("0", "/workspace", true)
-                        {
-                            SecondaryValue = Path.Combine(scope.RootPath, "docker-workspace"),
-                        },
-                    ]),
                 }));
 
         Assert.False(result.Success);
@@ -963,9 +1001,9 @@ public sealed class WorkspaceTests
         imageCatalog.AddImage("custom:latest");
         var configService = new DockerExecutionWorkspaceConfigService(scope.Context, imageCatalog);
         var target = new DockerExecutionTarget(scope.Context, configService, lifecycle, imageCatalog, targetRunner);
-        var workspace = CreateWorkspace();
+        var (workspace, _) = CreateDockerWorkspace(scope);
         var binding = CreateBinding(workspace.WorkspaceId, "docker");
-        configService.SaveConfig(binding.BindingId, new DockerExecutionWorkspaceConfig("custom:latest", ["/workspace"], "/workspace", "sunder-agent-test", "/bin/sh"));
+        configService.SaveConfig(binding.BindingId, new DockerExecutionWorkspaceConfig("custom:latest", "sunder-agent-test", "/bin/sh"));
 
         var readiness = await target.GetReadinessAsync(new AgentExecutionTargetContext(null, null, workspace, binding));
 
@@ -1001,9 +1039,9 @@ public sealed class WorkspaceTests
         imageCatalog.AddImage("custom:latest");
         var configService = new DockerExecutionWorkspaceConfigService(scope.Context, imageCatalog);
         var target = new DockerExecutionTarget(scope.Context, configService, lifecycle, imageCatalog, targetRunner);
-        var workspace = CreateWorkspace();
+        var (workspace, _) = CreateDockerWorkspace(scope);
         var binding = CreateBinding(workspace.WorkspaceId, "docker");
-        configService.SaveConfig(binding.BindingId, new DockerExecutionWorkspaceConfig("custom:latest", ["/workspace"], "/workspace", "sunder-agent-test", "/bin/sh"));
+        configService.SaveConfig(binding.BindingId, new DockerExecutionWorkspaceConfig("custom:latest", "sunder-agent-test", "/bin/sh"));
 
         var readiness = await target.GetReadinessAsync(new AgentExecutionTargetContext(null, null, workspace, binding));
 
@@ -1452,8 +1490,8 @@ public sealed class WorkspaceTests
     public void AgentEditorPathListFieldViewModel_PreservesDefaultWithoutInitialSelection()
     {
         var section = CreateEditorSectionViewModel(new AgentEditorField(
-            "allowed-roots",
-            "Allowed roots",
+            "workspace-paths",
+            "Workspace paths",
             AgentEditorFieldKind.PathList,
             Items:
             [
@@ -1473,8 +1511,8 @@ public sealed class WorkspaceTests
     public void AgentEditorPathListFieldViewModel_AddDefaultItem_SelectsNewUserItem()
     {
         var section = CreateEditorSectionViewModel(new AgentEditorField(
-            "allowed-roots",
-            "Allowed roots",
+            "workspace-paths",
+            "Workspace paths",
             AgentEditorFieldKind.PathList,
             Items:
             [
@@ -1844,11 +1882,11 @@ public sealed class WorkspaceTests
         var catalog = new TestExtensionCatalog();
         catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target);
         var source = new FilesToolSource(catalog);
-        var workspace = CreateWorkspace();
+        var (workspace, _) = CreateDockerWorkspace(scope);
         var binding = CreateBinding(workspace.WorkspaceId, "docker");
         configService.SaveConfig(
             binding.BindingId,
-            new DockerExecutionWorkspaceConfig("test-image:latest", ["/workspace"], "/workspace", null, "/bin/sh"));
+            new DockerExecutionWorkspaceConfig("test-image:latest", null, "/bin/sh"));
 
         var permission = await source.BuildPermissionRequestAsync(
             new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding),
@@ -2141,7 +2179,7 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public async Task FilesToolSource_ApplyPatchPermission_UsesOutsideConfiguredScope_WhenAnyPathEscapesAllowedRoots()
+    public async Task FilesToolSource_ApplyPatchPermission_UsesOutsideConfiguredScope_WhenAnyPathEscapesWorkspacePaths()
     {
         using var scope = TestScope.Create();
         var root = Path.Combine(scope.RootPath, "workspace");
@@ -2539,18 +2577,80 @@ public sealed class WorkspaceTests
         Assert.True(viewModel.SaveWorkspaceCommand.CanExecute(null));
     }
 
+    [Fact]
+    public async Task AgentWorkspacesViewModel_WorkspacePath_UsesTildeDisplayAndPersistsFullPath()
+    {
+        using var scope = TestScope.Create();
+        var services = CreateWorkspaceViewServices(scope.Context);
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        using var viewModel = new AgentWorkspacesViewModel(services.WorkspaceService, services.ExecutionTargetService, services.Catalog);
+
+        viewModel.CreateWorkspaceCommand.Execute(null);
+        var workspaceId = viewModel.SelectedWorkspace!.WorkspaceId;
+        viewModel.AddWorkspacePath(home);
+
+        Assert.Equal("~", Assert.Single(viewModel.WorkspacePaths).HostPath);
+
+        await viewModel.SaveWorkspaceCommand.ExecuteAsync(null);
+
+        var savedPath = Assert.Single(services.WorkspaceService.GetWorkspace(workspaceId)!.Paths);
+        Assert.Equal(Path.GetFullPath(home), savedPath.HostPath);
+    }
+
     private static (AgentWorkspaceRecord Workspace, AgentWorkspaceBindingRecord Binding) CreateLocalWorkspace(string root, LocalExecutionWorkspaceConfigService configService)
     {
-        var workspace = CreateWorkspace();
+        var workspace = CreateWorkspace(root);
         var binding = CreateBinding(workspace.WorkspaceId);
-        configService.SaveConfig(binding.BindingId, new LocalExecutionWorkspaceConfig([root], root));
+        configService.SaveConfig(binding.BindingId, new LocalExecutionWorkspaceConfig(null, []));
         return (workspace, binding);
     }
 
-    private static AgentWorkspaceRecord CreateWorkspace()
+    private static (AgentWorkspaceRecord Workspace, string HostPath) CreateDockerWorkspace(TestScope scope, string name = "docker-workspace")
+    {
+        var hostPath = Path.Combine(scope.RootPath, name);
+        Directory.CreateDirectory(hostPath);
+        return (CreateWorkspace(hostPath), hostPath);
+    }
+
+    private static AgentWorkspaceRecord CreateWorkspace(params string[] workspacePaths)
     {
         var now = DateTimeOffset.UtcNow;
-        return new AgentWorkspaceRecord("local-test", "Local Test", null, now, now);
+        const string workspaceId = "local-test";
+        var paths = workspacePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select((path, index) => new AgentWorkspacePathRecord(
+                Guid.NewGuid().ToString("N"),
+                workspaceId,
+                Path.GetFullPath(path),
+                index == 0,
+                index,
+                now,
+                now))
+            .ToArray();
+        return new AgentWorkspaceRecord("local-test", "Local Test", null, now, now, paths);
+    }
+
+    private static AgentSystemPromptRequest CreateSystemPromptRequest(AgentWorkspaceRecord? workspace)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new AgentSystemPromptRequest(
+            new AgentSessionRecord(Guid.NewGuid(), "Test Session", AgentSessionState.Active, now, now),
+            new AgentProfileRecord("profile", "Test Profile", null, null, "provider", "model", null, null, now, now, [], []),
+            "provider",
+            "model",
+            new AgentProviderRunCapabilities(
+                SupportsNativeToolCalling: true,
+                SupportsStreamingToolCalls: true,
+                SupportsMultipleToolCalls: true,
+                Summary: "Test capabilities."),
+            workspace,
+            null,
+            [],
+            [],
+            Guid.NewGuid(),
+            RunRevision: 1,
+            now,
+            "Test user message.");
     }
 
     private static AgentEditorSectionViewModel CreateEditorSectionViewModel(params AgentEditorField[] fields)

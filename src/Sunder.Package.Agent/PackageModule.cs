@@ -34,6 +34,7 @@ public sealed partial class PackageModule : ISunderPackageModule
         services.AddSingleton<AgentMemoryCoordinator>();
         services.AddSingleton<AgentSessionContextProjectionService>();
         services.AddSingleton<AgentSystemPromptComposer>();
+        services.AddSingleton<WorkspaceDocumentationContextService>();
         services.AddSingleton<DefaultAgentBehaviorLoop>();
         services.AddSingleton<AgentBehaviorLoopResolver>();
         services.AddSingleton<AgentBehaviorLoopHostFactory>();
@@ -80,6 +81,10 @@ public sealed partial class PackageModule : ISunderPackageModule
         registry.RegisterExtension(
             PackageExtensionPoints.BehaviorLoops,
             services.GetRequiredService<DefaultAgentBehaviorLoop>()
+        );
+        registry.RegisterExtension(
+            PackageExtensionPoints.SystemPromptContributors,
+            services.GetRequiredService<WorkspaceDocumentationContextService>()
         );
 
         // Left-Top

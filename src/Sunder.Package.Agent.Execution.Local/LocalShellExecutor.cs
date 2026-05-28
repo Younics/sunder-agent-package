@@ -20,7 +20,7 @@ internal sealed class LocalShellExecutor(IPackageContext packageContext, LocalSh
     }
 
     public async ValueTask<AgentShellCommandResult> ExecuteShellAsync(
-        LocalExecutionWorkspaceConfig config,
+        LocalExecutionRuntimeConfig config,
         AgentExecutionTargetContext context,
         AgentShellCommandRequest request,
         CancellationToken cancellationToken)

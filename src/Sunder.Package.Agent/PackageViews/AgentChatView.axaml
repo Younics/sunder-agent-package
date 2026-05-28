@@ -295,7 +295,6 @@
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
       <Setter Property="Padding" Value="8,4" />
-      <Setter Property="MaxWidth" Value="180" />
       <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
 
@@ -320,7 +319,6 @@
       <Setter Property="FontSize" Value="11" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
       <Setter Property="MaxLines" Value="1" />
-      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
       <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
 
@@ -1201,49 +1199,44 @@
                         ToolTip.Tip="New session" />
               </Grid>
 
-              <Grid Grid.Row="1"
+              <Grid x:Name="WideWorkspacePathRow"
+                    Grid.Row="1"
                     Classes="context-path-row"
                     ColumnDefinitions="*,Auto"
-                    ColumnSpacing="8">
-                <StackPanel Orientation="Horizontal"
-                            Spacing="6"
-                            MinWidth="0"
-                            ClipToBounds="True">
-                  <Border Classes="context-path-chip">
-                    <Grid ColumnDefinitions="Auto,*"
-                          ColumnSpacing="6">
-                      <Path Classes="context-path-icon"
-                            Data="{StaticResource AgentChat.Icon.Path}" />
-                      <TextBlock Grid.Column="1"
-                                 Classes="context-path-text"
-                                 Text="~/Projects/sunder" />
-                    </Grid>
-                  </Border>
-                  <Border Classes="context-path-chip">
-                    <Grid ColumnDefinitions="Auto,*"
-                          ColumnSpacing="6">
-                      <Path Classes="context-path-icon"
-                            Data="{StaticResource AgentChat.Icon.Path}" />
-                      <TextBlock Grid.Column="1"
-                                 Classes="context-path-text"
-                                 Text="/app/workspace" />
-                    </Grid>
-                  </Border>
-                  <Border Classes="context-path-chip">
-                    <Grid ColumnDefinitions="Auto,*"
-                          ColumnSpacing="6">
-                      <Path Classes="context-path-icon"
-                            Data="{StaticResource AgentChat.Icon.Path}" />
-                      <TextBlock Grid.Column="1"
-                                 Classes="context-path-text"
-                                 Text="/Documents/context" />
-                    </Grid>
-                  </Border>
-                </StackPanel>
+                    ColumnSpacing="8"
+                    SizeChanged="OnWorkspacePathRowSizeChanged"
+                    IsVisible="{Binding HasWorkspacePathChips}">
+                <ItemsControl ItemsSource="{Binding WideWorkspacePathChips}"
+                              MinWidth="0"
+                              ClipToBounds="True">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <StackPanel Orientation="Horizontal"
+                                  Spacing="6" />
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:AgentWorkspacePathChipViewModel">
+                      <Border Classes="context-path-chip">
+                        <Grid ColumnDefinitions="Auto,*"
+                              ColumnSpacing="6">
+                          <Path Classes="context-path-icon"
+                                Data="{StaticResource AgentChat.Icon.Path}" />
+                          <TextBlock Grid.Column="1"
+                                     Classes="context-path-text"
+                                     Text="{Binding Label}" />
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
                 <Border Grid.Column="1"
                         Classes="context-path-chip more">
+                  <Border.IsVisible>
+                    <Binding Path="HasWideWorkspacePathOverflow" />
+                  </Border.IsVisible>
                   <TextBlock Classes="context-path-more-text"
-                             Text="+2 more" />
+                             Text="{Binding WideWorkspacePathOverflowText}" />
                 </Border>
               </Grid>
             </Grid>
@@ -1281,40 +1274,45 @@
                     Command="{Binding CreateSessionCommand}"
                     ToolTip.Tip="New session" />
 
-            <Grid Grid.Row="2"
+            <Grid x:Name="NarrowWorkspacePathRow"
+                  Grid.Row="2"
                   Grid.ColumnSpan="2"
                   Classes="context-path-row"
                   ColumnDefinitions="*,Auto"
-                  ColumnSpacing="8">
-              <StackPanel Orientation="Horizontal"
-                          Spacing="6"
-                          MinWidth="0"
-                          ClipToBounds="True">
-                <Border Classes="context-path-chip">
-                  <Grid ColumnDefinitions="Auto,*"
-                        ColumnSpacing="6">
-                    <Path Classes="context-path-icon"
-                          Data="{StaticResource AgentChat.Icon.Path}" />
-                    <TextBlock Grid.Column="1"
-                               Classes="context-path-text"
-                               Text="~/Projects/sunder" />
-                  </Grid>
-                </Border>
-                <Border Classes="context-path-chip">
-                  <Grid ColumnDefinitions="Auto,*"
-                        ColumnSpacing="6">
-                    <Path Classes="context-path-icon"
-                          Data="{StaticResource AgentChat.Icon.Path}" />
-                    <TextBlock Grid.Column="1"
-                               Classes="context-path-text"
-                               Text="/app/workspace" />
-                  </Grid>
-                </Border>
-              </StackPanel>
+                  ColumnSpacing="8"
+                  SizeChanged="OnWorkspacePathRowSizeChanged"
+                  IsVisible="{Binding HasWorkspacePathChips}">
+              <ItemsControl ItemsSource="{Binding NarrowWorkspacePathChips}"
+                            MinWidth="0"
+                            ClipToBounds="True">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal"
+                                Spacing="6" />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:AgentWorkspacePathChipViewModel">
+                    <Border Classes="context-path-chip">
+                      <Grid ColumnDefinitions="Auto,*"
+                            ColumnSpacing="6">
+                        <Path Classes="context-path-icon"
+                              Data="{StaticResource AgentChat.Icon.Path}" />
+                        <TextBlock Grid.Column="1"
+                                   Classes="context-path-text"
+                                   Text="{Binding Label}" />
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
               <Border Grid.Column="1"
                       Classes="context-path-chip more">
+                <Border.IsVisible>
+                  <Binding Path="HasNarrowWorkspacePathOverflow" />
+                </Border.IsVisible>
                 <TextBlock Classes="context-path-more-text"
-                           Text="+3 more" />
+                           Text="{Binding NarrowWorkspacePathOverflowText}" />
               </Border>
             </Grid>
           </Grid>

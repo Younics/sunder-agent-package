@@ -24,6 +24,7 @@ public sealed class PackageModule : ISunderPackageModule
         var target = services.GetRequiredService<DockerExecutionTarget>();
         registry.RegisterExtension(PackageExtensionPoints.ExecutionTargets, target);
         registry.RegisterExtension(PackageExtensionPoints.WorkspaceBindingContributors, target);
+        registry.RegisterExtension(PackageExtensionPoints.WorkspacePathMigrationContributors, services.GetRequiredService<DockerExecutionWorkspaceConfigService>());
         registry.RegisterExtension(PackageExtensionPoints.WorkspaceEditorContributors, services.GetRequiredService<DockerExecutionWorkspaceEditorContributor>());
     }
 }

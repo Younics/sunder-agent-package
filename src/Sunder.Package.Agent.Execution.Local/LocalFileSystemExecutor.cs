@@ -5,7 +5,7 @@ namespace Sunder.Package.Agent.Execution.Local;
 internal static class LocalFileSystemExecutor
 {
     public static async ValueTask<AgentFileReadResult> ReadFileAsync(
-        LocalExecutionWorkspaceConfig config,
+        LocalExecutionRuntimeConfig config,
         AgentFileReadRequest request,
         bool allowOutsideConfiguredScope,
         CancellationToken cancellationToken)
@@ -33,7 +33,7 @@ internal static class LocalFileSystemExecutor
     }
 
     public static async ValueTask<AgentFileMutationResult> WriteFileAsync(
-        LocalExecutionWorkspaceConfig config,
+        LocalExecutionRuntimeConfig config,
         AgentFileWriteRequest request,
         bool allowOutsideConfiguredScope,
         CancellationToken cancellationToken)
@@ -50,7 +50,7 @@ internal static class LocalFileSystemExecutor
     }
 
     public static ValueTask<AgentFileMutationResult> DeleteFileAsync(
-        LocalExecutionWorkspaceConfig config,
+        LocalExecutionRuntimeConfig config,
         AgentFileDeleteRequest request,
         bool allowOutsideConfiguredScope)
     {

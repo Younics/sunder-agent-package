@@ -10,7 +10,7 @@ internal sealed class LocalProcessExecutor(IPackageContext packageContext)
     private const int DefaultTimeoutSeconds = 300;
 
     public async ValueTask<AgentShellCommandResult> ExecuteProcessAsync(
-        LocalExecutionWorkspaceConfig config,
+        LocalExecutionRuntimeConfig config,
         AgentExecutionTargetContext context,
         AgentProcessCommandRequest request,
         CancellationToken cancellationToken)

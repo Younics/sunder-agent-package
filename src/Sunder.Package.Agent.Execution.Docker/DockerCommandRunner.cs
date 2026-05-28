@@ -8,7 +8,7 @@ internal sealed class DockerCommandRunner(IPackageContext packageContext, Docker
     private const int DefaultTimeoutSeconds = 300;
 
     public async ValueTask<AgentShellCommandResult> ExecuteShellAsync(
-        DockerExecutionWorkspaceConfig config,
+        DockerExecutionRuntimeConfig config,
         string containerName,
         AgentExecutionTargetContext context,
         AgentShellCommandRequest request,
@@ -23,7 +23,7 @@ internal sealed class DockerCommandRunner(IPackageContext packageContext, Docker
     }
 
     public async ValueTask<AgentShellCommandResult> ExecuteProcessAsync(
-        DockerExecutionWorkspaceConfig config,
+        DockerExecutionRuntimeConfig config,
         string containerName,
         AgentExecutionTargetContext context,
         AgentProcessCommandRequest request,
@@ -65,6 +65,11 @@ internal sealed class DockerCommandRunner(IPackageContext packageContext, Docker
     }
 
     public static string ResolveShellPath(DockerExecutionWorkspaceConfig config)
+        => string.IsNullOrWhiteSpace(config.ShellPath)
+            ? DockerExecutionWorkspaceConfigService.DefaultShellPath
+            : config.ShellPath;
+
+    public static string ResolveShellPath(DockerExecutionRuntimeConfig config)
         => string.IsNullOrWhiteSpace(config.ShellPath)
             ? DockerExecutionWorkspaceConfigService.DefaultShellPath
             : config.ShellPath;

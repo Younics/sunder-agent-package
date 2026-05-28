@@ -34,9 +34,9 @@ public sealed class AgentWorkspaceExecutionResolver(
         var scope = target is IAgentExecutionScopeProvider scopeProvider
             ? await scopeProvider.GetExecutionScopeAsync(context, cancellationToken)
             : new AgentExecutionScopeDescriptor(target.Descriptor.DisplayName, []);
-        if (scope.AllowedRoots.Count == 0)
+        if (scope.WorkspacePaths.Count == 0)
         {
-            throw new InvalidOperationException("Selected workspace execution target does not expose an allowed root.");
+            throw new InvalidOperationException("Selected workspace execution target does not expose a workspace path.");
         }
 
         return new AgentWorkspaceExecutionResolution(workspace, binding, target.Descriptor, scope, target);

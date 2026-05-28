@@ -1062,7 +1062,7 @@ public sealed class BuilderViewModel(
         var hostMapping = await execution.MapToHostPathAsync(executionProjectFolder, context.CancellationToken);
         if (!hostMapping.IsInsideAllowedRoot)
         {
-            throw new InvalidOperationException("Generated project path is outside the selected workspace allowed roots.");
+            throw new InvalidOperationException("Generated project path is outside the selected workspace paths.");
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(hostMapping.HostPath) ?? hostMapping.HostPath);

@@ -21,6 +21,7 @@ public sealed class PackageModule : ISunderPackageModule
         var target = services.GetRequiredService<LocalExecutionTarget>();
         registry.RegisterExtension(PackageExtensionPoints.ExecutionTargets, target);
         registry.RegisterExtension(PackageExtensionPoints.WorkspaceBindingContributors, target);
+        registry.RegisterExtension(PackageExtensionPoints.WorkspacePathMigrationContributors, services.GetRequiredService<LocalExecutionWorkspaceConfigService>());
         registry.RegisterExtension(PackageExtensionPoints.WorkspaceEditorContributors, services.GetRequiredService<LocalExecutionWorkspaceEditorContributor>());
     }
 }

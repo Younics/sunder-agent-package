@@ -10,7 +10,6 @@ public sealed class LocalExecutionWorkspaceEditorContributor(
     private const string TargetId = "local";
     private const string SectionId = "local-execution-settings";
     private const string ShellFieldId = "shell";
-    private const string RootsFieldId = "allowed-roots";
 
     public string ContributorId => "sunder.package.agent.execution.local.workspace-editor";
 
@@ -36,7 +35,7 @@ public sealed class LocalExecutionWorkspaceEditorContributor(
             new AgentEditorSection(
                 SectionId,
                 "Local Execution Settings",
-                "Allowed roots are local folders. Select one row at a time and mark one root as the default working directory.",
+                "Choose the local shell. Workspace paths are configured in the main Workspace section.",
                 [
                     new AgentEditorField(
                         ShellFieldId,
@@ -44,18 +43,6 @@ public sealed class LocalExecutionWorkspaceEditorContributor(
                         AgentEditorFieldKind.Select,
                         Value: selectedShellId,
                         Options: shells),
-                    new AgentEditorField(
-                        RootsFieldId,
-                        "Allowed roots",
-                        AgentEditorFieldKind.PathList,
-                        Items: config.AllowedRoots
-                            .Select((root, index) => new AgentEditorListItem(
-                                index.ToString(),
-                                root,
-                                string.Equals(root, config.DefaultWorkingDirectory, StringComparison.OrdinalIgnoreCase)))
-                            .ToArray(),
-                        AddItemLabel: "Add Folder...",
-                        UseFolderPicker: true),
                 ]),
         ];
 
@@ -74,39 +61,10 @@ public sealed class LocalExecutionWorkspaceEditorContributor(
             return ValueTask.FromResult(AgentEditorSaveResult.Failed("Unknown local execution settings section."));
         }
 
-        var roots = request.Fields.TryGetValue(RootsFieldId, out var rootsValue)
-            ? rootsValue.Items ?? []
-            : [];
-        var normalizedRoots = new List<string>();
-        foreach (var root in roots)
-        {
-            if (string.IsNullOrWhiteSpace(root.Value))
-            {
-                continue;
-            }
-
-            var fullPath = Path.GetFullPath(LocalExecutionWorkspaceConfigService.ExpandPath(root.Value));
-            if (!Directory.Exists(fullPath))
-            {
-                return ValueTask.FromResult(AgentEditorSaveResult.Failed($"Folder does not exist: {fullPath}"));
-            }
-
-            if (!normalizedRoots.Contains(fullPath, StringComparer.OrdinalIgnoreCase))
-            {
-                normalizedRoots.Add(fullPath);
-            }
-        }
-
-        var defaultRoot = roots.FirstOrDefault(root => root.IsDefault)?.Value ?? normalizedRoots.FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(defaultRoot))
-        {
-            defaultRoot = Path.GetFullPath(LocalExecutionWorkspaceConfigService.ExpandPath(defaultRoot));
-        }
-
         var selectedShellId = request.Fields.TryGetValue(ShellFieldId, out var shellValue)
             ? shellValue.Value
             : null;
-        configService.SaveConfig(context.ConfigurationId, new LocalExecutionWorkspaceConfig(normalizedRoots, defaultRoot, selectedShellId));
+        configService.SaveConfig(context.ConfigurationId, new LocalExecutionWorkspaceConfig(selectedShellId));
         return ValueTask.FromResult(AgentEditorSaveResult.Ok("Local execution settings saved."));
     }
 }

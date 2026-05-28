@@ -1,28 +1,32 @@
 using System.Text.Json;
+using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
-public sealed class LocalExecutionWorkspaceConfigService(IPackageContext packageContext)
+public sealed class LocalExecutionWorkspaceConfigService(IPackageContext packageContext) : IAgentWorkspacePathMigrationContributor
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+
+    public string ContributorId => "sunder.package.agent.execution.local.workspace-path-migration";
 
     public LocalExecutionWorkspaceConfig GetConfig(string bindingId)
     {
         var json = packageContext.Storage.State.GetValue(BuildKey(bindingId));
         if (string.IsNullOrWhiteSpace(json))
         {
-            return new LocalExecutionWorkspaceConfig([], null, null, []);
+            return new LocalExecutionWorkspaceConfig(null, []);
         }
 
         try
         {
             var config = JsonSerializer.Deserialize<LocalExecutionWorkspaceConfig>(json, JsonOptions);
-            return Normalize(config ?? new LocalExecutionWorkspaceConfig([], null, null, []));
+            return Normalize(config ?? new LocalExecutionWorkspaceConfig(null, []));
         }
         catch
         {
-            return new LocalExecutionWorkspaceConfig([], null, null, []);
+            return new LocalExecutionWorkspaceConfig(null, []);
         }
     }
 
@@ -34,22 +38,6 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
 
     private static LocalExecutionWorkspaceConfig Normalize(LocalExecutionWorkspaceConfig config)
     {
-        var roots = config.AllowedRoots
-            .Where(root => !string.IsNullOrWhiteSpace(root))
-            .Select(root => Path.GetFullPath(ExpandPath(root.Trim())))
-            .Distinct(GetPathStringComparer())
-            .ToArray();
-
-        var defaultWorkingDirectory = string.IsNullOrWhiteSpace(config.DefaultWorkingDirectory)
-            ? roots.FirstOrDefault()
-            : Path.GetFullPath(ExpandPath(config.DefaultWorkingDirectory.Trim()));
-
-        if (defaultWorkingDirectory is not null
-            && !roots.Any(root => IsSameOrChildPath(defaultWorkingDirectory, root)))
-        {
-            defaultWorkingDirectory = roots.FirstOrDefault();
-        }
-
         var pathEntries = (config.PathEntries ?? [])
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(path => Path.GetFullPath(ExpandPath(path.Trim())))
@@ -57,11 +45,64 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
             .ToArray();
 
         return new LocalExecutionWorkspaceConfig(
-            roots,
-            defaultWorkingDirectory,
             string.IsNullOrWhiteSpace(config.SelectedShellId) ? null : config.SelectedShellId.Trim(),
             pathEntries);
     }
+
+    public bool CanMigrate(AgentWorkspacePathMigrationContext context)
+        => string.Equals(context.Binding.ContributionId, "local", StringComparison.OrdinalIgnoreCase);
+
+    public IReadOnlyList<AgentWorkspacePathMigrationItem> GetLegacyWorkspacePaths(AgentWorkspacePathMigrationContext context)
+    {
+        var json = packageContext.Storage.State.GetValue(BuildKey(context.Binding.BindingId));
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("AllowedRoots", out var rootsElement) || rootsElement.ValueKind != JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            var defaultWorkingDirectory = TryGetString(root, "DefaultWorkingDirectory");
+            var normalizedDefault = string.IsNullOrWhiteSpace(defaultWorkingDirectory)
+                ? null
+                : Path.GetFullPath(ExpandPath(defaultWorkingDirectory.Trim()));
+            var items = new List<AgentWorkspacePathMigrationItem>();
+            var index = 0;
+            foreach (var item in rootsElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var value = item.GetString();
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    continue;
+                }
+
+                var hostPath = Path.GetFullPath(ExpandPath(value.Trim()));
+                var isDefault = normalizedDefault is not null && IsSameOrChildPath(normalizedDefault, hostPath);
+                items.Add(new AgentWorkspacePathMigrationItem(hostPath, isDefault, SortOrder: index++));
+            }
+
+            return items;
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    public void CompleteWorkspacePathMigration(AgentWorkspacePathMigrationContext context)
+        => SaveConfig(context.Binding.BindingId, GetConfig(context.Binding.BindingId));
 
     internal static string ExpandPath(string path)
     {
@@ -100,4 +141,9 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
             : StringComparison.Ordinal;
 
     private static string BuildKey(string bindingId) => $"workspace-bindings:{bindingId}:config";
+
+    private static string? TryGetString(JsonElement element, string propertyName)
+        => element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
 }

@@ -4,41 +4,42 @@ namespace Sunder.Package.Agent.Execution.Docker;
 
 internal static class DockerPathResolver
 {
-    public static string ResolvePath(DockerExecutionWorkspaceConfig config, string path, bool allowOutsideConfiguredScope)
+    public static string ResolvePath(DockerExecutionRuntimeConfig config, string path, bool allowOutsideConfiguredScope)
     {
         var normalized = ResolveRuntimePath(path, ResolveDefaultBaseDirectory(config));
 
-        if (!allowOutsideConfiguredScope && !IsInsideAllowedRoot(config, normalized))
+        if (!allowOutsideConfiguredScope && !IsInsideWorkspacePath(config, normalized))
         {
-            throw new InvalidOperationException($"Path '{path}' is outside the Docker workspace allowed roots.");
+            throw new InvalidOperationException($"Path '{path}' is outside the configured Docker workspace paths.");
         }
 
         return normalized;
     }
 
     public static string ResolveWorkingDirectory(
-        DockerExecutionWorkspaceConfig config,
+        DockerExecutionRuntimeConfig config,
         string? requestedWorkingDirectory,
         bool allowOutsideConfiguredScope)
         => string.IsNullOrWhiteSpace(requestedWorkingDirectory)
             ? ResolveDefaultBaseDirectory(config)
             : ResolvePath(config, requestedWorkingDirectory, allowOutsideConfiguredScope);
 
-    public static string ResolveDefaultBaseDirectory(DockerExecutionWorkspaceConfig config)
+    public static string ResolveDefaultBaseDirectory(DockerExecutionRuntimeConfig config)
         => string.IsNullOrWhiteSpace(config.DefaultWorkingDirectory)
-            ? config.AllowedRoots.FirstOrDefault() ?? DockerExecutionWorkspaceConfigService.DefaultContainerRoot
+            ? config.Mounts.FirstOrDefault()?.ContainerPath
+              ?? throw new InvalidOperationException("The Docker execution binding has no workspace paths configured.")
             : config.DefaultWorkingDirectory;
 
-    public static bool IsInsideAllowedRoot(DockerExecutionWorkspaceConfig config, string candidate)
-        => config.AllowedRoots.Any(root => DockerExecutionWorkspaceConfigService.IsSameOrChildPath(candidate, root));
+    public static bool IsInsideWorkspacePath(DockerExecutionRuntimeConfig config, string candidate)
+        => config.Mounts.Any(mount => DockerExecutionWorkspaceConfigService.IsSameOrChildPath(candidate, mount.ContainerPath));
 
     public static AgentResolvedResource ResolveFileResource(
-        DockerExecutionWorkspaceConfig config,
+        DockerExecutionRuntimeConfig config,
         string path,
         bool allowOutsideConfiguredScope)
     {
         var resolved = ResolvePath(config, path, allowOutsideConfiguredScope);
-        var boundary = IsInsideAllowedRoot(config, resolved)
+        var boundary = IsInsideWorkspacePath(config, resolved)
             ? AgentPermissionBoundaryIds.ConfiguredScope
             : AgentPermissionBoundaryIds.OutsideConfiguredScope;
         return new AgentResolvedResource("file", resolved, resolved, boundary, Exists: true);
@@ -46,21 +47,20 @@ internal static class DockerPathResolver
 
     public static AgentExecutionPathMapping MapToHostPath(
         DockerExecutionWorkspaceConfigService configService,
-        DockerExecutionWorkspaceConfig config,
+        DockerExecutionRuntimeConfig config,
         string executionPath)
     {
         var normalizedPath = ResolvePath(config, executionPath, allowOutsideConfiguredScope: false);
-        var root = config.AllowedRoots
-            .Where(root => DockerExecutionWorkspaceConfigService.IsSameOrChildPath(normalizedPath, root))
-            .OrderByDescending(root => root.Length)
+        var mount = config.Mounts
+            .Where(mount => DockerExecutionWorkspaceConfigService.IsSameOrChildPath(normalizedPath, mount.ContainerPath))
+            .OrderByDescending(mount => mount.ContainerPath.Length)
             .FirstOrDefault()
-            ?? throw new InvalidOperationException("Execution path is outside the selected workspace allowed roots.");
-        var hostRoot = configService.ResolveHostPath(config, root);
-        var relative = normalizedPath[root.Length..].TrimStart('/');
+            ?? throw new InvalidOperationException("Execution path is outside the selected workspace paths.");
+        var relative = normalizedPath[mount.ContainerPath.Length..].TrimStart('/');
         var hostPath = string.IsNullOrWhiteSpace(relative)
-            ? hostRoot
-            : Path.Combine([hostRoot, .. relative.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)]);
-        return new AgentExecutionPathMapping(normalizedPath, Path.GetFullPath(hostPath), IsInsideAllowedRoot(config, normalizedPath));
+            ? mount.HostPath
+            : Path.Combine([mount.HostPath, .. relative.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)]);
+        return new AgentExecutionPathMapping(normalizedPath, Path.GetFullPath(hostPath), IsInsideWorkspacePath(config, normalizedPath));
     }
 
     private static string ResolveRuntimePath(string path, string baseDirectory)

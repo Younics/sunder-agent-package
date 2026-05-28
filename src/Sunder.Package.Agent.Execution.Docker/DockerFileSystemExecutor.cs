@@ -11,7 +11,7 @@ internal sealed class DockerFileSystemExecutor(DockerCommandRunner commandRunner
     private const string DirectoryDeletedMarker = "__SUNDER_DIRECTORY_DELETED__";
 
     public async ValueTask<AgentFileReadResult> ReadFileAsync(
-        DockerExecutionWorkspaceConfig config,
+        DockerExecutionRuntimeConfig config,
         string containerName,
         AgentFileReadRequest request,
         bool allowOutsideConfiguredScope,
@@ -50,7 +50,7 @@ internal sealed class DockerFileSystemExecutor(DockerCommandRunner commandRunner
     }
 
     public async ValueTask<AgentFileMutationResult> WriteFileAsync(
-        DockerExecutionWorkspaceConfig config,
+        DockerExecutionRuntimeConfig config,
         string containerName,
         AgentFileWriteRequest request,
         bool allowOutsideConfiguredScope,
@@ -75,7 +75,7 @@ internal sealed class DockerFileSystemExecutor(DockerCommandRunner commandRunner
     }
 
     public async ValueTask<AgentFileMutationResult> DeleteFileAsync(
-        DockerExecutionWorkspaceConfig config,
+        DockerExecutionRuntimeConfig config,
         string containerName,
         AgentFileDeleteRequest request,
         bool allowOutsideConfiguredScope,

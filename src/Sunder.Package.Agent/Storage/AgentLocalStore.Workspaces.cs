@@ -37,6 +37,22 @@ public sealed partial class AgentLocalStore
         connection.Open();
         using var transaction = connection.BeginTransaction();
 
+        using (var deleteDocumentsCommand = connection.CreateCommand())
+        {
+            deleteDocumentsCommand.Transaction = transaction;
+            deleteDocumentsCommand.CommandText = "DELETE FROM AgentWorkspaceDocuments WHERE WorkspaceId = $workspaceId;";
+            deleteDocumentsCommand.Parameters.AddWithValue("$workspaceId", workspaceId);
+            deleteDocumentsCommand.ExecuteNonQuery();
+        }
+
+        using (var deletePathsCommand = connection.CreateCommand())
+        {
+            deletePathsCommand.Transaction = transaction;
+            deletePathsCommand.CommandText = "DELETE FROM AgentWorkspacePaths WHERE WorkspaceId = $workspaceId;";
+            deletePathsCommand.Parameters.AddWithValue("$workspaceId", workspaceId);
+            deletePathsCommand.ExecuteNonQuery();
+        }
+
         using (var deleteBindingsCommand = connection.CreateCommand())
         {
             deleteBindingsCommand.Transaction = transaction;
@@ -51,6 +67,64 @@ public sealed partial class AgentLocalStore
             command.CommandText = "DELETE FROM AgentWorkspaces WHERE WorkspaceId = $workspaceId;";
             command.Parameters.AddWithValue("$workspaceId", workspaceId);
             command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
+
+    public IReadOnlyList<AgentWorkspacePathRecord> ListWorkspacePaths(string workspaceId)
+    {
+        using var connection = CreateConnection();
+        connection.Open();
+        return ListWorkspacePaths(connection, workspaceId);
+    }
+
+    public void SaveWorkspacePaths(string workspaceId, IReadOnlyList<AgentWorkspacePathRecord> paths)
+    {
+        using var connection = CreateConnection();
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+
+        using (var deleteCommand = connection.CreateCommand())
+        {
+            deleteCommand.Transaction = transaction;
+            deleteCommand.CommandText = "DELETE FROM AgentWorkspacePaths WHERE WorkspaceId = $workspaceId;";
+            deleteCommand.Parameters.AddWithValue("$workspaceId", workspaceId);
+            deleteCommand.ExecuteNonQuery();
+        }
+
+        foreach (var path in paths)
+        {
+            InsertWorkspacePath(connection, path, transaction);
+        }
+
+        transaction.Commit();
+    }
+
+    public IReadOnlyList<AgentWorkspaceDocumentRecord> ListWorkspaceDocuments(string workspaceId)
+    {
+        using var connection = CreateConnection();
+        connection.Open();
+        return ListWorkspaceDocuments(connection, workspaceId);
+    }
+
+    public void SaveWorkspaceDocuments(string workspaceId, IReadOnlyList<AgentWorkspaceDocumentRecord> documents)
+    {
+        using var connection = CreateConnection();
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+
+        using (var deleteCommand = connection.CreateCommand())
+        {
+            deleteCommand.Transaction = transaction;
+            deleteCommand.CommandText = "DELETE FROM AgentWorkspaceDocuments WHERE WorkspaceId = $workspaceId;";
+            deleteCommand.Parameters.AddWithValue("$workspaceId", workspaceId);
+            deleteCommand.ExecuteNonQuery();
+        }
+
+        foreach (var document in documents)
+        {
+            InsertWorkspaceDocument(connection, document, transaction);
         }
 
         transaction.Commit();
@@ -93,14 +167,16 @@ public sealed partial class AgentLocalStore
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT WorkspaceId, DisplayName, Description, CreatedAtUtc, UpdatedAtUtc FROM AgentWorkspaces ORDER BY DisplayName, UpdatedAtUtc DESC;";
 
-        using var reader = command.ExecuteReader();
         var items = new List<AgentWorkspaceRecord>();
-        while (reader.Read())
+        using (var reader = command.ExecuteReader())
         {
-            items.Add(ReadWorkspace(reader));
+            while (reader.Read())
+            {
+                items.Add(ReadWorkspace(reader));
+            }
         }
 
-        return items;
+        return items.Select(workspace => HydrateWorkspace(connection, workspace)).ToArray();
     }
 
     private static AgentWorkspaceRecord? GetWorkspace(SqliteConnection connection, string workspaceId)
@@ -109,9 +185,24 @@ public sealed partial class AgentLocalStore
         command.CommandText = "SELECT WorkspaceId, DisplayName, Description, CreatedAtUtc, UpdatedAtUtc FROM AgentWorkspaces WHERE WorkspaceId = $workspaceId;";
         command.Parameters.AddWithValue("$workspaceId", workspaceId);
 
-        using var reader = command.ExecuteReader();
-        return reader.Read() ? ReadWorkspace(reader) : null;
+        AgentWorkspaceRecord? workspace = null;
+        using (var reader = command.ExecuteReader())
+        {
+            if (reader.Read())
+            {
+                workspace = ReadWorkspace(reader);
+            }
+        }
+
+        return workspace is null ? null : HydrateWorkspace(connection, workspace);
     }
+
+    private static AgentWorkspaceRecord HydrateWorkspace(SqliteConnection connection, AgentWorkspaceRecord workspace)
+        => workspace with
+        {
+            Paths = ListWorkspacePaths(connection, workspace.WorkspaceId),
+            Documents = ListWorkspaceDocuments(connection, workspace.WorkspaceId),
+        };
 
     private static AgentWorkspaceRecord ReadWorkspace(SqliteDataReader reader)
         => new(
@@ -138,6 +229,100 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$description", (object?)workspace.Description ?? DBNull.Value);
         command.Parameters.AddWithValue("$createdAtUtc", workspace.CreatedAtUtc.ToString("O"));
         command.Parameters.AddWithValue("$updatedAtUtc", workspace.UpdatedAtUtc.ToString("O"));
+        command.ExecuteNonQuery();
+    }
+
+    private static IReadOnlyList<AgentWorkspacePathRecord> ListWorkspacePaths(
+        SqliteConnection connection,
+        string workspaceId,
+        SqliteTransaction? transaction = null)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT PathId, WorkspaceId, HostPath, IsDefault, SortOrder, CreatedAtUtc, UpdatedAtUtc FROM AgentWorkspacePaths WHERE WorkspaceId = $workspaceId ORDER BY SortOrder, HostPath;";
+        command.Parameters.AddWithValue("$workspaceId", workspaceId);
+
+        using var reader = command.ExecuteReader();
+        var paths = new List<AgentWorkspacePathRecord>();
+        while (reader.Read())
+        {
+            paths.Add(new AgentWorkspacePathRecord(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetInt64(3) != 0,
+                reader.GetInt32(4),
+                DateTimeOffset.Parse(reader.GetString(5)),
+                DateTimeOffset.Parse(reader.GetString(6))));
+        }
+
+        return paths;
+    }
+
+    private static void InsertWorkspacePath(
+        SqliteConnection connection,
+        AgentWorkspacePathRecord path,
+        SqliteTransaction? transaction = null)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO AgentWorkspacePaths (PathId, WorkspaceId, HostPath, IsDefault, SortOrder, CreatedAtUtc, UpdatedAtUtc)
+            VALUES ($pathId, $workspaceId, $hostPath, $isDefault, $sortOrder, $createdAtUtc, $updatedAtUtc);
+            """;
+        command.Parameters.AddWithValue("$pathId", path.PathId);
+        command.Parameters.AddWithValue("$workspaceId", path.WorkspaceId);
+        command.Parameters.AddWithValue("$hostPath", path.HostPath);
+        command.Parameters.AddWithValue("$isDefault", path.IsDefault ? 1 : 0);
+        command.Parameters.AddWithValue("$sortOrder", path.SortOrder);
+        command.Parameters.AddWithValue("$createdAtUtc", path.CreatedAtUtc.ToString("O"));
+        command.Parameters.AddWithValue("$updatedAtUtc", path.UpdatedAtUtc.ToString("O"));
+        command.ExecuteNonQuery();
+    }
+
+    private static IReadOnlyList<AgentWorkspaceDocumentRecord> ListWorkspaceDocuments(
+        SqliteConnection connection,
+        string workspaceId,
+        SqliteTransaction? transaction = null)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT DocumentId, WorkspaceId, FilePath, SortOrder, CreatedAtUtc, UpdatedAtUtc FROM AgentWorkspaceDocuments WHERE WorkspaceId = $workspaceId ORDER BY SortOrder, FilePath;";
+        command.Parameters.AddWithValue("$workspaceId", workspaceId);
+
+        using var reader = command.ExecuteReader();
+        var documents = new List<AgentWorkspaceDocumentRecord>();
+        while (reader.Read())
+        {
+            documents.Add(new AgentWorkspaceDocumentRecord(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetInt32(3),
+                DateTimeOffset.Parse(reader.GetString(4)),
+                DateTimeOffset.Parse(reader.GetString(5))));
+        }
+
+        return documents;
+    }
+
+    private static void InsertWorkspaceDocument(
+        SqliteConnection connection,
+        AgentWorkspaceDocumentRecord document,
+        SqliteTransaction? transaction = null)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO AgentWorkspaceDocuments (DocumentId, WorkspaceId, FilePath, SortOrder, CreatedAtUtc, UpdatedAtUtc)
+            VALUES ($documentId, $workspaceId, $filePath, $sortOrder, $createdAtUtc, $updatedAtUtc);
+            """;
+        command.Parameters.AddWithValue("$documentId", document.DocumentId);
+        command.Parameters.AddWithValue("$workspaceId", document.WorkspaceId);
+        command.Parameters.AddWithValue("$filePath", document.FilePath);
+        command.Parameters.AddWithValue("$sortOrder", document.SortOrder);
+        command.Parameters.AddWithValue("$createdAtUtc", document.CreatedAtUtc.ToString("O"));
+        command.Parameters.AddWithValue("$updatedAtUtc", document.UpdatedAtUtc.ToString("O"));
         command.ExecuteNonQuery();
     }
 

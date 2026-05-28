@@ -22,7 +22,7 @@ public sealed class LocalExecutionTarget
         "local",
         "local",
         "Local Machine",
-        "Executes commands and file operations on this machine within package-configured workspace roots.",
+        "Executes commands and file operations on this machine within configured workspace paths.",
         SupportsShell: true,
         SupportsFiles: true,
         SupportsSearch: true);
@@ -32,14 +32,14 @@ public sealed class LocalExecutionTarget
         "local",
         "primary-execution-target",
         "Local Machine",
-        "Run shell and file tools on this machine using configured local roots.");
+        "Run shell and file tools on this machine using configured workspace paths.");
 
     public ValueTask<AgentWorkspaceBindingReadiness> GetReadinessAsync(
         AgentWorkspaceBindingContext context,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var readiness = GetReadinessCore(context.Binding);
+        var readiness = GetReadinessCore(new AgentExecutionTargetContext(null, null, context.Workspace, context.Binding));
         return ValueTask.FromResult(new AgentWorkspaceBindingReadiness(context.Binding.BindingId, readiness.Status, readiness.Message));
     }
 
@@ -48,7 +48,7 @@ public sealed class LocalExecutionTarget
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(GetReadinessCore(context.Binding));
+        return ValueTask.FromResult(GetReadinessCore(context));
     }
 
     public ValueTask<AgentExecutionShellDescriptor> GetShellAsync(
@@ -64,10 +64,10 @@ public sealed class LocalExecutionTarget
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var config = _configService.GetConfig(context.Binding.BindingId);
+        var config = BuildRuntimeConfig(context);
         return ValueTask.FromResult(new AgentExecutionScopeDescriptor(
             Descriptor.DisplayName,
-            config.AllowedRoots,
+            config.WorkspacePaths,
             config.DefaultWorkingDirectory,
             "Local filesystem paths for this machine. On Windows, use the exact configured drive and user profile paths shown here."));
     }
@@ -87,7 +87,7 @@ public sealed class LocalExecutionTarget
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var config = _configService.GetConfig(context.Binding.BindingId);
+        var config = BuildRuntimeConfig(context);
         return ValueTask.FromResult(LocalResourceResolver.ResolveFileResource(config, path, allowOutsideConfiguredScope: true));
     }
 
@@ -96,7 +96,7 @@ public sealed class LocalExecutionTarget
         AgentShellCommandRequest request,
         CancellationToken cancellationToken = default)
     {
-        var config = _configService.GetConfig(context.Binding.BindingId);
+        var config = BuildRuntimeConfig(context);
         return await _shellExecutor.ExecuteShellAsync(config, context, request, cancellationToken);
     }
 
@@ -105,7 +105,7 @@ public sealed class LocalExecutionTarget
         AgentProcessCommandRequest request,
         CancellationToken cancellationToken = default)
     {
-        var config = _configService.GetConfig(context.Binding.BindingId);
+        var config = BuildRuntimeConfig(context);
         return await _processExecutor.ExecuteProcessAsync(config, context, request, cancellationToken);
     }
 
@@ -115,7 +115,7 @@ public sealed class LocalExecutionTarget
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var config = _configService.GetConfig(context.Binding.BindingId);
+        var config = BuildRuntimeConfig(context);
         return ValueTask.FromResult(LocalResourceResolver.MapToHostPath(config, executionPath));
     }
 
@@ -153,7 +153,7 @@ public sealed class LocalExecutionTarget
         AgentFileReadRequest request,
         CancellationToken cancellationToken = default)
     {
-        var config = _configService.GetConfig(context.Binding.BindingId);
+        var config = BuildRuntimeConfig(context);
         return await LocalFileSystemExecutor.ReadFileAsync(config, request, context.AllowOutsideConfiguredScope, cancellationToken);
     }
 
@@ -162,7 +162,7 @@ public sealed class LocalExecutionTarget
         AgentFileWriteRequest request,
         CancellationToken cancellationToken = default)
     {
-        var config = _configService.GetConfig(context.Binding.BindingId);
+        var config = BuildRuntimeConfig(context);
         return await LocalFileSystemExecutor.WriteFileAsync(config, request, context.AllowOutsideConfiguredScope, cancellationToken);
     }
 
@@ -172,27 +172,52 @@ public sealed class LocalExecutionTarget
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var config = _configService.GetConfig(context.Binding.BindingId);
+        var config = BuildRuntimeConfig(context);
         return LocalFileSystemExecutor.DeleteFileAsync(config, request, context.AllowOutsideConfiguredScope);
     }
 
-    internal string ResolvePath(LocalExecutionWorkspaceConfig config, string path, bool allowOutsideConfiguredScope)
+    internal string ResolvePath(LocalExecutionRuntimeConfig config, string path, bool allowOutsideConfiguredScope)
         => LocalPathResolver.ResolvePath(config, path, allowOutsideConfiguredScope);
 
-    private AgentExecutionTargetReadiness GetReadinessCore(AgentWorkspaceBindingRecord binding)
+    private AgentExecutionTargetReadiness GetReadinessCore(AgentExecutionTargetContext context)
     {
-        var config = _configService.GetConfig(binding.BindingId);
-        if (config.AllowedRoots.Count == 0)
+        var config = BuildRuntimeConfig(context);
+        if (config.WorkspacePaths.Count == 0)
         {
-            return new AgentExecutionTargetReadiness(Descriptor.TargetKind, Descriptor.TargetId, AgentExecutionTargetReadinessStatus.NeedsConfiguration, "Configure at least one local allowed root before using local execution.");
+            return new AgentExecutionTargetReadiness(Descriptor.TargetKind, Descriptor.TargetId, AgentExecutionTargetReadinessStatus.NeedsConfiguration, "Configure at least one workspace path before using local execution.");
         }
 
-        var missingRoots = config.AllowedRoots.Where(root => !Directory.Exists(root)).ToArray();
+        var missingRoots = config.WorkspacePaths.Where(root => !Directory.Exists(root)).ToArray();
         if (missingRoots.Length > 0)
         {
-            return new AgentExecutionTargetReadiness(Descriptor.TargetKind, Descriptor.TargetId, AgentExecutionTargetReadinessStatus.Failed, $"Allowed root does not exist: {missingRoots[0]}");
+            return new AgentExecutionTargetReadiness(Descriptor.TargetKind, Descriptor.TargetId, AgentExecutionTargetReadinessStatus.Failed, $"Workspace path does not exist: {missingRoots[0]}");
         }
 
         return new AgentExecutionTargetReadiness(Descriptor.TargetKind, Descriptor.TargetId, AgentExecutionTargetReadinessStatus.Ready, "Local execution is ready.");
+    }
+
+    private LocalExecutionRuntimeConfig BuildRuntimeConfig(AgentExecutionTargetContext context)
+    {
+        var config = _configService.GetConfig(context.Binding.BindingId);
+        var paths = context.Workspace.Paths
+            .Where(path => !string.IsNullOrWhiteSpace(path.HostPath))
+            .OrderBy(path => path.SortOrder)
+            .Select(path => Path.GetFullPath(LocalExecutionWorkspaceConfigService.ExpandPath(path.HostPath.Trim())))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var defaultPath = context.Workspace.Paths
+            .OrderBy(path => path.SortOrder)
+            .FirstOrDefault(path => path.IsDefault && !string.IsNullOrWhiteSpace(path.HostPath))
+            ?.HostPath;
+        var defaultWorkingDirectory = string.IsNullOrWhiteSpace(defaultPath)
+            ? paths.FirstOrDefault()
+            : Path.GetFullPath(LocalExecutionWorkspaceConfigService.ExpandPath(defaultPath.Trim()));
+        if (defaultWorkingDirectory is not null
+            && !paths.Any(path => LocalExecutionWorkspaceConfigService.IsSameOrChildPath(defaultWorkingDirectory, path)))
+        {
+            defaultWorkingDirectory = paths.FirstOrDefault();
+        }
+
+        return new LocalExecutionRuntimeConfig(paths, defaultWorkingDirectory, config.SelectedShellId, config.PathEntries);
     }
 }

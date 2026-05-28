@@ -56,11 +56,19 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     public ObservableCollection<ExecutionTargetOption> ExecutionTargets { get; } = [];
 
+    public ObservableCollection<AgentWorkspacePathItemViewModel> WorkspacePaths { get; } = [];
+
+    public ObservableCollection<AgentWorkspaceDocumentItemViewModel> WorkspaceDocuments { get; } = [];
+
     public bool HasExecutionTargetChoices => ExecutionTargets.Any(target => !target.IsUnconfigured);
 
     public bool HasNoExecutionTargetChoices => !HasExecutionTargetChoices;
 
     public bool HasSelectedWorkspace => SelectedWorkspace is not null;
+
+    public bool HasWorkspacePaths => WorkspacePaths.Count > 0;
+
+    public bool HasWorkspaceDocuments => WorkspaceDocuments.Count > 0;
 
     public bool IsListActive => !IsEditorActive;
 
@@ -91,6 +99,12 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     [ObservableProperty]
     private ExecutionTargetOption? _selectedExecutionTarget;
+
+    [ObservableProperty]
+    private AgentWorkspacePathItemViewModel? _selectedWorkspacePath;
+
+    [ObservableProperty]
+    private AgentWorkspaceDocumentItemViewModel? _selectedWorkspaceDocument;
 
     public ObservableCollection<AgentEditorSectionViewModel> EditorSections { get; } = [];
 
@@ -187,6 +201,15 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         _ = RefreshEditorSectionsAsync();
     }
 
+    partial void OnSelectedWorkspacePathChanged(AgentWorkspacePathItemViewModel? value)
+    {
+        SetSelectedWorkspacePathAsDefaultCommand.NotifyCanExecuteChanged();
+        DeleteSelectedWorkspacePathCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnSelectedWorkspaceDocumentChanged(AgentWorkspaceDocumentItemViewModel? value)
+        => DeleteSelectedWorkspaceDocumentCommand.NotifyCanExecuteChanged();
+
     [RelayCommand]
     private void CreateWorkspace()
     {
@@ -214,6 +237,12 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         try
         {
             var savedWorkspaceId = SelectedWorkspace.WorkspaceId;
+            if (!ValidateWorkspacePathsAndDocuments(out var validationMessage))
+            {
+                SetStatus(validationMessage, AgentWorkspaceStatusKind.Error);
+                return;
+            }
+
             var editorSaveResult = await SaveEditorSectionsAsync();
             if (!editorSaveResult.Success)
             {
@@ -222,6 +251,12 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             }
 
             _workspaceService.SaveWorkspace(SelectedWorkspace.WorkspaceId, DisplayName, Description);
+            _workspaceService.SaveWorkspacePaths(
+                SelectedWorkspace.WorkspaceId,
+                WorkspacePaths.Select((path, index) => path.ToRecord(SelectedWorkspace.WorkspaceId, index)).ToArray());
+            _workspaceService.SaveWorkspaceDocuments(
+                SelectedWorkspace.WorkspaceId,
+                WorkspaceDocuments.Select((document, index) => document.ToRecord(SelectedWorkspace.WorkspaceId, index)).ToArray());
             AgentExecutionTargetWarmupResult? warmupResult = null;
             if (SelectedExecutionTarget is null || SelectedExecutionTarget.IsUnconfigured)
             {
@@ -232,8 +267,9 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
                 _workspaceService.SavePrimaryExecutionBinding(SelectedWorkspace.WorkspaceId, SelectedExecutionTarget.TargetId!);
                 if (_warmupService is not null)
                 {
+                    var warmupWorkspace = _workspaceService.GetWorkspace(savedWorkspaceId) ?? SelectedWorkspace;
                     SetStatus("Workspace saved. Preparing execution target...", AgentWorkspaceStatusKind.Warning);
-                    warmupResult = await _warmupService.WarmWorkspaceAsync(SelectedWorkspace);
+                    warmupResult = await _warmupService.WarmWorkspaceAsync(warmupWorkspace);
                 }
             }
 
@@ -307,6 +343,194 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private bool CanSaveWorkspace() => SelectedWorkspace is not null;
 
     private bool CanDeleteWorkspace() => SelectedWorkspace is not null;
+
+    public void AddWorkspacePath(string hostPath)
+    {
+        if (SelectedWorkspace is null || string.IsNullOrWhiteSpace(hostPath))
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var fullPath = AgentWorkspacePathFormatter.GetFullPath(hostPath);
+        if (WorkspacePaths.Any(path => string.Equals(AgentWorkspacePathFormatter.GetFullPath(path.HostPath), fullPath, GetPathStringComparison())))
+        {
+            return;
+        }
+
+        var item = new AgentWorkspacePathItemViewModel(new AgentWorkspacePathRecord(
+            Guid.NewGuid().ToString("N"),
+            SelectedWorkspace.WorkspaceId,
+            fullPath,
+            WorkspacePaths.Count == 0,
+            WorkspacePaths.Count,
+            now,
+            now));
+        WorkspacePaths.Add(item);
+        SelectedWorkspacePath = item;
+        NotifyWorkspacePathCollectionChanged();
+    }
+
+    public void AddWorkspaceDocument(string filePath)
+    {
+        if (SelectedWorkspace is null || string.IsNullOrWhiteSpace(filePath))
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var fullPath = AgentWorkspacePathFormatter.GetFullPath(filePath);
+        if (WorkspaceDocuments.Any(document => string.Equals(AgentWorkspacePathFormatter.GetFullPath(document.FilePath), fullPath, GetPathStringComparison())))
+        {
+            return;
+        }
+
+        var item = new AgentWorkspaceDocumentItemViewModel(new AgentWorkspaceDocumentRecord(
+            Guid.NewGuid().ToString("N"),
+            SelectedWorkspace.WorkspaceId,
+            fullPath,
+            WorkspaceDocuments.Count,
+            now,
+            now));
+        WorkspaceDocuments.Add(item);
+        SelectedWorkspaceDocument = item;
+        NotifyWorkspaceDocumentCollectionChanged();
+    }
+
+    [RelayCommand(CanExecute = nameof(CanSetSelectedWorkspacePathAsDefault))]
+    private void SetSelectedWorkspacePathAsDefault()
+    {
+        SetWorkspacePathAsDefault(SelectedWorkspacePath);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanDeleteSelectedWorkspacePath))]
+    private void DeleteSelectedWorkspacePath()
+    {
+        DeleteWorkspacePath(SelectedWorkspacePath);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanDeleteSelectedWorkspaceDocument))]
+    private void DeleteSelectedWorkspaceDocument()
+    {
+        DeleteWorkspaceDocument(SelectedWorkspaceDocument);
+    }
+
+    [RelayCommand]
+    private void BeginEditWorkspacePath(AgentWorkspacePathItemViewModel? path)
+    {
+        if (path is null)
+        {
+            return;
+        }
+
+        foreach (var item in WorkspacePaths)
+        {
+            if (!ReferenceEquals(item, path) && item.IsEditActive)
+            {
+                item.CancelEdit();
+            }
+        }
+
+        path.BeginEdit();
+    }
+
+    [RelayCommand]
+    private static void SaveWorkspacePathEdit(AgentWorkspacePathItemViewModel? path)
+        => path?.SaveEdit();
+
+    [RelayCommand]
+    private static void CancelWorkspacePathEdit(AgentWorkspacePathItemViewModel? path)
+        => path?.CancelEdit();
+
+    [RelayCommand]
+    private void SetWorkspacePathAsDefault(AgentWorkspacePathItemViewModel? path)
+    {
+        if (path is null)
+        {
+            return;
+        }
+
+        foreach (var item in WorkspacePaths)
+        {
+            item.IsDefault = ReferenceEquals(item, path);
+        }
+
+        SelectedWorkspacePath = path;
+        SetSelectedWorkspacePathAsDefaultCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand]
+    private void DeleteWorkspacePath(AgentWorkspacePathItemViewModel? path)
+    {
+        if (path is null)
+        {
+            return;
+        }
+
+        var wasDefault = path.IsDefault;
+        WorkspacePaths.Remove(path);
+        if (wasDefault && WorkspacePaths.Count > 0)
+        {
+            WorkspacePaths[0].IsDefault = true;
+        }
+
+        if (ReferenceEquals(SelectedWorkspacePath, path))
+        {
+            SelectedWorkspacePath = WorkspacePaths.FirstOrDefault(item => item.IsDefault) ?? WorkspacePaths.FirstOrDefault();
+        }
+
+        NotifyWorkspacePathCollectionChanged();
+    }
+
+    [RelayCommand]
+    private void BeginEditWorkspaceDocument(AgentWorkspaceDocumentItemViewModel? document)
+    {
+        if (document is null)
+        {
+            return;
+        }
+
+        foreach (var item in WorkspaceDocuments)
+        {
+            if (!ReferenceEquals(item, document) && item.IsEditActive)
+            {
+                item.CancelEdit();
+            }
+        }
+
+        document.BeginEdit();
+    }
+
+    [RelayCommand]
+    private static void SaveWorkspaceDocumentEdit(AgentWorkspaceDocumentItemViewModel? document)
+        => document?.SaveEdit();
+
+    [RelayCommand]
+    private static void CancelWorkspaceDocumentEdit(AgentWorkspaceDocumentItemViewModel? document)
+        => document?.CancelEdit();
+
+    [RelayCommand]
+    private void DeleteWorkspaceDocument(AgentWorkspaceDocumentItemViewModel? document)
+    {
+        if (document is null)
+        {
+            return;
+        }
+
+        WorkspaceDocuments.Remove(document);
+        if (ReferenceEquals(SelectedWorkspaceDocument, document))
+        {
+            SelectedWorkspaceDocument = WorkspaceDocuments.FirstOrDefault();
+        }
+
+        NotifyWorkspaceDocumentCollectionChanged();
+    }
+
+    private bool CanSetSelectedWorkspacePathAsDefault() => SelectedWorkspacePath is not null;
+
+    private bool CanDeleteSelectedWorkspacePath() => SelectedWorkspacePath is not null;
+
+    private bool CanDeleteSelectedWorkspaceDocument() => SelectedWorkspaceDocument is not null;
 
     [RelayCommand]
     private void BackToWorkspaceList()
@@ -461,12 +685,95 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     {
         DisplayName = workspace?.DisplayName ?? string.Empty;
         Description = workspace?.Description ?? string.Empty;
+        LoadWorkspacePaths(workspace);
+        LoadWorkspaceDocuments(workspace);
         var binding = workspace is null
             ? null
             : _workspaceService.ListBindings(workspace.WorkspaceId)
                 .FirstOrDefault(item => string.Equals(item.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase));
         SetSelectionSilently(() => SelectedExecutionTarget = ResolveTargetOption(binding?.ContributionId));
         _ = RefreshEditorSectionsAsync();
+    }
+
+    private void LoadWorkspacePaths(AgentWorkspaceRecord? workspace)
+    {
+        WorkspacePaths.Clear();
+        if (workspace is not null)
+        {
+            foreach (var path in workspace.Paths.OrderBy(path => path.SortOrder))
+            {
+                WorkspacePaths.Add(new AgentWorkspacePathItemViewModel(path));
+            }
+        }
+
+        SelectedWorkspacePath = WorkspacePaths.FirstOrDefault(path => path.IsDefault) ?? WorkspacePaths.FirstOrDefault();
+        NotifyWorkspacePathCollectionChanged();
+    }
+
+    private void LoadWorkspaceDocuments(AgentWorkspaceRecord? workspace)
+    {
+        WorkspaceDocuments.Clear();
+        if (workspace is not null)
+        {
+            foreach (var document in workspace.Documents.OrderBy(document => document.SortOrder))
+            {
+                WorkspaceDocuments.Add(new AgentWorkspaceDocumentItemViewModel(document));
+            }
+        }
+
+        SelectedWorkspaceDocument = WorkspaceDocuments.FirstOrDefault();
+        NotifyWorkspaceDocumentCollectionChanged();
+    }
+
+    private bool ValidateWorkspacePathsAndDocuments(out string message)
+    {
+        foreach (var path in WorkspacePaths)
+        {
+            if (string.IsNullOrWhiteSpace(path.HostPath))
+            {
+                message = "Workspace path cannot be empty.";
+                return false;
+            }
+
+            var fullPath = AgentWorkspacePathFormatter.GetFullPath(path.HostPath);
+            if (!Directory.Exists(fullPath))
+            {
+                message = $"Workspace path does not exist: {fullPath}";
+                return false;
+            }
+        }
+
+        foreach (var document in WorkspaceDocuments)
+        {
+            if (string.IsNullOrWhiteSpace(document.FilePath))
+            {
+                message = "Workspace document path cannot be empty.";
+                return false;
+            }
+
+            var fullPath = AgentWorkspacePathFormatter.GetFullPath(document.FilePath);
+            if (!File.Exists(fullPath))
+            {
+                message = $"Workspace document does not exist: {fullPath}";
+                return false;
+            }
+        }
+
+        message = string.Empty;
+        return true;
+    }
+
+    private void NotifyWorkspacePathCollectionChanged()
+    {
+        OnPropertyChanged(nameof(HasWorkspacePaths));
+        SetSelectedWorkspacePathAsDefaultCommand.NotifyCanExecuteChanged();
+        DeleteSelectedWorkspacePathCommand.NotifyCanExecuteChanged();
+    }
+
+    private void NotifyWorkspaceDocumentCollectionChanged()
+    {
+        OnPropertyChanged(nameof(HasWorkspaceDocuments));
+        DeleteSelectedWorkspaceDocumentCommand.NotifyCanExecuteChanged();
     }
 
     private string? ResolveWorkspaceTargetId(string workspaceId)
@@ -635,4 +942,9 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             _suppressSelectionHandlers = false;
         }
     }
+
+    private static StringComparison GetPathStringComparison()
+        => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
 }

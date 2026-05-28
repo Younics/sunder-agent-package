@@ -51,7 +51,7 @@ public sealed record BuilderWorkspaceExecution(
 
     public bool IsPosix => Shell.SyntaxKind == AgentShellSyntaxKinds.PosixSh;
 
-    public string DefaultExecutionRoot => Scope.DefaultWorkingDirectory ?? Scope.AllowedRoots.First();
+    public string DefaultExecutionRoot => Scope.DefaultWorkingDirectory ?? Scope.WorkspacePaths.First();
 
     public async ValueTask<BuilderProcessResult> RunProcessAsync(
         string fileName,
@@ -91,7 +91,7 @@ public sealed record BuilderWorkspaceExecution(
     {
         if (PathMapper is null)
         {
-            return new AgentExecutionPathMapping(executionPath, executionPath, IsInsideAllowedRoot(executionPath));
+            return new AgentExecutionPathMapping(executionPath, executionPath, IsInsideWorkspacePath(executionPath));
         }
 
         return await PathMapper.MapToHostPathAsync(Context, executionPath, cancellationToken);
@@ -110,8 +110,8 @@ public sealed record BuilderWorkspaceExecution(
     public string CombinePath(string root, string leaf)
         => UsesWindowsPaths(root) ? root.TrimEnd('\\', '/') + "\\" + leaf : root.TrimEnd('/') + "/" + leaf;
 
-    private bool IsInsideAllowedRoot(string path)
-        => Scope.AllowedRoots.Any(root => path.StartsWith(root, StringComparison.OrdinalIgnoreCase));
+    private bool IsInsideWorkspacePath(string path)
+        => Scope.WorkspacePaths.Any(root => path.StartsWith(root, StringComparison.OrdinalIgnoreCase));
 
     private bool UsesWindowsPaths(string path)
         => IsWindows || path.Contains('\\') || path.Contains(':');

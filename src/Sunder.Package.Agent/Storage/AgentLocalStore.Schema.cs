@@ -43,6 +43,25 @@ public sealed partial class AgentLocalStore
                 UpdatedAtUtc TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS AgentWorkspacePaths (
+                PathId TEXT PRIMARY KEY,
+                WorkspaceId TEXT NOT NULL,
+                HostPath TEXT NOT NULL,
+                IsDefault INTEGER NOT NULL DEFAULT 0,
+                SortOrder INTEGER NOT NULL DEFAULT 0,
+                CreatedAtUtc TEXT NOT NULL,
+                UpdatedAtUtc TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS AgentWorkspaceDocuments (
+                DocumentId TEXT PRIMARY KEY,
+                WorkspaceId TEXT NOT NULL,
+                FilePath TEXT NOT NULL,
+                SortOrder INTEGER NOT NULL DEFAULT 0,
+                CreatedAtUtc TEXT NOT NULL,
+                UpdatedAtUtc TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS AgentWorkspaceBindings (
                 BindingId TEXT PRIMARY KEY,
                 WorkspaceId TEXT NOT NULL,
@@ -204,6 +223,8 @@ public sealed partial class AgentLocalStore
             );
 
             CREATE INDEX IF NOT EXISTS IX_AgentWorkspaceBindings_WorkspaceId_Role ON AgentWorkspaceBindings (WorkspaceId, Role);
+            CREATE INDEX IF NOT EXISTS IX_AgentWorkspacePaths_WorkspaceId_SortOrder ON AgentWorkspacePaths (WorkspaceId, SortOrder);
+            CREATE INDEX IF NOT EXISTS IX_AgentWorkspaceDocuments_WorkspaceId_SortOrder ON AgentWorkspaceDocuments (WorkspaceId, SortOrder);
             CREATE INDEX IF NOT EXISTS IX_AgentTurns_SessionId_CreatedAtUtc ON AgentTurns (SessionId, CreatedAtUtc);
             CREATE INDEX IF NOT EXISTS IX_AgentTurnItems_TurnId_SequenceNumber ON AgentTurnItems (TurnId, SequenceNumber);
             CREATE INDEX IF NOT EXISTS IX_AgentRunCheckpoints_SessionId_CreatedAtUtc ON AgentRunCheckpoints (SessionId, CreatedAtUtc);

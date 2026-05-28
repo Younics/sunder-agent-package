@@ -7,7 +7,7 @@ public static class LocalExecutionConfiguration
     public static PackageConfigurationSchema Schema { get; } = new(
         "sunder.package.agent.execution.local",
         "Sunder Agent Execution Local",
-        "Configure local-machine execution defaults. Workspaces still define allowed roots before tools can use this target.",
+        "Configure local-machine execution defaults. Workspaces define paths before tools can use this target.",
         [
             new PackageConfigurationSection(
                 "shell",

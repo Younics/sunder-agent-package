@@ -344,3 +344,189 @@ public sealed record ExecutionTargetOption(string? TargetId, string DisplayName,
 
     public static ExecutionTargetOption Unconfigured { get; } = new(null, "Unconfigured", "Chat-only workspace. Execution-backed tools will be unavailable.");
 }
+
+public sealed partial class AgentWorkspacePathItemViewModel : ObservableObject
+{
+    public AgentWorkspacePathItemViewModel(AgentWorkspacePathRecord path)
+    {
+        PathId = path.PathId;
+        HostPath = AgentWorkspacePathFormatter.FormatForDisplay(path.HostPath);
+        IsDefault = path.IsDefault;
+        CreatedAtUtc = path.CreatedAtUtc;
+    }
+
+    public string PathId { get; }
+
+    public DateTimeOffset CreatedAtUtc { get; }
+
+    [ObservableProperty]
+    private string _hostPath = string.Empty;
+
+    [ObservableProperty]
+    private bool _isDefault;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsNotEditActive))]
+    private bool _isEditActive;
+
+    [ObservableProperty]
+    private string _editHostPath = string.Empty;
+
+    public bool IsNotEditActive => !IsEditActive;
+
+    public void BeginEdit()
+    {
+        EditHostPath = HostPath;
+        IsEditActive = true;
+    }
+
+    public void SaveEdit()
+    {
+        HostPath = AgentWorkspacePathFormatter.FormatForDisplayOrRaw(EditHostPath);
+        CancelEdit();
+    }
+
+    public void CancelEdit()
+    {
+        IsEditActive = false;
+        EditHostPath = string.Empty;
+    }
+
+    public AgentWorkspacePathRecord ToRecord(string workspaceId, int sortOrder)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new AgentWorkspacePathRecord(
+            PathId,
+            workspaceId,
+            HostPath,
+            IsDefault,
+            sortOrder,
+            CreatedAtUtc == default ? now : CreatedAtUtc,
+            now);
+    }
+}
+
+internal static class AgentWorkspacePathFormatter
+{
+    public static string FormatForDisplay(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var fullPath = Path.GetFullPath(ExpandPath(path.Trim()));
+        if (!string.IsNullOrWhiteSpace(home)
+            && IsSameOrChildPath(fullPath, home))
+        {
+            var relative = fullPath[Path.GetFullPath(home).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length..]
+                .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return string.IsNullOrWhiteSpace(relative)
+                ? "~"
+                : $"~/{relative.Replace(Path.DirectorySeparatorChar, '/')}";
+        }
+
+        return fullPath.Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    public static string FormatForDisplayOrRaw(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            return FormatForDisplay(path);
+        }
+        catch
+        {
+            return path.Trim();
+        }
+    }
+
+    public static string GetFullPath(string path)
+        => Path.GetFullPath(ExpandPath(path.Trim()));
+
+    private static string ExpandPath(string path)
+    {
+        if (path == "~")
+        {
+            return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        }
+
+        return path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith("~\\", StringComparison.Ordinal)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path[2..])
+            : Environment.ExpandEnvironmentVariables(path);
+    }
+
+    private static bool IsSameOrChildPath(string candidatePath, string rootPath)
+    {
+        var candidate = Path.GetFullPath(candidatePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return string.Equals(candidate, root, comparison)
+               || candidate.StartsWith(root + Path.DirectorySeparatorChar, comparison)
+               || candidate.StartsWith(root + Path.AltDirectorySeparatorChar, comparison);
+    }
+}
+
+public sealed partial class AgentWorkspaceDocumentItemViewModel : ObservableObject
+{
+    public AgentWorkspaceDocumentItemViewModel(AgentWorkspaceDocumentRecord document)
+    {
+        DocumentId = document.DocumentId;
+        FilePath = AgentWorkspacePathFormatter.FormatForDisplay(document.FilePath);
+        CreatedAtUtc = document.CreatedAtUtc;
+    }
+
+    public string DocumentId { get; }
+
+    public DateTimeOffset CreatedAtUtc { get; }
+
+    [ObservableProperty]
+    private string _filePath = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsNotEditActive))]
+    private bool _isEditActive;
+
+    [ObservableProperty]
+    private string _editFilePath = string.Empty;
+
+    public bool IsNotEditActive => !IsEditActive;
+
+    public void BeginEdit()
+    {
+        EditFilePath = FilePath;
+        IsEditActive = true;
+    }
+
+    public void SaveEdit()
+    {
+        FilePath = AgentWorkspacePathFormatter.FormatForDisplayOrRaw(EditFilePath);
+        CancelEdit();
+    }
+
+    public void CancelEdit()
+    {
+        IsEditActive = false;
+        EditFilePath = string.Empty;
+    }
+
+    public AgentWorkspaceDocumentRecord ToRecord(string workspaceId, int sortOrder)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new AgentWorkspaceDocumentRecord(
+            DocumentId,
+            workspaceId,
+            FilePath,
+            sortOrder,
+            CreatedAtUtc == default ? now : CreatedAtUtc,
+            now);
+    }
+}
