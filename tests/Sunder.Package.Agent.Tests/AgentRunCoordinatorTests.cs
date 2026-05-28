@@ -5319,6 +5319,58 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task AgentRunCoordinator_ReportsReasoningActivityAsFiveLineTail()
+    {
+        var provider = new ScriptedProvider(
+            (_, _) =>
+            [
+                ReasoningDelta("First sentence. Second sentence. Third sentence. Four"),
+                ReasoningDelta("th sentence. Fifth sentence. Sixth sentence."),
+                Complete("done"),
+            ]
+        );
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        var reasoningActivities = new List<AgentRunActivityUpdate>();
+
+        void OnRunActivityChanged(Guid changedSessionId, AgentRunActivityUpdate activity)
+        {
+            if (changedSessionId == sessionId && activity.Kind == AgentRunActivityKind.Reasoning)
+            {
+                reasoningActivities.Add(activity);
+            }
+        }
+
+        runtime.SessionService.RunActivityChanged += OnRunActivityChanged;
+        try
+        {
+            await runtime.RunCoordinator.QueueUserMessageAsync(
+                sessionId,
+                runtime.CurrentProfileId,
+                "Use reasoning.",
+                runtime.CurrentWorkspaceId
+            );
+        }
+        finally
+        {
+            runtime.SessionService.RunActivityChanged -= OnRunActivityChanged;
+        }
+
+        Assert.NotEmpty(reasoningActivities);
+        Assert.Equal(
+            string.Join(
+                Environment.NewLine,
+                "Second sentence.",
+                "Third sentence.",
+                "Fourth sentence.",
+                "Fifth sentence.",
+                "Sixth sentence."
+            ),
+            reasoningActivities[^1].Text
+        );
+    }
+
+    [Fact]
     public async Task AgentRunCoordinator_IgnoresStaleProfileReasoningVariant()
     {
         var provider = new ScriptedProvider(
@@ -7659,7 +7711,7 @@ public sealed class AgentRunCoordinatorTests
         );
 
         var activityRow = Assert.IsType<AgentActivityTranscriptRowViewModel>(Assert.Single(viewModel.Messages));
-        Assert.Equal("Checking the latest transcript before choosing a tool.", activityRow.ThinkingText);
+        Assert.Equal("Checking the latest transcript before choosing a tool. ...", activityRow.ThinkingText);
     }
 
     [Fact]
@@ -7805,27 +7857,37 @@ public sealed class AgentRunCoordinatorTests
         );
 
         Assert.Equal(
-            "Fetching New York weather I need the current weather for New York City.",
+            "Fetching New York weather I need the current weather for New York City. ...",
             activityRow.ThinkingText
         );
     }
 
     [Fact]
-    public void AgentActivityTranscriptRowViewModel_PreservesReasoningStartWhenLong()
+    public void AgentActivityTranscriptRowViewModel_PreservesReasoningLines()
     {
         using var activityRow = new AgentActivityTranscriptRowViewModel(
-            "I need to fetch the New York forecast. "
-            + "I will use the coordinates for NYC, which are 40.7128, -74.0060. "
-            + string.Join(' ', Enumerable.Repeat("Additional planning context follows.", 20)),
+            "**First step.**\n- Second step.\n3. Third step.",
             isReasoningActivity: true
         );
 
-        Assert.StartsWith(
-            "I need to fetch the New York forecast. I will use the coordinates for NYC",
-            activityRow.ThinkingText,
-            StringComparison.Ordinal
+        Assert.Equal(
+            string.Join(Environment.NewLine, "First step.", "Second step.", "Third step.") + " ...",
+            activityRow.ThinkingText
         );
-        Assert.EndsWith("...", activityRow.ThinkingText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AgentActivityTranscriptRowViewModel_DoesNotPreclipReasoningText()
+    {
+        var reasoningText = "I need to fetch the New York forecast. "
+                            + "I will use the coordinates for NYC, which are 40.7128, -74.0060. "
+                            + string.Join(' ', Enumerable.Repeat("Additional planning context follows.", 20));
+        using var activityRow = new AgentActivityTranscriptRowViewModel(
+            reasoningText,
+            isReasoningActivity: true
+        );
+
+        Assert.Equal(reasoningText + " ...", activityRow.ThinkingText);
     }
 
     [Fact]

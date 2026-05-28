@@ -362,7 +362,7 @@
     <Style Selector="TextBlock.setup-description">
       <Setter Property="FontSize" Value="14" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
-      <Setter Property="TextWrapping" Value="Wrap" />
+      <Setter Property="TextWrapping" Value="NoWrap" />
       <Setter Property="LineHeight" Value="22" />
     </Style>
 
@@ -391,8 +391,8 @@
       <Setter Property="Height" Value="6" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Full}" />
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Accent}" />
-      <Setter Property="VerticalAlignment" Value="Center" />
-      <Setter Property="Margin" Value="0,2,0,0" />
+      <Setter Property="VerticalAlignment" Value="Top" />
+      <Setter Property="Margin" Value="0,7,0,0" />
       <Style.Animations>
         <Animation Duration="0:0:1.3"
                    IterationCount="INFINITE"
@@ -413,7 +413,7 @@
       <Setter Property="FontWeight" Value="Regular" />
       <Setter Property="TextWrapping" Value="Wrap" />
       <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-      <Setter Property="MaxLines" Value="3" />
+      <Setter Property="MaxLines" Value="5" />
       <Setter Property="LineHeight" Value="19" />
       <Setter Property="Opacity" Value="0.82" />
     </Style>
@@ -807,7 +807,8 @@
               ColumnDefinitions="Auto,*"
               ColumnSpacing="9"
               MinWidth="0"
-              VerticalAlignment="Center">
+              Margin="0,11,0,0"
+              VerticalAlignment="Top">
           <Border Classes="activity-pulse-dot" />
           <TextBlock Grid.Column="1"
                      Classes="activity-text"

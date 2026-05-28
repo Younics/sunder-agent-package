@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -36,6 +37,7 @@ public partial class AgentChatView : UserControl
     private bool _transcriptChangedBeforeScrollReady;
     private bool _initialTranscriptPlacementPending = true;
     private bool _initialTranscriptPlacementQueued;
+    private bool _initialTranscriptVisibilityRetryQueued;
     private int _initialTranscriptPlacementVersion;
     private Guid? _pendingSessionRenameFocusId;
     private IPackageNotificationService _notificationService = NullPackageNotificationService.Instance;
@@ -98,7 +100,16 @@ public partial class AgentChatView : UserControl
             attachmentService: attachmentService);
         _viewModel.TranscriptChanging += OnTranscriptChanging;
         _viewModel.TranscriptChanged += OnTranscriptChanged;
+        _viewModel.PropertyChanging += OnViewModelPropertyChanging;
         DataContext = _viewModel;
+    }
+
+    private void OnViewModelPropertyChanging(object? sender, PropertyChangingEventArgs e)
+    {
+        if (string.Equals(e.PropertyName, nameof(AgentChatViewModel.DisplayedSession), StringComparison.Ordinal))
+        {
+            MarkInitialTranscriptPlacementPending();
+        }
     }
 
     private async void CopyTranscriptText_OnClick(object? sender, RoutedEventArgs e)
@@ -720,9 +731,15 @@ public partial class AgentChatView : UserControl
         }
 
         _transcriptChangedBeforeScrollReady = false;
-        if (viewModel is null || viewModel.ShowSetupInstructions || viewModel.Messages.Count == 0 || !TranscriptScrollViewer.IsVisible)
+        if (viewModel is null || viewModel.ShowSetupInstructions || viewModel.Messages.Count == 0)
         {
             CompleteInitialTranscriptPlacement(_initialTranscriptPlacementVersion);
+            return true;
+        }
+
+        if (!TranscriptScrollViewer.IsVisible)
+        {
+            QueueInitialTranscriptVisibilityRetry();
             return true;
         }
 
@@ -747,7 +764,23 @@ public partial class AgentChatView : UserControl
 
         _initialTranscriptPlacementPending = true;
         _initialTranscriptPlacementQueued = false;
+        _initialTranscriptVisibilityRetryQueued = false;
         HideTranscriptUntilInitialPlacement();
+    }
+
+    private void QueueInitialTranscriptVisibilityRetry()
+    {
+        if (_initialTranscriptVisibilityRetryQueued)
+        {
+            return;
+        }
+
+        _initialTranscriptVisibilityRetryQueued = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            _initialTranscriptVisibilityRetryQueued = false;
+            HandleTranscriptReadyAfterScrollReady();
+        }, DispatcherPriority.Loaded);
     }
 
     private void HideTranscriptUntilInitialPlacement()
@@ -762,6 +795,7 @@ public partial class AgentChatView : UserControl
 
         _initialTranscriptPlacementPending = false;
         _initialTranscriptPlacementQueued = false;
+        _initialTranscriptVisibilityRetryQueued = false;
         TranscriptScrollViewer.Opacity = 1;
     }
 

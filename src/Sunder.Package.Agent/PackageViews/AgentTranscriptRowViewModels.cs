@@ -163,7 +163,6 @@ public sealed class AgentTextTranscriptRowViewModel : AgentTranscriptRowViewMode
 
 public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscriptRowViewModel, IDisposable
 {
-    private const int MaxCompactReasoningCharacters = 360;
     private readonly DispatcherTimer _timer;
     private string _activityTextBase;
     private bool _isReasoningActivity;
@@ -211,11 +210,21 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
         }
 
         _tick++;
-        ThinkingText = FormatThinkingText(ResolveActivityText(_activityTextBase), _tick);
+        ThinkingText = _isReasoningActivity
+            ? FormatReasoningActivityText(CreateCompactReasoningText(_activityTextBase), _tick)
+            : FormatThinkingText(ResolveActivityText(_activityTextBase), _tick);
     }
 
     private static string FormatThinkingText(string activityTextBase, int tick)
-        => activityTextBase + new string('.', tick % 4);
+        => activityTextBase + FormatActivityDots(tick);
+
+    private static string FormatReasoningActivityText(string activityText, int tick)
+        => string.IsNullOrWhiteSpace(activityText)
+            ? FormatThinkingText("Thinking", tick)
+            : activityText + " " + FormatActivityDots(tick);
+
+    private static string FormatActivityDots(int tick)
+        => new string('.', ((tick + 2) % 3) + 1);
 
     private void ApplyActivityTextBase(string activityTextBase, bool isReasoningActivity)
     {
@@ -232,9 +241,9 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
 
     private void ApplyReasoningActivityText(string markdown)
     {
-        _animateActivityText = false;
+        _animateActivityText = true;
         var normalizedMarkdown = string.IsNullOrWhiteSpace(markdown) ? "Thinking" : markdown.Trim();
-        ThinkingText = CreateCompactReasoningText(normalizedMarkdown);
+        ThinkingText = FormatReasoningActivityText(CreateCompactReasoningText(normalizedMarkdown), _tick);
     }
 
     private static string ResolveActivityText(string activityTextBase)
@@ -264,19 +273,20 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
            || activityTextBase.StartsWith("Reviewing", StringComparison.OrdinalIgnoreCase);
 
     private static string CreateCompactReasoningText(string markdown)
-        => ClipText(StripMarkdown(markdown), MaxCompactReasoningCharacters);
+        => StripMarkdown(markdown);
 
     private static string StripMarkdown(string markdown)
     {
         var text = markdown.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
         text = Regex.Replace(text, @"!\[([^\]]*)\]\([^)]+\)", "$1");
         text = Regex.Replace(text, @"\[([^\]]+)\]\([^)]+\)", "$1");
-        text = string.Join(
-            ' ',
+        return string.Join(
+            Environment.NewLine,
             text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Select(StripMarkdownLine));
-        text = Regex.Replace(text, @"[*_`~]+", string.Empty);
-        return string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+                .Select(StripMarkdownLine)
+                .Select(line => Regex.Replace(line, @"[*_`~]+", string.Empty))
+                .Select(NormalizeWhitespace)
+                .Where(line => !string.IsNullOrWhiteSpace(line)));
     }
 
     private static string StripMarkdownLine(string line)
@@ -297,16 +307,8 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
         return text;
     }
 
-    private static string ClipText(string text, int maxCharacters)
-    {
-        var normalized = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-        if (normalized.Length <= maxCharacters)
-        {
-            return normalized;
-        }
-
-        return normalized[..Math.Max(0, maxCharacters - 3)].TrimEnd() + "...";
-    }
+    private static string NormalizeWhitespace(string text)
+        => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
     public void Dispose()
     {

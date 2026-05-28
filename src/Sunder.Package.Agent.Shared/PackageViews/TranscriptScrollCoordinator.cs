@@ -40,8 +40,12 @@ internal sealed class TranscriptScrollCoordinator
     private bool _restoreAnchorPending;
     private bool _loadOlderPending;
     private bool _loadNewerPending;
+    private bool _suppressEdgeLoadsUntilNextScroll;
+    private bool _isOlderEdgeArmed = true;
+    private bool _isNewerEdgeArmed = true;
     private int _bottomPlacementLockVersion;
     private Action? _pendingSettledScrollCompleted;
+    private Action? _pendingBottomPlacementReleaseCompleted;
     private ScrollAnchor? _pendingAnchor;
 
     public TranscriptScrollCoordinator(
@@ -212,8 +216,7 @@ internal sealed class TranscriptScrollCoordinator
                 _settledScrollToBottomPending = false;
                 var callback = _pendingSettledScrollCompleted;
                 _pendingSettledScrollCompleted = null;
-                callback?.Invoke();
-                QueueReleaseBottomPlacementLock();
+                QueueReleaseBottomPlacementLock(callback);
             }
         }, DispatcherPriority.Loaded);
     }
@@ -235,8 +238,19 @@ internal sealed class TranscriptScrollCoordinator
                 return;
             }
 
+            if (ShouldPinToBottomForLayoutGrowth())
+            {
+                PinToBottom(updateLayout: false);
+                UpdateJumpToLatestVisibility();
+                return;
+            }
+
             UpdateJumpToLatestVisibility();
-            if (_isRestoringAnchor || _pendingAnchor is not null || _loadOlderPending || _loadNewerPending)
+            if (_suppressEdgeLoadsUntilNextScroll
+                || _isRestoringAnchor
+                || _pendingAnchor is not null
+                || _loadOlderPending
+                || _loadNewerPending)
             {
                 return;
             }
@@ -245,6 +259,14 @@ internal sealed class TranscriptScrollCoordinator
             QueueLoadNewerRowsIfAtBottom(requireActualBottom: false);
         }
     }
+
+    private bool ShouldPinToBottomForLayoutGrowth()
+        => _shouldAutoScroll
+           && !_hasNewerRows()
+           && !_isRestoringAnchor
+           && _pendingAnchor is null
+           && !_loadOlderPending
+           && !_loadNewerPending;
 
     private void OnScrollOffsetChanged()
     {
@@ -259,7 +281,9 @@ internal sealed class TranscriptScrollCoordinator
             return;
         }
 
-        if (_isRestoringAnchor || _loadOlderPending || _loadNewerPending)
+        _suppressEdgeLoadsUntilNextScroll = false;
+
+        if (_isRestoringAnchor)
         {
             UpdateJumpToLatestVisibility();
             return;
@@ -268,10 +292,26 @@ internal sealed class TranscriptScrollCoordinator
         var isNearBottom = IsNearBottom();
         var isNearTop = IsNearLoadTop();
         var isNearLoadBottom = IsNearLoadBottom();
+        if (!isNearTop)
+        {
+            _isOlderEdgeArmed = true;
+        }
+
+        if (!isNearLoadBottom)
+        {
+            _isNewerEdgeArmed = true;
+        }
+
         _shouldAutoScroll = isNearBottom && !_hasNewerRows();
         if (!isNearBottom)
         {
             _onDetachedFromLatest?.Invoke();
+        }
+
+        if (_loadOlderPending || _loadNewerPending)
+        {
+            UpdateJumpToLatestVisibility();
+            return;
         }
 
         var queuedOlderLoad = false;
@@ -296,11 +336,19 @@ internal sealed class TranscriptScrollCoordinator
             return true;
         }
 
+        if (!_isOlderEdgeArmed)
+        {
+            return false;
+        }
+
         if (_loadNewerPending || _isRestoringAnchor || _restoreAnchorPending || !_canLoadOlderRows())
         {
             return false;
         }
 
+        _isOlderEdgeArmed = false;
+        var anchor = CaptureScrollAnchor(ScrollAnchorMode.ViewportMutation);
+        var offsetYWhenQueued = _scrollViewer.Offset.Y;
         _loadOlderPending = true;
 
         Dispatcher.UIThread.Post(async () =>
@@ -323,10 +371,22 @@ internal sealed class TranscriptScrollCoordinator
             {
                 try
                 {
-                    await WaitForRenderedContentAsync();
+                    if (loaded && Math.Abs(_scrollViewer.Offset.Y - offsetYWhenQueued) < 1)
+                    {
+                        await RestoreScrollAnchorAfterRenderedContentAsync(anchor);
+                    }
+                    else
+                    {
+                        await WaitForRenderedContentAsync();
+                    }
                 }
                 finally
                 {
+                    if (loaded)
+                    {
+                        _suppressEdgeLoadsUntilNextScroll = true;
+                    }
+
                     _loadOlderPending = false;
                 }
             }
@@ -342,19 +402,29 @@ internal sealed class TranscriptScrollCoordinator
             return true;
         }
 
+        if (!_isNewerEdgeArmed)
+        {
+            return false;
+        }
+
         if (_loadOlderPending || _isRestoringAnchor || _restoreAnchorPending || !_canLoadNewerRows())
         {
             return false;
         }
 
+        _isNewerEdgeArmed = false;
+        var anchor = CaptureScrollAnchor(ScrollAnchorMode.ViewportMutation);
+        var wasAtBottom = IsNearBottom();
+        var offsetYWhenQueued = _scrollViewer.Offset.Y;
         _loadNewerPending = true;
         Dispatcher.UIThread.Post(async () =>
         {
+            var loaded = false;
             try
             {
                 _pendingAnchor = null;
                 var protectedAnchorKey = CaptureCurrentScrollAnchorKey();
-                var loaded = await _loadNewerRowsAsync(protectedAnchorKey);
+                loaded = await _loadNewerRowsAsync(protectedAnchorKey);
                 if (loaded)
                 {
                     UpdateJumpToLatestVisibility();
@@ -373,10 +443,30 @@ internal sealed class TranscriptScrollCoordinator
             {
                 try
                 {
-                    await WaitForRenderedContentAsync();
+                    if (loaded && Math.Abs(_scrollViewer.Offset.Y - offsetYWhenQueued) < 1)
+                    {
+                        if (wasAtBottom)
+                        {
+                            await WaitForRenderedContentAsync();
+                            ScrollToBottom();
+                        }
+                        else
+                        {
+                            await RestoreScrollAnchorAfterRenderedContentAsync(anchor);
+                        }
+                    }
+                    else
+                    {
+                        await WaitForRenderedContentAsync();
+                    }
                 }
                 finally
                 {
+                    if (loaded)
+                    {
+                        _suppressEdgeLoadsUntilNextScroll = true;
+                    }
+
                     _loadNewerPending = false;
                 }
             }
@@ -387,7 +477,7 @@ internal sealed class TranscriptScrollCoordinator
 
     private bool QueueLoadOlderRowsIfNearTop()
     {
-        if (_shouldAutoScroll || !IsNearLoadTop())
+        if (_shouldAutoScroll || !_isOlderEdgeArmed || !IsNearLoadTop())
         {
             return false;
         }
@@ -404,6 +494,11 @@ internal sealed class TranscriptScrollCoordinator
         }
 
         if (requireActualBottom ? !IsNearBottom() : !IsNearLoadBottom())
+        {
+            return false;
+        }
+
+        if (!_isNewerEdgeArmed)
         {
             return false;
         }
@@ -489,8 +584,9 @@ internal sealed class TranscriptScrollCoordinator
         UpdateJumpToLatestVisibility();
     }
 
-    private void QueueReleaseBottomPlacementLock()
+    private void QueueReleaseBottomPlacementLock(Action? completed = null)
     {
+        _pendingBottomPlacementReleaseCompleted += completed;
         if (_bottomPlacementReleasePending)
         {
             return;
@@ -513,6 +609,7 @@ internal sealed class TranscriptScrollCoordinator
                 _bottomPlacementReleasePending = false;
                 if (version == _bottomPlacementLockVersion)
                 {
+                    PinToBottom(updateLayout: true);
                     _bottomPlacementLockActive = false;
                     _shouldAutoScroll = !_hasNewerRows();
                     if (!_hasNewerRows())
@@ -521,6 +618,9 @@ internal sealed class TranscriptScrollCoordinator
                     }
 
                     UpdateJumpToLatestVisibility();
+                    var callback = _pendingBottomPlacementReleaseCompleted;
+                    _pendingBottomPlacementReleaseCompleted = null;
+                    callback?.Invoke();
                 }
                 else if (_bottomPlacementLockActive)
                 {
@@ -556,14 +656,8 @@ internal sealed class TranscriptScrollCoordinator
         }, DispatcherPriority.Render);
     }
 
-    private async Task RestorePendingScrollAnchorAfterRenderedContentAsync()
+    private async Task RestoreScrollAnchorAfterRenderedContentAsync(ScrollAnchor anchor)
     {
-        var anchor = _pendingAnchor;
-        if (anchor is null)
-        {
-            return;
-        }
-
         _isRestoringAnchor = true;
         try
         {
@@ -586,6 +680,17 @@ internal sealed class TranscriptScrollCoordinator
         {
             _isRestoringAnchor = false;
         }
+    }
+
+    private async Task RestorePendingScrollAnchorAfterRenderedContentAsync()
+    {
+        var anchor = _pendingAnchor;
+        if (anchor is null)
+        {
+            return;
+        }
+
+        await RestoreScrollAnchorAfterRenderedContentAsync(anchor);
 
         if (ReferenceEquals(_pendingAnchor, anchor))
         {
@@ -825,4 +930,5 @@ internal sealed class TranscriptScrollCoordinator
         LiveTranscriptMutation,
         ViewportMutation,
     }
+
 }

@@ -641,21 +641,23 @@ public sealed partial class DefaultAgentBehaviorLoop(
     private sealed class ReasoningActivityReporter(IAgentRunActivitySink? activitySink)
     {
         private static readonly TimeSpan ReportInterval = TimeSpan.FromMilliseconds(240);
-        private const int MaxDisplayCharacters = 260;
+        private const int MaxDisplayLines = 5;
+        private const int MaxSegmentCharacters = 4096;
         private readonly IAgentRunActivitySink? _activitySink = activitySink;
-        private readonly StringBuilder _reasoning = new();
+        private readonly List<string> _completedSegments = [];
+        private readonly StringBuilder _currentSegment = new();
         private TimeSpan _lastReportElapsed = TimeSpan.MinValue;
         private string _lastReportedText = string.Empty;
 
         public void Append(string? text, TimeSpan elapsed)
         {
-            if (_activitySink is null || string.IsNullOrWhiteSpace(text))
+            if (_activitySink is null || string.IsNullOrEmpty(text))
             {
                 return;
             }
 
-            _reasoning.Append(text);
-            var displayText = CreateDisplayText(_reasoning.ToString());
+            AppendReasoningText(text);
+            var displayText = CreateDisplayText();
             if (string.IsNullOrWhiteSpace(displayText)
                 || string.Equals(displayText, _lastReportedText, StringComparison.Ordinal))
             {
@@ -672,12 +674,13 @@ public sealed partial class DefaultAgentBehaviorLoop(
 
         public void Flush()
         {
-            if (_activitySink is null || _reasoning.Length == 0)
+            if (_activitySink is null
+                || (_completedSegments.Count == 0 && _currentSegment.Length == 0))
             {
                 return;
             }
 
-            var displayText = CreateDisplayText(_reasoning.ToString());
+            var displayText = CreateDisplayText();
             if (!string.IsNullOrWhiteSpace(displayText)
                 && !string.Equals(displayText, _lastReportedText, StringComparison.Ordinal))
             {
@@ -692,18 +695,82 @@ public sealed partial class DefaultAgentBehaviorLoop(
             _activitySink?.ReportRunActivity(AgentRunActivityKind.Reasoning, displayText);
         }
 
-        private static string CreateDisplayText(string text)
+        private void AppendReasoningText(string text)
         {
-            var normalized = string.Join(
-                ' ',
-                text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-            if (normalized.Length <= MaxDisplayCharacters)
+            foreach (var character in text)
             {
-                return normalized;
+                if (character is '\r' or '\n')
+                {
+                    CompleteCurrentSegment();
+                    continue;
+                }
+
+                if (char.IsWhiteSpace(character))
+                {
+                    AppendCurrentSegmentSpace();
+                    continue;
+                }
+
+                if (_currentSegment.Length < MaxSegmentCharacters)
+                {
+                    _currentSegment.Append(character);
+                }
+
+                if (IsSentenceTerminator(character))
+                {
+                    CompleteCurrentSegment();
+                }
+            }
+        }
+
+        private void AppendCurrentSegmentSpace()
+        {
+            if (_currentSegment.Length == 0
+                || _currentSegment.Length >= MaxSegmentCharacters
+                || _currentSegment[^1] == ' ')
+            {
+                return;
             }
 
-            return normalized[..Math.Max(0, MaxDisplayCharacters - 3)].TrimEnd() + "...";
+            _currentSegment.Append(' ');
         }
+
+        private void CompleteCurrentSegment()
+        {
+            var segment = NormalizeSegment(_currentSegment.ToString());
+            _currentSegment.Clear();
+            if (string.IsNullOrWhiteSpace(segment) || !segment.Any(char.IsLetterOrDigit))
+            {
+                return;
+            }
+
+            _completedSegments.Add(segment);
+            while (_completedSegments.Count > MaxDisplayLines)
+            {
+                _completedSegments.RemoveAt(0);
+            }
+        }
+
+        private string CreateDisplayText()
+        {
+            var segments = new List<string>(_completedSegments);
+            var currentSegment = NormalizeSegment(_currentSegment.ToString());
+            if (!string.IsNullOrWhiteSpace(currentSegment)
+                && currentSegment.Any(char.IsLetterOrDigit))
+            {
+                segments.Add(currentSegment);
+            }
+
+            return string.Join(
+                Environment.NewLine,
+                segments.Skip(Math.Max(0, segments.Count - MaxDisplayLines)));
+        }
+
+        private static string NormalizeSegment(string text)
+            => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+        private static bool IsSentenceTerminator(char character)
+            => character is '.' or '?' or '!';
     }
 
     private sealed class AssistantTurnState

@@ -17,6 +17,7 @@ public partial class SubsessionsView : UserControl
     private bool _transcriptChangedBeforeScrollReady;
     private bool _initialTranscriptPlacementPending = true;
     private bool _initialTranscriptPlacementQueued;
+    private bool _initialTranscriptVisibilityRetryQueued;
     private int _initialTranscriptPlacementVersion;
 
     public SubsessionsView()
@@ -201,9 +202,15 @@ public partial class SubsessionsView : UserControl
 
         var viewModel = _viewModel ?? DataContext as SubsessionsViewModel;
         _transcriptChangedBeforeScrollReady = false;
-        if (viewModel is null || !viewModel.HasSelectedSubsession || viewModel.Messages.Count == 0 || !TranscriptScrollViewer.IsVisible)
+        if (viewModel is null || !viewModel.HasSelectedSubsession || viewModel.Messages.Count == 0)
         {
             CompleteInitialTranscriptPlacement(_initialTranscriptPlacementVersion);
+            return true;
+        }
+
+        if (!TranscriptScrollViewer.IsVisible)
+        {
+            QueueInitialTranscriptVisibilityRetry();
             return true;
         }
 
@@ -228,7 +235,23 @@ public partial class SubsessionsView : UserControl
 
         _initialTranscriptPlacementPending = true;
         _initialTranscriptPlacementQueued = false;
+        _initialTranscriptVisibilityRetryQueued = false;
         HideTranscriptUntilInitialPlacement();
+    }
+
+    private void QueueInitialTranscriptVisibilityRetry()
+    {
+        if (_initialTranscriptVisibilityRetryQueued)
+        {
+            return;
+        }
+
+        _initialTranscriptVisibilityRetryQueued = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            _initialTranscriptVisibilityRetryQueued = false;
+            HandleTranscriptReadyAfterScrollReady();
+        }, DispatcherPriority.Loaded);
     }
 
     private void HideTranscriptUntilInitialPlacement()
@@ -243,6 +266,7 @@ public partial class SubsessionsView : UserControl
 
         _initialTranscriptPlacementPending = false;
         _initialTranscriptPlacementQueued = false;
+        _initialTranscriptVisibilityRetryQueued = false;
         TranscriptScrollViewer.Opacity = 1;
     }
 
