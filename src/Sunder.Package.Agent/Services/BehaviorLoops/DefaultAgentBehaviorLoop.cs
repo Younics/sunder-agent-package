@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
@@ -364,6 +365,7 @@ public sealed partial class DefaultAgentBehaviorLoop(
     {
         var contentBuilder = new StringBuilder();
         var toolCalls = new List<FunctionCallContent>();
+        var reasoningActivity = new ReasoningActivityReporter(host as IAgentRunActivitySink);
         var lastAssistantFlushElapsed = TimeSpan.MinValue;
         AgentBehaviorLoopResult? terminalResult = null;
         var streamAttempt = 0;
@@ -422,6 +424,11 @@ public sealed partial class DefaultAgentBehaviorLoop(
                     toolCalls.Add(functionCall);
                 }
 
+                foreach (var reasoningContent in streamUpdate.Contents.OfType<TextReasoningContent>())
+                {
+                    reasoningActivity.Append(reasoningContent.Text, loopStopwatch.Elapsed);
+                }
+
                 if (!string.IsNullOrEmpty(streamUpdate.Text))
                 {
                     contentBuilder.Append(streamUpdate.Text);
@@ -462,6 +469,7 @@ public sealed partial class DefaultAgentBehaviorLoop(
                 }
             }
         }, cancellationToken);
+        reasoningActivity.Flush();
 
         if (terminalResult is not null)
         {
@@ -609,6 +617,9 @@ public sealed partial class DefaultAgentBehaviorLoop(
             : new ReasoningOptions
             {
                 Effort = ToReasoningEffort(variant.ReasoningEffort.Value),
+                Output = variant.ReasoningEffort.Value == AgentReasoningEffort.None
+                    ? ReasoningOutput.None
+                    : ReasoningOutput.Summary,
             };
 
     private static ReasoningEffort ToReasoningEffort(AgentReasoningEffort effort)
@@ -626,6 +637,74 @@ public sealed partial class DefaultAgentBehaviorLoop(
         string Text,
         IReadOnlyList<FunctionCallContent> ToolCalls,
         AgentBehaviorLoopResult? TerminalResult);
+
+    private sealed class ReasoningActivityReporter(IAgentRunActivitySink? activitySink)
+    {
+        private static readonly TimeSpan ReportInterval = TimeSpan.FromMilliseconds(240);
+        private const int MaxDisplayCharacters = 260;
+        private readonly IAgentRunActivitySink? _activitySink = activitySink;
+        private readonly StringBuilder _reasoning = new();
+        private TimeSpan _lastReportElapsed = TimeSpan.MinValue;
+        private string _lastReportedText = string.Empty;
+
+        public void Append(string? text, TimeSpan elapsed)
+        {
+            if (_activitySink is null || string.IsNullOrWhiteSpace(text))
+            {
+                return;
+            }
+
+            _reasoning.Append(text);
+            var displayText = CreateDisplayText(_reasoning.ToString());
+            if (string.IsNullOrWhiteSpace(displayText)
+                || string.Equals(displayText, _lastReportedText, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (_lastReportElapsed != TimeSpan.MinValue && elapsed - _lastReportElapsed < ReportInterval)
+            {
+                return;
+            }
+
+            Report(displayText, elapsed);
+        }
+
+        public void Flush()
+        {
+            if (_activitySink is null || _reasoning.Length == 0)
+            {
+                return;
+            }
+
+            var displayText = CreateDisplayText(_reasoning.ToString());
+            if (!string.IsNullOrWhiteSpace(displayText)
+                && !string.Equals(displayText, _lastReportedText, StringComparison.Ordinal))
+            {
+                Report(displayText, TimeSpan.MaxValue);
+            }
+        }
+
+        private void Report(string displayText, TimeSpan elapsed)
+        {
+            _lastReportedText = displayText;
+            _lastReportElapsed = elapsed;
+            _activitySink?.ReportRunActivity(AgentRunActivityKind.Reasoning, displayText);
+        }
+
+        private static string CreateDisplayText(string text)
+        {
+            var normalized = string.Join(
+                ' ',
+                text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+            if (normalized.Length <= MaxDisplayCharacters)
+            {
+                return normalized;
+            }
+
+            return normalized[..Math.Max(0, MaxDisplayCharacters - 3)].TrimEnd() + "...";
+        }
+    }
 
     private sealed class AssistantTurnState
     {

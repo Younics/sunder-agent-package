@@ -156,6 +156,18 @@ internal sealed class GeminiChatClient(
 
         var responseId = Guid.NewGuid().ToString("N");
         var messageId = responseId;
+        var reasoningText = ExtractReasoningText(response);
+        if (!string.IsNullOrWhiteSpace(reasoningText))
+        {
+            await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", "ReasoningDelta", stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
+            yield return new ChatResponseUpdate(AIChatRole.Assistant, [new TextReasoningContent(reasoningText)])
+            {
+                ResponseId = responseId,
+                MessageId = messageId,
+                ModelId = modelId,
+            };
+        }
+
         if (response.FunctionCalls is { Count: > 1 } && !allowMultipleToolCalls)
         {
             throw new AgentChatProviderException(
@@ -182,10 +194,11 @@ internal sealed class GeminiChatClient(
             yield break;
         }
 
-        if (!string.IsNullOrWhiteSpace(response.Text))
+        var responseText = ExtractText(response);
+        if (!string.IsNullOrWhiteSpace(responseText))
         {
             await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", "TextDelta", stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
-            yield return new ChatResponseUpdate(AIChatRole.Assistant, response.Text)
+            yield return new ChatResponseUpdate(AIChatRole.Assistant, responseText)
             {
                 ResponseId = responseId,
                 MessageId = messageId,
@@ -193,7 +206,7 @@ internal sealed class GeminiChatClient(
             };
         }
 
-        await LogAsync(AgentLogLevel.Debug, "provider.stream.completed", string.IsNullOrWhiteSpace(response.Text) ? "Provider stream ended without events." : null, stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
+        await LogAsync(AgentLogLevel.Debug, "provider.stream.completed", string.IsNullOrWhiteSpace(responseText) && string.IsNullOrWhiteSpace(reasoningText) ? "Provider stream ended without events." : null, stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
     }
 
     private async IAsyncEnumerable<ChatResponseUpdate> GetTextStreamingResponseAsync(
@@ -243,6 +256,23 @@ internal sealed class GeminiChatClient(
             {
                 await LogAsync(AgentLogLevel.Error, "provider.stream.failed", ex.Message, stopwatch.ElapsedMilliseconds, exception: ex, cancellationToken: CancellationToken.None);
                 throw CreateProviderException(ex);
+            }
+
+            var reasoningDelta = ExtractReasoningText(chunk);
+            if (!string.IsNullOrWhiteSpace(reasoningDelta))
+            {
+                if (!firstEventRecorded)
+                {
+                    firstEventRecorded = true;
+                    await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", "ReasoningDelta", stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
+                }
+
+                yield return new ChatResponseUpdate(AIChatRole.Assistant, [new TextReasoningContent(reasoningDelta)])
+                {
+                    ResponseId = responseId,
+                    MessageId = messageId,
+                    ModelId = modelId,
+                };
             }
 
             var delta = ExtractText(chunk);
@@ -491,14 +521,17 @@ internal sealed class GeminiChatClient(
     }
 
     private static ThinkingConfig? BuildThinkingConfig(ReasoningOptions? reasoning)
-        => reasoning?.Effort switch
+    {
+        var includeThoughts = reasoning?.Output is ReasoningOutput.Summary or ReasoningOutput.Full;
+        return reasoning?.Effort switch
         {
             ReasoningEffort.None => new ThinkingConfig { ThinkingBudget = 0 },
-            ReasoningEffort.Low => new ThinkingConfig { ThinkingLevel = ThinkingLevel.Low },
-            ReasoningEffort.Medium => new ThinkingConfig { ThinkingLevel = ThinkingLevel.Medium },
-            ReasoningEffort.High or ReasoningEffort.ExtraHigh => new ThinkingConfig { ThinkingLevel = ThinkingLevel.High },
+            ReasoningEffort.Low => new ThinkingConfig { ThinkingLevel = ThinkingLevel.Low, IncludeThoughts = includeThoughts },
+            ReasoningEffort.Medium => new ThinkingConfig { ThinkingLevel = ThinkingLevel.Medium, IncludeThoughts = includeThoughts },
+            ReasoningEffort.High or ReasoningEffort.ExtraHigh => new ThinkingConfig { ThinkingLevel = ThinkingLevel.High, IncludeThoughts = includeThoughts },
             _ => null,
         };
+    }
 
     private static JsonElement ParseJsonElement(JsonElement schema)
     {
@@ -585,7 +618,28 @@ internal sealed class GeminiChatClient(
             return null;
         }
 
-        return string.Concat(parts.Select(part => part.Text).Where(text => !string.IsNullOrWhiteSpace(text)));
+        return string.Concat(parts
+            .Where(part => part.Thought != true)
+            .Select(part => part.Text)
+            .Where(text => !string.IsNullOrWhiteSpace(text)));
+    }
+
+    private static string? ExtractReasoningText(GenerateContentResponse response)
+    {
+        var parts = response.Candidates?
+            .FirstOrDefault()?
+            .Content?
+            .Parts;
+
+        if (parts is null)
+        {
+            return null;
+        }
+
+        return string.Concat(parts
+            .Where(part => part.Thought == true)
+            .Select(part => part.Text)
+            .Where(text => !string.IsNullOrWhiteSpace(text)));
     }
 
     private static AgentChatProviderException CreateProviderException(Exception exception)

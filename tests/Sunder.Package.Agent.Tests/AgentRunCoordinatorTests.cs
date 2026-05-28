@@ -5270,6 +5270,7 @@ public sealed class AgentRunCoordinatorTests
             (request, _) =>
             {
                 Assert.Equal(ReasoningEffort.High, request.ReasoningEffort);
+                Assert.Equal(ReasoningOutput.Summary, request.ReasoningOutput);
                 return Complete("done");
             },
             models:
@@ -5449,6 +5450,37 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public void AnthropicChatClient_RequestsSummarizedThinking_WhenReasoningOutputRequested()
+    {
+        var parameters = InvokePrivateStatic<AnthropicMessageCreateParams>(
+            typeof(AnthropicAgentProvider).Assembly.GetType(
+                "Sunder.Package.Agent.Provider.Anthropic.AnthropicChatClient",
+                throwOnError: true
+            )!,
+            "BuildMessageCreateParams",
+            [
+                new[] { new ChatMessage(ChatRole.User, "Think carefully.") },
+                new ChatOptions
+                {
+                    MaxOutputTokens = 8192,
+                    Reasoning = new ReasoningOptions
+                    {
+                        Effort = ReasoningEffort.High,
+                        Output = ReasoningOutput.Summary,
+                    },
+                },
+                "anthropic/claude-sonnet-4-6",
+                false,
+            ]
+        );
+
+        Assert.NotNull(parameters.Thinking);
+        var thinkingValue = parameters.Thinking!.Value;
+        Assert.NotNull(thinkingValue);
+        Assert.Equal("ThinkingConfigEnabled", thinkingValue!.GetType().Name);
+    }
+
+    [Fact]
     public void GeminiChatClient_MapsReasoningEffort_ToThinkingConfig()
     {
         var config = InvokePrivateStatic<GeminiGenerateContentConfig>(
@@ -5468,6 +5500,32 @@ public sealed class AgentRunCoordinatorTests
 
         Assert.NotNull(config.ThinkingConfig);
         Assert.Equal(GeminiThinkingLevel.Medium, config.ThinkingConfig.ThinkingLevel);
+    }
+
+    [Fact]
+    public void GeminiChatClient_IncludesThoughts_WhenReasoningOutputRequested()
+    {
+        var config = InvokePrivateStatic<GeminiGenerateContentConfig>(
+            typeof(GeminiAgentProvider).Assembly.GetType(
+                "Sunder.Package.Agent.Provider.Gemini.GeminiChatClient",
+                throwOnError: true
+            )!,
+            "BuildConfig",
+            [
+                new ChatOptions
+                {
+                    Reasoning = new ReasoningOptions
+                    {
+                        Effort = ReasoningEffort.Medium,
+                        Output = ReasoningOutput.Summary,
+                    },
+                },
+                false,
+            ]
+        );
+
+        Assert.NotNull(config.ThinkingConfig);
+        Assert.True(config.ThinkingConfig.IncludeThoughts);
     }
 
     [Fact]
@@ -7555,7 +7613,8 @@ public sealed class AgentRunCoordinatorTests
             "Thinking."
         );
 
-        Assert.IsType<AgentActivityTranscriptRowViewModel>(Assert.Single(viewModel.Messages));
+        var activityRow = Assert.IsType<AgentActivityTranscriptRowViewModel>(Assert.Single(viewModel.Messages));
+        Assert.StartsWith("Thinking", activityRow.ThinkingText, StringComparison.Ordinal);
 
         runtime.SessionService.SaveCheckpoint(
             sessionId,
@@ -7565,6 +7624,42 @@ public sealed class AgentRunCoordinatorTests
         );
 
         Assert.Empty(viewModel.Messages);
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_ShowsLiveReasoningActivity_WhenProviderReportsIt()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        var runRevision = runtime.SessionService.GetNextRunRevision(sessionId);
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+
+        runtime.SessionService.SaveCheckpoint(
+            sessionId,
+            runRevision,
+            AgentRunStatus.Running,
+            "Thinking."
+        );
+        runtime.SessionService.ReportRunActivity(
+            sessionId,
+            runRevision,
+            AgentRunActivityKind.Reasoning,
+            "Checking the latest transcript before choosing a tool."
+        );
+
+        var activityRow = Assert.IsType<AgentActivityTranscriptRowViewModel>(Assert.Single(viewModel.Messages));
+        Assert.Equal("Checking the latest transcript before choosing a tool.", activityRow.ThinkingText);
     }
 
     [Fact]
@@ -7691,6 +7786,46 @@ public sealed class AgentRunCoordinatorTests
             viewModel.Messages[^1]
         );
         Assert.StartsWith("Running Fetch Page", activityRow.ThinkingText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AgentActivityTranscriptRowViewModel_KeepsFallbackLightweight()
+    {
+        using var activityRow = new AgentActivityTranscriptRowViewModel("Processing result");
+
+        Assert.StartsWith("Reviewing result", activityRow.ThinkingText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AgentActivityTranscriptRowViewModel_StripsReasoningMarkdown()
+    {
+        using var activityRow = new AgentActivityTranscriptRowViewModel(
+            "**Fetching New York weather** I need the current weather for New York City.",
+            isReasoningActivity: true
+        );
+
+        Assert.Equal(
+            "Fetching New York weather I need the current weather for New York City.",
+            activityRow.ThinkingText
+        );
+    }
+
+    [Fact]
+    public void AgentActivityTranscriptRowViewModel_PreservesReasoningStartWhenLong()
+    {
+        using var activityRow = new AgentActivityTranscriptRowViewModel(
+            "I need to fetch the New York forecast. "
+            + "I will use the coordinates for NYC, which are 40.7128, -74.0060. "
+            + string.Join(' ', Enumerable.Repeat("Additional planning context follows.", 20)),
+            isReasoningActivity: true
+        );
+
+        Assert.StartsWith(
+            "I need to fetch the New York forecast. I will use the coordinates for NYC",
+            activityRow.ThinkingText,
+            StringComparison.Ordinal
+        );
+        Assert.EndsWith("...", activityRow.ThinkingText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -9318,7 +9453,8 @@ public sealed class AgentRunCoordinatorTests
         string? SystemInstructions,
         IReadOnlyList<AgentTurnRecord> Turns,
         IReadOnlyList<AgentToolDescriptor>? AvailableTools = null,
-        ReasoningEffort? ReasoningEffort = null
+        ReasoningEffort? ReasoningEffort = null,
+        ReasoningOutput? ReasoningOutput = null
     );
 
     private sealed record AgentProviderStreamEvent(
@@ -9335,6 +9471,7 @@ public sealed class AgentRunCoordinatorTests
         Completed = 1,
         Error = 2,
         ToolCallRequested = 3,
+        ReasoningDelta = 4,
     }
 
     private sealed record AgentProviderResponse(
@@ -9577,6 +9714,9 @@ public sealed class AgentRunCoordinatorTests
 
     private static AgentProviderStreamEvent Delta(string delta) =>
         new(AgentProviderStreamEventType.TextDelta, Delta: delta);
+
+    private static AgentProviderStreamEvent ReasoningDelta(string delta) =>
+        new(AgentProviderStreamEventType.ReasoningDelta, Delta: delta);
 
     private static AgentProviderStreamEvent Complete(string content) =>
         new(AgentProviderStreamEventType.Completed, Response: new AgentProviderResponse(content));
@@ -10111,7 +10251,8 @@ public sealed class AgentRunCoordinatorTests
                 request.SystemInstructions,
                 request.Turns.Select(CloneTurn).ToArray(),
                 request.AvailableTools?.ToArray(),
-                request.ReasoningEffort
+                request.ReasoningEffort,
+                request.ReasoningOutput
             );
 
         private static AgentTurnRecord CloneTurn(AgentTurnRecord turn) =>
@@ -10195,6 +10336,19 @@ public sealed class AgentRunCoordinatorTests
                             };
                             break;
 
+                        case AgentProviderStreamEventType.ReasoningDelta
+                            when streamEvent.Delta is not null:
+                            yield return new ChatResponseUpdate(
+                                ChatRole.Assistant,
+                                [new TextReasoningContent(streamEvent.Delta)]
+                            )
+                            {
+                                ResponseId = responseId,
+                                MessageId = messageId,
+                                ModelId = modelId,
+                            };
+                            break;
+
                         case AgentProviderStreamEventType.ToolCallRequested
                             when streamEvent.ToolCalls is { Count: > 0 }:
                             yield return CreateToolCallUpdate(
@@ -10264,7 +10418,8 @@ public sealed class AgentRunCoordinatorTests
                     options?.ToolMode == ChatToolMode.None
                         ? null
                         : BuildProviderToolDescriptors(options?.Tools),
-                    options?.Reasoning?.Effort
+                    options?.Reasoning?.Effort,
+                    options?.Reasoning?.Output
                 );
 
             private static IReadOnlyList<AgentTurnRecord> BuildProviderTurns(

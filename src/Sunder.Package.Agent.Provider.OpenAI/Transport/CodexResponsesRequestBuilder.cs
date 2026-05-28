@@ -308,7 +308,8 @@ internal static class CodexResponsesRequestBuilder
             return null;
         }
 
-        return new CodexReasoningOptions(ToOpenAiReasoningEffort(reasoning?.Effort) ?? "medium", "auto");
+        var summary = reasoning?.Output == ReasoningOutput.None ? null : "auto";
+        return new CodexReasoningOptions(ToOpenAiReasoningEffort(reasoning?.Effort) ?? "medium", summary);
     }
 
     private static string? ToOpenAiReasoningEffort(ReasoningEffort? effort)
@@ -517,7 +518,7 @@ internal static class CodexResponsesRequestBuilder
 
     private sealed record CodexReasoningOptions(
         [property: JsonPropertyName("effort")] string Effort,
-        [property: JsonPropertyName("summary")] string Summary);
+        [property: JsonPropertyName("summary")] string? Summary);
 
     private sealed record CodexTextOptions(
         [property: JsonPropertyName("verbosity")] string Verbosity);

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using LiveMarkdown.Avalonia;
@@ -162,15 +163,19 @@ public sealed class AgentTextTranscriptRowViewModel : AgentTranscriptRowViewMode
 
 public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscriptRowViewModel, IDisposable
 {
+    private const int MaxCompactReasoningCharacters = 360;
     private readonly DispatcherTimer _timer;
     private string _activityTextBase;
+    private bool _isReasoningActivity;
+    private bool _animateActivityText = true;
     private int _tick = 3;
 
-    public AgentActivityTranscriptRowViewModel(string activityTextBase = "Thinking")
+    public AgentActivityTranscriptRowViewModel(string activityTextBase = "Thinking", bool isReasoningActivity = false)
         : base(Guid.Empty, DateTimeOffset.UtcNow, TranscriptRowAnchorKey.Activity())
     {
         _activityTextBase = string.IsNullOrWhiteSpace(activityTextBase) ? "Processing" : activityTextBase.Trim();
-        _thinkingText = FormatThinkingText(_activityTextBase, _tick);
+        _isReasoningActivity = isReasoningActivity;
+        ApplyActivityTextBase(_activityTextBase, isReasoningActivity);
         _timer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(420),
@@ -184,26 +189,124 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
     [ObservableProperty]
     private string _thinkingText = "Thinking...";
 
-    public void SetActivityTextBase(string activityTextBase)
+    public void SetActivityTextBase(string activityTextBase, bool isReasoningActivity = false)
     {
         var normalized = string.IsNullOrWhiteSpace(activityTextBase) ? "Processing" : activityTextBase.Trim();
-        if (string.Equals(_activityTextBase, normalized, StringComparison.Ordinal))
+        if (string.Equals(_activityTextBase, normalized, StringComparison.Ordinal)
+            && _isReasoningActivity == isReasoningActivity)
         {
             return;
         }
 
         _activityTextBase = normalized;
-        ThinkingText = FormatThinkingText(_activityTextBase, _tick);
+        _isReasoningActivity = isReasoningActivity;
+        ApplyActivityTextBase(_activityTextBase, isReasoningActivity);
     }
 
     private void OnTimerTick(object? sender, EventArgs e)
     {
+        if (!_animateActivityText)
+        {
+            return;
+        }
+
         _tick++;
-        ThinkingText = FormatThinkingText(_activityTextBase, _tick);
+        ThinkingText = FormatThinkingText(ResolveActivityText(_activityTextBase), _tick);
     }
 
     private static string FormatThinkingText(string activityTextBase, int tick)
         => activityTextBase + new string('.', tick % 4);
+
+    private void ApplyActivityTextBase(string activityTextBase, bool isReasoningActivity)
+    {
+        if (isReasoningActivity)
+        {
+            ApplyReasoningActivityText(activityTextBase);
+            return;
+        }
+
+        var activityText = ResolveActivityText(activityTextBase);
+        _animateActivityText = ShouldAnimateActivityText(activityTextBase);
+        ThinkingText = _animateActivityText ? FormatThinkingText(activityText, _tick) : activityText;
+    }
+
+    private void ApplyReasoningActivityText(string markdown)
+    {
+        _animateActivityText = false;
+        var normalizedMarkdown = string.IsNullOrWhiteSpace(markdown) ? "Thinking" : markdown.Trim();
+        ThinkingText = CreateCompactReasoningText(normalizedMarkdown);
+    }
+
+    private static string ResolveActivityText(string activityTextBase)
+    {
+        if (activityTextBase.StartsWith("Running ", StringComparison.OrdinalIgnoreCase))
+        {
+            return activityTextBase;
+        }
+
+        if (activityTextBase.Contains("result", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Reviewing result";
+        }
+
+        if (activityTextBase.Contains("Processing", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Processing result";
+        }
+
+        return string.IsNullOrWhiteSpace(activityTextBase) ? "Thinking" : activityTextBase.Trim();
+    }
+
+    private static bool ShouldAnimateActivityText(string activityTextBase)
+        => activityTextBase.Equals("Thinking", StringComparison.OrdinalIgnoreCase)
+           || activityTextBase.StartsWith("Running ", StringComparison.OrdinalIgnoreCase)
+           || activityTextBase.StartsWith("Processing", StringComparison.OrdinalIgnoreCase)
+           || activityTextBase.StartsWith("Reviewing", StringComparison.OrdinalIgnoreCase);
+
+    private static string CreateCompactReasoningText(string markdown)
+        => ClipText(StripMarkdown(markdown), MaxCompactReasoningCharacters);
+
+    private static string StripMarkdown(string markdown)
+    {
+        var text = markdown.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        text = Regex.Replace(text, @"!\[([^\]]*)\]\([^)]+\)", "$1");
+        text = Regex.Replace(text, @"\[([^\]]+)\]\([^)]+\)", "$1");
+        text = string.Join(
+            ' ',
+            text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(StripMarkdownLine));
+        text = Regex.Replace(text, @"[*_`~]+", string.Empty);
+        return string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    private static string StripMarkdownLine(string line)
+    {
+        var text = line.Trim();
+        while (text.StartsWith('#'))
+        {
+            text = text[1..].TrimStart();
+        }
+
+        while (text.StartsWith('>'))
+        {
+            text = text[1..].TrimStart();
+        }
+
+        text = Regex.Replace(text, @"^[-*+]\s+", string.Empty);
+        text = Regex.Replace(text, @"^\d+[.)]\s+", string.Empty);
+        return text;
+    }
+
+    private static string ClipText(string text, int maxCharacters)
+    {
+        var normalized = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (normalized.Length <= maxCharacters)
+        {
+            return normalized;
+        }
+
+        return normalized[..Math.Max(0, maxCharacters - 3)].TrimEnd() + "...";
+    }
 
     public void Dispose()
     {

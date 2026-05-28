@@ -56,6 +56,25 @@ public sealed class CodexResponsesStreamParserTests
     }
 
     [Fact]
+    public async Task ParseAsync_ReasoningSummaryDelta_YieldsReasoningContent()
+    {
+        using var response = CreateSseResponse("""
+            event: response.reasoning_summary_text.delta
+            data: {"type":"response.reasoning_summary_text.delta","delta":"Checking the repo shape."}
+
+            event: response.output_text.delta
+            data: {"type":"response.output_text.delta","delta":"Done"}
+
+            """);
+
+        var updates = await ReadUpdatesAsync(response);
+
+        var reasoning = Assert.IsType<TextReasoningContent>(updates[0].Contents.Single());
+        Assert.Equal("Checking the repo shape.", reasoning.Text);
+        Assert.Equal("Done", updates[1].Text);
+    }
+
+    [Fact]
     public async Task ParseAsync_FunctionCallWithDuplicateArguments_UsesLastValue()
     {
         using var response = CreateSseResponse("""

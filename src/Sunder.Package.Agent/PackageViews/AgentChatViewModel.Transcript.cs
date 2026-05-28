@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
 
 namespace Sunder.Package.Agent.PackageViews;
@@ -384,6 +385,31 @@ public sealed partial class AgentChatViewModel
 
     private void OnTranscriptReset(Guid sessionId)
         => RunOnUiThread(() => ApplyTranscriptReset(sessionId));
+
+    private void OnRunActivityChanged(Guid sessionId, AgentRunActivityUpdate activity)
+        => RunOnUiThread(() => ApplyRunActivityChanged(sessionId, activity));
+
+    private void ApplyRunActivityChanged(Guid sessionId, AgentRunActivityUpdate activity)
+    {
+        if (DisplayedSession?.SessionId != sessionId || !IsDisplayedSessionRunActive || _isTranscriptDetachedFromLatest)
+        {
+            return;
+        }
+
+        var checkpoint = _sessionService.GetLatestCheckpoint(sessionId);
+        if (checkpoint?.Status != AgentRunStatus.Running || checkpoint.RunRevision != activity.RunRevision)
+        {
+            return;
+        }
+
+        SetActivityTextBase(
+            ResolveActivityTextBase(activity),
+            activity.Kind == AgentRunActivityKind.Reasoning);
+        _showActivityAfterQuiet = true;
+        UpdateActivityRowForCurrentState();
+        EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest);
+        TranscriptChanged?.Invoke();
+    }
 
     private void ApplyTranscriptReset(Guid sessionId)
     {
@@ -875,12 +901,12 @@ public sealed partial class AgentChatViewModel
             if (_activityRow is null)
             {
                 NotifyTranscriptChanging();
-                _activityRow = new AgentActivityTranscriptRowViewModel(_activityTextBase);
+                _activityRow = new AgentActivityTranscriptRowViewModel(_activityTextBase, _activityIsReasoning);
                 Messages.Add(_activityRow);
                 return;
             }
 
-            _activityRow.SetActivityTextBase(_activityTextBase);
+            _activityRow.SetActivityTextBase(_activityTextBase, _activityIsReasoning);
 
             var index = Messages.IndexOf(_activityRow);
             if (index >= 0 && index != Messages.Count - 1)
@@ -918,6 +944,7 @@ public sealed partial class AgentChatViewModel
         if (turn.Role == AgentMessageRole.User)
         {
             _activityTextBase = "Thinking";
+            _activityIsReasoning = false;
             _hasVisibleRunActivity = false;
             _showActivityAfterQuiet = false;
             _activityQuietTimer.Stop();
@@ -972,16 +999,18 @@ public sealed partial class AgentChatViewModel
         TranscriptChanged?.Invoke();
     }
 
-    private void SetActivityTextBase(string textBase)
+    private void SetActivityTextBase(string textBase, bool isReasoning = false)
     {
         var normalized = string.IsNullOrWhiteSpace(textBase) ? "Processing" : textBase.Trim();
-        if (string.Equals(_activityTextBase, normalized, StringComparison.Ordinal))
+        if (string.Equals(_activityTextBase, normalized, StringComparison.Ordinal)
+            && _activityIsReasoning == isReasoning)
         {
             return;
         }
 
         _activityTextBase = normalized;
-        _activityRow?.SetActivityTextBase(normalized);
+        _activityIsReasoning = isReasoning;
+        _activityRow?.SetActivityTextBase(normalized, isReasoning);
     }
 
     private void TrackCheckpointActivity(AgentRunCheckpointRecord? checkpoint)
@@ -1041,8 +1070,22 @@ public sealed partial class AgentChatViewModel
             return "Thinking";
         }
 
+        if (summary.Contains("Thinking", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Thinking";
+        }
+
         return "Processing";
     }
+
+    private static string ResolveActivityTextBase(AgentRunActivityUpdate activity)
+        => activity.Kind switch
+        {
+            AgentRunActivityKind.Reasoning when !string.IsNullOrWhiteSpace(activity.Text) => activity.Text,
+            AgentRunActivityKind.Tool when !string.IsNullOrWhiteSpace(activity.Text) => activity.Text,
+            AgentRunActivityKind.Processing when !string.IsNullOrWhiteSpace(activity.Text) => activity.Text,
+            _ => "Thinking",
+        };
 
     private static bool TryExtractQuotedToolId(string text, string prefix, out string? toolId)
     {

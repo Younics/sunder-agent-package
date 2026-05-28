@@ -59,7 +59,19 @@ internal static class CodexResponsesStreamParser
                 continue;
             }
 
-            switch (typeElement.GetString())
+            var eventType = typeElement.GetString();
+            if (IsReasoningSummaryDeltaEvent(eventType) && TryExtractReasoningDelta(root, out var reasoningDelta))
+            {
+                yield return new ChatResponseUpdate(AIChatRole.Assistant, [new TextReasoningContent(reasoningDelta)])
+                {
+                    ResponseId = currentResponseId,
+                    MessageId = messageId,
+                    ModelId = modelId,
+                };
+                continue;
+            }
+
+            switch (eventType)
             {
                 case "response.output_text.delta":
                     if (root.TryGetProperty("delta", out var deltaElement) && deltaElement.ValueKind == JsonValueKind.String)
@@ -120,6 +132,43 @@ internal static class CodexResponsesStreamParser
             MessageId = messageId,
             ModelId = modelId,
         };
+
+    private static bool IsReasoningSummaryDeltaEvent(string? eventType)
+        => !string.IsNullOrWhiteSpace(eventType)
+           && eventType.Contains("reasoning", StringComparison.OrdinalIgnoreCase)
+           && eventType.Contains("delta", StringComparison.OrdinalIgnoreCase)
+           && (eventType.Contains("summary", StringComparison.OrdinalIgnoreCase)
+               || eventType.Contains("text", StringComparison.OrdinalIgnoreCase));
+
+    private static bool TryExtractReasoningDelta(JsonElement root, out string delta)
+    {
+        if (TryGetStringProperty(root, "delta", out delta)
+            || TryGetStringProperty(root, "text", out delta))
+        {
+            return true;
+        }
+
+        if (root.TryGetProperty("summary", out var summaryElement))
+        {
+            return TryGetStringProperty(summaryElement, "text", out delta)
+                   || TryGetStringProperty(summaryElement, "delta", out delta);
+        }
+
+        delta = string.Empty;
+        return false;
+    }
+
+    private static bool TryGetStringProperty(JsonElement element, string propertyName, out string value)
+    {
+        value = string.Empty;
+        if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        value = property.GetString() ?? string.Empty;
+        return !string.IsNullOrWhiteSpace(value);
+    }
 
     private static IDictionary<string, object?> ParseArguments(string argumentsJson)
     {

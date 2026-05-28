@@ -1,6 +1,7 @@
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
 
@@ -16,6 +17,8 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
     public event Action<Guid, AgentTurnRecord>? TurnChanged;
 
     public event Action<Guid>? TranscriptReset;
+
+    public event Action<Guid, AgentRunActivityUpdate>? RunActivityChanged;
 
     public IReadOnlyList<AgentSessionRecord> ListSessions() => _store.ListSessions();
 
@@ -106,6 +109,18 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
     public IReadOnlyList<AgentTranscriptMessageRecord> ListMessages(Guid sessionId) => _store.ListMessages(sessionId);
 
     public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => _store.GetLatestCheckpoint(sessionId);
+
+    public void ReportRunActivity(Guid sessionId, long runRevision, AgentRunActivityKind kind, string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        NotifyRunActivityChanged(
+            sessionId,
+            new AgentRunActivityUpdate(runRevision, kind, text.Trim(), DateTimeOffset.UtcNow));
+    }
 
     public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId)
     {
@@ -317,6 +332,27 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
             catch
             {
                 // UI or extension listeners must not break persisted agent state changes.
+            }
+        }
+    }
+
+    private void NotifyRunActivityChanged(Guid sessionId, AgentRunActivityUpdate activity)
+    {
+        var handlers = RunActivityChanged;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action<Guid, AgentRunActivityUpdate> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(sessionId, activity);
+            }
+            catch
+            {
+                // Live activity listeners must not break agent execution.
             }
         }
     }

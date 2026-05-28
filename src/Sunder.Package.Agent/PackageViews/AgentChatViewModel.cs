@@ -44,6 +44,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private CancellationTokenSource? _transcriptRefreshCts;
     private string _globalStatusText = string.Empty;
     private string _activityTextBase = "Thinking";
+    private bool _activityIsReasoning;
     private bool _hasVisibleRunActivity;
     private bool _showActivityAfterQuiet;
     private bool _isReconcilingSessionSelection;
@@ -92,6 +93,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _sessionService.SessionChanged += OnSessionChanged;
         _sessionService.TurnChanged += OnTurnChanged;
         _sessionService.TranscriptReset += OnTranscriptReset;
+        _sessionService.RunActivityChanged += OnRunActivityChanged;
         ReloadProfiles(_selectionState?.GetSelectedProfileId());
         ReloadWorkspaces(_selectionState?.GetSelectedWorkspaceId());
         ReloadSessions(_selectionState?.GetSelectedSessionId());
@@ -648,6 +650,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _sessionService.SessionChanged -= OnSessionChanged;
         _sessionService.TurnChanged -= OnTurnChanged;
         _sessionService.TranscriptReset -= OnTranscriptReset;
+        _sessionService.RunActivityChanged -= OnRunActivityChanged;
         _activityQuietTimer.Stop();
         _activityQuietTimer.Tick -= OnActivityQuietTimerTick;
         _workspaceWarmupCts?.Cancel();

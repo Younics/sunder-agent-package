@@ -23,7 +23,7 @@ internal sealed class AgentBehaviorLoopHost(
     DateTimeOffset runStartedAtUtc,
     string userMessage,
     Guid userTurnId,
-    Func<bool> isCurrentRun) : IAgentBehaviorLoopRuntime
+    Func<bool> isCurrentRun) : IAgentBehaviorLoopRuntime, IAgentRunActivitySink
 {
     private const int MaxParallelToolExecutions = 4;
 
@@ -137,6 +137,9 @@ internal sealed class AgentBehaviorLoopHost(
 
     public AgentRunCheckpointRecord SaveCheckpoint(AgentRunStatus status, string? summary)
         => _sessionService.SaveCheckpoint(_session.SessionId, _runRevision, status, summary);
+
+    public void ReportRunActivity(AgentRunActivityKind kind, string text)
+        => _sessionService.ReportRunActivity(_session.SessionId, _runRevision, kind, text);
 
     private IReadOnlyDictionary<string, object?> BuildProviderCorrelationAttributes(IReadOnlyDictionary<string, object?>? existingAttributes)
     {

@@ -135,6 +135,18 @@ internal sealed class AnthropicChatClient(
 
         var responseId = Guid.NewGuid().ToString("N");
         var messageId = responseId;
+        var reasoningText = ExtractReasoningText(response.Content);
+        if (!string.IsNullOrWhiteSpace(reasoningText))
+        {
+            await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", "ReasoningDelta", stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
+            yield return new ChatResponseUpdate(AIChatRole.Assistant, [new TextReasoningContent(reasoningText)])
+            {
+                ResponseId = responseId,
+                MessageId = messageId,
+                ModelId = modelId,
+            };
+        }
+
         var toolCalls = response.Content
             .Where(block => block.TryPickToolUse(out _))
             .Select(block =>
@@ -188,7 +200,7 @@ internal sealed class AnthropicChatClient(
             };
         }
 
-        await LogAsync(AgentLogLevel.Debug, "provider.stream.completed", string.IsNullOrWhiteSpace(text) ? "Provider stream ended without events." : null, stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
+        await LogAsync(AgentLogLevel.Debug, "provider.stream.completed", string.IsNullOrWhiteSpace(text) && string.IsNullOrWhiteSpace(reasoningText) ? "Provider stream ended without events." : null, stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
     }
 
     private async IAsyncEnumerable<ChatResponseUpdate> GetTextStreamingResponseAsync(
@@ -235,12 +247,29 @@ internal sealed class AnthropicChatClient(
                 throw CreateProviderException(ex);
             }
 
-            if (!rawEvent.TryPickContentBlockDelta(out var delta) || !delta.Delta.TryPickText(out var text))
+            if (!rawEvent.TryPickContentBlockDelta(out var delta))
             {
                 continue;
             }
 
-            if (string.IsNullOrWhiteSpace(text.Text))
+            if (delta.Delta.TryPickThinking(out var thinking) && !string.IsNullOrWhiteSpace(thinking.Thinking))
+            {
+                if (!firstEventRecorded)
+                {
+                    firstEventRecorded = true;
+                    await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", "ReasoningDelta", stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
+                }
+
+                yield return new ChatResponseUpdate(AIChatRole.Assistant, [new TextReasoningContent(thinking.Thinking)])
+                {
+                    ResponseId = responseId,
+                    MessageId = messageId,
+                    ModelId = modelId,
+                };
+                continue;
+            }
+
+            if (!delta.Delta.TryPickText(out var text) || string.IsNullOrWhiteSpace(text.Text))
             {
                 continue;
             }
@@ -312,7 +341,43 @@ internal sealed class AnthropicChatClient(
             parameters = parameters with { OutputConfig = outputConfig };
         }
 
+        if (BuildThinkingConfig(options?.Reasoning, parameters.MaxTokens) is { } thinkingConfig)
+        {
+            parameters = parameters with { Thinking = thinkingConfig };
+        }
+
         return parameters;
+    }
+
+    private static ThinkingConfigParam? BuildThinkingConfig(ReasoningOptions? reasoning, long maxTokens)
+    {
+        if (reasoning?.Output is not (ReasoningOutput.Summary or ReasoningOutput.Full)
+            || reasoning.Effort is null or ReasoningEffort.None)
+        {
+            return null;
+        }
+
+        var desiredBudget = reasoning.Effort switch
+        {
+            ReasoningEffort.Low => 1024,
+            ReasoningEffort.Medium => 2048,
+            ReasoningEffort.High => 4096,
+            ReasoningEffort.ExtraHigh => 8192,
+            _ => 2048,
+        };
+        var budget = Math.Min(desiredBudget, maxTokens - 1);
+        if (budget < 1024)
+        {
+            return null;
+        }
+
+        return new ThinkingConfigParam(
+            new ThinkingConfigEnabled
+            {
+                BudgetTokens = budget,
+                Display = ThinkingConfigEnabledDisplay.Summarized,
+            },
+            null);
     }
 
     private static OutputConfig? BuildOutputConfig(ReasoningOptions? reasoning)
@@ -329,6 +394,16 @@ internal sealed class AnthropicChatClient(
             ReasoningEffort.ExtraHigh => Effort.Xhigh,
             _ => null,
         };
+
+    private static string ExtractReasoningText(IEnumerable<ContentBlock> content)
+        => string.Concat(content
+            .Where(block => block.TryPickThinking(out _))
+            .Select(block =>
+            {
+                block.TryPickThinking(out var thinkingBlock);
+                return thinkingBlock?.Thinking;
+            })
+            .Where(textPart => !string.IsNullOrWhiteSpace(textPart)));
 
     private static List<MessageParam> BuildMessages(IEnumerable<AIChatMessage> chatMessages)
     {
