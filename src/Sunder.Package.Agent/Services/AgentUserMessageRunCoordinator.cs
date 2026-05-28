@@ -78,6 +78,25 @@ public sealed partial class AgentUserMessageRunCoordinator(
             );
         }
 
+        if (string.IsNullOrWhiteSpace(session.WorkspaceId))
+        {
+            return _sessionService.SaveCheckpoint(
+                sessionId,
+                nextRevision,
+                AgentRunStatus.Failed,
+                "The selected session is not assigned to a workspace."
+            );
+        }
+        else if (!string.Equals(session.WorkspaceId, workspace.WorkspaceId, StringComparison.OrdinalIgnoreCase))
+        {
+            return _sessionService.SaveCheckpoint(
+                sessionId,
+                nextRevision,
+                AgentRunStatus.Failed,
+                "The selected session belongs to a different workspace."
+            );
+        }
+
         var profile = ResolveProfile(profileId);
         if (profile is null)
         {

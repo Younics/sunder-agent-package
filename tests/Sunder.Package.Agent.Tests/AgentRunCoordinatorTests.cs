@@ -980,7 +980,7 @@ public sealed class AgentRunCoordinatorTests
             ]
         );
         var workspace = runtime.WorkspaceService.CreateWorkspace("Test Workspace");
-        var sessionId = runtime.SessionService.CreateSession("Test Session").SessionId;
+        var sessionId = runtime.SessionService.CreateSession("Test Session", workspaceId: workspace.WorkspaceId).SessionId;
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
@@ -1002,7 +1002,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var workspace = runtime.WorkspaceService.CreateWorkspace("Unprofiled Workspace");
-        var session = runtime.SessionService.CreateSession("Unprofiled Session");
+        var session = runtime.SessionService.CreateSession("Unprofiled Session", workspaceId: workspace.WorkspaceId);
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
             session.SessionId,
@@ -3012,6 +3012,7 @@ public sealed class AgentRunCoordinatorTests
                 && string.Equals(session.TaskId, "task-123", StringComparison.OrdinalIgnoreCase)
         );
         Assert.Equal(first.SessionId, childSession.SessionId);
+        Assert.Equal(runtime.CurrentWorkspaceId, childSession.WorkspaceId);
         Assert.Equal(2, provider.Requests.Count);
     }
 
@@ -3443,7 +3444,7 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task AgentChatViewModel_PreservesSelectedSession_WhenWorkspaceChanges()
+    public async Task AgentChatViewModel_ReloadsSessions_WhenWorkspaceChanges()
     {
         const string toolId = "fetch_page";
 
@@ -3452,7 +3453,6 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        var secondWorkspace = runtime.WorkspaceService.CreateWorkspace("Second Workspace");
         using var viewModel = new AgentChatViewModel(
             runtime.ProfileService,
             runtime.WorkspaceService,
@@ -3460,15 +3460,77 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        var secondWorkspace = runtime.WorkspaceService.CreateWorkspace("Second Workspace");
+        var secondSession = runtime.SessionService.CreateSession("Second Workspace Session", workspaceId: secondWorkspace.WorkspaceId);
 
         viewModel.SelectedWorkspace = viewModel.Workspaces.Single(workspace =>
             workspace.WorkspaceId == secondWorkspace.WorkspaceId
         );
 
         Assert.Equal(secondWorkspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+        Assert.Equal(secondSession.SessionId, viewModel.SelectedSession?.SessionId);
+        Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == sessionId);
+        Assert.Contains(viewModel.Sessions, session => session.SessionId == secondSession.SessionId);
+        Assert.True(viewModel.CanUseChat);
+
+        viewModel.SelectedWorkspace = viewModel.Workspaces.Single(workspace =>
+            workspace.WorkspaceId == runtime.CurrentWorkspaceId
+        );
+
         Assert.Equal(sessionId, viewModel.SelectedSession?.SessionId);
         Assert.Contains(viewModel.Sessions, session => session.SessionId == sessionId);
-        Assert.True(viewModel.CanUseChat);
+        Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == secondSession.SessionId);
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_IgnoresStaleSelectedSessionFromAnotherWorkspace()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var firstSessionId = await runtime.CreateSessionAsync(toolId);
+        var secondWorkspace = runtime.WorkspaceService.CreateWorkspace("Second Workspace");
+        var secondSession = runtime.SessionService.CreateSession(
+            "Second Workspace Session",
+            workspaceId: secondWorkspace.WorkspaceId
+        );
+        var stateRoot = Path.Combine(
+            Path.GetTempPath(),
+            "sunder-agent-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(stateRoot);
+
+        try
+        {
+            var selectionState = new AgentChatSelectionStateService(new TestPackageContext(stateRoot));
+            selectionState.SaveSelectedWorkspaceId(secondWorkspace.WorkspaceId);
+            selectionState.SaveSelectedSessionId(firstSessionId);
+
+            using var viewModel = new AgentChatViewModel(
+                runtime.ProfileService,
+                runtime.WorkspaceService,
+                runtime.SessionService,
+                runtime.PermissionService,
+                runtime.RunCoordinator,
+                selectionState
+            );
+
+            Assert.Equal(secondWorkspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+            Assert.Equal(secondSession.SessionId, viewModel.SelectedSession?.SessionId);
+            Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == firstSessionId);
+            Assert.Contains(viewModel.Sessions, session => session.SessionId == secondSession.SessionId);
+        }
+        finally
+        {
+            if (Directory.Exists(stateRoot))
+            {
+                Directory.Delete(stateRoot, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -3481,7 +3543,10 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var deletedSessionId = await runtime.CreateSessionAsync(toolId);
-        var fallbackSession = runtime.SessionService.CreateSession("Fallback Session");
+        var fallbackSession = runtime.SessionService.CreateSession(
+            "Fallback Session",
+            workspaceId: runtime.CurrentWorkspaceId
+        );
         using var viewModel = new AgentChatViewModel(
             runtime.ProfileService,
             runtime.WorkspaceService,
@@ -3538,7 +3603,10 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var deletedSessionId = await runtime.CreateSessionAsync(toolId);
-        var fallbackSession = runtime.SessionService.CreateSession("Fallback Session");
+        var fallbackSession = runtime.SessionService.CreateSession(
+            "Fallback Session",
+            workspaceId: runtime.CurrentWorkspaceId
+        );
         using var viewModel = new AgentChatViewModel(
             runtime.ProfileService,
             runtime.WorkspaceService,
@@ -3562,7 +3630,7 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task QueueUserMessageAsync_UsesProvidedWorkspaceContext()
+    public async Task QueueUserMessageAsync_FailsWhenWorkspaceDoesNotMatchSession()
     {
         const string toolId = "fetch_page";
         var provider = new ScriptedProvider(
@@ -3589,32 +3657,9 @@ public sealed class AgentRunCoordinatorTests
             secondWorkspace.WorkspaceId
         );
 
-        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
-        Assert.Equal(secondWorkspace.WorkspaceId, tool.LastWorkspaceId);
-    }
-
-    [Fact]
-    public void AgentSessionsViewModel_CreatesRenamesAndDeletesSession()
-    {
-        using var runtime = AgentTestRuntime.Create(
-            new ScriptedProvider((_, _) => Complete("done"))
-        );
-        using var viewModel = new AgentSessionsViewModel(runtime.SessionService);
-
-        viewModel.CreateSessionCommand.Execute(null);
-        var sessionId = Assert.Single(viewModel.Sessions).SessionId;
-
-        Assert.Equal("Session 1", runtime.SessionService.GetSession(sessionId)?.Title);
-
-        viewModel.Title = "Renamed Session";
-        viewModel.SaveSessionCommand.Execute(null);
-
-        Assert.Equal("Renamed Session", runtime.SessionService.GetSession(sessionId)?.Title);
-
-        viewModel.DeleteSessionCommand.Execute(null);
-
-        Assert.Empty(viewModel.Sessions);
-        Assert.Null(runtime.SessionService.GetSession(sessionId));
+        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
+        Assert.Equal("The selected session belongs to a different workspace.", checkpoint.Summary);
+        Assert.Null(tool.LastWorkspaceId);
     }
 
     [Fact]
@@ -3623,8 +3668,9 @@ public sealed class AgentRunCoordinatorTests
         using var runtime = AgentTestRuntime.Create(
             new ScriptedProvider((_, _) => Complete("done"))
         );
-        await runtime.ProfileService.CreateProfileAsync("Package Developer");
-        runtime.SessionService.CreateSession("Package Developer Session 2");
+        var profile = await runtime.ProfileService.CreateProfileAsync("Package Developer");
+        var workspace = runtime.WorkspaceService.CreateWorkspace("Test Workspace");
+        runtime.SessionService.CreateSession("Package Developer Session 2", workspaceId: workspace.WorkspaceId);
         using var viewModel = new AgentChatViewModel(
             runtime.ProfileService,
             runtime.WorkspaceService,
@@ -3632,11 +3678,14 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        viewModel.SelectedWorkspace = viewModel.Workspaces.Single(item => item.WorkspaceId == workspace.WorkspaceId);
+        viewModel.SelectedProfile = viewModel.Profiles.Single(item => item.ProfileId == profile.ProfileId);
 
         viewModel.CreateSessionCommand.Execute(null);
 
         Assert.Equal("Session 3", viewModel.SelectedSession?.Title);
         Assert.Equal("Session 3", runtime.SessionService.GetSession(viewModel.SelectedSession!.SessionId)?.Title);
+        Assert.Equal(workspace.WorkspaceId, runtime.SessionService.GetSession(viewModel.SelectedSession.SessionId)?.WorkspaceId);
     }
 
     [Fact]
@@ -3654,7 +3703,8 @@ public sealed class AgentRunCoordinatorTests
         var session = runtime.SessionService.CreateSession(
             "Session 1",
             profileId: profile.ProfileId,
-            behaviorLoopId: profile.BehaviorLoopId
+            behaviorLoopId: profile.BehaviorLoopId,
+            workspaceId: workspace.WorkspaceId
         );
 
         await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -3942,136 +3992,6 @@ public sealed class AgentRunCoordinatorTests
         Assert.Equal("test.embeddings", settingsNavigation.OpenedPackageId);
         Assert.Empty(viewModel.StatusText);
         Assert.False(viewModel.HasStatusText);
-    }
-
-    [Fact]
-    public void AgentSessionsViewModel_CompactLayout_UsesRowActivationAndReturnsToList()
-    {
-        using var runtime = AgentTestRuntime.Create(
-            new ScriptedProvider((_, _) => Complete("done"))
-        );
-        var session = runtime.SessionService.CreateSession("Alpha Session");
-        using var viewModel = new AgentSessionsViewModel(runtime.SessionService);
-        Assert.Equal(session.SessionId, viewModel.SelectedSession?.SessionId);
-
-        viewModel.IsCompactLayout = true;
-
-        Assert.Null(viewModel.SelectedSession);
-        Assert.False(viewModel.IsEditorActive);
-        Assert.True(viewModel.ShowCompactList);
-
-        viewModel.ActivateSession(
-            viewModel.Sessions.Single(item => item.SessionId == session.SessionId)
-        );
-
-        Assert.True(viewModel.IsEditorActive);
-        Assert.Equal(session.SessionId, viewModel.SelectedSession?.SessionId);
-        Assert.True(viewModel.ShowCompactEditor);
-
-        viewModel.BackToSessionListCommand.Execute(null);
-
-        Assert.False(viewModel.IsEditorActive);
-        Assert.Null(viewModel.SelectedSession);
-        Assert.True(viewModel.ShowCompactList);
-
-        viewModel.IsCompactLayout = false;
-
-        Assert.Equal(session.SessionId, viewModel.SelectedSession?.SessionId);
-        Assert.True(viewModel.ShowListPane);
-        Assert.True(viewModel.ShowEditorPane);
-    }
-
-    [Fact]
-    public void AgentSessionsViewModel_SaveAndDelete_CompactLayout_ReturnToListAndClearSelection()
-    {
-        using var runtime = AgentTestRuntime.Create(
-            new ScriptedProvider((_, _) => Complete("done"))
-        );
-        var session = runtime.SessionService.CreateSession("Alpha Session");
-        using var viewModel = new AgentSessionsViewModel(runtime.SessionService)
-        {
-            IsCompactLayout = true,
-        };
-        viewModel.ActivateSession(
-            viewModel.Sessions.Single(item => item.SessionId == session.SessionId)
-        );
-        viewModel.Title = "Saved Session";
-
-        viewModel.SaveSessionCommand.Execute(null);
-
-        Assert.False(viewModel.IsEditorActive);
-        Assert.Null(viewModel.SelectedSession);
-        Assert.Empty(viewModel.StatusText);
-        Assert.False(viewModel.HasStatusText);
-        Assert.Equal("Saved Session", runtime.SessionService.GetSession(session.SessionId)?.Title);
-
-        viewModel.ActivateSession(
-            viewModel.Sessions.Single(item => item.SessionId == session.SessionId)
-        );
-
-        viewModel.DeleteSessionCommand.Execute(null);
-
-        Assert.False(viewModel.IsEditorActive);
-        Assert.Null(viewModel.SelectedSession);
-        Assert.Empty(viewModel.Sessions);
-        Assert.Null(runtime.SessionService.GetSession(session.SessionId));
-    }
-
-    [Fact]
-    public void AgentSessionsViewModel_NormalListUpdates_LeaveFooterStatusEmpty()
-    {
-        using var runtime = AgentTestRuntime.Create(
-            new ScriptedProvider((_, _) => Complete("done"))
-        );
-        var session = runtime.SessionService.CreateSession("Alpha Session");
-        using var viewModel = new AgentSessionsViewModel(runtime.SessionService);
-
-        Assert.Empty(viewModel.StatusText);
-        Assert.False(viewModel.HasStatusText);
-
-        runtime.SessionService.CreateSession("Beta Session");
-
-        Assert.Empty(viewModel.StatusText);
-        Assert.False(viewModel.HasStatusText);
-
-        runtime.SessionService.SaveCheckpoint(
-            session.SessionId,
-            runtime.SessionService.GetNextRunRevision(session.SessionId),
-            AgentRunStatus.Running,
-            "Assistant response saved."
-        );
-
-        Assert.Empty(viewModel.StatusText);
-        Assert.False(viewModel.HasStatusText);
-    }
-
-    [Fact]
-    public async Task AgentSessionsViewModel_Save_WideLayout_KeepsEditorLoadedAndAutoClearsSuccess()
-    {
-        using var runtime = AgentTestRuntime.Create(
-            new ScriptedProvider((_, _) => Complete("done"))
-        );
-        var session = runtime.SessionService.CreateSession("Alpha Session");
-        using var viewModel = new AgentSessionsViewModel(runtime.SessionService);
-        Assert.Equal(session.SessionId, viewModel.SelectedSession?.SessionId);
-        viewModel.Title = "Saved Session";
-
-        viewModel.SaveSessionCommand.Execute(null);
-
-        Assert.False(viewModel.IsEditorActive);
-        Assert.Equal(session.SessionId, viewModel.SelectedSession?.SessionId);
-        Assert.Equal("Saved Session", viewModel.Title);
-        Assert.Equal("Saved Session", runtime.SessionService.GetSession(session.SessionId)?.Title);
-        Assert.Equal("Session saved.", viewModel.StatusText);
-        Assert.True(viewModel.HasStatusText);
-        Assert.True(viewModel.IsStatusSuccess);
-        Assert.False(viewModel.IsStatusWarning);
-        Assert.False(viewModel.IsStatusError);
-
-        await WaitUntilAsync(() => !viewModel.HasStatusText, TimeSpan.FromSeconds(4));
-
-        Assert.Empty(viewModel.StatusText);
-        Assert.Equal(AgentSessionStatusKind.None, viewModel.StatusKind);
     }
 
     [Fact]
@@ -4408,6 +4328,67 @@ public sealed class AgentRunCoordinatorTests
 
         runtime.SessionService.DeleteSession(parentSessionId);
 
+        Assert.Null(runtime.SessionService.GetSession(parentSessionId));
+        Assert.Null(runtime.SessionService.GetSession(childSession.SessionId));
+        using (var subsessionsViewModel = new SubsessionsViewModel(runtime.ExtensionCatalog))
+        {
+            Assert.DoesNotContain(
+                subsessionsViewModel.Subsessions,
+                session => session.SessionId == childSession.SessionId
+            );
+        }
+        await Assert.ThrowsAsync<FileNotFoundException>(
+            () => runtime.AttachmentService.ReadAttachmentBytesAsync(parentAttachment.Metadata)
+        );
+        await Assert.ThrowsAsync<FileNotFoundException>(
+            () => runtime.AttachmentService.ReadAttachmentBytesAsync(childAttachment.Metadata)
+        );
+    }
+
+    [Fact]
+    public async Task AgentWorkspaceService_DeleteWorkspace_RemovesSessionTreeAndExternalSessionData()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var parentSessionId = await runtime.CreateSessionAsync(toolId);
+        var childSession = runtime.SessionService.CreateSession(
+            "Child Session",
+            parentSessionId: parentSessionId,
+            rootSessionId: parentSessionId
+        );
+        var parentAttachment = await runtime.AttachmentService.StoreAttachmentAsync(
+            parentSessionId,
+            new AgentAttachmentUploadRequest(
+                "parent.txt",
+                "text/plain",
+                Encoding.UTF8.GetBytes("parent attachment")
+            )
+        );
+        var childAttachment = await runtime.AttachmentService.StoreAttachmentAsync(
+            childSession.SessionId,
+            new AgentAttachmentUploadRequest(
+                "child.txt",
+                "text/plain",
+                Encoding.UTF8.GetBytes("child attachment")
+            )
+        );
+
+        runtime.WorkspaceService.DeleteWorkspace(runtime.CurrentWorkspaceId);
+
+        Assert.Null(runtime.WorkspaceService.GetWorkspace(runtime.CurrentWorkspaceId));
+        Assert.Null(runtime.SessionService.GetSession(parentSessionId));
+        Assert.Null(runtime.SessionService.GetSession(childSession.SessionId));
+        using (var subsessionsViewModel = new SubsessionsViewModel(runtime.ExtensionCatalog))
+        {
+            Assert.DoesNotContain(
+                subsessionsViewModel.Subsessions,
+                session => session.SessionId == childSession.SessionId
+            );
+        }
         await Assert.ThrowsAsync<FileNotFoundException>(
             () => runtime.AttachmentService.ReadAttachmentBytesAsync(parentAttachment.Metadata)
         );
@@ -5306,7 +5287,7 @@ public sealed class AgentRunCoordinatorTests
             chatModelSettingsJson: "{\"reasoningVariantId\":\"high\"}"
         );
         var workspace = runtime.WorkspaceService.CreateWorkspace("Test Workspace");
-        var session = runtime.SessionService.CreateSession("Test Session");
+        var session = runtime.SessionService.CreateSession("Test Session", workspaceId: workspace.WorkspaceId);
 
         await runtime.RunCoordinator.QueueUserMessageAsync(
             session.SessionId,
@@ -5412,7 +5393,7 @@ public sealed class AgentRunCoordinatorTests
             chatModelSettingsJson: "{\"reasoningVariantId\":\"high\"}"
         );
         var workspace = runtime.WorkspaceService.CreateWorkspace("Test Workspace");
-        var session = runtime.SessionService.CreateSession("Test Session");
+        var session = runtime.SessionService.CreateSession("Test Session", workspaceId: workspace.WorkspaceId);
 
         await runtime.RunCoordinator.QueueUserMessageAsync(
             session.SessionId,
@@ -6527,7 +6508,10 @@ public sealed class AgentRunCoordinatorTests
         var firstSessionId = await runtime.CreateSessionAsync(toolId);
         var secondProfile = await runtime.ProfileService.CreateProfileAsync("Second Profile");
         var secondWorkspace = runtime.WorkspaceService.CreateWorkspace("Second Workspace");
-        var secondSession = runtime.SessionService.CreateSession("Second Session");
+        var secondSession = runtime.SessionService.CreateSession(
+            "Second Session",
+            workspaceId: secondWorkspace.WorkspaceId
+        );
         var selectionRootPath = Path.Combine(
             Path.GetTempPath(),
             "sunder-agent-selection-tests",
@@ -6582,7 +6566,10 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionA = await runtime.CreateSessionAsync(toolId);
-        var sessionB = runtime.SessionService.CreateSession("Test Session B").SessionId;
+        var sessionB = runtime.SessionService.CreateSession(
+            "Test Session B",
+            workspaceId: runtime.CurrentWorkspaceId
+        ).SessionId;
         using var viewModel = new AgentChatViewModel(
             runtime.ProfileService,
             runtime.WorkspaceService,
@@ -6622,7 +6609,10 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionA = await runtime.CreateSessionAsync(toolId);
-        var sessionB = runtime.SessionService.CreateSession("Test Session B").SessionId;
+        var sessionB = runtime.SessionService.CreateSession(
+            "Test Session B",
+            workspaceId: runtime.CurrentWorkspaceId
+        ).SessionId;
         using var viewModel = new AgentChatViewModel(
             runtime.ProfileService,
             runtime.WorkspaceService,
@@ -6710,7 +6700,10 @@ public sealed class AgentRunCoordinatorTests
 
         using var runtime = AgentTestRuntime.Create(provider, blockingTool);
         var sessionA = await runtime.CreateSessionAsync(toolId);
-        var sessionB = runtime.SessionService.CreateSession("Test Session B").SessionId;
+        var sessionB = runtime.SessionService.CreateSession(
+            "Test Session B",
+            workspaceId: runtime.CurrentWorkspaceId
+        ).SessionId;
         using var viewModel = new AgentChatViewModel(
             runtime.ProfileService,
             runtime.WorkspaceService,
@@ -6777,7 +6770,10 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionA = await runtime.CreateSessionAsync(toolId);
-        var sessionB = runtime.SessionService.CreateSession("Test Session B").SessionId;
+        var sessionB = runtime.SessionService.CreateSession(
+            "Test Session B",
+            workspaceId: runtime.CurrentWorkspaceId
+        ).SessionId;
         using var viewModel = new AgentChatViewModel(
             runtime.ProfileService,
             runtime.WorkspaceService,
@@ -10008,7 +10004,7 @@ public sealed class AgentRunCoordinatorTests
             var packageContext = new TestPackageContext(rootPath);
             var store = new AgentLocalStore(packageContext);
             var sessionService = new AgentSessionService(store, extensionCatalog);
-            var workspaceService = new AgentWorkspaceService(store);
+            var workspaceService = new AgentWorkspaceService(store, extensionCatalog, sessionService);
             var permissionService = new AgentPermissionService(store, extensionCatalog);
             var executionTargetService = new AgentExecutionTargetService(extensionCatalog);
             var installedPackageToolSource = new InstalledPackageToolSource(extensionCatalog);
@@ -10169,7 +10165,7 @@ public sealed class AgentRunCoordinatorTests
             CurrentProfileId = profile.ProfileId;
             var workspace = WorkspaceService.CreateWorkspace("Test Workspace");
             CurrentWorkspaceId = workspace.WorkspaceId;
-            return SessionService.CreateSession("Test Session").SessionId;
+            return SessionService.CreateSession("Test Session", workspaceId: workspace.WorkspaceId).SessionId;
         }
 
         public void Dispose()
@@ -11529,6 +11525,9 @@ public sealed class AgentRunCoordinatorTests
         public IReadOnlyList<AgentSessionRecord> ListSessions() => _sessions;
 
         public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => [];
+
+        public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId)
+            => _sessions.Where(session => string.Equals(session.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase)).ToArray();
 
         public AgentSessionRecord? GetSession(Guid sessionId) =>
             _sessions.FirstOrDefault(session => session.SessionId == sessionId);

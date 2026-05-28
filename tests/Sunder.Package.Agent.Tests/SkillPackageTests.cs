@@ -444,6 +444,8 @@ public sealed class SkillPackageTests
 
         public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => [];
 
+        public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId) => [];
+
         public AgentSessionRecord? GetSession(Guid sessionId) => null;
 
         public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [];

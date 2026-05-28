@@ -55,7 +55,7 @@ public sealed partial class AgentChatViewModel
         {
             return (
                 "Select a workspace",
-                "Choose the workspace this session should run against. You can switch workspaces without changing sessions."
+                "Choose a workspace to load its sessions. Sessions are scoped to the workspace they belong to."
             );
         }
 

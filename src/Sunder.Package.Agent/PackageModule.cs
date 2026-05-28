@@ -14,12 +14,16 @@ public sealed partial class PackageModule : ISunderPackageModule
     public void ConfigureServices(IServiceCollection services, IPackageContext context)
     {
         services.AddSingleton(new AgentLocalStore(context));
-        services.AddSingleton<AgentWorkspaceService>();
         services.AddSingleton<AgentExecutionTargetService>();
         services.AddSingleton<AgentWorkspaceExecutionResolver>();
         services.AddSingleton<AgentExecutionTargetWarmupService>();
         services.AddSingleton<AgentProfileService>();
         services.AddSingleton<AgentSessionService>();
+        services.AddSingleton(provider => new AgentWorkspaceService(
+            provider.GetRequiredService<AgentLocalStore>(),
+            provider.GetService<IPackageExtensionCatalog>(),
+            provider.GetRequiredService<AgentSessionService>()
+        ));
         services.AddSingleton<AgentAttachmentService>();
         services.AddSingleton<AgentRunAttachmentStore>();
         services.AddSingleton<IAgentAttachmentContentStore>(provider =>
@@ -85,16 +89,6 @@ public sealed partial class PackageModule : ISunderPackageModule
         registry.RegisterExtension(
             PackageExtensionPoints.SystemPromptContributors,
             services.GetRequiredService<WorkspaceDocumentationContextService>()
-        );
-
-        // Left-Top
-        registry.RegisterPackageView<AgentSessionsView>(
-            new PackageViewRegistration(
-                "sunder.package.agent.sessions",
-                "Sessions",
-                "Assets/session-icon.png",
-                defaultPlacement: PackageViewPlacement.LeftTop
-            )
         );
 
         // Middle

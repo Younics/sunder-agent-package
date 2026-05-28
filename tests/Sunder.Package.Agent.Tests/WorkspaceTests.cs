@@ -118,7 +118,7 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void AgentLocalStore_MigratesLegacySessionWorkspaceColumn()
+    public void AgentLocalStore_PreservesLegacySessionWorkspaceColumn()
     {
         using var scope = TestScope.Create();
         Directory.CreateDirectory(scope.Context.Storage.DataRootPath);
@@ -154,7 +154,52 @@ public sealed class WorkspaceTests
         var session = store.GetSession(sessionId);
         Assert.NotNull(session);
         Assert.Equal("Legacy Session", session!.Title);
-        Assert.DoesNotContain(GetTableColumns(databasePath, "AgentSessions"), column => string.Equals(column, "WorkspaceId", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("legacy-workspace", session.WorkspaceId);
+        Assert.Contains(GetTableColumns(databasePath, "AgentSessions"), column => string.Equals(column, "WorkspaceId", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void AgentLocalStore_AddsMissingSessionWorkspaceColumn()
+    {
+        using var scope = TestScope.Create();
+        Directory.CreateDirectory(scope.Context.Storage.DataRootPath);
+        var databasePath = Path.Combine(scope.Context.Storage.DataRootPath, "agent.db");
+        var sessionId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow.ToString("O");
+
+        using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE AgentSessions (
+                    SessionId TEXT PRIMARY KEY,
+                    Title TEXT NOT NULL,
+                    State TEXT NOT NULL,
+                    CreatedAtUtc TEXT NOT NULL,
+                    UpdatedAtUtc TEXT NOT NULL
+                );
+
+                INSERT INTO AgentSessions (SessionId, Title, State, CreatedAtUtc, UpdatedAtUtc)
+                VALUES ($sessionId, 'Legacy Session', 'Active', $created, $updated);
+                """;
+            command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
+            command.Parameters.AddWithValue("$created", now);
+            command.Parameters.AddWithValue("$updated", now);
+            command.ExecuteNonQuery();
+        }
+
+        var store = new AgentLocalStore(scope.Context);
+
+        var session = store.GetSession(sessionId);
+        Assert.NotNull(session);
+        Assert.Equal("Legacy Session", session!.Title);
+        Assert.Equal(AgentWorkspaceService.UnassignedSessionsWorkspaceId, session.WorkspaceId);
+        Assert.Contains(GetTableColumns(databasePath, "AgentSessions"), column => string.Equals(column, "WorkspaceId", StringComparison.OrdinalIgnoreCase));
+
+        var workspace = store.GetWorkspace(AgentWorkspaceService.UnassignedSessionsWorkspaceId);
+        Assert.NotNull(workspace);
+        Assert.Equal(AgentWorkspaceService.UnassignedSessionsWorkspaceDisplayName, workspace!.DisplayName);
     }
 
     [Fact]

@@ -78,6 +78,7 @@ public sealed partial class AgentLocalStore
                 SessionId TEXT PRIMARY KEY,
                 Title TEXT NOT NULL,
                 State TEXT NOT NULL,
+                WorkspaceId TEXT NULL,
                 ParentSessionId TEXT NULL,
                 RootSessionId TEXT NULL,
                 ParentRunId TEXT NULL,
@@ -236,73 +237,35 @@ public sealed partial class AgentLocalStore
         command.ExecuteNonQuery();
     }
 
-    private void EnsureSessionWorkspaceDecoupledMigration()
+    private void EnsureSessionWorkspaceMigration()
     {
         using var connection = CreateConnection();
         connection.Open();
-        if (!TableHasColumn(connection, "AgentSessions", "WorkspaceId"))
+        EnsureTableColumnExists(connection, "AgentSessions", "WorkspaceId", "TEXT NULL");
+        AssignMissingSessionWorkspacesToUnassignedWorkspace(connection);
+
+        using var indexCommand = connection.CreateCommand();
+        indexCommand.CommandText = "CREATE INDEX IF NOT EXISTS IX_AgentSessions_WorkspaceId_UpdatedAtUtc ON AgentSessions (WorkspaceId, UpdatedAtUtc);";
+        indexCommand.ExecuteNonQuery();
+    }
+
+    private static void AssignMissingSessionWorkspacesToUnassignedWorkspace(SqliteConnection connection)
+    {
+        using (var existsCommand = connection.CreateCommand())
         {
-            return;
+            existsCommand.CommandText = "SELECT 1 FROM AgentSessions WHERE WorkspaceId IS NULL OR TRIM(WorkspaceId) = '' LIMIT 1;";
+            if (existsCommand.ExecuteScalar() is null)
+            {
+                return;
+            }
         }
 
-        using var transaction = connection.BeginTransaction();
-        using (var cleanupCommand = connection.CreateCommand())
-        {
-            cleanupCommand.Transaction = transaction;
-            cleanupCommand.CommandText = "DROP TABLE IF EXISTS AgentSessions_New;";
-            cleanupCommand.ExecuteNonQuery();
-        }
+        EnsureUnassignedSessionsWorkspace(connection);
 
-        using (var createCommand = connection.CreateCommand())
-        {
-            createCommand.Transaction = transaction;
-            createCommand.CommandText = """
-                CREATE TABLE AgentSessions_New (
-                    SessionId TEXT PRIMARY KEY,
-                    Title TEXT NOT NULL,
-                    State TEXT NOT NULL,
-                    ParentSessionId TEXT NULL,
-                    RootSessionId TEXT NULL,
-                    ParentRunId TEXT NULL,
-                    ParentRunRevision INTEGER NULL,
-                    ParentToolCallId TEXT NULL,
-                    TaskId TEXT NULL,
-                    ProfileId TEXT NULL,
-                    BehaviorLoopId TEXT NULL,
-                    AgentKind TEXT NULL,
-                    CreatedAtUtc TEXT NOT NULL,
-                    UpdatedAtUtc TEXT NOT NULL
-                );
-                """;
-            createCommand.ExecuteNonQuery();
-        }
-
-        using (var copyCommand = connection.CreateCommand())
-        {
-            copyCommand.Transaction = transaction;
-            copyCommand.CommandText = """
-                INSERT INTO AgentSessions_New (SessionId, Title, State, ParentSessionId, RootSessionId, ParentRunId, ParentRunRevision, ParentToolCallId, TaskId, ProfileId, BehaviorLoopId, AgentKind, CreatedAtUtc, UpdatedAtUtc)
-                SELECT SessionId, Title, State, ParentSessionId, RootSessionId, ParentRunId, ParentRunRevision, ParentToolCallId, TaskId, ProfileId, BehaviorLoopId, AgentKind, CreatedAtUtc, UpdatedAtUtc
-                FROM AgentSessions;
-                """;
-            copyCommand.ExecuteNonQuery();
-        }
-
-        using (var dropCommand = connection.CreateCommand())
-        {
-            dropCommand.Transaction = transaction;
-            dropCommand.CommandText = "DROP TABLE AgentSessions;";
-            dropCommand.ExecuteNonQuery();
-        }
-
-        using (var renameCommand = connection.CreateCommand())
-        {
-            renameCommand.Transaction = transaction;
-            renameCommand.CommandText = "ALTER TABLE AgentSessions_New RENAME TO AgentSessions;";
-            renameCommand.ExecuteNonQuery();
-        }
-
-        transaction.Commit();
+        using var updateCommand = connection.CreateCommand();
+        updateCommand.CommandText = "UPDATE AgentSessions SET WorkspaceId = $workspaceId WHERE WorkspaceId IS NULL OR TRIM(WorkspaceId) = '';";
+        updateCommand.Parameters.AddWithValue("$workspaceId", UnassignedSessionsWorkspaceId);
+        updateCommand.ExecuteNonQuery();
     }
 
     private void EnsureTraceTelemetryRemoved()

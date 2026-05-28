@@ -37,6 +37,8 @@ public sealed partial class AgentLocalStore
         connection.Open();
         using var transaction = connection.BeginTransaction();
 
+        DeleteSessionTreesForWorkspace(connection, transaction, workspaceId);
+
         using (var deleteDocumentsCommand = connection.CreateCommand())
         {
             deleteDocumentsCommand.Transaction = transaction;
@@ -229,6 +231,19 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$description", (object?)workspace.Description ?? DBNull.Value);
         command.Parameters.AddWithValue("$createdAtUtc", workspace.CreatedAtUtc.ToString("O"));
         command.Parameters.AddWithValue("$updatedAtUtc", workspace.UpdatedAtUtc.ToString("O"));
+        command.ExecuteNonQuery();
+    }
+
+    private static void EnsureUnassignedSessionsWorkspace(SqliteConnection connection, SqliteTransaction? transaction = null)
+    {
+        var now = DateTimeOffset.UtcNow;
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "INSERT OR IGNORE INTO AgentWorkspaces (WorkspaceId, DisplayName, Description, CreatedAtUtc, UpdatedAtUtc) VALUES ($workspaceId, $displayName, NULL, $createdAtUtc, $updatedAtUtc);";
+        command.Parameters.AddWithValue("$workspaceId", UnassignedSessionsWorkspaceId);
+        command.Parameters.AddWithValue("$displayName", UnassignedSessionsWorkspaceDisplayName);
+        command.Parameters.AddWithValue("$createdAtUtc", now.ToString("O"));
+        command.Parameters.AddWithValue("$updatedAtUtc", now.ToString("O"));
         command.ExecuteNonQuery();
     }
 

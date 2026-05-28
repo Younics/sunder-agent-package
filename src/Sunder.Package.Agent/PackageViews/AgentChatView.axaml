@@ -340,27 +340,18 @@
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Workspace}" />
     </Style>
 
-    <Style Selector="Border.setup-card">
-      <Setter Property="MaxWidth" Value="560" />
-      <Setter Property="HorizontalAlignment" Value="Center" />
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Medium}" />
-      <Setter Property="Padding" Value="24" />
-      <Setter Property="Margin" Value="0,48,0,0" />
-    </Style>
-
     <Style Selector="TextBlock.setup-title">
       <Setter Property="FontSize" Value="20" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+      <Setter Property="TextAlignment" Value="Center" />
     </Style>
 
     <Style Selector="TextBlock.setup-description">
       <Setter Property="FontSize" Value="14" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
-      <Setter Property="TextWrapping" Value="NoWrap" />
+      <Setter Property="TextAlignment" Value="Center" />
+      <Setter Property="TextWrapping" Value="Wrap" />
       <Setter Property="LineHeight" Value="22" />
     </Style>
 
@@ -1342,15 +1333,16 @@
               </Border>
             </ScrollViewer>
 
-            <Border Classes="setup-card"
-                    IsVisible="{Binding ShowSetupInstructions}">
-              <StackPanel Spacing="10">
+            <StackPanel Spacing="10"
+                        MaxWidth="560"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        IsVisible="{Binding ShowSetupInstructions}">
                 <TextBlock Classes="setup-title"
                            Text="{Binding SetupTitle}" />
                 <TextBlock Classes="setup-description"
                            Text="{Binding SetupDescription}" />
-              </StackPanel>
-            </Border>
+            </StackPanel>
 
             <TextBlock Text="Loading messages..."
                        TextWrapping="Wrap"

@@ -96,7 +96,6 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _sessionService.RunActivityChanged += OnRunActivityChanged;
         ReloadProfiles(_selectionState?.GetSelectedProfileId());
         ReloadWorkspaces(_selectionState?.GetSelectedWorkspaceId());
-        ReloadSessions(_selectionState?.GetSelectedSessionId());
         ScheduleSelectedWorkspaceWarmup();
     }
 
@@ -422,7 +421,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         {
             ApplySessionStatus(
                 selectedSession,
-                "Select a workspace before chatting. Sessions can stay open while you switch workspaces."
+                "Select a workspace before chatting. Sessions are scoped to their workspace."
             );
             return;
         }

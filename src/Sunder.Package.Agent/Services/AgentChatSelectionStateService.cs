@@ -6,6 +6,7 @@ public sealed class AgentChatSelectionStateService(IPackageContext packageContex
 {
     private const string SelectedWorkspaceIdKey = "agent.chat.selectedWorkspaceId";
     private const string SelectedSessionIdKey = "agent.chat.selectedSessionId";
+    private const string SelectedWorkspaceSessionIdPrefix = "agent.chat.selectedSessionId.";
     private const string SelectedProfileIdKey = "agent.chat.selectedProfileId";
 
     private readonly IPackageKeyValueStore _state = packageContext.Storage.State;
@@ -18,6 +19,11 @@ public sealed class AgentChatSelectionStateService(IPackageContext packageContex
             ? sessionId
             : null;
 
+    public Guid? GetSelectedSessionId(string? workspaceId)
+        => Guid.TryParse(Normalize(_state.GetValue(GetWorkspaceSessionKey(workspaceId))), out var sessionId)
+            ? sessionId
+            : GetSelectedSessionId();
+
     public string? GetSelectedProfileId()
         => Normalize(_state.GetValue(SelectedProfileIdKey));
 
@@ -26,6 +32,9 @@ public sealed class AgentChatSelectionStateService(IPackageContext packageContex
 
     public void SaveSelectedSessionId(Guid? sessionId)
         => SaveOrClear(SelectedSessionIdKey, sessionId?.ToString("N"));
+
+    public void SaveSelectedSessionId(string? workspaceId, Guid? sessionId)
+        => SaveOrClear(GetWorkspaceSessionKey(workspaceId), sessionId?.ToString("N"));
 
     public void SaveSelectedProfileId(string? profileId)
         => SaveOrClear(SelectedProfileIdKey, Normalize(profileId));
@@ -50,4 +59,12 @@ public sealed class AgentChatSelectionStateService(IPackageContext packageContex
 
     private static string? Normalize(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string GetWorkspaceSessionKey(string? workspaceId)
+    {
+        var normalizedWorkspaceId = Normalize(workspaceId);
+        return normalizedWorkspaceId is null
+            ? SelectedSessionIdKey
+            : SelectedWorkspaceSessionIdPrefix + normalizedWorkspaceId;
+    }
 }

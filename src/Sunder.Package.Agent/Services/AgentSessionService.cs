@@ -22,6 +22,9 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
 
     public IReadOnlyList<AgentSessionRecord> ListSessions() => _store.ListSessions();
 
+    public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId)
+        => _store.ListSessionsForWorkspace(workspaceId);
+
     public AgentSessionRecord CreateSession(
         string title,
         Guid? parentSessionId = null,
@@ -32,9 +35,11 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
         string? taskId = null,
         string? profileId = null,
         string? behaviorLoopId = null,
-        string? agentKind = null)
+        string? agentKind = null,
+        string? workspaceId = null)
     {
-        var session = _store.CreateSession(title, parentSessionId, rootSessionId, parentRunId, parentRunRevision, parentToolCallId, taskId, profileId, behaviorLoopId, agentKind);
+        workspaceId = ResolveWorkspaceId(parentSessionId, workspaceId);
+        var session = _store.CreateSession(title, parentSessionId, rootSessionId, parentRunId, parentRunRevision, parentToolCallId, taskId, profileId, behaviorLoopId, agentKind, workspaceId);
         NotifySessionChanged(session.SessionId);
         return session;
     }
@@ -50,6 +55,17 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
     public void DeleteSession(Guid sessionId)
     {
         var deletedSessionIds = _store.DeleteSessionTree(sessionId);
+        CompleteSessionDeletion(deletedSessionIds);
+    }
+
+    public void DeleteSessionsForWorkspace(string workspaceId)
+    {
+        var deletedSessionIds = _store.DeleteSessionTreesForWorkspace(workspaceId);
+        CompleteSessionDeletion(deletedSessionIds);
+    }
+
+    private void CompleteSessionDeletion(IReadOnlyList<Guid> deletedSessionIds)
+    {
         var cleanupFailures = DeleteExternalSessionData(deletedSessionIds);
         foreach (var deletedSessionId in deletedSessionIds)
         {
@@ -60,6 +76,21 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
         {
             throw new AggregateException("Session was deleted, but one or more external cleanup steps failed.", cleanupFailures);
         }
+    }
+
+    private string? ResolveWorkspaceId(Guid? parentSessionId, string? workspaceId)
+    {
+        if (!string.IsNullOrWhiteSpace(workspaceId))
+        {
+            return workspaceId.Trim();
+        }
+
+        if (parentSessionId is not null && _store.GetSession(parentSessionId.Value)?.WorkspaceId is { } parentWorkspaceId)
+        {
+            return parentWorkspaceId;
+        }
+
+        return AgentLocalStore.UnassignedSessionsWorkspaceId;
     }
 
     private IReadOnlyList<Exception> DeleteExternalSessionData(IReadOnlyList<Guid> deletedSessionIds)

@@ -6,6 +6,9 @@ namespace Sunder.Package.Agent.Storage;
 
 public sealed partial class AgentLocalStore
 {
+    internal const string UnassignedSessionsWorkspaceId = "legacy-unassigned-sessions";
+    internal const string UnassignedSessionsWorkspaceDisplayName = "Unassigned Sessions";
+
     public AgentLocalStore(IPackageContext packageContext)
     {
         EnsureSqliteNativeLibraryLoaded(packageContext.InstallPath);
@@ -17,7 +20,7 @@ public sealed partial class AgentLocalStore
         EnsureTurnItemPresentationMigration();
         EnsureTraceTelemetryRemoved();
         EnsureSessionHierarchyMigration();
-        EnsureSessionWorkspaceDecoupledMigration();
+        EnsureSessionWorkspaceMigration();
         EnsurePendingPermissionMigration();
         EnsureProfileSchemaMigration();
         EnsureProfileModelBindingMigration();

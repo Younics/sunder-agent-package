@@ -37,6 +37,11 @@ public sealed class AgentRuntimeCatalog : IAgentRuntimeCatalog
                 .Where(session => string.Equals(session.ProfileId, profileId, StringComparison.OrdinalIgnoreCase))
                 .ToArray();
 
+    public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId)
+        => string.IsNullOrWhiteSpace(workspaceId)
+            ? []
+            : _sessionService.ListSessionsForWorkspace(workspaceId);
+
     public AgentSessionRecord? GetSession(Guid sessionId) => _sessionService.GetSession(sessionId);
 
     public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => _workspaceService.ListWorkspaces();

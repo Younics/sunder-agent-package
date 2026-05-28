@@ -14,4 +14,5 @@ public sealed record AgentSessionRecord(
     string? TaskId = null,
     string? ProfileId = null,
     string? BehaviorLoopId = null,
-    string? AgentKind = null);
+    string? AgentKind = null,
+    string? WorkspaceId = null);

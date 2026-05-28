@@ -19,6 +19,8 @@ public sealed partial class AgentChatViewModel
         _selectionState?.SaveSelectedWorkspaceId(value?.WorkspaceId);
         _globalStatusText = string.Empty;
         RefreshWorkspacePathChips();
+        ReloadSessions(_selectionState?.GetSelectedSessionId(value?.WorkspaceId));
+        CreateSessionCommand.NotifyCanExecuteChanged();
         RefreshSetupState();
         ScheduleSelectedWorkspaceWarmup();
     }
@@ -56,6 +58,7 @@ public sealed partial class AgentChatViewModel
         _selectionState?.SaveSelectedWorkspaceId(SelectedWorkspace?.WorkspaceId);
         RefreshWorkspacePathChips();
         NotifyWorkspaceStateChanged();
+        ReloadSessions(_selectionState?.GetSelectedSessionId(SelectedWorkspace?.WorkspaceId));
         CreateSessionCommand.NotifyCanExecuteChanged();
         RefreshSetupState();
         return selectedWorkspaceChanged;

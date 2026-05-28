@@ -27,15 +27,17 @@ public sealed class AgentChildRunSessionService(
                                parentSessionId: parentSession.SessionId,
                                rootSessionId: parentSession.RootSessionId ?? parentSession.SessionId,
                                parentRunId: request.ParentRunId,
-                               parentRunRevision: request.ParentRunRevision,
-                               parentToolCallId: request.ParentToolCallId,
-                               taskId: NormalizeTaskId(request.TaskId),
-                               profileId: childProfile.ProfileId,
-                               behaviorLoopId: childProfile.BehaviorLoopId,
-                               agentKind: request.AgentKind);
+                                parentRunRevision: request.ParentRunRevision,
+                                parentToolCallId: request.ParentToolCallId,
+                                taskId: NormalizeTaskId(request.TaskId),
+                                profileId: childProfile.ProfileId,
+                                behaviorLoopId: childProfile.BehaviorLoopId,
+                                agentKind: request.AgentKind,
+                                workspaceId: parentSession.WorkspaceId);
         if (childSession.ParentRunId != request.ParentRunId
             || childSession.ParentRunRevision != request.ParentRunRevision
-            || !string.Equals(childSession.ParentToolCallId, request.ParentToolCallId, StringComparison.Ordinal))
+            || !string.Equals(childSession.ParentToolCallId, request.ParentToolCallId, StringComparison.Ordinal)
+            || !string.Equals(childSession.WorkspaceId, parentSession.WorkspaceId, StringComparison.OrdinalIgnoreCase))
         {
             childSession = childSession with
             {
@@ -44,6 +46,7 @@ public sealed class AgentChildRunSessionService(
                 ParentToolCallId = request.ParentToolCallId,
                 ProfileId = childProfile.ProfileId,
                 BehaviorLoopId = childProfile.BehaviorLoopId,
+                WorkspaceId = parentSession.WorkspaceId,
                 UpdatedAtUtc = DateTimeOffset.UtcNow,
             };
             _sessionService.UpdateSession(childSession);

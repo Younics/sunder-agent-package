@@ -14,6 +14,8 @@ public interface IAgentRuntimeCatalog
 
     IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId);
 
+    IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId);
+
     AgentSessionRecord? GetSession(Guid sessionId);
 
     IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces();

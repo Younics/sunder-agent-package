@@ -12,6 +12,13 @@ public sealed partial class AgentLocalStore
         return ListSessions(connection);
     }
 
+    public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId)
+    {
+        using var connection = CreateConnection();
+        connection.Open();
+        return ListSessionsForWorkspace(connection, workspaceId);
+    }
+
     public AgentSessionRecord CreateSession(
         string title,
         Guid? parentSessionId = null,
@@ -22,7 +29,8 @@ public sealed partial class AgentLocalStore
         string? taskId = null,
         string? profileId = null,
         string? behaviorLoopId = null,
-        string? agentKind = null)
+        string? agentKind = null,
+        string? workspaceId = null)
     {
         var now = DateTimeOffset.UtcNow;
         var sessionId = Guid.NewGuid();
@@ -41,10 +49,16 @@ public sealed partial class AgentLocalStore
             string.IsNullOrWhiteSpace(taskId) ? null : taskId.Trim(),
             string.IsNullOrWhiteSpace(profileId) ? null : profileId.Trim(),
             string.IsNullOrWhiteSpace(behaviorLoopId) ? null : behaviorLoopId.Trim(),
-            string.IsNullOrWhiteSpace(agentKind) ? "agent" : agentKind.Trim());
+            string.IsNullOrWhiteSpace(agentKind) ? "agent" : agentKind.Trim(),
+            NormalizeWorkspaceId(workspaceId));
 
         using var connection = CreateConnection();
         connection.Open();
+        if (string.Equals(session.WorkspaceId, UnassignedSessionsWorkspaceId, StringComparison.OrdinalIgnoreCase))
+        {
+            EnsureUnassignedSessionsWorkspace(connection);
+        }
+
         InsertSession(connection, session);
         return session;
     }
@@ -55,10 +69,11 @@ public sealed partial class AgentLocalStore
         connection.Open();
 
         using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE AgentSessions SET Title = $title, State = $state, UpdatedAtUtc = $updated, ParentSessionId = $parentSessionId, RootSessionId = $rootSessionId, ParentRunId = $parentRunId, ParentRunRevision = $parentRunRevision, ParentToolCallId = $parentToolCallId, TaskId = $taskId, ProfileId = $profileId, BehaviorLoopId = $behaviorLoopId, AgentKind = $agentKind WHERE SessionId = $id;";
+        command.CommandText = "UPDATE AgentSessions SET Title = $title, State = $state, UpdatedAtUtc = $updated, WorkspaceId = $workspaceId, ParentSessionId = $parentSessionId, RootSessionId = $rootSessionId, ParentRunId = $parentRunId, ParentRunRevision = $parentRunRevision, ParentToolCallId = $parentToolCallId, TaskId = $taskId, ProfileId = $profileId, BehaviorLoopId = $behaviorLoopId, AgentKind = $agentKind WHERE SessionId = $id;";
         command.Parameters.AddWithValue("$title", session.Title);
         command.Parameters.AddWithValue("$state", session.State.ToString());
         command.Parameters.AddWithValue("$updated", session.UpdatedAtUtc.ToString("O"));
+        command.Parameters.AddWithValue("$workspaceId", (object?)NormalizeWorkspaceId(session.WorkspaceId) ?? DBNull.Value);
         command.Parameters.AddWithValue("$parentSessionId", session.ParentSessionId?.ToString() ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$rootSessionId", session.RootSessionId?.ToString() ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$parentRunId", session.ParentRunId?.ToString() ?? (object)DBNull.Value);
@@ -78,7 +93,7 @@ public sealed partial class AgentLocalStore
         connection.Open();
         using var transaction = connection.BeginTransaction();
 
-        var sessions = ResolveSessionTree(connection, sessionId);
+        var sessions = ResolveSessionTree(connection, transaction, sessionId);
         foreach (var session in sessions.Reverse())
         {
             DeleteSession(connection, transaction, session.SessionId.ToString());
@@ -88,13 +103,25 @@ public sealed partial class AgentLocalStore
         return sessions.Select(session => session.SessionId).ToArray();
     }
 
+    public IReadOnlyList<Guid> DeleteSessionTreesForWorkspace(string workspaceId)
+    {
+        using var connection = CreateConnection();
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+
+        var deletedSessionIds = DeleteSessionTreesForWorkspace(connection, transaction, workspaceId);
+
+        transaction.Commit();
+        return deletedSessionIds;
+    }
+
     public AgentSessionRecord? GetSession(Guid sessionId)
     {
         using var connection = CreateConnection();
         connection.Open();
 
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT SessionId, Title, State, CreatedAtUtc, UpdatedAtUtc, ParentSessionId, RootSessionId, ParentRunId, ParentRunRevision, ParentToolCallId, TaskId, ProfileId, BehaviorLoopId, AgentKind FROM AgentSessions WHERE SessionId = $id;";
+        command.CommandText = "SELECT SessionId, Title, State, CreatedAtUtc, UpdatedAtUtc, ParentSessionId, RootSessionId, ParentRunId, ParentRunRevision, ParentToolCallId, TaskId, ProfileId, BehaviorLoopId, AgentKind, WorkspaceId FROM AgentSessions WHERE SessionId = $id;";
         command.Parameters.AddWithValue("$id", sessionId.ToString());
         using var reader = command.ExecuteReader();
 
@@ -113,7 +140,8 @@ public sealed partial class AgentLocalStore
                 reader.IsDBNull(10) ? null : reader.GetString(10),
                 reader.IsDBNull(11) ? null : reader.GetString(11),
                 reader.IsDBNull(12) ? null : reader.GetString(12),
-                reader.IsDBNull(13) ? null : reader.GetString(13))
+                reader.IsDBNull(13) ? null : reader.GetString(13),
+                reader.IsDBNull(14) ? null : reader.GetString(14))
              : null;
     }
 
@@ -255,11 +283,32 @@ public sealed partial class AgentLocalStore
         return Convert.ToInt64(command.ExecuteScalar()) + 1;
     }
 
-    private static IReadOnlyList<AgentSessionRecord> ListSessions(SqliteConnection connection)
+    private static IReadOnlyList<AgentSessionRecord> ListSessions(SqliteConnection connection, SqliteTransaction? transaction = null)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT SessionId, Title, State, CreatedAtUtc, UpdatedAtUtc, ParentSessionId, RootSessionId, ParentRunId, ParentRunRevision, ParentToolCallId, TaskId, ProfileId, BehaviorLoopId, AgentKind FROM AgentSessions ORDER BY UpdatedAtUtc DESC;";
+        command.Transaction = transaction;
+        command.CommandText = "SELECT SessionId, Title, State, CreatedAtUtc, UpdatedAtUtc, ParentSessionId, RootSessionId, ParentRunId, ParentRunRevision, ParentToolCallId, TaskId, ProfileId, BehaviorLoopId, AgentKind, WorkspaceId FROM AgentSessions ORDER BY UpdatedAtUtc DESC;";
 
+        return ReadSessions(command);
+    }
+
+    private static IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(SqliteConnection connection, string workspaceId)
+    {
+        var normalizedWorkspaceId = NormalizeWorkspaceId(workspaceId);
+        if (normalizedWorkspaceId is null)
+        {
+            return [];
+        }
+
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT SessionId, Title, State, CreatedAtUtc, UpdatedAtUtc, ParentSessionId, RootSessionId, ParentRunId, ParentRunRevision, ParentToolCallId, TaskId, ProfileId, BehaviorLoopId, AgentKind, WorkspaceId FROM AgentSessions WHERE WorkspaceId = $workspaceId ORDER BY UpdatedAtUtc DESC;";
+        command.Parameters.AddWithValue("$workspaceId", normalizedWorkspaceId);
+
+        return ReadSessions(command);
+    }
+
+    private static IReadOnlyList<AgentSessionRecord> ReadSessions(SqliteCommand command)
+    {
         using var reader = command.ExecuteReader();
         var items = new List<AgentSessionRecord>();
         while (reader.Read())
@@ -278,7 +327,8 @@ public sealed partial class AgentLocalStore
                 reader.IsDBNull(10) ? null : reader.GetString(10),
                 reader.IsDBNull(11) ? null : reader.GetString(11),
                 reader.IsDBNull(12) ? null : reader.GetString(12),
-                reader.IsDBNull(13) ? null : reader.GetString(13)
+                reader.IsDBNull(13) ? null : reader.GetString(13),
+                reader.IsDBNull(14) ? null : reader.GetString(14)
             ));
         }
 
@@ -310,10 +360,11 @@ public sealed partial class AgentLocalStore
     private static void InsertSession(SqliteConnection connection, AgentSessionRecord session)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO AgentSessions (SessionId, Title, State, ParentSessionId, RootSessionId, ParentRunId, ParentRunRevision, ParentToolCallId, TaskId, ProfileId, BehaviorLoopId, AgentKind, CreatedAtUtc, UpdatedAtUtc) VALUES ($id, $title, $state, $parentSessionId, $rootSessionId, $parentRunId, $parentRunRevision, $parentToolCallId, $taskId, $profileId, $behaviorLoopId, $agentKind, $created, $updated);";
+        command.CommandText = "INSERT INTO AgentSessions (SessionId, Title, State, WorkspaceId, ParentSessionId, RootSessionId, ParentRunId, ParentRunRevision, ParentToolCallId, TaskId, ProfileId, BehaviorLoopId, AgentKind, CreatedAtUtc, UpdatedAtUtc) VALUES ($id, $title, $state, $workspaceId, $parentSessionId, $rootSessionId, $parentRunId, $parentRunRevision, $parentToolCallId, $taskId, $profileId, $behaviorLoopId, $agentKind, $created, $updated);";
         command.Parameters.AddWithValue("$id", session.SessionId.ToString());
         command.Parameters.AddWithValue("$title", session.Title);
         command.Parameters.AddWithValue("$state", session.State.ToString());
+        command.Parameters.AddWithValue("$workspaceId", (object?)NormalizeWorkspaceId(session.WorkspaceId) ?? DBNull.Value);
         command.Parameters.AddWithValue("$parentSessionId", session.ParentSessionId?.ToString() ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$rootSessionId", session.RootSessionId?.ToString() ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$parentRunId", session.ParentRunId?.ToString() ?? (object)DBNull.Value);
@@ -328,9 +379,51 @@ public sealed partial class AgentLocalStore
         command.ExecuteNonQuery();
     }
 
-    private static IReadOnlyList<AgentSessionRecord> ResolveSessionTree(SqliteConnection connection, Guid sessionId)
+    private static string? NormalizeWorkspaceId(string? workspaceId)
+        => string.IsNullOrWhiteSpace(workspaceId) ? null : workspaceId.Trim();
+
+    private static IReadOnlyList<Guid> DeleteSessionTreesForWorkspace(SqliteConnection connection, SqliteTransaction transaction, string workspaceId)
     {
-        var sessions = ListSessions(connection);
+        var normalizedWorkspaceId = NormalizeWorkspaceId(workspaceId);
+        if (normalizedWorkspaceId is null)
+        {
+            return [];
+        }
+
+        var candidateSessionIds = ListSessions(connection, transaction)
+            .Where(session => string.Equals(session.WorkspaceId, normalizedWorkspaceId, StringComparison.OrdinalIgnoreCase))
+            .Select(session => session.SessionId)
+            .ToArray();
+        var deletedSessionIds = new List<Guid>();
+        var deletedSessionIdSet = new HashSet<Guid>();
+        foreach (var sessionId in candidateSessionIds)
+        {
+            if (deletedSessionIdSet.Contains(sessionId))
+            {
+                continue;
+            }
+
+            var sessions = ResolveSessionTree(connection, transaction, sessionId);
+            foreach (var session in sessions.Reverse())
+            {
+                DeleteSession(connection, transaction, session.SessionId.ToString());
+            }
+
+            foreach (var session in sessions)
+            {
+                if (deletedSessionIdSet.Add(session.SessionId))
+                {
+                    deletedSessionIds.Add(session.SessionId);
+                }
+            }
+        }
+
+        return deletedSessionIds;
+    }
+
+    private static IReadOnlyList<AgentSessionRecord> ResolveSessionTree(SqliteConnection connection, SqliteTransaction transaction, Guid sessionId)
+    {
+        var sessions = ListSessions(connection, transaction);
         var rootSession = sessions.FirstOrDefault(session => session.SessionId == sessionId);
         if (rootSession is null)
         {

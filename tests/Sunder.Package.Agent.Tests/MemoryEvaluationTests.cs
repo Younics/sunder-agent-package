@@ -514,6 +514,9 @@ public sealed class MemoryEvaluationTests
         public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string requestedProfileId)
             => string.Equals(requestedProfileId, profileId, StringComparison.OrdinalIgnoreCase) ? [_session] : [];
 
+        public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId)
+            => string.Equals(workspaceId, _workspace.WorkspaceId, StringComparison.OrdinalIgnoreCase) ? [_session] : [];
+
         public AgentSessionRecord? GetSession(Guid requestedSessionId)
             => requestedSessionId == _session.SessionId ? _session : null;
 

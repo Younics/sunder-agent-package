@@ -6,11 +6,25 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentWorkspaceService(AgentLocalStore store, IPackageExtensionCatalog? extensionCatalog = null)
+public sealed class AgentWorkspaceService
 {
-    private readonly AgentLocalStore _store = store;
-    private readonly IPackageExtensionCatalog? _extensionCatalog = extensionCatalog;
+    public const string UnassignedSessionsWorkspaceId = AgentLocalStore.UnassignedSessionsWorkspaceId;
+    public const string UnassignedSessionsWorkspaceDisplayName = AgentLocalStore.UnassignedSessionsWorkspaceDisplayName;
+
+    private readonly AgentLocalStore _store;
+    private readonly IPackageExtensionCatalog? _extensionCatalog;
+    private readonly AgentSessionService? _sessionService;
     private bool _isMigratingWorkspacePaths;
+
+    public AgentWorkspaceService(
+        AgentLocalStore store,
+        IPackageExtensionCatalog? extensionCatalog = null,
+        AgentSessionService? sessionService = null)
+    {
+        _store = store;
+        _extensionCatalog = extensionCatalog;
+        _sessionService = sessionService;
+    }
 
     public event Action? WorkspacesChanged;
 
@@ -80,6 +94,7 @@ public sealed class AgentWorkspaceService(AgentLocalStore store, IPackageExtensi
 
     public void DeleteWorkspace(string workspaceId)
     {
+        _sessionService?.DeleteSessionsForWorkspace(workspaceId);
         _store.DeleteWorkspace(workspaceId);
         WorkspacesChanged?.Invoke();
     }

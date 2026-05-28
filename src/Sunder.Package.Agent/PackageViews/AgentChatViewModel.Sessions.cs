@@ -48,7 +48,7 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        _selectionState?.SaveSelectedSessionId(value?.SessionId);
+        _selectionState?.SaveSelectedSessionId(SelectedWorkspace?.WorkspaceId, value?.SessionId);
 
         if (value is not null)
         {
@@ -82,16 +82,24 @@ public sealed partial class AgentChatViewModel
     private void CreateSession()
     {
         var profile = SelectedProfile;
+        var workspace = SelectedWorkspace;
         if (profile is null)
         {
             SetGlobalStatus("Create an Agent before starting a session.");
             return;
         }
 
+        if (workspace is null)
+        {
+            SetGlobalStatus("Select a workspace before starting a session.");
+            return;
+        }
+
         var session = _sessionService.CreateSession(
             AgentSessionTitleDefaults.CreateNextTitle(ListMainSessions()),
             profileId: profile.ProfileId,
-            behaviorLoopId: profile.BehaviorLoopId
+            behaviorLoopId: profile.BehaviorLoopId,
+            workspaceId: workspace.WorkspaceId
         );
         ReloadSessions(session.SessionId);
     }
@@ -189,10 +197,20 @@ public sealed partial class AgentChatViewModel
         }
     }
 
-    private bool CanCreateSession() => SelectedProfile is not null;
+    private bool CanCreateSession() => SelectedProfile is not null && SelectedWorkspace is not null;
 
     private void ReloadSessions(Guid? selectSessionId)
     {
+        if (SelectedWorkspace is null)
+        {
+            ReconcileSessions([]);
+            SelectedSession = null;
+            SetDisplayedSession(null);
+            _selectionState?.SaveSelectedSessionId((string?)null, null);
+            RefreshSetupState();
+            return;
+        }
+
         ReconcileSessions(ListMainSessions());
         if (selectSessionId is null && SelectedSession is not null)
         {
@@ -208,7 +226,7 @@ public sealed partial class AgentChatViewModel
         if (nextSession is null)
         {
             SetDisplayedSession(null);
-            _selectionState?.SaveSelectedSessionId(null);
+            _selectionState?.SaveSelectedSessionId(SelectedWorkspace?.WorkspaceId, null);
             RefreshSetupState();
         }
     }
@@ -229,7 +247,11 @@ public sealed partial class AgentChatViewModel
     }
 
     private IReadOnlyList<AgentSessionRecord> ListMainSessions() =>
-        _sessionService.ListSessions().Where(session => session.ParentSessionId is null).ToArray();
+        SelectedWorkspace is null
+            ? []
+            : _sessionService.ListSessionsForWorkspace(SelectedWorkspace.WorkspaceId)
+                .Where(session => session.ParentSessionId is null)
+                .ToArray();
 
     private AgentSessionListItemViewModel? ResolveSessionItem(
         Guid? sessionId,
@@ -248,19 +270,25 @@ public sealed partial class AgentChatViewModel
         }
 
         var session = _sessionService.GetSession(sessionId.Value);
-        if (!allowChildSession && session?.ParentSessionId is not null)
+        if (session is null || !IsSessionInSelectedWorkspace(session))
+        {
+            return null;
+        }
+
+        if (!allowChildSession && session.ParentSessionId is not null)
         {
             var rootSessionId = session.RootSessionId ?? session.ParentSessionId.Value;
             return Sessions.FirstOrDefault(candidate => candidate.SessionId == rootSessionId)
                 ?? (
                     _sessionService.GetSession(rootSessionId)
                         is { ParentSessionId: null } rootSession
+                        && IsSessionInSelectedWorkspace(rootSession)
                         ? CreateSessionItem(rootSession)
                         : null
                 );
         }
 
-        return session is null ? null : CreateSessionItem(session);
+        return CreateSessionItem(session);
     }
 
     private void LoadPermissionState(AgentSessionListItemViewModel? session)
@@ -439,7 +467,15 @@ public sealed partial class AgentChatViewModel
 
         if (changedSession.ParentSessionId is null)
         {
-            ApplyMainSessionChanged(changedSession);
+            if (IsSessionInSelectedWorkspace(changedSession))
+            {
+                ApplyMainSessionChanged(changedSession);
+            }
+            else
+            {
+                RemoveMainSession(changedSession.SessionId);
+            }
+
             RestoreReconciledSessionSelection(
                 selectedSessionId,
                 selectedSessionId is not null
@@ -486,6 +522,10 @@ public sealed partial class AgentChatViewModel
             Sessions.Move(existingIndex, targetIndex);
         }
     }
+
+    private bool IsSessionInSelectedWorkspace(AgentSessionRecord session)
+        => SelectedWorkspace is not null
+           && string.Equals(session.WorkspaceId, SelectedWorkspace.WorkspaceId, StringComparison.OrdinalIgnoreCase);
 
     private void RemoveMainSession(Guid sessionId)
     {
