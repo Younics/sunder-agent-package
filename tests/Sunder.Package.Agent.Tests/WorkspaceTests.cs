@@ -107,7 +107,7 @@ public sealed class WorkspaceTests
         var firstStore = new AgentLocalStore(scope.Context);
         var workspace = CreateWorkspace();
         firstStore.SaveWorkspace(workspace);
-        var session = firstStore.CreateSession("Persistent Session");
+        var session = firstStore.CreateSession("Persistent Session", workspaceId: workspace.WorkspaceId);
 
         var reopenedStore = new AgentLocalStore(scope.Context);
 
@@ -115,6 +115,141 @@ public sealed class WorkspaceTests
         Assert.NotNull(persistedSession);
         Assert.Equal(session.SessionId, persistedSession!.SessionId);
         Assert.Contains(reopenedStore.ListSessions(), item => item.SessionId == session.SessionId);
+    }
+
+    [Fact]
+    public void AgentLocalStore_CreateSessionWithoutWorkspace_Throws()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => store.CreateSession("Unassigned Session"));
+
+        Assert.Equal("Sessions must be created with an assigned workspace.", exception.Message);
+        Assert.Null(store.GetWorkspace(AgentWorkspaceService.UnassignedSessionsWorkspaceId));
+    }
+
+    [Fact]
+    public void AgentSessionService_CreateRootSessionWithoutWorkspace_Throws()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var sessionService = new AgentSessionService(store);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => sessionService.CreateSession("Root Session"));
+
+        Assert.Equal("Root sessions must be created with an explicit workspace id.", exception.Message);
+    }
+
+    [Fact]
+    public void AgentSessionService_CreateRootSessionInUnassignedWorkspace_Throws()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var sessionService = new AgentSessionService(store);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => sessionService.CreateSession(
+            "Root Session",
+            workspaceId: AgentWorkspaceService.UnassignedSessionsWorkspaceId));
+
+        Assert.Equal("Root sessions cannot be created in Unassigned Sessions.", exception.Message);
+    }
+
+    [Fact]
+    public void AgentSessionService_CreateChildSessionWithoutWorkspace_InheritsParentWorkspace()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var sessionService = new AgentSessionService(store);
+        var workspace = CreateWorkspace();
+        store.SaveWorkspace(workspace);
+        var parent = sessionService.CreateSession("Parent Session", workspaceId: workspace.WorkspaceId);
+
+        var child = sessionService.CreateSession("Child Session", parentSessionId: parent.SessionId);
+
+        Assert.Equal(workspace.WorkspaceId, child.WorkspaceId);
+        Assert.Equal(workspace.WorkspaceId, store.GetSession(child.SessionId)?.WorkspaceId);
+    }
+
+    [Fact]
+    public void AgentSessionService_CreateChildSessionWithDifferentWorkspace_Throws()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var sessionService = new AgentSessionService(store);
+        var now = DateTimeOffset.UtcNow;
+        var parentWorkspace = new AgentWorkspaceRecord(Guid.NewGuid().ToString("N"), "Parent Workspace", null, now, now);
+        var otherWorkspace = new AgentWorkspaceRecord(Guid.NewGuid().ToString("N"), "Other Workspace", null, now, now);
+        store.SaveWorkspace(parentWorkspace);
+        store.SaveWorkspace(otherWorkspace);
+        var parent = sessionService.CreateSession("Parent Session", workspaceId: parentWorkspace.WorkspaceId);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => sessionService.CreateSession(
+            "Child Session",
+            parentSessionId: parent.SessionId,
+            workspaceId: otherWorkspace.WorkspaceId));
+
+        Assert.Equal("Child sessions must use their parent session workspace.", exception.Message);
+    }
+
+    [Fact]
+    public void AgentSessionService_UpdateSessionRejectsBlankWorkspace()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var sessionService = new AgentSessionService(store);
+        var workspace = CreateWorkspace();
+        store.SaveWorkspace(workspace);
+        var session = sessionService.CreateSession("Workspace Session", workspaceId: workspace.WorkspaceId);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => sessionService.UpdateSession(session with
+        {
+            WorkspaceId = " ",
+        }));
+
+        Assert.Equal("Sessions must have an assigned workspace.", exception.Message);
+        Assert.Equal(workspace.WorkspaceId, store.GetSession(session.SessionId)?.WorkspaceId);
+    }
+
+    [Fact]
+    public void AgentSessionService_UpdateSessionRejectsMoveToUnassignedWorkspace()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var sessionService = new AgentSessionService(store);
+        var workspace = CreateWorkspace();
+        store.SaveWorkspace(workspace);
+        var session = sessionService.CreateSession("Workspace Session", workspaceId: workspace.WorkspaceId);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => sessionService.UpdateSession(session with
+        {
+            WorkspaceId = AgentWorkspaceService.UnassignedSessionsWorkspaceId,
+        }));
+
+        Assert.Equal("Sessions cannot be moved to Unassigned Sessions.", exception.Message);
+        Assert.Equal(workspace.WorkspaceId, store.GetSession(session.SessionId)?.WorkspaceId);
+    }
+
+    [Fact]
+    public void AgentSessionService_UpdateSessionRejectsMoveBetweenWorkspaces()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var sessionService = new AgentSessionService(store);
+        var now = DateTimeOffset.UtcNow;
+        var firstWorkspace = new AgentWorkspaceRecord(Guid.NewGuid().ToString("N"), "First Workspace", null, now, now);
+        var secondWorkspace = new AgentWorkspaceRecord(Guid.NewGuid().ToString("N"), "Second Workspace", null, now, now);
+        store.SaveWorkspace(firstWorkspace);
+        store.SaveWorkspace(secondWorkspace);
+        var session = sessionService.CreateSession("Workspace Session", workspaceId: firstWorkspace.WorkspaceId);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => sessionService.UpdateSession(session with
+        {
+            WorkspaceId = secondWorkspace.WorkspaceId,
+        }));
+
+        Assert.Equal("Sessions cannot be moved between workspaces.", exception.Message);
+        Assert.Equal(firstWorkspace.WorkspaceId, store.GetSession(session.SessionId)?.WorkspaceId);
     }
 
     [Fact]
@@ -207,7 +342,9 @@ public sealed class WorkspaceTests
     {
         using var scope = TestScope.Create();
         var store = new AgentLocalStore(scope.Context);
-        var session = store.CreateSession("Failed Legacy Session");
+        var workspace = CreateWorkspace();
+        store.SaveWorkspace(workspace);
+        var session = store.CreateSession("Failed Legacy Session", workspaceId: workspace.WorkspaceId);
         var databasePath = Path.Combine(scope.Context.Storage.DataRootPath, "agent.db");
         var now = DateTimeOffset.UtcNow.ToString("O");
 
@@ -235,7 +372,9 @@ public sealed class WorkspaceTests
     {
         using var scope = TestScope.Create();
         var store = new AgentLocalStore(scope.Context);
-        var session = store.CreateSession("Failed Session");
+        var workspace = CreateWorkspace();
+        store.SaveWorkspace(workspace);
+        var session = store.CreateSession("Failed Session", workspaceId: workspace.WorkspaceId);
 
         store.SaveCheckpoint(session.SessionId, 1, AgentRunStatus.Failed, "Provider stream failed.");
 
@@ -248,7 +387,9 @@ public sealed class WorkspaceTests
         using var scope = TestScope.Create();
         var store = new AgentLocalStore(scope.Context);
         var sessionService = new AgentSessionService(store);
-        var session = sessionService.CreateSession("Event Isolation Session");
+        var workspace = CreateWorkspace();
+        store.SaveWorkspace(workspace);
+        var session = sessionService.CreateSession("Event Isolation Session", workspaceId: workspace.WorkspaceId);
         var observed = false;
         sessionService.SessionChanged += _ => throw new InvalidOperationException("Subscriber failed.");
         sessionService.SessionChanged += _ => observed = true;
@@ -265,7 +406,9 @@ public sealed class WorkspaceTests
         using var scope = TestScope.Create();
         var store = new AgentLocalStore(scope.Context);
         var sessionService = new AgentSessionService(store);
-        var session = sessionService.CreateSession("Turn Event Isolation Session");
+        var workspace = CreateWorkspace();
+        store.SaveWorkspace(workspace);
+        var session = sessionService.CreateSession("Turn Event Isolation Session", workspaceId: workspace.WorkspaceId);
         var observed = false;
         sessionService.TurnChanged += (_, _) => throw new InvalidOperationException("Subscriber failed.");
         sessionService.TurnChanged += (_, _) => observed = true;
@@ -281,7 +424,9 @@ public sealed class WorkspaceTests
     {
         using var scope = TestScope.Create();
         var store = new AgentLocalStore(scope.Context);
-        var session = store.CreateSession("Forward Paging Session");
+        var workspace = CreateWorkspace();
+        store.SaveWorkspace(workspace);
+        var session = store.CreateSession("Forward Paging Session", workspaceId: workspace.WorkspaceId);
         for (var index = 0; index < 6; index++)
         {
             store.AppendTextTurn(session.SessionId, AgentMessageRole.User, $"turn-{index}");
@@ -316,18 +461,18 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void AgentLocalStore_AllowsWorkspaceDeletion_WhenSessionsExist()
+    public void AgentLocalStore_DeleteWorkspace_RemovesSessions_WhenSessionsExist()
     {
         using var scope = TestScope.Create();
         var store = new AgentLocalStore(scope.Context);
         var workspace = CreateWorkspace();
         store.SaveWorkspace(workspace);
-        var session = store.CreateSession("Workspace Session");
+        var session = store.CreateSession("Workspace Session", workspaceId: workspace.WorkspaceId);
 
         store.DeleteWorkspace(workspace.WorkspaceId);
 
         Assert.Null(store.GetWorkspace(workspace.WorkspaceId));
-        Assert.NotNull(store.GetSession(session.SessionId));
+        Assert.Null(store.GetSession(session.SessionId));
     }
 
     [Fact]
@@ -355,7 +500,7 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var argumentsJson = JsonSerializer.Serialize(new { pattern = "*.html" });
         store.SaveWorkspace(workspace);
-        var session = store.CreateSession("Tool Args");
+        var session = store.CreateSession("Tool Args", workspaceId: workspace.WorkspaceId);
 
         sessionService.AppendToolResultTurn(
             session.SessionId,
@@ -384,7 +529,7 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var payloadJson = JsonSerializer.Serialize(new { schema = "sunder.file-diff.v1" });
         store.SaveWorkspace(workspace);
-        var session = store.CreateSession("Tool Payload");
+        var session = store.CreateSession("Tool Payload", workspaceId: workspace.WorkspaceId);
 
         sessionService.AppendToolResultTurn(
             session.SessionId,
@@ -438,7 +583,7 @@ public sealed class WorkspaceTests
             ]
         };
         var workspace = workspaceService.CreateWorkspace("MCP Workspace");
-        var session = sessionService.CreateSession("MCP Session");
+        var session = sessionService.CreateSession("MCP Session", workspaceId: workspace.WorkspaceId);
 
         var tools = await toolService.ListReadyRuntimeToolsAsync(profile, session.SessionId, workspace);
 
@@ -1703,7 +1848,7 @@ public sealed class WorkspaceTests
         var permissions = new AgentPermissionService(store, catalog);
         var workspace = CreateWorkspace();
         store.SaveWorkspace(workspace);
-        var session = store.CreateSession("Permission Test");
+        var session = store.CreateSession("Permission Test", workspaceId: workspace.WorkspaceId);
 
         catalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, new TestPermissionSurface());
         permissions.SaveOverride("shell.execute", AgentPermissionBoundaryIds.SelectedExecutionTarget, AgentPermissionDecision.Deny);

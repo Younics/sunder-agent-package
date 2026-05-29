@@ -97,6 +97,29 @@ public sealed record BuilderWorkspaceExecution(
         return await PathMapper.MapToHostPathAsync(Context, executionPath, cancellationToken);
     }
 
+    public string ResolveExecutionWorkspacePath(AgentWorkspacePathRecord workspacePath)
+    {
+        var selectedHostPath = NormalizeHostPath(workspacePath.HostPath);
+        var hostPaths = Workspace.Paths
+            .Where(path => !string.IsNullOrWhiteSpace(path.HostPath))
+            .OrderBy(path => path.SortOrder)
+            .Select(path => NormalizeHostPath(path.HostPath))
+            .Distinct(GetHostPathStringComparer())
+            .ToArray();
+        var index = Array.FindIndex(hostPaths, path => string.Equals(path, selectedHostPath, GetHostPathStringComparison()));
+        if (index >= 0 && index < Scope.WorkspacePaths.Count)
+        {
+            return Scope.WorkspacePaths[index];
+        }
+
+        if (PathMapper is null)
+        {
+            return selectedHostPath;
+        }
+
+        throw new InvalidOperationException("Selected workspace path is not available in the execution target.");
+    }
+
     public async ValueTask AddPathEntryAsync(string executionPath, CancellationToken cancellationToken = default)
     {
         if (PathEnvironment is null)
@@ -115,6 +138,19 @@ public sealed record BuilderWorkspaceExecution(
 
     private bool UsesWindowsPaths(string path)
         => IsWindows || path.Contains('\\') || path.Contains(':');
+
+    private static string NormalizeHostPath(string hostPath)
+        => Path.GetFullPath(Environment.ExpandEnvironmentVariables(hostPath.Trim()));
+
+    private static IEqualityComparer<string> GetHostPathStringComparer()
+        => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+
+    private static StringComparison GetHostPathStringComparison()
+        => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
 
     private string BuildCommand(string fileName, IReadOnlyList<string> arguments)
     {

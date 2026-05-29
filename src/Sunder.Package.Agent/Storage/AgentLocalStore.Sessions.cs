@@ -35,6 +35,7 @@ public sealed partial class AgentLocalStore
         var now = DateTimeOffset.UtcNow;
         var sessionId = Guid.NewGuid();
         var resolvedRootSessionId = rootSessionId ?? (parentSessionId is null ? sessionId : parentSessionId.Value);
+        var resolvedWorkspaceId = RequireSessionWorkspaceIdForWrite(workspaceId);
         var session = new AgentSessionRecord(
             sessionId,
             title,
@@ -50,11 +51,11 @@ public sealed partial class AgentLocalStore
             string.IsNullOrWhiteSpace(profileId) ? null : profileId.Trim(),
             string.IsNullOrWhiteSpace(behaviorLoopId) ? null : behaviorLoopId.Trim(),
             string.IsNullOrWhiteSpace(agentKind) ? "agent" : agentKind.Trim(),
-            NormalizeWorkspaceId(workspaceId));
+            resolvedWorkspaceId);
 
         using var connection = CreateConnection();
         connection.Open();
-        if (string.Equals(session.WorkspaceId, UnassignedSessionsWorkspaceId, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(resolvedWorkspaceId, UnassignedSessionsWorkspaceId, StringComparison.OrdinalIgnoreCase))
         {
             EnsureUnassignedSessionsWorkspace(connection);
         }
@@ -67,13 +68,18 @@ public sealed partial class AgentLocalStore
     {
         using var connection = CreateConnection();
         connection.Open();
+        var workspaceId = RequireSessionWorkspaceIdForWrite(session.WorkspaceId);
+        if (string.Equals(workspaceId, UnassignedSessionsWorkspaceId, StringComparison.OrdinalIgnoreCase))
+        {
+            EnsureUnassignedSessionsWorkspace(connection);
+        }
 
         using var command = connection.CreateCommand();
         command.CommandText = "UPDATE AgentSessions SET Title = $title, State = $state, UpdatedAtUtc = $updated, WorkspaceId = $workspaceId, ParentSessionId = $parentSessionId, RootSessionId = $rootSessionId, ParentRunId = $parentRunId, ParentRunRevision = $parentRunRevision, ParentToolCallId = $parentToolCallId, TaskId = $taskId, ProfileId = $profileId, BehaviorLoopId = $behaviorLoopId, AgentKind = $agentKind WHERE SessionId = $id;";
         command.Parameters.AddWithValue("$title", session.Title);
         command.Parameters.AddWithValue("$state", session.State.ToString());
         command.Parameters.AddWithValue("$updated", session.UpdatedAtUtc.ToString("O"));
-        command.Parameters.AddWithValue("$workspaceId", (object?)NormalizeWorkspaceId(session.WorkspaceId) ?? DBNull.Value);
+        command.Parameters.AddWithValue("$workspaceId", workspaceId);
         command.Parameters.AddWithValue("$parentSessionId", session.ParentSessionId?.ToString() ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$rootSessionId", session.RootSessionId?.ToString() ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$parentRunId", session.ParentRunId?.ToString() ?? (object)DBNull.Value);
@@ -364,7 +370,7 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$id", session.SessionId.ToString());
         command.Parameters.AddWithValue("$title", session.Title);
         command.Parameters.AddWithValue("$state", session.State.ToString());
-        command.Parameters.AddWithValue("$workspaceId", (object?)NormalizeWorkspaceId(session.WorkspaceId) ?? DBNull.Value);
+        command.Parameters.AddWithValue("$workspaceId", RequireSessionWorkspaceIdForWrite(session.WorkspaceId));
         command.Parameters.AddWithValue("$parentSessionId", session.ParentSessionId?.ToString() ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$rootSessionId", session.RootSessionId?.ToString() ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$parentRunId", session.ParentRunId?.ToString() ?? (object)DBNull.Value);
@@ -381,6 +387,10 @@ public sealed partial class AgentLocalStore
 
     private static string? NormalizeWorkspaceId(string? workspaceId)
         => string.IsNullOrWhiteSpace(workspaceId) ? null : workspaceId.Trim();
+
+    private static string RequireSessionWorkspaceIdForWrite(string? workspaceId)
+        => NormalizeWorkspaceId(workspaceId)
+           ?? throw new InvalidOperationException("Sessions must be created with an assigned workspace.");
 
     private static IReadOnlyList<Guid> DeleteSessionTreesForWorkspace(SqliteConnection connection, SqliteTransaction transaction, string workspaceId)
     {

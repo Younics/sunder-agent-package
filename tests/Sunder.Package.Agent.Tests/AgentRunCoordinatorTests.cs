@@ -3534,6 +3534,57 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task AgentChatViewModel_IgnoresWorkspaceScopedSelectedSessionFromAnotherWorkspace()
+    {
+        const string toolId = "fetch_page";
+
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId)
+        );
+        var firstSessionId = await runtime.CreateSessionAsync(toolId);
+        var secondWorkspace = runtime.WorkspaceService.CreateWorkspace("Second Workspace");
+        var secondSession = runtime.SessionService.CreateSession(
+            "Second Workspace Session",
+            workspaceId: secondWorkspace.WorkspaceId
+        );
+        var stateRoot = Path.Combine(
+            Path.GetTempPath(),
+            "sunder-agent-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(stateRoot);
+
+        try
+        {
+            var selectionState = new AgentChatSelectionStateService(new TestPackageContext(stateRoot));
+            selectionState.SaveSelectedWorkspaceId(secondWorkspace.WorkspaceId);
+            selectionState.SaveSelectedSessionId(secondWorkspace.WorkspaceId, firstSessionId);
+
+            using var viewModel = new AgentChatViewModel(
+                runtime.ProfileService,
+                runtime.WorkspaceService,
+                runtime.SessionService,
+                runtime.PermissionService,
+                runtime.RunCoordinator,
+                selectionState
+            );
+
+            Assert.Equal(secondWorkspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+            Assert.Equal(secondSession.SessionId, viewModel.SelectedSession?.SessionId);
+            Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == firstSessionId);
+            Assert.Contains(viewModel.Sessions, session => session.SessionId == secondSession.SessionId);
+        }
+        finally
+        {
+            if (Directory.Exists(stateRoot))
+            {
+                Directory.Delete(stateRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task AgentChatViewModel_SelectsFallbackSession_WhenSelectedSessionIsDeleted()
     {
         const string toolId = "fetch_page";
@@ -3689,6 +3740,59 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task AgentChatViewModel_CreateSession_PersistsSelectedWorkspaceAcrossStoreReopen()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done"))
+        );
+        var profile = await runtime.ProfileService.CreateProfileAsync("Package Developer");
+        var otherWorkspace = runtime.WorkspaceService.CreateWorkspace("Other Workspace");
+        var selectedWorkspace = runtime.WorkspaceService.CreateWorkspace("Selected Workspace");
+        var selectionState = new AgentChatSelectionStateService(new TestPackageContext(runtime.RootPath));
+        Guid sessionId;
+
+        using (var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator,
+            selectionState
+        ))
+        {
+            viewModel.SelectedWorkspace = viewModel.Workspaces.Single(item => item.WorkspaceId == selectedWorkspace.WorkspaceId);
+            viewModel.SelectedProfile = viewModel.Profiles.Single(item => item.ProfileId == profile.ProfileId);
+
+            viewModel.CreateSessionCommand.Execute(null);
+
+            sessionId = viewModel.SelectedSession!.SessionId;
+            Assert.Equal(selectedWorkspace.WorkspaceId, viewModel.SelectedSession.Session.WorkspaceId);
+        }
+
+        var reopenedStore = new AgentLocalStore(new TestPackageContext(runtime.RootPath));
+        var reopenedSessionService = new AgentSessionService(reopenedStore);
+
+        var reopenedSession = reopenedSessionService.GetSession(sessionId);
+        Assert.NotNull(reopenedSession);
+        Assert.Equal(selectedWorkspace.WorkspaceId, reopenedSession!.WorkspaceId);
+        Assert.Equal(selectedWorkspace.WorkspaceId, selectionState.GetSelectedWorkspaceId());
+        Assert.Equal(sessionId, selectionState.GetSelectedSessionId(selectedWorkspace.WorkspaceId));
+        Assert.NotEqual(sessionId, selectionState.GetSelectedSessionId(AgentWorkspaceService.UnassignedSessionsWorkspaceId));
+        Assert.Contains(
+            reopenedSessionService.ListSessionsForWorkspace(selectedWorkspace.WorkspaceId),
+            session => session.SessionId == sessionId
+        );
+        Assert.DoesNotContain(
+            reopenedSessionService.ListSessionsForWorkspace(otherWorkspace.WorkspaceId),
+            session => session.SessionId == sessionId
+        );
+        Assert.DoesNotContain(
+            reopenedSessionService.ListSessionsForWorkspace(AgentWorkspaceService.UnassignedSessionsWorkspaceId),
+            session => session.SessionId == sessionId
+        );
+    }
+
+    [Fact]
     public async Task AgentRunCoordinator_AutoTitlesDefaultSessionFromFirstUserMessage()
     {
         var provider = new ScriptedProvider(
@@ -3735,7 +3839,8 @@ public sealed class AgentRunCoordinatorTests
         var session = runtime.SessionService.CreateSession(
             "Custom Session Name",
             profileId: profile.ProfileId,
-            behaviorLoopId: profile.BehaviorLoopId
+            behaviorLoopId: profile.BehaviorLoopId,
+            workspaceId: workspace.WorkspaceId
         );
 
         await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -4414,7 +4519,8 @@ public sealed class AgentRunCoordinatorTests
             parentSessionId: parentSessionId,
             rootSessionId: parentSessionId
         );
-        var otherSession = runtime.SessionService.CreateSession("Other Session");
+        var otherWorkspace = runtime.WorkspaceService.CreateWorkspace("Other Workspace");
+        var otherSession = runtime.SessionService.CreateSession("Other Session", workspaceId: otherWorkspace.WorkspaceId);
         var context = new TestPackageContext(
             Path.Combine(Path.GetTempPath(), "sunder-memory-tests", Guid.NewGuid().ToString("N"))
         );
@@ -9963,6 +10069,8 @@ public sealed class AgentRunCoordinatorTests
         public AgentParentRunContinuationService ParentRunContinuationService { get; }
 
         public TestExtensionCatalog ExtensionCatalog => _extensionCatalog;
+
+        public string RootPath => _rootPath;
 
         public string CurrentProfileId { get; private set; } = string.Empty;
 

@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using System.Text.Json;
 using Avalonia.Threading;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
@@ -16,6 +15,7 @@ public sealed class BuilderViewModel(
     IBackgroundProcessQueue backgroundProcesses) : INotifyPropertyChanged
 {
     private static readonly TimeSpan StatusMessageVisibleDuration = TimeSpan.FromSeconds(3);
+    private const string DefaultDevPackageRelativePath = "/bin/Debug/net10.0/sunder-dev";
 
     private BuilderProjectViewModel? _selectedProject;
     private string _statusText = string.Empty;
@@ -40,6 +40,8 @@ public sealed class BuilderViewModel(
     public ObservableCollection<BuilderProjectViewModel> Projects { get; } = [];
 
     public ObservableCollection<AgentWorkspaceRecord> Workspaces { get; } = [];
+
+    public ObservableCollection<BuilderWorkspacePathOptionViewModel> WorkspacePathOptions { get; } = [];
 
     public bool IsBusy
     {
@@ -131,7 +133,8 @@ public sealed class BuilderViewModel(
                                                 && !IsSelectedProjectInitialized
                                                && !string.IsNullOrWhiteSpace(SelectedProject?.DisplayName)
                                                && !string.IsNullOrWhiteSpace(SelectedProject?.PackageId)
-                                               && !string.IsNullOrWhiteSpace(SelectedProject?.WorkspaceId);
+                                               && !string.IsNullOrWhiteSpace(SelectedProject?.WorkspaceId)
+                                               && !string.IsNullOrWhiteSpace(SelectedProject?.WorkspacePathId);
 
     public bool ShowLoadSelectedProject => HasSelectedProject && IsSelectedProjectInitialized && !IsSelectedProjectLoaded;
 
@@ -202,11 +205,18 @@ public sealed class BuilderViewModel(
                         value.WorkspaceId = Workspaces.FirstOrDefault()?.WorkspaceId ?? string.Empty;
                     }
 
+                    NormalizeLoadedProject(value);
+                    RefreshWorkspacePathOptions(preserveSelection: true);
+
                     value.PropertyChanged += OnSelectedProjectPropertyChanged;
                     if (IsCompactLayout)
                     {
                         IsEditorActive = true;
                     }
+                }
+                else
+                {
+                    WorkspacePathOptions.Clear();
                 }
 
                 UpdateSelectedProjectInitialized();
@@ -465,7 +475,8 @@ public sealed class BuilderViewModel(
                 }
 
                 RuntimeLogText = string.Empty;
-                project.DevPackageFolder = ResolveDefaultDevPackageFolder(project.ProjectFolder);
+                EnsureDevPackageRelativePath(project);
+                project.DevPackageFolder = ResolveDevPackageFolder(project);
                 project.Touch();
                 await SaveProjectsAsync(context.CancellationToken);
                 UpdateSelectedProjectInitialized();
@@ -584,11 +595,12 @@ public sealed class BuilderViewModel(
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(project!.DevPackageFolder))
+        if (string.IsNullOrWhiteSpace(project!.DevPackageRelativePath))
         {
-            project.DevPackageFolder = ResolveDefaultDevPackageFolder(project.ProjectFolder);
+            project.DevPackageRelativePath = DefaultDevPackageRelativePath;
         }
 
+        project.DevPackageFolder = ResolveDevPackageFolder(project);
         if (!Directory.Exists(project.DevPackageFolder))
         {
             StatusText = "Build the project before loading; the sunder-dev folder does not exist.";
@@ -693,7 +705,8 @@ public sealed class BuilderViewModel(
         }
 
         SelectedProject.ProjectFolder = folder;
-        SelectedProject.DevPackageFolder = ResolveDefaultDevPackageFolder(folder);
+        EnsureDevPackageRelativePath(SelectedProject);
+        SelectedProject.DevPackageFolder = ResolveDevPackageFolder(SelectedProject);
     }
 
     private async Task LoadProjectsAsync(CancellationToken cancellationToken = default)
@@ -705,7 +718,9 @@ public sealed class BuilderViewModel(
             Projects.Clear();
             foreach (var project in projects)
             {
-                Projects.Add(new BuilderProjectViewModel(project));
+                var projectViewModel = new BuilderProjectViewModel(project);
+                NormalizeLoadedProject(projectViewModel);
+                Projects.Add(projectViewModel);
             }
 
             SelectedProject = Projects.FirstOrDefault(project => project.Id == selectedProjectId)
@@ -740,8 +755,67 @@ public sealed class BuilderViewModel(
             SelectedProject.WorkspaceId = selectedWorkspaceId;
         }
 
+        RefreshWorkspacePathOptions(preserveSelection: true);
         OnPropertyChanged(nameof(Workspaces));
         NotifyProjectStatePropertiesChanged();
+    }
+
+    private void RefreshWorkspacePathOptions(bool preserveSelection)
+    {
+        var project = SelectedProject;
+        WorkspacePathOptions.Clear();
+        if (project is null || string.IsNullOrWhiteSpace(project.WorkspaceId))
+        {
+            NotifyProjectStatePropertiesChanged();
+            return;
+        }
+
+        var workspace = FindWorkspace(project.WorkspaceId);
+        if (workspace is null)
+        {
+            NotifyProjectStatePropertiesChanged();
+            return;
+        }
+
+        foreach (var path in workspace.Paths.OrderBy(path => path.SortOrder))
+        {
+            WorkspacePathOptions.Add(new BuilderWorkspacePathOptionViewModel(path));
+        }
+
+        if (WorkspacePathOptions.Count == 0)
+        {
+            project.WorkspacePathId = string.Empty;
+            NotifyProjectStatePropertiesChanged();
+            return;
+        }
+
+        var selectedPathId = preserveSelection ? project.WorkspacePathId : null;
+        var selectedPath = WorkspacePathOptions.FirstOrDefault(path => string.Equals(path.PathId, selectedPathId, StringComparison.OrdinalIgnoreCase))
+            ?? WorkspacePathOptions.FirstOrDefault(path => path.IsDefault)
+            ?? WorkspacePathOptions.First();
+        project.WorkspacePathId = selectedPath.PathId;
+        NotifyProjectStatePropertiesChanged();
+    }
+
+    private AgentWorkspaceRecord? FindWorkspace(string workspaceId)
+        => Workspaces.FirstOrDefault(workspace => string.Equals(workspace.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase));
+
+    private AgentWorkspacePathRecord? FindWorkspacePath(string workspaceId, string workspacePathId)
+        => FindWorkspace(workspaceId)?.Paths.FirstOrDefault(path => string.Equals(path.PathId, workspacePathId, StringComparison.OrdinalIgnoreCase));
+
+    private void NormalizeLoadedProject(BuilderProjectViewModel project)
+    {
+        if (string.IsNullOrWhiteSpace(project.DevPackageRelativePath))
+        {
+            project.DevPackageRelativePath = TryResolveRelativeDevPackagePath(project.ProjectFolder, project.DevPackageFolder)
+                ?? DefaultDevPackageRelativePath;
+        }
+
+        project.DevPackageRelativePath = NormalizeDevPackageRelativePath(project.DevPackageRelativePath);
+        if (!string.IsNullOrWhiteSpace(project.ProjectFolder))
+        {
+            project.DevPackageFolder = ResolveDevPackageFolder(project);
+        }
     }
 
     private async Task<BuilderWorkspaceExecution> ResolveSelectedExecutionAsync(CancellationToken cancellationToken = default)
@@ -872,11 +946,34 @@ public sealed class BuilderViewModel(
         if (e.PropertyName is nameof(BuilderProjectViewModel.ProjectFolder)
             or nameof(BuilderProjectViewModel.ExecutionProjectFolder)
             or nameof(BuilderProjectViewModel.WorkspaceId)
+            or nameof(BuilderProjectViewModel.WorkspacePathId)
             or nameof(BuilderProjectViewModel.DisplayName)
             or nameof(BuilderProjectViewModel.PackageId)
-            or nameof(BuilderProjectViewModel.DevPackageFolder))
+            or nameof(BuilderProjectViewModel.DevPackageFolder)
+            or nameof(BuilderProjectViewModel.DevPackageRelativePath))
         {
             var version = ++_selectedProjectStatusVersion;
+            if (e.PropertyName is nameof(BuilderProjectViewModel.WorkspaceId))
+            {
+                RefreshWorkspacePathOptions(preserveSelection: false);
+            }
+
+            if (e.PropertyName is nameof(BuilderProjectViewModel.DevPackageRelativePath)
+                && SelectedProject is not null
+                && !string.IsNullOrWhiteSpace(SelectedProject.ProjectFolder))
+            {
+                try
+                {
+                    EnsureDevPackageRelativePath(SelectedProject);
+                    SelectedProject.DevPackageFolder = ResolveDevPackageFolder(SelectedProject);
+                }
+                catch (Exception ex)
+                {
+                    StatusText = ex.Message;
+                    return;
+                }
+            }
+
             UpdateSelectedProjectInitialized();
             IsSelectedProjectLoaded = false;
             if (e.PropertyName is nameof(BuilderProjectViewModel.DisplayName) && string.IsNullOrWhiteSpace(SelectedProject?.PackageId))
@@ -893,6 +990,7 @@ public sealed class BuilderViewModel(
 
         if (IsSelectedProjectInitialized
             && e.PropertyName is nameof(BuilderProjectViewModel.DevPackageFolder)
+                or nameof(BuilderProjectViewModel.DevPackageRelativePath)
                 or nameof(BuilderProjectViewModel.Watch)
                 or nameof(BuilderProjectViewModel.AutoLoadOnStartup))
         {
@@ -945,11 +1043,12 @@ public sealed class BuilderViewModel(
         bool updateStatusText,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(project.DevPackageFolder) && !string.IsNullOrWhiteSpace(project.ProjectFolder))
+        if (string.IsNullOrWhiteSpace(project.DevPackageRelativePath))
         {
-            project.DevPackageFolder = ResolveDefaultDevPackageFolder(project.ProjectFolder);
+            project.DevPackageRelativePath = DefaultDevPackageRelativePath;
         }
 
+        project.DevPackageFolder = ResolveDevPackageFolder(project);
         if (string.IsNullOrWhiteSpace(project.DevPackageFolder) || !Directory.Exists(project.DevPackageFolder))
         {
             if (updateStatusText)
@@ -1014,6 +1113,34 @@ public sealed class BuilderViewModel(
             return false;
         }
 
+        if (FindWorkspace(project.WorkspaceId)?.Paths.Count == 0)
+        {
+            StatusText = "Selected workspace has no workspace paths.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(project.WorkspacePathId))
+        {
+            StatusText = "Workspace path is required.";
+            return false;
+        }
+
+        if (FindWorkspacePath(project.WorkspaceId, project.WorkspacePathId) is null)
+        {
+            StatusText = "Selected workspace path was not found.";
+            return false;
+        }
+
+        try
+        {
+            project.DevPackageRelativePath = NormalizeDevPackageRelativePath(project.DevPackageRelativePath);
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+            return false;
+        }
+
         if (!requireInitializedPaths)
         {
             return true;
@@ -1032,14 +1159,8 @@ public sealed class BuilderViewModel(
         }
 
         project.ProjectFolder = Path.GetFullPath(project.ProjectFolder);
-        if (string.IsNullOrWhiteSpace(project.DevPackageFolder))
-        {
-            project.DevPackageFolder = ResolveDefaultDevPackageFolder(project.ProjectFolder);
-        }
-        else
-        {
-            project.DevPackageFolder = Path.GetFullPath(project.DevPackageFolder);
-        }
+        EnsureDevPackageRelativePath(project);
+        project.DevPackageFolder = ResolveDevPackageFolder(project);
 
         if (requireExistingFolder && !Directory.Exists(project.ProjectFolder))
         {
@@ -1056,9 +1177,10 @@ public sealed class BuilderViewModel(
         BuilderWorkspaceExecution execution,
         BackgroundProcessContext context)
     {
-        var executionProjectFolder = string.IsNullOrWhiteSpace(draft.ExecutionProjectFolder)
-            ? execution.CombinePath(execution.DefaultExecutionRoot, ToProjectName(draft.DisplayName))
-            : draft.ExecutionProjectFolder;
+        var workspacePath = FindWorkspacePath(draft.WorkspaceId, draft.WorkspacePathId)
+            ?? throw new InvalidOperationException("Selected workspace path was not found.");
+        var executionRoot = execution.ResolveExecutionWorkspacePath(workspacePath);
+        var executionProjectFolder = execution.CombinePath(executionRoot, ToProjectName(draft.DisplayName));
         var hostMapping = await execution.MapToHostPathAsync(executionProjectFolder, context.CancellationToken);
         if (!hostMapping.IsInsideAllowedRoot)
         {
@@ -1086,9 +1208,11 @@ public sealed class BuilderViewModel(
         project.DisplayName = draft.DisplayName;
         project.PackageId = draft.PackageId;
         project.WorkspaceId = draft.WorkspaceId;
+        project.WorkspacePathId = draft.WorkspacePathId;
         project.ExecutionProjectFolder = executionProjectFolder;
         project.ProjectFolder = hostMapping.HostPath;
-        project.DevPackageFolder = ResolveDefaultDevPackageFolder(project.ProjectFolder);
+        project.DevPackageRelativePath = NormalizeDevPackageRelativePath(draft.DevPackageRelativePath);
+        project.DevPackageFolder = ResolveDevPackageFolder(project);
     }
 
     private static string[] BuildTemplateArguments(BuilderProjectInitializationDraft project, string outputFolder, bool createInPlace)
@@ -1323,8 +1447,65 @@ public sealed class BuilderViewModel(
         return completion.Task;
     }
 
-    private static string ResolveDefaultDevPackageFolder(string projectFolder)
-        => Path.Combine(Path.GetFullPath(projectFolder), "bin", "Debug", "net10.0", "sunder-dev");
+    private static void EnsureDevPackageRelativePath(BuilderProjectViewModel project)
+    {
+        if (string.IsNullOrWhiteSpace(project.DevPackageRelativePath))
+        {
+            project.DevPackageRelativePath = DefaultDevPackageRelativePath;
+        }
+
+        project.DevPackageRelativePath = NormalizeDevPackageRelativePath(project.DevPackageRelativePath);
+    }
+
+    private static string ResolveDevPackageFolder(BuilderProjectViewModel project)
+        => ResolveDevPackageFolder(project.ProjectFolder, project.DevPackageRelativePath);
+
+    private static string ResolveDevPackageFolder(string projectFolder, string devPackageRelativePath)
+    {
+        var normalized = NormalizeDevPackageRelativePath(devPackageRelativePath);
+        var parts = normalized.TrimStart('/', '\\')
+            .Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return Path.GetFullPath(Path.Combine([Path.GetFullPath(projectFolder), .. parts]));
+    }
+
+    private static string NormalizeDevPackageRelativePath(string? relativePath)
+    {
+        var value = string.IsNullOrWhiteSpace(relativePath)
+            ? DefaultDevPackageRelativePath
+            : relativePath.Trim().Replace('\\', '/');
+        value = "/" + value.TrimStart('/');
+        if (value.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(part => part == ".."))
+        {
+            throw new InvalidOperationException("sunder-dev folder must stay inside the package project folder.");
+        }
+
+        return value;
+    }
+
+    private static string? TryResolveRelativeDevPackagePath(string projectFolder, string devPackageFolder)
+    {
+        if (string.IsNullOrWhiteSpace(projectFolder) || string.IsNullOrWhiteSpace(devPackageFolder))
+        {
+            return null;
+        }
+
+        var projectRoot = Path.GetFullPath(projectFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var devFolder = Path.GetFullPath(devPackageFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (!string.Equals(projectRoot, devFolder, comparison)
+            && !devFolder.StartsWith(projectRoot + Path.DirectorySeparatorChar, comparison)
+            && !devFolder.StartsWith(projectRoot + Path.AltDirectorySeparatorChar, comparison))
+        {
+            return null;
+        }
+
+        var relative = Path.GetRelativePath(projectRoot, devFolder).Replace(Path.DirectorySeparatorChar, '/');
+        return string.IsNullOrWhiteSpace(relative) || relative == "."
+            ? "/"
+            : NormalizeDevPackageRelativePath(relative);
+    }
 
     private static string ResolveExecutionProjectFolder(BuilderProjectViewModel project)
         => string.IsNullOrWhiteSpace(project.ExecutionProjectFolder)
@@ -1335,14 +1516,18 @@ public sealed class BuilderViewModel(
         string DisplayName,
         string PackageId,
         string WorkspaceId,
-        string ExecutionProjectFolder)
+        string WorkspacePathId,
+        string ExecutionProjectFolder,
+        string DevPackageRelativePath)
     {
         public static BuilderProjectInitializationDraft From(BuilderProjectViewModel project)
             => new(
                 project.DisplayName.Trim(),
                 project.PackageId.Trim(),
                 project.WorkspaceId.Trim(),
-                project.ExecutionProjectFolder.Trim());
+                project.WorkspacePathId.Trim(),
+                project.ExecutionProjectFolder.Trim(),
+                NormalizeDevPackageRelativePath(project.DevPackageRelativePath));
     }
 
     private static string ToProjectName(string displayName)
@@ -1423,14 +1608,56 @@ public sealed class BuilderPrerequisiteViewModel(BuilderPrerequisiteStatus statu
     public string StateText => IsInstalled ? "Installed" : "Missing";
 }
 
+public sealed class BuilderWorkspacePathOptionViewModel(AgentWorkspacePathRecord path)
+{
+    public string PathId { get; } = path.PathId;
+
+    public string HostPath { get; } = path.HostPath;
+
+    public bool IsDefault { get; } = path.IsDefault;
+
+    public string DisplayPath { get; } = FormatPath(path.HostPath);
+
+    private static string FormatPath(string hostPath)
+    {
+        if (string.IsNullOrWhiteSpace(hostPath))
+        {
+            return string.Empty;
+        }
+
+        var fullPath = Path.GetFullPath(hostPath.Trim());
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(home))
+        {
+            var normalizedHome = Path.GetFullPath(home).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+            if (string.Equals(fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), normalizedHome, comparison)
+                || fullPath.StartsWith(normalizedHome + Path.DirectorySeparatorChar, comparison)
+                || fullPath.StartsWith(normalizedHome + Path.AltDirectorySeparatorChar, comparison))
+            {
+                var relative = fullPath[normalizedHome.Length..]
+                    .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    .Replace(Path.DirectorySeparatorChar, '/');
+                return string.IsNullOrWhiteSpace(relative) ? "~" : $"~/{relative}";
+            }
+        }
+
+        return fullPath.Replace(Path.DirectorySeparatorChar, '/');
+    }
+}
+
 public sealed class BuilderProjectViewModel(BuilderProjectRecord record) : INotifyPropertyChanged
 {
     private string _displayName = record.DisplayName ?? string.Empty;
     private string _packageId = record.PackageId ?? string.Empty;
     private string _workspaceId = record.WorkspaceId ?? string.Empty;
+    private string _workspacePathId = record.WorkspacePathId ?? string.Empty;
     private string _executionProjectFolder = record.ExecutionProjectFolder ?? string.Empty;
     private string _projectFolder = record.ProjectFolder ?? string.Empty;
     private string _devPackageFolder = record.DevPackageFolder ?? string.Empty;
+    private string _devPackageRelativePath = record.DevPackageRelativePath ?? string.Empty;
     private bool _watch = record.Watch;
     private bool _autoLoadOnStartup = record.AutoLoadOnStartup;
     private DateTimeOffset _updatedAtUtc = record.UpdatedAtUtc;
@@ -1459,6 +1686,12 @@ public sealed class BuilderProjectViewModel(BuilderProjectRecord record) : INoti
         set => SetField(ref _workspaceId, value);
     }
 
+    public string WorkspacePathId
+    {
+        get => _workspacePathId;
+        set => SetField(ref _workspacePathId, value);
+    }
+
     public string ExecutionProjectFolder
     {
         get => _executionProjectFolder;
@@ -1475,6 +1708,12 @@ public sealed class BuilderProjectViewModel(BuilderProjectRecord record) : INoti
     {
         get => _devPackageFolder;
         set => SetField(ref _devPackageFolder, value);
+    }
+
+    public string DevPackageRelativePath
+    {
+        get => _devPackageRelativePath;
+        set => SetField(ref _devPackageRelativePath, value);
     }
 
     public bool Watch
@@ -1511,6 +1750,8 @@ public sealed class BuilderProjectViewModel(BuilderProjectRecord record) : INoti
             UpdatedAtUtc)
         {
             AutoLoadOnStartup = AutoLoadOnStartup,
+            WorkspacePathId = WorkspacePathId.Trim(),
+            DevPackageRelativePath = DevPackageRelativePath.Trim(),
         };
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

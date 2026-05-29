@@ -13,4 +13,8 @@ public sealed record BuilderProjectRecord(
     DateTimeOffset UpdatedAtUtc)
 {
     public bool AutoLoadOnStartup { get; init; }
+
+    public string? WorkspacePathId { get; init; }
+
+    public string? DevPackageRelativePath { get; init; }
 }

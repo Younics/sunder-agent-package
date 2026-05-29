@@ -314,11 +314,11 @@
 
                       <StackPanel Spacing="5">
                         <TextBlock Classes="builder-field-label"
-                                   Text="Display name" />
+                                   Text="Name" />
                         <TextBox x:Name="PackageDisplayNameTextBox"
-                                 Text="{Binding SelectedProject.DisplayName, Mode=TwoWay}"
-                                 IsEnabled="{Binding CanEditProjectIdentity}"
-                                 PlaceholderText="Package name" />
+                                  Text="{Binding SelectedProject.DisplayName, Mode=TwoWay}"
+                                  IsEnabled="{Binding CanEditProjectIdentity}"
+                                  PlaceholderText="Package name" />
                       </StackPanel>
 
                       <StackPanel Spacing="5">
@@ -344,24 +344,27 @@
                           </shared:SunderComboBox.ItemTemplate>
                         </shared:SunderComboBox>
                         <TextBlock Classes="builder-field-help"
-                                   Text="The project will be created inside the selected workspace's default allowed root." />
+                                   Text="Choose the workspace that owns this package project." />
                       </StackPanel>
 
-                      <StackPanel Spacing="5"
-                                  IsVisible="{Binding IsSelectedProjectInitialized}">
+                      <StackPanel Spacing="5">
                         <TextBlock Classes="builder-field-label"
-                                   Text="Host project folder" />
-                        <TextBox Text="{Binding SelectedProject.ProjectFolder}"
-                                 IsReadOnly="True" />
+                                   Text="Workspace path" />
+                        <shared:SunderComboBox ItemsSource="{Binding WorkspacePathOptions}"
+                                              SelectedValue="{Binding SelectedProject.WorkspacePathId, Mode=TwoWay}"
+                                              SelectedValueBinding="{Binding PathId}"
+                                              IsEnabled="{Binding CanEditProjectIdentity}"
+                                              HorizontalAlignment="Stretch">
+                          <shared:SunderComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:BuilderWorkspacePathOptionViewModel">
+                              <TextBlock Text="{Binding DisplayPath}" />
+                            </DataTemplate>
+                          </shared:SunderComboBox.ItemTemplate>
+                        </shared:SunderComboBox>
+                        <TextBlock Classes="builder-field-help"
+                                   Text="The project folder is created under this workspace path using the package name." />
                       </StackPanel>
 
-                      <StackPanel Spacing="5"
-                                  IsVisible="{Binding IsSelectedProjectInitialized}">
-                        <TextBlock Classes="builder-field-label"
-                                   Text="Executor project folder" />
-                        <TextBox Text="{Binding SelectedProject.ExecutionProjectFolder}"
-                                 IsReadOnly="True" />
-                      </StackPanel>
                     </StackPanel>
                   </Border>
 
@@ -432,8 +435,8 @@
                       <StackPanel Spacing="5">
                         <TextBlock Classes="builder-field-label"
                                    Text="sunder-dev folder" />
-                        <TextBox Text="{Binding SelectedProject.DevPackageFolder, Mode=TwoWay}"
-                                 PlaceholderText="sunder-dev folder" />
+                        <TextBox Text="{Binding SelectedProject.DevPackageRelativePath, Mode=TwoWay}"
+                                 PlaceholderText="/bin/Debug/net10.0/sunder-dev" />
                       </StackPanel>
 
                       <CheckBox IsChecked="{Binding SelectedProject.AutoLoadOnStartup, Mode=TwoWay}">

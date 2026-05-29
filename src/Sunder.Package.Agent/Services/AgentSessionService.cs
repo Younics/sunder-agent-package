@@ -48,6 +48,7 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
 
     public void UpdateSession(AgentSessionRecord session)
     {
+        session = NormalizeSessionWorkspaceForUpdate(session);
         _store.UpdateSession(session);
         NotifySessionChanged(session.SessionId);
     }
@@ -78,20 +79,77 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
         }
     }
 
-    private string? ResolveWorkspaceId(Guid? parentSessionId, string? workspaceId)
+    private string ResolveWorkspaceId(Guid? parentSessionId, string? workspaceId)
     {
-        if (!string.IsNullOrWhiteSpace(workspaceId))
+        var normalizedWorkspaceId = NormalizeWorkspaceId(workspaceId);
+        if (parentSessionId is not null)
         {
-            return workspaceId.Trim();
-        }
+            var parentWorkspaceId = NormalizeWorkspaceId(_store.GetSession(parentSessionId.Value)?.WorkspaceId);
+            if (parentWorkspaceId is null)
+            {
+                throw new InvalidOperationException("Child sessions must have a parent session with an assigned workspace.");
+            }
 
-        if (parentSessionId is not null && _store.GetSession(parentSessionId.Value)?.WorkspaceId is { } parentWorkspaceId)
-        {
+            if (normalizedWorkspaceId is not null
+                && !string.Equals(normalizedWorkspaceId, parentWorkspaceId, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Child sessions must use their parent session workspace.");
+            }
+
             return parentWorkspaceId;
         }
 
-        return AgentLocalStore.UnassignedSessionsWorkspaceId;
+        if (normalizedWorkspaceId is null)
+        {
+            throw new InvalidOperationException("Root sessions must be created with an explicit workspace id.");
+        }
+
+        if (IsUnassignedSessionsWorkspace(normalizedWorkspaceId))
+        {
+            throw new InvalidOperationException("Root sessions cannot be created in Unassigned Sessions.");
+        }
+
+        return normalizedWorkspaceId;
     }
+
+    private AgentSessionRecord NormalizeSessionWorkspaceForUpdate(AgentSessionRecord session)
+    {
+        var workspaceId = NormalizeWorkspaceId(session.WorkspaceId)
+            ?? throw new InvalidOperationException("Sessions must have an assigned workspace.");
+        var current = _store.GetSession(session.SessionId);
+        var currentWorkspaceId = NormalizeWorkspaceId(current?.WorkspaceId);
+        if (currentWorkspaceId is null)
+        {
+            return session with { WorkspaceId = workspaceId };
+        }
+
+        if (IsUnassignedSessionsWorkspace(workspaceId) && !IsUnassignedSessionsWorkspace(currentWorkspaceId))
+        {
+            throw new InvalidOperationException("Sessions cannot be moved to Unassigned Sessions.");
+        }
+
+        if (!IsUnassignedSessionsWorkspace(workspaceId)
+            && !IsUnassignedSessionsWorkspace(currentWorkspaceId)
+            && !string.Equals(workspaceId, currentWorkspaceId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Sessions cannot be moved between workspaces.");
+        }
+
+        if (!IsUnassignedSessionsWorkspace(workspaceId)
+            && IsUnassignedSessionsWorkspace(currentWorkspaceId)
+            && current?.ParentSessionId is null)
+        {
+            throw new InvalidOperationException("Unassigned root sessions cannot be moved into a workspace.");
+        }
+
+        return session with { WorkspaceId = workspaceId };
+    }
+
+    private static string? NormalizeWorkspaceId(string? workspaceId)
+        => string.IsNullOrWhiteSpace(workspaceId) ? null : workspaceId.Trim();
+
+    private static bool IsUnassignedSessionsWorkspace(string workspaceId)
+        => string.Equals(workspaceId, AgentLocalStore.UnassignedSessionsWorkspaceId, StringComparison.OrdinalIgnoreCase);
 
     private IReadOnlyList<Exception> DeleteExternalSessionData(IReadOnlyList<Guid> deletedSessionIds)
     {

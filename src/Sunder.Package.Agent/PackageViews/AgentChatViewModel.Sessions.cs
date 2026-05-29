@@ -95,12 +95,26 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
+        var workspaceId = NormalizeSelectedWorkspaceId(workspace.WorkspaceId);
+        if (workspaceId is null || IsUnassignedSessionsWorkspace(workspaceId))
+        {
+            SetGlobalStatus("Select a workspace before starting a session.");
+            return;
+        }
+
         var session = _sessionService.CreateSession(
             AgentSessionTitleDefaults.CreateNextTitle(ListMainSessions()),
             profileId: profile.ProfileId,
             behaviorLoopId: profile.BehaviorLoopId,
-            workspaceId: workspace.WorkspaceId
+            workspaceId: workspaceId
         );
+        if (!string.Equals(session.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Created session workspace did not match the selected workspace.");
+        }
+
+        _selectionState?.SaveSelectedWorkspaceId(workspaceId);
+        _selectionState?.SaveSelectedSessionId(workspaceId, session.SessionId);
         ReloadSessions(session.SessionId);
     }
 
@@ -197,7 +211,16 @@ public sealed partial class AgentChatViewModel
         }
     }
 
-    private bool CanCreateSession() => SelectedProfile is not null && SelectedWorkspace is not null;
+    private bool CanCreateSession()
+        => SelectedProfile is not null
+           && NormalizeSelectedWorkspaceId(SelectedWorkspace?.WorkspaceId) is { } workspaceId
+           && !IsUnassignedSessionsWorkspace(workspaceId);
+
+    private static string? NormalizeSelectedWorkspaceId(string? workspaceId)
+        => string.IsNullOrWhiteSpace(workspaceId) ? null : workspaceId.Trim();
+
+    private static bool IsUnassignedSessionsWorkspace(string workspaceId)
+        => string.Equals(workspaceId, AgentWorkspaceService.UnassignedSessionsWorkspaceId, StringComparison.OrdinalIgnoreCase);
 
     private void ReloadSessions(Guid? selectSessionId)
     {

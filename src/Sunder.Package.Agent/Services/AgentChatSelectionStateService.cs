@@ -15,14 +15,13 @@ public sealed class AgentChatSelectionStateService(IPackageContext packageContex
         => Normalize(_state.GetValue(SelectedWorkspaceIdKey));
 
     public Guid? GetSelectedSessionId()
-        => Guid.TryParse(Normalize(_state.GetValue(SelectedSessionIdKey)), out var sessionId)
-            ? sessionId
-            : null;
+        => null;
 
     public Guid? GetSelectedSessionId(string? workspaceId)
-        => Guid.TryParse(Normalize(_state.GetValue(GetWorkspaceSessionKey(workspaceId))), out var sessionId)
+        => GetWorkspaceSessionKey(workspaceId) is { } key
+           && Guid.TryParse(Normalize(_state.GetValue(key)), out var sessionId)
             ? sessionId
-            : GetSelectedSessionId();
+            : null;
 
     public string? GetSelectedProfileId()
         => Normalize(_state.GetValue(SelectedProfileIdKey));
@@ -34,7 +33,16 @@ public sealed class AgentChatSelectionStateService(IPackageContext packageContex
         => SaveOrClear(SelectedSessionIdKey, sessionId?.ToString("N"));
 
     public void SaveSelectedSessionId(string? workspaceId, Guid? sessionId)
-        => SaveOrClear(GetWorkspaceSessionKey(workspaceId), sessionId?.ToString("N"));
+    {
+        var key = GetWorkspaceSessionKey(workspaceId);
+        if (key is null)
+        {
+            SaveSelectedSessionId(sessionId);
+            return;
+        }
+
+        SaveOrClear(key, sessionId?.ToString("N"));
+    }
 
     public void SaveSelectedProfileId(string? profileId)
         => SaveOrClear(SelectedProfileIdKey, Normalize(profileId));
@@ -60,11 +68,11 @@ public sealed class AgentChatSelectionStateService(IPackageContext packageContex
     private static string? Normalize(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static string GetWorkspaceSessionKey(string? workspaceId)
+    private static string? GetWorkspaceSessionKey(string? workspaceId)
     {
         var normalizedWorkspaceId = Normalize(workspaceId);
         return normalizedWorkspaceId is null
-            ? SelectedSessionIdKey
+            ? null
             : SelectedWorkspaceSessionIdPrefix + normalizedWorkspaceId;
     }
 }
