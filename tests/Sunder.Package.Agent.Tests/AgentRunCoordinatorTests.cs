@@ -262,6 +262,40 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task QueueUserMessageAsync_PassesToolContentBeforeStructuredPayloadIntoNextProviderRequest()
+    {
+        const string toolId = "structured_tool";
+        const string toolContent = "Bratislava weather: 23.2 C and clear sky.";
+        const string structuredPayload = "{\"childSessionId\":\"session-metadata-only\"}";
+        var provider = new ScriptedProvider(
+            (request, requestIndex) =>
+                requestIndex switch
+                {
+                    1 => ToolRequest("call-1", toolId, "{}"),
+                    2 => AssertToolResultContentAndComplete(request, toolId, "call-1", toolContent, "childSessionId"),
+                    _ => throw new Xunit.Sdk.XunitException(
+                        $"Unexpected provider request {requestIndex}."
+                    ),
+                }
+        );
+
+        using var runtime = AgentTestRuntime.Create(
+            provider,
+            new StructuredPayloadTool(toolId, toolContent, structuredPayload));
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Use the structured tool and answer from its result.",
+            runtime.CurrentWorkspaceId
+        );
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(2, provider.Requests.Count);
+    }
+
+    [Fact]
     public async Task QueueUserMessageAsync_RetriesTransientStreamFailureAndReplacesPartialAssistantTurn()
     {
         var provider = new ScriptedProvider(
@@ -9665,6 +9699,28 @@ public sealed class AgentRunCoordinatorTests
         return Complete("Used the tool result without refetching.");
     }
 
+    private static AgentProviderStreamEvent AssertToolResultContentAndComplete(
+        AgentProviderRequest request,
+        string toolId,
+        string callId,
+        string expectedContent,
+        string unexpectedContent
+    )
+    {
+        var toolResult = request.Turns
+            .Where(turn => turn.Kind == AgentTurnKind.ToolResult)
+            .SelectMany(turn => turn.Items)
+            .Single(item => item.Kind == AgentTurnItemKind.ToolResult
+                            && string.Equals(item.ToolId, toolId, StringComparison.Ordinal)
+                            && string.Equals(item.CallId, callId, StringComparison.Ordinal));
+        Assert.NotNull(toolResult.TextContent);
+        Assert.Contains(expectedContent, toolResult.TextContent, StringComparison.Ordinal);
+        Assert.DoesNotContain(unexpectedContent, toolResult.TextContent, StringComparison.Ordinal);
+        AssertNoOrphanToolResults(request);
+
+        return Complete("Used the visible tool result content.");
+    }
+
     private static void AssertNoOrphanToolResults(AgentProviderRequest request)
     {
         var callIds = request
@@ -9804,6 +9860,7 @@ public sealed class AgentRunCoordinatorTests
             .SelectMany(turn => turn.Items)
             .Single(item => item.Kind == AgentTurnItemKind.ToolResult && item.ToolId == toolId);
         Assert.NotNull(toolResult.TextContent);
+        Assert.Contains("chunk-0000", toolResult.TextContent, StringComparison.Ordinal);
         Assert.Contains("[compacted for prompt budget", toolResult.TextContent, StringComparison.Ordinal);
         Assert.DoesNotContain("chunk-1999", toolResult.TextContent, StringComparison.Ordinal);
         return Complete("Used compacted tool result.");
@@ -10930,6 +10987,33 @@ public sealed class AgentRunCoordinatorTests
                 )
             );
         }
+    }
+
+    private sealed class StructuredPayloadTool(
+        string toolId,
+        string content,
+        string structuredPayloadJson) : IAgentTool
+    {
+        public AgentToolDescriptor Descriptor { get; } = new(
+            toolId,
+            "Structured Payload Tool",
+            "Returns visible content plus structured metadata.",
+            IsReadOnly: true,
+            RequiresNetwork: false,
+            ArgumentsJsonSchema: "{\"type\":\"object\"}");
+
+        public ValueTask<AgentToolReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentToolReadiness(Descriptor.ToolId, AgentToolReadinessStatus.Ready, "Ready."));
+
+        public ValueTask<AgentToolResult> ExecuteAsync(
+            AgentToolExecutionContext context,
+            AgentToolRequest request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentToolResult(
+                request.ToolId,
+                "Structured payload tool completed.",
+                Content: content,
+                StructuredPayloadJson: structuredPayloadJson));
     }
 
     private sealed class BlockingTool(string toolId) : IAgentTool

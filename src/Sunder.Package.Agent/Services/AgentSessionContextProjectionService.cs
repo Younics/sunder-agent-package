@@ -557,11 +557,13 @@ public sealed class AgentSessionContextProjectionService(AgentSessionService ses
             : $"Tool call `{item.ToolId}` requested.";
 
     private static string RenderToolResultSummary(AgentTurnItemRecord item)
-        => !string.IsNullOrWhiteSpace(item.ResultSummary)
-            ? item.ResultSummary.Trim()
-            : !string.IsNullOrWhiteSpace(item.TextContent)
-                ? item.TextContent.Trim()
-                : "Tool result recorded.";
+        => !string.IsNullOrWhiteSpace(item.TextContent)
+            ? item.TextContent.Trim()
+            : !string.IsNullOrWhiteSpace(item.ResultSummary)
+                ? item.ResultSummary.Trim()
+                : !string.IsNullOrWhiteSpace(item.StructuredPayloadJson)
+                    ? item.StructuredPayloadJson.Trim()
+                    : "Tool result recorded.";
 
     private static string RenderRole(AgentTurnRecord turn)
         => turn.Role switch

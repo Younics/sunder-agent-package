@@ -10,9 +10,9 @@ public static class PathEnvironment
         bool isWindows)
     {
         var entries = new List<string>();
-        AddPathEntries(entries, configuredPathEntries ?? [], homeDirectory);
-        AddPathEntries(entries, SplitPath(inheritedPath, isWindows), homeDirectory);
-        AddPathEntries(entries, fallbackPathEntries, homeDirectory);
+        AddPathEntries(entries, configuredPathEntries ?? [], homeDirectory, isWindows);
+        AddPathEntries(entries, SplitPath(inheritedPath, isWindows), homeDirectory, isWindows);
+        AddPathEntries(entries, fallbackPathEntries, homeDirectory, isWindows);
         return entries;
     }
 
@@ -21,11 +21,11 @@ public static class PathEnvironment
             ? []
             : pathValue.Split(isWindows ? ';' : ':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-    private static void AddPathEntries(List<string> entries, IEnumerable<string> candidates, string? homeDirectory)
+    private static void AddPathEntries(List<string> entries, IEnumerable<string> candidates, string? homeDirectory, bool isWindows)
     {
         foreach (var candidate in candidates)
         {
-            var normalized = NormalizePathEntry(candidate, homeDirectory);
+            var normalized = NormalizePathEntry(candidate, homeDirectory, isWindows);
             if (!string.IsNullOrWhiteSpace(normalized)
                 && !entries.Contains(normalized, StringComparer.OrdinalIgnoreCase))
             {
@@ -34,7 +34,7 @@ public static class PathEnvironment
         }
     }
 
-    private static string NormalizePathEntry(string path, string? homeDirectory)
+    private static string NormalizePathEntry(string path, string? homeDirectory, bool isWindows)
     {
         var trimmed = path.Trim().Trim('"');
         if (string.IsNullOrWhiteSpace(homeDirectory))
@@ -47,8 +47,15 @@ public static class PathEnvironment
             return homeDirectory;
         }
 
-        return trimmed.StartsWith("~/", StringComparison.Ordinal) || trimmed.StartsWith(@"~\", StringComparison.Ordinal)
-            ? Path.Combine(homeDirectory, trimmed[2..])
-            : trimmed;
+        if (!trimmed.StartsWith("~/", StringComparison.Ordinal) && !trimmed.StartsWith(@"~\", StringComparison.Ordinal))
+        {
+            return trimmed;
+        }
+
+        var separator = isWindows ? '\\' : '/';
+        var relative = isWindows
+            ? trimmed[2..].Replace('/', '\\')
+            : trimmed[2..].Replace('\\', '/');
+        return homeDirectory.TrimEnd('\\', '/') + separator + relative;
     }
 }

@@ -35,7 +35,7 @@ public static class ExecutableResolver
         {
             foreach (var executableName in EnumerateExecutableNames(fileName, isWindows, pathExtensions))
             {
-                var candidate = Path.Combine(pathEntry, executableName);
+                var candidate = CombinePathEntry(pathEntry, executableName, isWindows);
                 if (!checkedLocations.Contains(candidate, StringComparer.OrdinalIgnoreCase))
                 {
                     checkedLocations.Add(candidate);
@@ -84,5 +84,14 @@ public static class ExecutableResolver
         {
             yield return fileName + (extension.StartsWith('.') ? extension : "." + extension);
         }
+    }
+
+    private static string CombinePathEntry(string pathEntry, string executableName, bool isWindows)
+    {
+        var separator = isWindows ? '\\' : '/';
+        var trimmed = pathEntry.TrimEnd('\\', '/');
+        return string.IsNullOrEmpty(trimmed)
+            ? separator + executableName
+            : trimmed + separator + executableName;
     }
 }

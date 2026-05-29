@@ -380,10 +380,10 @@ public sealed partial class DefaultAgentBehaviorLoop
     }
 
     private static string BuildToolResultContent(AgentTurnItemRecord item)
-        => !string.IsNullOrWhiteSpace(item.StructuredPayloadJson)
-            ? item.StructuredPayloadJson
-            : !string.IsNullOrWhiteSpace(item.TextContent)
-                ? item.TextContent
+        => !string.IsNullOrWhiteSpace(item.TextContent)
+            ? item.TextContent
+            : !string.IsNullOrWhiteSpace(item.StructuredPayloadJson)
+                ? item.StructuredPayloadJson
                 : item.ResultSummary ?? string.Empty;
 
     private static int FindTurnIndex(IReadOnlyList<AgentTurnRecord> turns, Guid turnId)

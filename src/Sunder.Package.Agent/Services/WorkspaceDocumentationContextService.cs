@@ -204,19 +204,7 @@ public sealed class WorkspaceDocumentationContextService : IAgentSystemPromptCon
         => SupportedExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
 
     private static string FormatPathForDisplay(string path)
-    {
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (!string.IsNullOrWhiteSpace(home) && IsSameOrChildPath(path, home))
-        {
-            var relative = Path.GetFullPath(path)[Path.GetFullPath(home).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length..]
-                .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            return string.IsNullOrWhiteSpace(relative)
-                ? "~"
-                : $"~/{relative.Replace(Path.DirectorySeparatorChar, '/')}";
-        }
-
-        return Path.GetFullPath(path).Replace(Path.DirectorySeparatorChar, '/');
-    }
+        => Path.GetFullPath(path).Replace(Path.DirectorySeparatorChar, '/');
 
     private static string? SafeFullPath(string path)
     {
