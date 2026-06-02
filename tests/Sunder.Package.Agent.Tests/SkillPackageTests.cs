@@ -5,6 +5,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Skills.PackageViews;
 using Sunder.Package.Agent.Skills.Services;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Stacks;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -312,12 +313,114 @@ public sealed class SkillPackageTests
         Assert.Contains("2: second", result.Content);
     }
 
+    [Fact]
+    public async Task SkillStackContributor_ExportAsync_IncludesSkillFilesWithoutLocalSourcePathByDefault()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var source = Path.Combine(root, "source", "docs-skill");
+            Directory.CreateDirectory(Path.Combine(source, "references"));
+            await File.WriteAllTextAsync(Path.Combine(source, "SKILL.md"), """
+                ---
+                name: docs-skill
+                description: Docs skill resources.
+                ---
+                # Docs Skill
+                """);
+            await File.WriteAllTextAsync(Path.Combine(source, "references", "guide.md"), "guide");
+            var context = new TestPackageContext(Path.Combine(root, "install"));
+            var store = new SkillStore(context);
+            var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
+            await importer.ImportLocalFolderAsync(source);
+            var contributor = new SkillStackContributor(store, importer, context);
+
+            var contribution = await contributor.ExportAsync(new StackExportRequest(["docs-skill"], new StackExportOptions()));
+
+            var fragment = Assert.Single(contribution.Fragments);
+            Assert.Equal("agent-skill.docs-skill", fragment.FragmentId);
+            Assert.True(fragment.Safety.ContainsPrivateText);
+            Assert.False(fragment.Safety.ContainsLocalPaths);
+            Assert.Contains(fragment.Files ?? [], file => file.RelativePath == "SKILL.md");
+            Assert.Contains(fragment.Files ?? [], file => file.RelativePath == "references/guide.md");
+            Assert.DoesNotContain(source, fragment.JsonPayload, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SkillStackContributor_ImportAsync_CreatesSkillWithResources()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var source = Path.Combine(root, "source", "docs-skill");
+            Directory.CreateDirectory(Path.Combine(source, "references"));
+            await File.WriteAllTextAsync(Path.Combine(source, "SKILL.md"), """
+                ---
+                name: docs-skill
+                description: Docs skill resources.
+                ---
+                # Docs Skill
+                """);
+            await File.WriteAllTextAsync(Path.Combine(source, "references", "guide.md"), "guide");
+            var sourceContext = new TestPackageContext(Path.Combine(root, "source-install"));
+            var sourceStore = new SkillStore(sourceContext);
+            var sourceImporter = new SkillImportService(sourceStore, new TestGitHubSkillClient(), sourceContext);
+            await sourceImporter.ImportLocalFolderAsync(source);
+            var sourceContributor = new SkillStackContributor(sourceStore, sourceImporter, sourceContext);
+            var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(["docs-skill"], new StackExportOptions()))).Fragments);
+
+            var targetContext = new TestPackageContext(Path.Combine(root, "target-install"));
+            var targetStore = new SkillStore(targetContext);
+            var targetImporter = new SkillImportService(targetStore, new TestGitHubSkillClient(), targetContext);
+            var targetContributor = new SkillStackContributor(targetStore, targetImporter, targetContext);
+            var importFragment = ToImportFragment(fragment);
+            var preview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest(
+                [importFragment],
+                new Dictionary<string, string>(),
+                new Dictionary<string, string>()));
+            var action = Assert.Single(preview.Actions);
+
+            var result = await targetContributor.ImportAsync(new StackImportRequest(
+                [importFragment],
+                new Dictionary<string, string>(),
+                new Dictionary<string, string>(),
+                [action.ActionId]));
+
+            Assert.True(result.Success, string.Join(Environment.NewLine, result.Errors));
+            var importedSkill = targetStore.GetSkill("docs-skill");
+            Assert.NotNull(importedSkill);
+            Assert.Equal("stack", importedSkill.SourceKind);
+            Assert.True(File.Exists(Path.Combine(targetStore.GetSkillRootPath(importedSkill), "references", "guide.md")));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
     private static string CreateTempRoot()
     {
         var root = Path.Combine(Path.GetTempPath(), "sunder-skill-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         return root;
     }
+
+    private static StackFragmentImport ToImportFragment(StackFragmentExport fragment)
+        => new(
+            fragment.FragmentId,
+            fragment.OwnerPackageId,
+            fragment.ContributorId,
+            fragment.SchemaId,
+            fragment.SchemaVersion,
+            fragment.DisplayName,
+            fragment.JsonPayload,
+            fragment.Description,
+            fragment.Files);
 
     private static string CreateSkillSource(string root, string skillId, string displayName)
     {

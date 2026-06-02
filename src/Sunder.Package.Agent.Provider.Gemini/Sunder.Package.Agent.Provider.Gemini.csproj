@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\SunderComboBox.cs" Link="PackageViews\SunderComboBox.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Stacks\PackageConfigurationStackContributor.cs" Link="Stacks\PackageConfigurationStackContributor.cs" />
   </ItemGroup>
 
   <ItemGroup Condition="!Exists('..\..\..\sunder-core\src\Sdk\Sunder.Package.Build\build\Sunder.Package.Build.targets')">

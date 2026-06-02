@@ -4,6 +4,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Skills.PackageViews;
 using Sunder.Package.Agent.Skills.Services;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Stacks;
 
 namespace Sunder.Package.Agent.Skills;
 
@@ -16,6 +17,7 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddSingleton<SkillStore>();
         services.AddSingleton<SkillImportService>();
         services.AddSingleton<SkillsFeature>();
+        services.AddSingleton<SkillStackContributor>();
         services.AddTransient<SkillSettingsViewModel>();
     }
 
@@ -27,5 +29,6 @@ public sealed class PackageModule : ISunderPackageModule
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, feature);
         registry.RegisterExtension(PackageExtensionPoints.SystemPromptContributors, feature);
         registry.RegisterExtension(PackageExtensionPoints.ExecutionResourceProviders, feature);
+        registry.RegisterExtension(SunderStackExtensionPoints.StackContributors, services.GetRequiredService<SkillStackContributor>());
     }
 }

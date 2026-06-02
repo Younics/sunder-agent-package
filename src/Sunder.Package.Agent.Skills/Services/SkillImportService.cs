@@ -86,6 +86,15 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
         }
     }
 
+    public Task<InstalledSkillRecord> ImportStackFolderAsync(string folderPath, CancellationToken cancellationToken = default)
+        => InstallFromFolderAsync(
+            folderPath,
+            sourceKind: "stack",
+            sourceUri: null,
+            sourceRef: null,
+            resolvedCommitSha: null,
+            cancellationToken);
+
     private async Task<InstalledSkillRecord> InstallFromFolderAsync(
         string folderPath,
         string sourceKind,

@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Subagents.PackageViews;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Stacks;
 
 namespace Sunder.Package.Agent.Subagents;
 
@@ -14,6 +15,7 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddSingleton<SubagentService>();
         services.AddSingleton<SubagentFeature>();
         services.AddSingleton<OrchestratedAgentBehaviorLoop>();
+        services.AddSingleton<SubagentStackContributor>();
         services.AddTransient<SubagentsViewModel>();
         services.AddTransient<SubsessionsViewModel>();
     }
@@ -55,5 +57,6 @@ public sealed class PackageModule : ISunderPackageModule
             PackageExtensionPoints.BehaviorLoops,
             services.GetRequiredService<OrchestratedAgentBehaviorLoop>()
         );
+        registry.RegisterExtension(SunderStackExtensionPoints.StackContributors, services.GetRequiredService<SubagentStackContributor>());
     }
 }

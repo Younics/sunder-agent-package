@@ -17,6 +17,7 @@ using Sunder.Package.Agent.Tools.Web;
 using Sunder.Package.Agent.Tools.Web.Backends;
 using Sunder.Package.Agent.Tools.Web.Services;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Stacks;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -65,6 +66,84 @@ public sealed class WorkspaceTests
         var document = Assert.Single(hydrated.Documents);
         Assert.Equal(Path.GetFullPath(documentPath), document.FilePath);
         Assert.Equal(0, document.SortOrder);
+    }
+
+    [Fact]
+    public async Task AgentWorkspaceStackContributor_ExportAsync_UsesLocalPathInputsByDefault()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var service = new AgentWorkspaceService(store);
+        var workspaceRoot = Path.Combine(scope.RootPath, "repo");
+        var documentPath = Path.Combine(scope.RootPath, "project-guide.md");
+        service.ImportWorkspace(
+            new AgentWorkspaceRecord("workspace.stack", "Stack Workspace", "Private workspace notes.", default, default),
+            [new AgentWorkspacePathRecord("root", "workspace.stack", workspaceRoot, IsDefault: true, 0, default, default)],
+            [new AgentWorkspaceDocumentRecord("doc", "workspace.stack", documentPath, 0, default, default)]);
+        service.SavePrimaryExecutionBinding("workspace.stack", "local");
+        var contributor = new AgentWorkspaceStackContributor(service, scope.Context);
+
+        var contribution = await contributor.ExportAsync(new StackExportRequest(["workspace.stack"], new StackExportOptions()));
+
+        var fragment = Assert.Single(contribution.Fragments);
+        Assert.Equal("sunder.package.agent", Assert.Single(contribution.PackageRequirements).PackageId);
+        Assert.Equal("sunder.package.agent.workspaces", fragment.ContributorId);
+        Assert.True(fragment.Safety.ContainsPrivateText);
+        Assert.False(fragment.Safety.ContainsLocalPaths);
+        Assert.False(fragment.Safety.ContainsMachineSpecificValues);
+        var requiredInputs = Assert.IsAssignableFrom<IReadOnlyList<StackRequiredInputDescriptor>>(fragment.RequiredInputs);
+        Assert.Equal(2, requiredInputs.Count);
+        Assert.All(requiredInputs, input => Assert.Equal(StackRequiredInputKind.LocalPath, input.Kind));
+        Assert.DoesNotContain(workspaceRoot, fragment.JsonPayload, StringComparison.Ordinal);
+        Assert.DoesNotContain(documentPath, fragment.JsonPayload, StringComparison.Ordinal);
+        Assert.Contains("Stack Workspace", fragment.JsonPayload, StringComparison.Ordinal);
+        Assert.Contains("local", fragment.JsonPayload, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AgentWorkspaceStackContributor_ImportAsync_CreatesWorkspaceFromLocalPathInputs()
+    {
+        using var scope = TestScope.Create();
+        var sourceContext = new TestPackageContext(Path.Combine(scope.RootPath, "source"));
+        var sourceService = new AgentWorkspaceService(new AgentLocalStore(sourceContext));
+        sourceService.ImportWorkspace(
+            new AgentWorkspaceRecord("workspace.stack", "Stack Workspace", "Workspace docs.", default, default),
+            [new AgentWorkspacePathRecord("root", "workspace.stack", Path.Combine(scope.RootPath, "source-repo"), IsDefault: true, 0, default, default)],
+            [new AgentWorkspaceDocumentRecord("doc", "workspace.stack", Path.Combine(scope.RootPath, "source-guide.md"), 0, default, default)]);
+        sourceService.SavePrimaryExecutionBinding("workspace.stack", "local");
+        var sourceContributor = new AgentWorkspaceStackContributor(sourceService, sourceContext);
+        var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(["workspace.stack"], new StackExportOptions()))).Fragments);
+
+        var targetContext = new TestPackageContext(Path.Combine(scope.RootPath, "target"));
+        var targetService = new AgentWorkspaceService(new AgentLocalStore(targetContext));
+        var targetContributor = new AgentWorkspaceStackContributor(targetService, targetContext);
+        var importFragment = ToImportFragment(fragment);
+        var preview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest(
+            [importFragment],
+            new Dictionary<string, string>(),
+            new Dictionary<string, string>()));
+        var action = Assert.Single(preview.Actions);
+        var targetRoot = Path.Combine(scope.RootPath, "target-repo");
+        var targetDocumentPath = Path.Combine(scope.RootPath, "target-guide.md");
+        var inputValues = preview.RequiredInputs.ToDictionary(
+            input => input.InputId,
+            input => input.Label.Contains("documentation", StringComparison.OrdinalIgnoreCase) ? targetDocumentPath : targetRoot,
+            StringComparer.OrdinalIgnoreCase);
+
+        var result = await targetContributor.ImportAsync(new StackImportRequest(
+            [importFragment],
+            inputValues,
+            new Dictionary<string, string>(),
+            [action.ActionId]));
+
+        Assert.True(result.Success, string.Join(Environment.NewLine, result.Errors));
+        var imported = targetService.GetWorkspace("workspace.stack");
+        Assert.NotNull(imported);
+        Assert.Equal("Stack Workspace", imported!.DisplayName);
+        Assert.Equal("Workspace docs.", imported.Description);
+        Assert.Equal(Path.GetFullPath(targetRoot), Assert.Single(imported.Paths).HostPath);
+        Assert.Equal(Path.GetFullPath(targetDocumentPath), Assert.Single(imported.Documents).FilePath);
+        Assert.Equal("local", Assert.Single(targetService.ListBindings("workspace.stack")).ContributionId);
     }
 
     [Fact]
@@ -2957,6 +3036,18 @@ public sealed class WorkspaceTests
         var now = DateTimeOffset.UtcNow;
         return new AgentWorkspaceBindingRecord("binding-test", workspaceId, PackageExtensionPoints.ExecutionTargets.Id, contributionId, "primary-execution-target", true, 0, now, now);
     }
+
+    private static StackFragmentImport ToImportFragment(StackFragmentExport fragment)
+        => new(
+            fragment.FragmentId,
+            fragment.OwnerPackageId,
+            fragment.ContributorId,
+            fragment.SchemaId,
+            fragment.SchemaVersion,
+            fragment.DisplayName,
+            fragment.JsonPayload,
+            fragment.Description,
+            fragment.Files);
 
     private sealed record WorkspaceViewServices(
         AgentLocalStore Store,

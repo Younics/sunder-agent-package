@@ -18,12 +18,14 @@ public sealed partial class PackageModule : ISunderPackageModule
         services.AddSingleton<AgentWorkspaceExecutionResolver>();
         services.AddSingleton<AgentExecutionTargetWarmupService>();
         services.AddSingleton<AgentProfileService>();
+        services.AddSingleton<AgentProfileStackContributor>();
         services.AddSingleton<AgentSessionService>();
         services.AddSingleton(provider => new AgentWorkspaceService(
             provider.GetRequiredService<AgentLocalStore>(),
             provider.GetService<IPackageExtensionCatalog>(),
             provider.GetRequiredService<AgentSessionService>()
         ));
+        services.AddSingleton<AgentWorkspaceStackContributor>();
         services.AddSingleton<AgentAttachmentService>();
         services.AddSingleton<AgentRunAttachmentStore>();
         services.AddSingleton<IAgentAttachmentContentStore>(provider =>
@@ -89,6 +91,14 @@ public sealed partial class PackageModule : ISunderPackageModule
         registry.RegisterExtension(
             PackageExtensionPoints.SystemPromptContributors,
             services.GetRequiredService<WorkspaceDocumentationContextService>()
+        );
+        registry.RegisterExtension(
+            Sunder.Sdk.Stacks.SunderStackExtensionPoints.StackContributors,
+            services.GetRequiredService<AgentProfileStackContributor>()
+        );
+        registry.RegisterExtension(
+            Sunder.Sdk.Stacks.SunderStackExtensionPoints.StackContributors,
+            services.GetRequiredService<AgentWorkspaceStackContributor>()
         );
 
         // Middle
