@@ -17,15 +17,12 @@ public sealed class PackageConfigurationStackContributorTests
         context.Secrets.SetSecret("auth.apiKey", "sk-test-secret");
         var contributor = new PackageConfigurationStackContributor(OpenAiProviderConfiguration.Schema, context);
 
-        var contribution = await contributor.ExportAsync(new StackExportRequest(["settings"], new StackExportOptions()));
+        var contribution = await contributor.ExportAsync(new StackExportRequest(["settings"]));
 
         var fragment = Assert.Single(contribution.Fragments);
         Assert.DoesNotContain("sk-test-secret", fragment.JsonPayload, StringComparison.Ordinal);
         Assert.Contains("openai/gpt-5.5", fragment.JsonPayload, StringComparison.Ordinal);
-        Assert.True(fragment.Safety.ContainsSecretReferences);
-        Assert.False(fragment.Safety.ContainsSecrets);
         var input = Assert.Single(fragment.RequiredInputs ?? []);
-        Assert.Equal(StackRequiredInputKind.Secret, input.Kind);
         Assert.Equal("API key", input.Label);
     }
 
@@ -36,7 +33,7 @@ public sealed class PackageConfigurationStackContributorTests
         await sourceContext.Storage.State.SetValueAsync(OpenAiProviderConfiguration.UtilityModelKey, "openai/gpt-5.5");
         sourceContext.Secrets.SetSecret("auth.apiKey", "sk-source-secret");
         var sourceContributor = new PackageConfigurationStackContributor(OpenAiProviderConfiguration.Schema, sourceContext);
-        var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(["settings"], new StackExportOptions()))).Fragments);
+        var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(["settings"]))).Fragments);
 
         var targetContext = new TestPackageContext();
         var targetContributor = new PackageConfigurationStackContributor(OpenAiProviderConfiguration.Schema, targetContext);
@@ -62,14 +59,14 @@ public sealed class PackageConfigurationStackContributorTests
     private static StackFragmentImport ToImportFragment(StackFragmentExport fragment)
         => new(
             fragment.FragmentId,
-            fragment.OwnerPackageId,
+            "sunder.package.agent.provider.openai",
             fragment.ContributorId,
             fragment.SchemaId,
             fragment.SchemaVersion,
             fragment.DisplayName,
             fragment.JsonPayload,
             fragment.Description,
-            fragment.Files);
+            fragment.Files?.Select(file => new StackImportPayloadFile(file.RelativePath, file.SourcePath)).ToArray());
 
     private sealed class TestPackageContext : IPackageContext
     {

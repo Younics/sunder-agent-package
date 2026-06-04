@@ -20,15 +20,19 @@ internal sealed class PackageConfigurationStackContributor(
     public ValueTask<IReadOnlyList<StackExportItemDescriptor>> ListExportItemsAsync(
         StackExportDiscoveryContext context,
         CancellationToken cancellationToken = default)
-        => ValueTask.FromResult<IReadOnlyList<StackExportItemDescriptor>>(
-            [new StackExportItemDescriptor(
+    {
+        var details = BuildExportDetails();
+        return ValueTask.FromResult<IReadOnlyList<StackExportItemDescriptor>>(details.Count == 0
+            ? []
+            : [new StackExportItemDescriptor(
                 SettingsItemId,
                 schema.PackageDisplayName + " Settings",
                 "package-settings",
                 schema.Summary,
                 DefaultSelected: false,
                 Sensitivities: BuildExportItemSensitivities(),
-                Details: BuildExportDetails())]);
+                Details: details)]);
+    }
 
     public ValueTask<StackExportContribution> ExportAsync(
         StackExportRequest request,
@@ -39,7 +43,6 @@ internal sealed class PackageConfigurationStackContributor(
             return ValueTask.FromResult(new StackExportContribution([], [], []));
         }
 
-        var hasExplicitDetails = request.GetItemSelection(SettingsItemId)?.Details is not null;
         var values = new List<PackageConfigurationStackValue>();
         var secretReferences = new List<PackageConfigurationStackSecretReference>();
         foreach (var field in ListFields())
@@ -93,16 +96,6 @@ internal sealed class PackageConfigurationStackContributor(
                 }
 
                 value = request.GetDetailValue(SettingsItemId, field.Key, value);
-                if (!hasExplicitDetails && (IsPathField(field) || IsLikelyLocalPath(field.Key, field.Label, value)) && !request.Options.IncludeMachineSpecificValues)
-                {
-                    continue;
-                }
-
-                if (!hasExplicitDetails && (IsNetworkField(field) || IsLikelyNetworkEndpoint(field.Key, field.Label, value)) && !request.Options.IncludeNetworkEndpoints)
-                {
-                    continue;
-                }
-
                 values.Add(new PackageConfigurationStackValue(field.Key, field.Label, field.Kind.ToString(), value));
             }
         }
@@ -118,16 +111,13 @@ internal sealed class PackageConfigurationStackContributor(
         var payload = new PackageConfigurationStackPayload(schema.PackageId, schema.PackageDisplayName, values, secretReferences);
         var fragment = new StackFragmentExport(
             FragmentId: "settings." + SanitizeIdentifier(schema.PackageId),
-            OwnerPackageId: schema.PackageId,
             ContributorId,
             SchemaId: "sunder.package.configuration/settings",
             SchemaVersion: 1,
             DisplayName: schema.PackageDisplayName + " Settings",
             JsonPayload: JsonSerializer.Serialize(payload, JsonOptions),
-            Safety: BuildSafety(values, secretReferences),
             Description: schema.Summary,
             DefaultSelected: true,
-            RequiresPackages: [CreatePackageRequirement()],
             RequiredInputs: secretReferences.Select(ToRequiredInput).ToArray(),
             SourceItemId: SettingsItemId);
 
@@ -248,25 +238,9 @@ internal sealed class PackageConfigurationStackContributor(
 
     private IReadOnlyList<StackValueSensitivity> BuildExportItemSensitivities()
     {
-        var fields = ListFields().ToArray();
-        var sensitivities = new List<StackValueSensitivity>();
-        if (fields.Any(field => field.Kind == PackageConfigurationFieldKind.Secret))
-        {
-            sensitivities.Add(StackValueSensitivity.Secret);
-        }
-
-        if (fields.Any(field => IsPathField(field)))
-        {
-            sensitivities.Add(StackValueSensitivity.LocalPath);
-            sensitivities.Add(StackValueSensitivity.MachineSpecific);
-        }
-
-        if (fields.Any(field => IsNetworkField(field)))
-        {
-            sensitivities.Add(StackValueSensitivity.NetworkEndpoint);
-        }
-
-        return sensitivities.Count == 0 ? [StackValueSensitivity.Public] : sensitivities.Distinct().ToArray();
+        return ListFields().Any(field => field.Kind == PackageConfigurationFieldKind.Secret)
+            ? [StackValueSensitivity.Secret]
+            : [StackValueSensitivity.Public];
     }
 
     private IReadOnlyList<StackExportItemDetail> BuildExportDetails()
@@ -295,44 +269,16 @@ internal sealed class PackageConfigurationStackContributor(
                 continue;
             }
 
-            var sensitivity = StackValueSensitivity.Public;
-            if (IsPathField(field) || IsLikelyLocalPath(field.Key, field.Label, value))
-            {
-                sensitivity = StackValueSensitivity.LocalPath;
-            }
-            else if (IsNetworkField(field) || IsLikelyNetworkEndpoint(field.Key, field.Label, value))
-            {
-                sensitivity = StackValueSensitivity.NetworkEndpoint;
-            }
-
             details.Add(new StackExportItemDetail(
                 field.Label,
                 value,
-                sensitivity,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: field.Key,
                 SupportsAskOnImport: true));
         }
 
-        return details.Count == 0
-            ? [new StackExportItemDetail("Package settings", "No configured values found yet", StackValueSensitivity.Public)]
-            : details;
-    }
-
-    private static StackSafetyDescriptor BuildSafety(
-        IReadOnlyList<PackageConfigurationStackValue> values,
-        IReadOnlyList<PackageConfigurationStackSecretReference> secretReferences)
-    {
-        var hasLocalPaths = values.Any(value => IsLikelyLocalPath(value.Key, value.Label, value.Value));
-        var hasNetworkEndpoints = values.Any(value => IsLikelyNetworkEndpoint(value.Key, value.Label, value.Value));
-        return new StackSafetyDescriptor(
-            ContainsSecrets: false,
-            ContainsSecretReferences: secretReferences.Count > 0,
-            ContainsLocalPaths: hasLocalPaths,
-            ContainsPrivateText: false,
-            ContainsExecutableCommands: false,
-            ContainsNetworkEndpoints: hasNetworkEndpoints,
-            ContainsMachineSpecificValues: hasLocalPaths);
+        return details;
     }
 
     private IEnumerable<PackageConfigurationField> ListFields()
@@ -347,7 +293,6 @@ internal sealed class PackageConfigurationStackContributor(
     private static StackRequiredInputDescriptor ToRequiredInput(PackageConfigurationStackSecretReference reference)
         => new(
             reference.InputId,
-            StackRequiredInputKind.Secret,
             reference.Label,
             reference.Required,
             reference.Description ?? "Secret configuration values are stored locally and are not included in Stack exports.");

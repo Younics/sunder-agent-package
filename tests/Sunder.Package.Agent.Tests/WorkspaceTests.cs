@@ -69,7 +69,7 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public async Task AgentWorkspaceStackContributor_ExportAsync_UsesLocalPathInputsByDefault()
+    public async Task AgentWorkspaceStackContributor_ExportAsync_IncludesSelectedLocalPaths()
     {
         using var scope = TestScope.Create();
         var store = new AgentLocalStore(scope.Context);
@@ -83,25 +83,20 @@ public sealed class WorkspaceTests
         service.SavePrimaryExecutionBinding("workspace.stack", "local");
         var contributor = new AgentWorkspaceStackContributor(service, scope.Context);
 
-        var contribution = await contributor.ExportAsync(new StackExportRequest(["workspace.stack"], new StackExportOptions()));
+        var contribution = await contributor.ExportAsync(new StackExportRequest(["workspace.stack"]));
 
         var fragment = Assert.Single(contribution.Fragments);
         Assert.Equal("sunder.package.agent", Assert.Single(contribution.PackageRequirements).PackageId);
         Assert.Equal("sunder.package.agent.workspaces", fragment.ContributorId);
-        Assert.True(fragment.Safety.ContainsPrivateText);
-        Assert.False(fragment.Safety.ContainsLocalPaths);
-        Assert.False(fragment.Safety.ContainsMachineSpecificValues);
-        var requiredInputs = Assert.IsAssignableFrom<IReadOnlyList<StackRequiredInputDescriptor>>(fragment.RequiredInputs);
-        Assert.Equal(2, requiredInputs.Count);
-        Assert.All(requiredInputs, input => Assert.Equal(StackRequiredInputKind.LocalPath, input.Kind));
-        Assert.DoesNotContain(workspaceRoot, fragment.JsonPayload, StringComparison.Ordinal);
-        Assert.DoesNotContain(documentPath, fragment.JsonPayload, StringComparison.Ordinal);
+        Assert.Empty(fragment.RequiredInputs ?? []);
+        Assert.Contains(workspaceRoot, fragment.JsonPayload, StringComparison.Ordinal);
+        Assert.Contains(documentPath, fragment.JsonPayload, StringComparison.Ordinal);
         Assert.Contains("Stack Workspace", fragment.JsonPayload, StringComparison.Ordinal);
         Assert.Contains("local", fragment.JsonPayload, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task AgentWorkspaceStackContributor_ImportAsync_CreatesWorkspaceFromLocalPathInputs()
+    public async Task AgentWorkspaceStackContributor_ImportAsync_CreatesWorkspaceFromPublicPaths()
     {
         using var scope = TestScope.Create();
         var sourceContext = new TestPackageContext(Path.Combine(scope.RootPath, "source"));
@@ -112,7 +107,9 @@ public sealed class WorkspaceTests
             [new AgentWorkspaceDocumentRecord("doc", "workspace.stack", Path.Combine(scope.RootPath, "source-guide.md"), 0, default, default)]);
         sourceService.SavePrimaryExecutionBinding("workspace.stack", "local");
         var sourceContributor = new AgentWorkspaceStackContributor(sourceService, sourceContext);
-        var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(["workspace.stack"], new StackExportOptions()))).Fragments);
+        var sourceRoot = Path.Combine(scope.RootPath, "source-repo");
+        var sourceDocumentPath = Path.Combine(scope.RootPath, "source-guide.md");
+        var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(["workspace.stack"]))).Fragments);
 
         var targetContext = new TestPackageContext(Path.Combine(scope.RootPath, "target"));
         var targetService = new AgentWorkspaceService(new AgentLocalStore(targetContext));
@@ -123,16 +120,11 @@ public sealed class WorkspaceTests
             new Dictionary<string, string>(),
             new Dictionary<string, string>()));
         var action = Assert.Single(preview.Actions);
-        var targetRoot = Path.Combine(scope.RootPath, "target-repo");
-        var targetDocumentPath = Path.Combine(scope.RootPath, "target-guide.md");
-        var inputValues = preview.RequiredInputs.ToDictionary(
-            input => input.InputId,
-            input => input.Label.Contains("documentation", StringComparison.OrdinalIgnoreCase) ? targetDocumentPath : targetRoot,
-            StringComparer.OrdinalIgnoreCase);
+        Assert.Empty(preview.RequiredInputs);
 
         var result = await targetContributor.ImportAsync(new StackImportRequest(
             [importFragment],
-            inputValues,
+            new Dictionary<string, string>(),
             new Dictionary<string, string>(),
             [action.ActionId]));
 
@@ -141,8 +133,8 @@ public sealed class WorkspaceTests
         Assert.NotNull(imported);
         Assert.Equal("Stack Workspace", imported!.DisplayName);
         Assert.Equal("Workspace docs.", imported.Description);
-        Assert.Equal(Path.GetFullPath(targetRoot), Assert.Single(imported.Paths).HostPath);
-        Assert.Equal(Path.GetFullPath(targetDocumentPath), Assert.Single(imported.Documents).FilePath);
+        Assert.Equal(Path.GetFullPath(sourceRoot), Assert.Single(imported.Paths).HostPath);
+        Assert.Equal(Path.GetFullPath(sourceDocumentPath), Assert.Single(imported.Documents).FilePath);
         Assert.Equal("local", Assert.Single(targetService.ListBindings("workspace.stack")).ContributionId);
     }
 
@@ -794,6 +786,62 @@ public sealed class WorkspaceTests
         Assert.Empty(imageCatalog.ListImages());
         Assert.Empty(new DockerImageCatalogService(scope.Context).ListImages());
         Assert.Null(new DockerExecutionWorkspaceConfigService(scope.Context, imageCatalog).GetConfig("workspace:primary-execution-target").ImageReference);
+    }
+
+    [Fact]
+    public async Task DockerImageStackContributor_ExportAsync_ExportsSelectedImageReferencesOnly()
+    {
+        using var scope = TestScope.Create();
+        var imageCatalog = new DockerImageCatalogService(scope.Context);
+        imageCatalog.SaveImages(
+        [
+            new DockerImageDefinition("custom:latest", DockerImageStatus.Ready, DateTimeOffset.UtcNow, "ready"),
+            new DockerImageDefinition("other:latest", DockerImageStatus.NotPulled, null, null),
+        ]);
+        var contributor = new DockerImageStackContributor(imageCatalog, scope.Context);
+
+        var contribution = await contributor.ExportAsync(new StackExportRequest(
+            ["docker-images"],
+            [new StackExportItemSelection("docker-images", [new StackExportDetailSelection("custom:latest")])]));
+
+        var fragment = Assert.Single(contribution.Fragments);
+        Assert.Equal("docker-images", fragment.FragmentId);
+        Assert.Contains("custom:latest", fragment.JsonPayload, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("other:latest", fragment.JsonPayload, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ready", fragment.JsonPayload, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(scope.Context.PackageId, Assert.Single(contribution.PackageRequirements).PackageId);
+    }
+
+    [Fact]
+    public async Task DockerImageStackContributor_ImportAsync_ConfiguresReferencesWithoutMarkingReady()
+    {
+        using var sourceScope = TestScope.Create();
+        var sourceCatalog = new DockerImageCatalogService(sourceScope.Context);
+        sourceCatalog.SaveImages([new DockerImageDefinition("custom:latest", DockerImageStatus.Ready, DateTimeOffset.UtcNow, "ready")]);
+        var sourceContributor = new DockerImageStackContributor(sourceCatalog, sourceScope.Context);
+        var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(["docker-images"]))).Fragments);
+
+        using var targetScope = TestScope.Create();
+        var targetCatalog = new DockerImageCatalogService(targetScope.Context);
+        targetCatalog.DeleteImage(DockerExecutionWorkspaceConfigService.DefaultImageReference);
+        var targetContributor = new DockerImageStackContributor(targetCatalog, targetScope.Context);
+        var importFragment = ToImportFragment(fragment);
+        var preview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest(
+            [importFragment],
+            new Dictionary<string, string>(),
+            new Dictionary<string, string>()));
+        var action = Assert.Single(preview.Actions);
+
+        var result = await targetContributor.ImportAsync(new StackImportRequest(
+            [importFragment],
+            new Dictionary<string, string>(),
+            new Dictionary<string, string>(),
+            [action.ActionId]));
+
+        Assert.True(result.Success, string.Join(Environment.NewLine, result.Errors));
+        var image = Assert.Single(targetCatalog.ListImages());
+        Assert.Equal("custom:latest", image.ImageReference);
+        Assert.Equal(DockerImageStatus.NotPulled, image.Status);
     }
 
     [Fact]
@@ -3040,14 +3088,14 @@ public sealed class WorkspaceTests
     private static StackFragmentImport ToImportFragment(StackFragmentExport fragment)
         => new(
             fragment.FragmentId,
-            fragment.OwnerPackageId,
+            "sunder.package.agent",
             fragment.ContributorId,
             fragment.SchemaId,
             fragment.SchemaVersion,
             fragment.DisplayName,
             fragment.JsonPayload,
             fragment.Description,
-            fragment.Files);
+            fragment.Files?.Select(file => new StackImportPayloadFile(file.RelativePath, file.SourcePath)).ToArray());
 
     private sealed record WorkspaceViewServices(
         AgentLocalStore Store,

@@ -12,6 +12,8 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
     private readonly DockerCliRunner _dockerCliRunner = dockerCliRunner ?? new DockerCliRunner(packageContext);
 
+    public event Action? ImagesChanged;
+
     public IReadOnlyList<DockerImageDefinition> ListImages()
     {
         var state = LoadState();
@@ -46,6 +48,7 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
         var image = new DockerImageDefinition(normalized, DockerImageStatus.NotPulled, null, "Image has not been pulled yet.");
         images.Add(image);
         SaveImages(images);
+        ImagesChanged?.Invoke();
         return image;
     }
 
@@ -55,6 +58,7 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
         SaveImages(ListImages()
             .Where(image => !string.Equals(image.ImageReference, normalized, StringComparison.OrdinalIgnoreCase))
             .ToArray());
+        ImagesChanged?.Invoke();
     }
 
     public async Task<DockerImageReadiness> GetReadinessAsync(
@@ -162,6 +166,9 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
         packageContext.Storage.State.SetValueAsync(ImagesKey, JsonSerializer.Serialize(new DockerImageCatalogState(1, normalized), JsonOptions)).GetAwaiter().GetResult();
         packageContext.Storage.State.SetValueAsync(InitializedKey, bool.TrueString).GetAwaiter().GetResult();
     }
+
+    public void NotifyImagesImported()
+        => ImagesChanged?.Invoke();
 
     public static string NormalizeImageReference(string imageReference)
     {

@@ -11,7 +11,7 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class SubagentStackContributorTests
 {
     [Fact]
-    public async Task ExportAsync_EmitsSubagentFragmentWithSafetyMetadata()
+    public async Task ExportAsync_EmitsSubagentFragment()
     {
         var root = CreateTempDirectory();
         try
@@ -30,13 +30,10 @@ public sealed class SubagentStackContributorTests
                 "{\"temperature\":0.1}");
             var contributor = new SubagentStackContributor(service, context);
 
-            var contribution = await contributor.ExportAsync(new StackExportRequest([subagent.SubagentId], new StackExportOptions()));
+            var contribution = await contributor.ExportAsync(new StackExportRequest([subagent.SubagentId]));
 
             var fragment = Assert.Single(contribution.Fragments);
             Assert.Equal("sunder.package.agent.subagents", Assert.Single(contribution.PackageRequirements).PackageId);
-            Assert.True(fragment.Safety.ContainsPrivateText);
-            Assert.True(fragment.Safety.ContainsNetworkEndpoints);
-            Assert.False(fragment.Safety.ContainsSecrets);
             Assert.Contains("Focus on bugs", fragment.JsonPayload, StringComparison.Ordinal);
             Assert.Contains("gpt-5.5", fragment.JsonPayload, StringComparison.Ordinal);
         }
@@ -57,7 +54,7 @@ public sealed class SubagentStackContributorTests
             var subagent = sourceService.CreateSubagent("Researcher");
             serviceSaveResearcher(sourceService, subagent.SubagentId);
             var sourceContributor = new SubagentStackContributor(sourceService, sourceContext);
-            var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest([subagent.SubagentId], new StackExportOptions()))).Fragments);
+            var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest([subagent.SubagentId]))).Fragments);
 
             var targetContext = new TestPackageContext(Path.Combine(root, "target"));
             var targetService = new SubagentService(new SubagentStore(targetContext));
@@ -103,14 +100,14 @@ public sealed class SubagentStackContributorTests
     private static StackFragmentImport ToImportFragment(StackFragmentExport fragment)
         => new(
             fragment.FragmentId,
-            fragment.OwnerPackageId,
+            "sunder.package.agent.subagents",
             fragment.ContributorId,
             fragment.SchemaId,
             fragment.SchemaVersion,
             fragment.DisplayName,
             fragment.JsonPayload,
             fragment.Description,
-            fragment.Files);
+            fragment.Files?.Select(file => new StackImportPayloadFile(file.RelativePath, file.SourcePath)).ToArray());
 
     private static string CreateTempDirectory()
     {

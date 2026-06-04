@@ -6,7 +6,7 @@ namespace Sunder.Package.Agent.Mcp.Services;
 
 internal sealed class McpServerStackContributor(
     McpServerCatalogService serverCatalog,
-    IPackageContext packageContext) : IPackageStackContributor
+    IPackageContext packageContext) : IPackageStackContributor, IPackageStackImportAppliedHandler
 {
     private const string PackageId = "sunder.package.agent.mcp";
     private const string SchemaId = "sunder.package.agent.mcp/server";
@@ -84,16 +84,13 @@ internal sealed class McpServerStackContributor(
             var requiredInputs = BuildRequiredInputs(payload).ToArray();
             fragments.Add(new StackFragmentExport(
                 FragmentId: "mcp-server." + SanitizeIdentifier(server.ServerId),
-                OwnerPackageId: PackageId,
                 ContributorId,
                 SchemaId,
                 SchemaVersion: 1,
                 DisplayName: server.DisplayName,
                 JsonPayload: JsonSerializer.Serialize(payload, JsonOptions),
-                Safety: BuildSafety(payload),
                 Description: payload.Description,
                 DefaultSelected: true,
-                RequiresPackages: [CreatePackageRequirement()],
                 RequiredInputs: requiredInputs,
                 SourceItemId: server.ServerId));
         }
@@ -188,6 +185,19 @@ internal sealed class McpServerStackContributor(
         return new StackImportResult(errors.Count == 0, imported, new Dictionary<string, string>(), warnings, errors);
     }
 
+    public ValueTask OnStackImportAppliedAsync(
+        StackImportAppliedContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (context.ImportedItems.Count > 0)
+        {
+            serverCatalog.NotifyServersImported();
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
     private StackPackageRequirement CreatePackageRequirement()
         => new(PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.0.0");
 
@@ -196,7 +206,7 @@ internal sealed class McpServerStackContributor(
         var sensitivities = new List<StackValueSensitivity>();
         if (!string.IsNullOrWhiteSpace(server.Description))
         {
-            sensitivities.Add(StackValueSensitivity.PrivateText);
+            sensitivities.Add(StackValueSensitivity.Public);
         }
 
         if (server.HeaderNames.Length > 0 || server.EnvironmentVariableNames.Length > 0)
@@ -206,17 +216,17 @@ internal sealed class McpServerStackContributor(
 
         if (server.TransportType == ConfiguredMcpTransportType.Stdio)
         {
-            sensitivities.Add(StackValueSensitivity.ExecutableCommand);
+            sensitivities.Add(StackValueSensitivity.Public);
         }
 
         if (!string.IsNullOrWhiteSpace(server.WorkingDirectory))
         {
-            sensitivities.Add(StackValueSensitivity.LocalPath);
+            sensitivities.Add(StackValueSensitivity.Public);
         }
 
         if (server.TransportType == ConfiguredMcpTransportType.HttpSse)
         {
-            sensitivities.Add(StackValueSensitivity.NetworkEndpoint);
+            sensitivities.Add(StackValueSensitivity.Public);
         }
 
         return sensitivities.Count == 0 ? [StackValueSensitivity.Public] : sensitivities.Distinct().ToArray();
@@ -230,7 +240,7 @@ internal sealed class McpServerStackContributor(
             details.Add(new StackExportItemDetail(
                 "Server description",
                 server.Description.Trim(),
-                StackValueSensitivity.PrivateText,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailIds.Description));
         }
@@ -247,7 +257,7 @@ internal sealed class McpServerStackContributor(
             details.Add(new StackExportItemDetail(
                 "Server URL",
                 server.EndpointUrl,
-                StackValueSensitivity.NetworkEndpoint,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailIds.ServerUrl));
         }
@@ -257,7 +267,7 @@ internal sealed class McpServerStackContributor(
             details.Add(new StackExportItemDetail(
                 "Launch command",
                 string.Join(" ", server.CommandParts),
-                StackValueSensitivity.ExecutableCommand,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailIds.LaunchCommand));
         }
@@ -267,7 +277,7 @@ internal sealed class McpServerStackContributor(
             details.Add(new StackExportItemDetail(
                 "Working folder",
                 server.WorkingDirectory,
-                StackValueSensitivity.LocalPath,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailIds.WorkingFolder));
         }
@@ -371,28 +381,16 @@ internal sealed class McpServerStackContributor(
             environmentVariables);
     }
 
-    private static StackSafetyDescriptor BuildSafety(McpServerStackPayload payload)
-        => new(
-            ContainsSecrets: false,
-            ContainsSecretReferences: payload.Headers.Any(reference => reference.RequiresInput) || payload.EnvironmentVariables.Any(reference => reference.RequiresInput),
-            ContainsLocalPaths: !string.IsNullOrWhiteSpace(payload.WorkingDirectory),
-            ContainsPrivateText: !string.IsNullOrWhiteSpace(payload.Description),
-            ContainsExecutableCommands: payload.CommandParts.Count > 0,
-            ContainsNetworkEndpoints: !string.IsNullOrWhiteSpace(payload.EndpointUrl),
-            ContainsMachineSpecificValues: !string.IsNullOrWhiteSpace(payload.WorkingDirectory));
-
     private static IReadOnlyList<StackRequiredInputDescriptor> BuildRequiredInputs(McpServerStackPayload payload)
         => payload.Headers
             .Where(header => header.RequiresInput)
             .Select(header => new StackRequiredInputDescriptor(
                 header.InputId,
-                StackRequiredInputKind.Secret,
                 $"{payload.DisplayName} header: {header.Name}",
                 Required: false,
                 Description: "Header values are stored as local secrets and are not included in Stack exports."))
             .Concat(payload.EnvironmentVariables.Where(variable => variable.RequiresInput).Select(variable => new StackRequiredInputDescriptor(
                 variable.InputId,
-                StackRequiredInputKind.Secret,
                 $"{payload.DisplayName} environment: {variable.Name}",
                 Required: false,
                 Description: "Environment values are stored as local secrets and are not included in Stack exports.")))

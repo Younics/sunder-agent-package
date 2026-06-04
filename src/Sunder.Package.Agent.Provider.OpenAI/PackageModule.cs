@@ -1,12 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Shared.Stacks;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Configuration;
-using Sunder.Sdk.Stacks;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
@@ -32,7 +30,6 @@ public sealed class PackageModule : ISunderPackageModule
     public void RegisterContributions(IPackageContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterConfigurationSchema(OpenAiProviderConfiguration.Schema);
-        registry.RegisterExtension(SunderStackExtensionPoints.StackContributors, new PackageConfigurationStackContributor(OpenAiProviderConfiguration.Schema, services.GetRequiredService<IPackageContext>()));
         registry.RegisterSettingsView<OpenAiSettingsView>();
         registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<OpenAiAgentProvider>());
         registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<OpenAiEmbeddingProvider>());

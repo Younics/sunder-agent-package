@@ -16,6 +16,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     private readonly IPackageSettingsNavigationService? _settingsNavigationService;
     private CancellationTokenSource? _successStatusClearCancellation;
     private bool _suppressSelectionHandlers;
+    private bool _suppressProfileChangeNotifications;
     private bool _disposed;
     private int _profileLoadVersion;
     private int _chatLoadVersion;
@@ -32,6 +33,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     {
         _profileService = profileService;
         _settingsNavigationService = settingsNavigationService;
+        _profileService.ProfileChanged += OnProfileChanged;
         _profileService.SelectableCapabilitiesChanged += OnSelectableCapabilitiesChanged;
         _ = InitializeAsync();
     }
@@ -372,7 +374,17 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         BeginBusy();
         try
         {
-            var created = await _profileService.CreateProfileAsync("New Agent");
+            AgentProfileRecord created;
+            _suppressProfileChangeNotifications = true;
+            try
+            {
+                created = await _profileService.CreateProfileAsync("New Agent");
+            }
+            finally
+            {
+                _suppressProfileChangeNotifications = false;
+            }
+
             await ReloadProfilesAsync(created.ProfileId);
             IsEditorActive = true;
             ClearStatus();
@@ -399,21 +411,29 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         try
         {
             var profileId = SelectedProfile.ProfileId;
-            _profileService.SaveProfile(
-                profileId,
-                string.IsNullOrWhiteSpace(DisplayName) ? "Unnamed Profile" : DisplayName.Trim(),
-                string.IsNullOrWhiteSpace(Description) ? null : Description.Trim(),
-                string.IsNullOrWhiteSpace(Instructions) ? null : Instructions.Trim(),
-                SelectedChatProvider?.Id,
-                SelectedChatModel?.Id,
-                CanConfigureEmbeddings ? SelectedEmbeddingProvider?.Id : null,
-                CanConfigureEmbeddings ? SelectedEmbeddingModel?.Id : null,
-                selectableCapabilityAssignments: BuildSelectableCapabilityAssignments(),
-                behaviorLoopId: SelectedBehaviorLoop?.LoopId ?? string.Empty,
-                behaviorLoopSourceId: SelectedBehaviorLoop?.SourceId ?? string.Empty,
-                behaviorLoopSettingsJson: SelectedProfile.BehaviorLoopSettingsJson ?? string.Empty,
-                chatModelSettingsJson: BuildChatModelSettingsJson() ?? string.Empty
-            );
+            _suppressProfileChangeNotifications = true;
+            try
+            {
+                _profileService.SaveProfile(
+                    profileId,
+                    string.IsNullOrWhiteSpace(DisplayName) ? "Unnamed Profile" : DisplayName.Trim(),
+                    string.IsNullOrWhiteSpace(Description) ? null : Description.Trim(),
+                    string.IsNullOrWhiteSpace(Instructions) ? null : Instructions.Trim(),
+                    SelectedChatProvider?.Id,
+                    SelectedChatModel?.Id,
+                    CanConfigureEmbeddings ? SelectedEmbeddingProvider?.Id : null,
+                    CanConfigureEmbeddings ? SelectedEmbeddingModel?.Id : null,
+                    selectableCapabilityAssignments: BuildSelectableCapabilityAssignments(),
+                    behaviorLoopId: SelectedBehaviorLoop?.LoopId ?? string.Empty,
+                    behaviorLoopSourceId: SelectedBehaviorLoop?.SourceId ?? string.Empty,
+                    behaviorLoopSettingsJson: SelectedProfile.BehaviorLoopSettingsJson ?? string.Empty,
+                    chatModelSettingsJson: BuildChatModelSettingsJson() ?? string.Empty
+                );
+            }
+            finally
+            {
+                _suppressProfileChangeNotifications = false;
+            }
 
             var shouldClearSelection = IsCompactLayout;
             await ReloadProfilesAsync(profileId);
@@ -452,7 +472,16 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         {
             var deletedName = SelectedProfile.DisplayName;
             var shouldClearSelection = IsCompactLayout;
-            _profileService.DeleteProfile(SelectedProfile.ProfileId);
+            _suppressProfileChangeNotifications = true;
+            try
+            {
+                _profileService.DeleteProfile(SelectedProfile.ProfileId);
+            }
+            finally
+            {
+                _suppressProfileChangeNotifications = false;
+            }
+
             await ReloadProfilesAsync(selectProfileId: null);
             if (shouldClearSelection)
             {
@@ -685,6 +714,33 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         finally
         {
             EndBusy();
+        }
+    }
+
+    private void OnProfileChanged(string profileId) =>
+        RunOnUiThread(() =>
+        {
+            if (!_suppressProfileChangeNotifications)
+            {
+                _ = ReloadProfilesSafelyAsync(SelectedProfile?.ProfileId);
+            }
+        });
+
+    private async Task ReloadProfilesSafelyAsync(string? selectProfileId)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            await ReloadProfilesAsync(selectProfileId);
+        }
+        catch (Exception ex)
+        {
+            ClearEditor();
+            SetStatus(ex.Message, AgentProfileStatusKind.Error);
         }
     }
 
@@ -1583,6 +1639,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
         _disposed = true;
         CancelSuccessStatusClear();
+        _profileService.ProfileChanged -= OnProfileChanged;
         _profileService.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
     }
 

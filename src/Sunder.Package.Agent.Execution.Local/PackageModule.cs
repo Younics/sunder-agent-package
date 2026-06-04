@@ -1,8 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
-using Sunder.Package.Agent.Shared.Stacks;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Stacks;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
@@ -19,7 +17,6 @@ public sealed class PackageModule : ISunderPackageModule
     public void RegisterContributions(IPackageContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterConfigurationSchema(LocalExecutionConfiguration.Schema);
-        registry.RegisterExtension(SunderStackExtensionPoints.StackContributors, new PackageConfigurationStackContributor(LocalExecutionConfiguration.Schema, services.GetRequiredService<IPackageContext>()));
         registry.RegisterSettingsView<LocalExecutionSettingsView>();
         var target = services.GetRequiredService<LocalExecutionTarget>();
         registry.RegisterExtension(PackageExtensionPoints.ExecutionTargets, target);

@@ -87,6 +87,9 @@ public sealed class SubagentService(SubagentStore store)
         return saved;
     }
 
+    public void NotifySubagentsImported()
+        => SubagentsChanged?.Invoke();
+
     private static string? Normalize(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 

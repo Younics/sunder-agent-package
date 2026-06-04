@@ -36,15 +36,11 @@ public sealed class McpServerStackContributorTests
                 """);
             await catalog.SaveServerAsync(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
 
-            var contribution = await contributor.ExportAsync(new StackExportRequest(["server-1"], new StackExportOptions()));
+            var contribution = await contributor.ExportAsync(new StackExportRequest(["server-1"]));
 
             var fragment = Assert.Single(contribution.Fragments);
             Assert.DoesNotContain("super-secret-token", fragment.JsonPayload, StringComparison.Ordinal);
-            Assert.False(fragment.Safety.ContainsSecrets);
-            Assert.True(fragment.Safety.ContainsSecretReferences);
-            Assert.True(fragment.Safety.ContainsExecutableCommands);
             var requiredInput = Assert.Single(fragment.RequiredInputs ?? []);
-            Assert.Equal(StackRequiredInputKind.Secret, requiredInput.Kind);
             Assert.Equal("GITHUB_TOKEN", ReadFirstSecretName(fragment.JsonPayload, "environmentVariables"));
             Assert.Contains(contribution.Warnings, warning => warning.Contains("executable command", StringComparison.OrdinalIgnoreCase));
         }
@@ -77,7 +73,7 @@ public sealed class McpServerStackContributorTests
                 }
                 """);
             await sourceCatalog.SaveServerAsync(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
-            var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(["server-1"], new StackExportOptions()))).Fragments);
+            var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(["server-1"]))).Fragments);
 
             var targetContext = new TestPackageContext(Path.Combine(root, "target"));
             var targetCatalog = new McpServerCatalogService(targetContext);
@@ -141,7 +137,7 @@ public sealed class McpServerStackContributorTests
             Assert.Contains(item.Details ?? [], detail => detail.DetailId == "header.accept" && detail.Sensitivity == StackValueSensitivity.Public && detail.Value == "application/json");
             Assert.Contains(item.Details ?? [], detail => detail.DetailId == "header.x-goog-api-key" && detail.Sensitivity == StackValueSensitivity.Secret && detail.Value == "Value not exported");
 
-            var contribution = await contributor.ExportAsync(new StackExportRequest(["server-1"], new StackExportOptions()));
+            var contribution = await contributor.ExportAsync(new StackExportRequest(["server-1"]));
 
             var fragment = Assert.Single(contribution.Fragments);
             Assert.Contains("application/json", fragment.JsonPayload, StringComparison.Ordinal);
@@ -165,14 +161,14 @@ public sealed class McpServerStackContributorTests
     private static StackFragmentImport ToImportFragment(StackFragmentExport fragment)
         => new(
             fragment.FragmentId,
-            fragment.OwnerPackageId,
+            "sunder.package.agent.mcp",
             fragment.ContributorId,
             fragment.SchemaId,
             fragment.SchemaVersion,
             fragment.DisplayName,
             fragment.JsonPayload,
             fragment.Description,
-            fragment.Files);
+            fragment.Files?.Select(file => new StackImportPayloadFile(file.RelativePath, file.SourcePath)).ToArray());
 
     private static string CreateTempDirectory()
     {

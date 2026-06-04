@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Sunder.Package.Agent.Contracts;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
@@ -7,7 +9,8 @@ namespace Sunder.Package.Agent.Subagents.Services;
 
 internal sealed class SubagentStackContributor(
     SubagentService subagentService,
-    IPackageContext packageContext) : IPackageStackContributor
+    IPackageContext packageContext,
+    IPackageExtensionCatalog? extensionCatalog = null) : IPackageStackContributor, IPackageStackImportAppliedHandler
 {
     private const string SchemaId = "sunder.package.agent.subagents/subagent";
     private const string DetailDescription = "description";
@@ -39,37 +42,29 @@ internal sealed class SubagentStackContributor(
         StackExportRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (!request.Options.IncludePrivateText)
-        {
-            return ValueTask.FromResult(new StackExportContribution(
-                [],
-                [],
-                ["Skipped subagents because subagent descriptions and instructions are text content."]));
-        }
-
         var selectedIds = request.ItemIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var fragments = subagentService.ListSubagents()
+        var subagents = subagentService.ListSubagents()
             .Where(subagent => selectedIds.Contains(subagent.SubagentId))
-            .Select(subagent => new StackFragmentExport(
+            .ToArray();
+        var payloads = subagents
+            .Select(subagent => SubagentStackPayload.FromSubagent(subagent, request))
+            .ToArray();
+        var fragments = subagents
+            .Zip(payloads, (subagent, payload) => new StackFragmentExport(
                 FragmentId: "subagent." + SanitizeIdentifier(subagent.SubagentId),
-                OwnerPackageId: SubagentConstants.PackageId,
                 ContributorId,
                 SchemaId,
                 SchemaVersion: 1,
                 DisplayName: subagent.DisplayName,
-                JsonPayload: JsonSerializer.Serialize(SubagentStackPayload.FromSubagent(subagent, request), JsonOptions),
-                Safety: BuildSafety(subagent, request),
-                Description: request.IsDetailSelected(subagent.SubagentId, DetailDescription)
-                    ? request.GetDetailValue(subagent.SubagentId, DetailDescription, subagent.Description ?? string.Empty)
-                    : null,
+                JsonPayload: JsonSerializer.Serialize(payload, JsonOptions),
+                Description: payload.Description,
                 DefaultSelected: true,
-                RequiresPackages: [CreatePackageRequirement()],
                 SourceItemId: subagent.SubagentId))
             .ToArray();
 
         return ValueTask.FromResult(new StackExportContribution(
             fragments,
-            fragments.Length == 0 ? [] : [CreatePackageRequirement()],
+            fragments.Length == 0 ? [] : BuildPackageRequirements(payloads),
             []));
     }
 
@@ -133,18 +128,81 @@ internal sealed class SubagentStackContributor(
         return ValueTask.FromResult(new StackImportResult(errors.Count == 0, imported, new Dictionary<string, string>(), warnings, errors));
     }
 
+    public ValueTask OnStackImportAppliedAsync(
+        StackImportAppliedContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (context.ImportedItems.Count > 0)
+        {
+            subagentService.NotifySubagentsImported();
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
     private StackPackageRequirement CreatePackageRequirement()
         => new(SubagentConstants.PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.0.0");
 
-    private static IReadOnlyList<StackValueSensitivity> BuildSensitivities(SubagentRecord subagent)
+    private IReadOnlyList<StackPackageRequirement> BuildPackageRequirements(IReadOnlyList<SubagentStackPayload> payloads)
     {
-        var sensitivities = new List<StackValueSensitivity> { StackValueSensitivity.PrivateText };
-        if (!string.IsNullOrWhiteSpace(subagent.ChatProviderId) || !string.IsNullOrWhiteSpace(subagent.ChatModelId))
+        var packageIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { SubagentConstants.PackageId };
+        if (extensionCatalog is not null)
         {
-            sensitivities.Add(StackValueSensitivity.NetworkEndpoint);
+            var providerIds = payloads
+                .Select(payload => payload.ChatProviderId)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (providerIds.Count > 0)
+            {
+                foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ChatProviders))
+                {
+                    if (providerIds.Contains(contribution.Contribution.Descriptor.ProviderId))
+                    {
+                        AddPackageId(packageIds, contribution.PackageId);
+                    }
+                }
+            }
+
+            var sourceIds = payloads
+                .SelectMany(payload => payload.SelectableCapabilityAssignments ?? [])
+                .Select(assignment => assignment.SourceId)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (sourceIds.Count > 0)
+            {
+                foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ProfileSelectableCapabilityProviders))
+                {
+                    if (sourceIds.Contains(contribution.Contribution.ProviderId))
+                    {
+                        AddPackageId(packageIds, contribution.PackageId);
+                    }
+                }
+            }
         }
 
-        return sensitivities;
+        return packageIds
+            .OrderBy(packageId => string.Equals(packageId, SubagentConstants.PackageId, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(packageId => packageId, StringComparer.OrdinalIgnoreCase)
+            .Select(packageId => string.Equals(packageId, SubagentConstants.PackageId, StringComparison.OrdinalIgnoreCase)
+                ? CreatePackageRequirement()
+                : new StackPackageRequirement(packageId))
+            .ToArray();
+    }
+
+    private static void AddPackageId(ISet<string> packageIds, string? packageId)
+    {
+        if (!string.IsNullOrWhiteSpace(packageId))
+        {
+            packageIds.Add(packageId.Trim());
+        }
+    }
+
+    private static IReadOnlyList<StackValueSensitivity> BuildSensitivities(SubagentRecord subagent)
+    {
+        return [StackValueSensitivity.Public];
     }
 
     private static IReadOnlyList<StackExportItemDetail> BuildExportDetails(SubagentRecord subagent)
@@ -155,7 +213,7 @@ internal sealed class SubagentStackContributor(
             details.Add(new StackExportItemDetail(
                 "Subagent description",
                 subagent.Description.Trim(),
-                StackValueSensitivity.PrivateText,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailDescription));
         }
@@ -165,7 +223,7 @@ internal sealed class SubagentStackContributor(
             details.Add(new StackExportItemDetail(
                 "Subagent instructions",
                 subagent.Instructions.Trim(),
-                StackValueSensitivity.PrivateText,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailInstructions));
         }
@@ -175,7 +233,7 @@ internal sealed class SubagentStackContributor(
             details.Add(new StackExportItemDetail(
                 "Provider connection",
                 subagent.ChatProviderId,
-                StackValueSensitivity.NetworkEndpoint,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailProvider));
         }
@@ -185,7 +243,7 @@ internal sealed class SubagentStackContributor(
             details.Add(new StackExportItemDetail(
                 "Model choice",
                 subagent.ChatModelId,
-                StackValueSensitivity.NetworkEndpoint,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailModel));
         }
@@ -194,18 +252,6 @@ internal sealed class SubagentStackContributor(
             ? [new StackExportItemDetail("Subagent settings", "No additional subagent content", StackValueSensitivity.Public)]
             : details;
     }
-
-    private static StackSafetyDescriptor BuildSafety(SubagentRecord subagent, StackExportRequest request)
-        => new(
-            ContainsSecrets: false,
-            ContainsSecretReferences: false,
-            ContainsLocalPaths: false,
-            ContainsPrivateText: request.IsDetailSelected(subagent.SubagentId, DetailDescription) && !string.IsNullOrWhiteSpace(subagent.Description)
-                                 || request.IsDetailSelected(subagent.SubagentId, DetailInstructions) && !string.IsNullOrWhiteSpace(subagent.Instructions),
-            ContainsExecutableCommands: false,
-            ContainsNetworkEndpoints: (request.IsDetailSelected(subagent.SubagentId, DetailProvider) || request.IsDetailSelected(subagent.SubagentId, DetailModel))
-                                      && (!string.IsNullOrWhiteSpace(subagent.ChatProviderId) || !string.IsNullOrWhiteSpace(subagent.ChatModelId)),
-            ContainsMachineSpecificValues: false);
 
     private static bool TryReadPayload(StackFragmentImport fragment, ICollection<string> warnings, out SubagentStackPayload? payload)
     {

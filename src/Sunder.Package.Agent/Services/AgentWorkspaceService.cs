@@ -133,6 +133,9 @@ public sealed class AgentWorkspaceService
         WorkspacesChanged?.Invoke();
     }
 
+    public void NotifyWorkspacesImported()
+        => WorkspacesChanged?.Invoke();
+
     public IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId)
         => _store.ListWorkspaceBindings(workspaceId);
 

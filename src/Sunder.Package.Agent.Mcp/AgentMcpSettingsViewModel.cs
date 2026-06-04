@@ -15,6 +15,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
     private CancellationTokenSource? _successStatusClearCancellation;
     private CancellationTokenSource? _discoveryCancellation;
     private bool _suppressSelectionHandlers;
+    private bool _suppressServerChangeNotifications;
     private bool _disposed;
     private int _serverLoadVersion;
 
@@ -24,6 +25,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
     {
         _serverCatalogService = serverCatalogService;
         _connectionManager = connectionManager;
+        _serverCatalogService.ServersChanged += OnServersChanged;
         _connectionManager.StatusChanged += OnConnectionStatusChanged;
         _ = InitializeAsync();
     }
@@ -248,7 +250,16 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
             var existing = SelectedServer;
             var serverId = existing?.ServerId ?? Guid.NewGuid().ToString("N");
             var parsed = McpConfigurationDocument.Parse(serverId, normalizedName, EditorText, existing);
-            await _serverCatalogService.SaveServerAsync(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
+            _suppressServerChangeNotifications = true;
+            try
+            {
+                await _serverCatalogService.SaveServerAsync(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
+            }
+            finally
+            {
+                _suppressServerChangeNotifications = false;
+            }
+
             await _connectionManager.DisconnectServerAsync(serverId);
             var shouldClearSelection = IsCompactLayout;
             await ReloadServersAsync(serverId);
@@ -289,7 +300,16 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         var deletedName = SelectedServer.DisplayName;
         var serverId = SelectedServer.ServerId;
         var shouldClearSelection = IsCompactLayout;
-        await _serverCatalogService.DeleteServerAsync(SelectedServer.ServerId);
+        _suppressServerChangeNotifications = true;
+        try
+        {
+            await _serverCatalogService.DeleteServerAsync(SelectedServer.ServerId);
+        }
+        finally
+        {
+            _suppressServerChangeNotifications = false;
+        }
+
         await _connectionManager.DisconnectServerAsync(serverId);
         await ReloadServersAsync(selectServerId: null);
         if (shouldClearSelection)
@@ -549,8 +569,36 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
 
         _disposed = true;
         CancelDiscovery();
+        _serverCatalogService.ServersChanged -= OnServersChanged;
         _connectionManager.StatusChanged -= OnConnectionStatusChanged;
         CancelSuccessStatusClear();
+    }
+
+    private void OnServersChanged()
+        => RunOnUiThread(() =>
+        {
+            if (!_suppressServerChangeNotifications)
+            {
+                _ = ReloadServersSafelyAsync(SelectedServer?.ServerId);
+            }
+        });
+
+    private async Task ReloadServersSafelyAsync(string? selectServerId)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            await ReloadServersAsync(selectServerId);
+        }
+        catch (Exception ex)
+        {
+            ClearEditor();
+            SetStatus(ex.Message, McpStatusKind.Error);
+        }
     }
 
     private void OnConnectionStatusChanged()

@@ -23,6 +23,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private readonly IPackageSettingsNavigationService? _settingsNavigationService;
     private CancellationTokenSource? _successStatusClearCancellation;
     private bool _suppressSelectionHandlers;
+    private bool _suppressWorkspaceChangeNotifications;
     private bool _disposed;
 
     public AgentWorkspacesViewModel(
@@ -36,6 +37,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         _targetService = targetService;
         _extensionCatalog = extensionCatalog;
         _settingsNavigationService = settingsNavigationService;
+        _workspaceService.WorkspacesChanged += OnWorkspacesChanged;
         _extensionCatalogMonitor = extensionCatalog as IPackageExtensionCatalogMonitor;
         if (_extensionCatalogMonitor is not null)
         {
@@ -153,6 +155,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
         _disposed = true;
         CancelSuccessStatusClear();
+        _workspaceService.WorkspacesChanged -= OnWorkspacesChanged;
         if (_extensionCatalogMonitor is not null)
         {
             _extensionCatalogMonitor.Changed -= OnExtensionCatalogChanged;
@@ -215,7 +218,17 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     {
         try
         {
-            var workspace = _workspaceService.CreateWorkspace("New Workspace");
+            AgentWorkspaceRecord workspace;
+            _suppressWorkspaceChangeNotifications = true;
+            try
+            {
+                workspace = _workspaceService.CreateWorkspace("New Workspace");
+            }
+            finally
+            {
+                _suppressWorkspaceChangeNotifications = false;
+            }
+
             ReloadWorkspaces(workspace.WorkspaceId);
             IsEditorActive = true;
             ClearStatus();
@@ -250,27 +263,35 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
                 return;
             }
 
-            _workspaceService.SaveWorkspace(SelectedWorkspace.WorkspaceId, DisplayName, Description);
-            _workspaceService.SaveWorkspacePaths(
-                SelectedWorkspace.WorkspaceId,
-                WorkspacePaths.Select((path, index) => path.ToRecord(SelectedWorkspace.WorkspaceId, index)).ToArray());
-            _workspaceService.SaveWorkspaceDocuments(
-                SelectedWorkspace.WorkspaceId,
-                WorkspaceDocuments.Select((document, index) => document.ToRecord(SelectedWorkspace.WorkspaceId, index)).ToArray());
             AgentExecutionTargetWarmupResult? warmupResult = null;
-            if (SelectedExecutionTarget is null || SelectedExecutionTarget.IsUnconfigured)
+            _suppressWorkspaceChangeNotifications = true;
+            try
             {
-                _workspaceService.RemovePrimaryExecutionBinding(SelectedWorkspace.WorkspaceId);
-            }
-            else
-            {
-                _workspaceService.SavePrimaryExecutionBinding(SelectedWorkspace.WorkspaceId, SelectedExecutionTarget.TargetId!);
-                if (_warmupService is not null)
+                _workspaceService.SaveWorkspace(SelectedWorkspace.WorkspaceId, DisplayName, Description);
+                _workspaceService.SaveWorkspacePaths(
+                    SelectedWorkspace.WorkspaceId,
+                    WorkspacePaths.Select((path, index) => path.ToRecord(SelectedWorkspace.WorkspaceId, index)).ToArray());
+                _workspaceService.SaveWorkspaceDocuments(
+                    SelectedWorkspace.WorkspaceId,
+                    WorkspaceDocuments.Select((document, index) => document.ToRecord(SelectedWorkspace.WorkspaceId, index)).ToArray());
+                if (SelectedExecutionTarget is null || SelectedExecutionTarget.IsUnconfigured)
                 {
-                    var warmupWorkspace = _workspaceService.GetWorkspace(savedWorkspaceId) ?? SelectedWorkspace;
-                    SetStatus("Workspace saved. Preparing execution target...", AgentWorkspaceStatusKind.Warning);
-                    warmupResult = await _warmupService.WarmWorkspaceAsync(warmupWorkspace);
+                    _workspaceService.RemovePrimaryExecutionBinding(SelectedWorkspace.WorkspaceId);
                 }
+                else
+                {
+                    _workspaceService.SavePrimaryExecutionBinding(SelectedWorkspace.WorkspaceId, SelectedExecutionTarget.TargetId!);
+                    if (_warmupService is not null)
+                    {
+                        var warmupWorkspace = _workspaceService.GetWorkspace(savedWorkspaceId) ?? SelectedWorkspace;
+                        SetStatus("Workspace saved. Preparing execution target...", AgentWorkspaceStatusKind.Warning);
+                        warmupResult = await _warmupService.WarmWorkspaceAsync(warmupWorkspace);
+                    }
+                }
+            }
+            finally
+            {
+                _suppressWorkspaceChangeNotifications = false;
             }
 
             var shouldClearSelection = IsCompactLayout;
@@ -313,7 +334,16 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         try
         {
             var shouldClearSelection = IsCompactLayout;
-            _workspaceService.DeleteWorkspace(SelectedWorkspace.WorkspaceId);
+            _suppressWorkspaceChangeNotifications = true;
+            try
+            {
+                _workspaceService.DeleteWorkspace(SelectedWorkspace.WorkspaceId);
+            }
+            finally
+            {
+                _suppressWorkspaceChangeNotifications = false;
+            }
+
             if (shouldClearSelection)
             {
                 ReloadWorkspaceList(selectWorkspaceId: null);
@@ -636,6 +666,15 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
         RunOnUiThread(ApplyExtensionCatalogChanges);
     }
+
+    private void OnWorkspacesChanged()
+        => RunOnUiThread(() =>
+        {
+            if (!_disposed && !_suppressWorkspaceChangeNotifications)
+            {
+                ReloadWorkspaces(SelectedWorkspace?.WorkspaceId);
+            }
+        });
 
     private void ApplyExtensionCatalogChanges()
     {

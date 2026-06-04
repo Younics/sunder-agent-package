@@ -1,10 +1,15 @@
 using System.Text.Json;
+using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentProfileStackContributor(AgentProfileService profileService) : IPackageStackContributor
+public sealed class AgentProfileStackContributor(
+    AgentProfileService profileService,
+    IPackageContext? packageContext = null,
+    IPackageExtensionCatalog? extensionCatalog = null) : IPackageStackContributor, IPackageStackImportAppliedHandler
 {
     private const string PackageId = "sunder.package.agent";
     private const string SchemaId = "sunder.package.agent/profile";
@@ -32,7 +37,7 @@ public sealed class AgentProfileStackContributor(AgentProfileService profileServ
                 "agent-profile",
                 Description: null,
                 DefaultSelected: true,
-                Sensitivities: [StackValueSensitivity.PrivateText, StackValueSensitivity.NetworkEndpoint],
+                Sensitivities: [StackValueSensitivity.Public],
                 Details: BuildExportDetails(profile)))
             .ToArray();
         return ValueTask.FromResult<IReadOnlyList<StackExportItemDescriptor>>(profiles);
@@ -46,31 +51,24 @@ public sealed class AgentProfileStackContributor(AgentProfileService profileServ
         var profiles = profileService.ListProfiles()
             .Where(profile => selectedIds.Contains(profile.ProfileId) && !profile.IsInternal)
             .ToArray();
+        var payloads = profiles
+            .Select(profile => AgentProfileStackPayload.FromProfile(profile, request))
+            .ToArray();
         var fragments = profiles
-            .Select(profile => new StackFragmentExport(
+            .Zip(payloads, (profile, payload) => new StackFragmentExport(
                 FragmentId: "agent-profile." + SanitizeId(profile.ProfileId),
-                OwnerPackageId: PackageId,
                 ContributorId,
                 SchemaId,
                 SchemaVersion: 1,
                 DisplayName: profile.DisplayName,
-                JsonPayload: JsonSerializer.Serialize(AgentProfileStackPayload.FromProfile(profile, request.Options, request), JsonOptions),
-                Safety: new StackSafetyDescriptor(
-                    ContainsPrivateText: request.IsDetailSelected(profile.ProfileId, DetailDescription) && !string.IsNullOrWhiteSpace(profile.Description)
-                                         || request.IsDetailSelected(profile.ProfileId, DetailInstructions) && !string.IsNullOrWhiteSpace(profile.Instructions)
-                                         || request.IsDetailSelected(profile.ProfileId, DetailBehaviorLoop) && !string.IsNullOrWhiteSpace(profile.BehaviorLoopSettingsJson),
-                    ContainsNetworkEndpoints: (request.IsDetailSelected(profile.ProfileId, DetailProviders) || request.IsDetailSelected(profile.ProfileId, DetailModels)) && HasProviderBindings(profile),
-                    ContainsMachineSpecificValues: false),
-                Description: request.IsDetailSelected(profile.ProfileId, DetailDescription)
-                    ? request.GetDetailValue(profile.ProfileId, DetailDescription, profile.Description ?? string.Empty)
-                    : null,
+                JsonPayload: JsonSerializer.Serialize(payload, JsonOptions),
+                Description: payload.Description,
                 DefaultSelected: true,
-                RequiresPackages: [new StackPackageRequirement(PackageId)],
                 SourceItemId: profile.ProfileId))
             .ToArray();
         return ValueTask.FromResult(new StackExportContribution(
             fragments,
-            [new StackPackageRequirement(PackageId)],
+            fragments.Length == 0 ? [] : BuildPackageRequirements(payloads),
             []));
     }
 
@@ -141,6 +139,19 @@ public sealed class AgentProfileStackContributor(AgentProfileService profileServ
         return ValueTask.FromResult(new StackImportResult(errors.Count == 0, imported, idRemaps, warnings, errors));
     }
 
+    public ValueTask OnStackImportAppliedAsync(
+        StackImportAppliedContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        foreach (var item in context.ImportedItems)
+        {
+            profileService.NotifyProfileImported(item.ItemId);
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
     private static bool TryReadPayload(StackFragmentImport fragment, ICollection<string> warnings, out AgentProfileStackPayload? payload)
     {
         try
@@ -166,6 +177,115 @@ public sealed class AgentProfileStackContributor(AgentProfileService profileServ
     private static string BuildActionId(string fragmentId, string profileId)
         => $"agent-profile:{fragmentId}:{profileId}";
 
+    private IReadOnlyList<StackPackageRequirement> BuildPackageRequirements(IReadOnlyList<AgentProfileStackPayload> payloads)
+    {
+        var packageIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { PackageId };
+        if (extensionCatalog is not null)
+        {
+            var providerIds = payloads
+                .SelectMany(payload => new[]
+                    {
+                        payload.ChatProviderId,
+                        payload.EmbeddingProviderId,
+                    }
+                    .Concat(payload.ModelBindings?.Select(binding => binding.ProviderId) ?? []))
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            AddProviderPackages(packageIds, providerIds);
+
+            var behaviorLoopIds = payloads
+                .Select(payload => payload.BehaviorLoopId)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var behaviorLoopSourceIds = payloads
+                .Select(payload => payload.BehaviorLoopSourceId)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.BehaviorLoops))
+            {
+                var descriptor = contribution.Contribution.Descriptor;
+                if (behaviorLoopIds.Contains(descriptor.LoopId)
+                    || (!string.IsNullOrWhiteSpace(descriptor.SourceId) && behaviorLoopSourceIds.Contains(descriptor.SourceId)))
+                {
+                    AddPackageId(packageIds, contribution.PackageId);
+                }
+            }
+
+            AddSelectableCapabilityPackages(packageIds, payloads.SelectMany(payload => payload.SelectableCapabilityAssignments ?? []));
+        }
+
+        return packageIds
+            .OrderBy(packageId => string.Equals(packageId, PackageId, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(packageId => packageId, StringComparer.OrdinalIgnoreCase)
+            .Select(packageId => string.Equals(packageId, PackageId, StringComparison.OrdinalIgnoreCase)
+                ? new StackPackageRequirement(PackageId, CreatedWithVersion: packageContext?.Version.ToString(), MinimumVersion: "1.0.0")
+                : new StackPackageRequirement(packageId))
+            .ToArray();
+    }
+
+    private void AddProviderPackages(ISet<string> packageIds, ISet<string> providerIds)
+    {
+        if (providerIds.Count == 0 || extensionCatalog is null)
+        {
+            return;
+        }
+
+        foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ChatProviders))
+        {
+            if (providerIds.Contains(contribution.Contribution.Descriptor.ProviderId))
+            {
+                AddPackageId(packageIds, contribution.PackageId);
+            }
+        }
+
+        foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.EmbeddingProviders))
+        {
+            if (providerIds.Contains(contribution.Contribution.Descriptor.ProviderId))
+            {
+                AddPackageId(packageIds, contribution.PackageId);
+            }
+        }
+    }
+
+    private void AddSelectableCapabilityPackages(
+        ISet<string> packageIds,
+        IEnumerable<AgentProfileSelectableCapabilityAssignmentRecord> assignments)
+    {
+        if (extensionCatalog is null)
+        {
+            return;
+        }
+
+        var sourceIds = assignments
+            .Select(assignment => assignment.SourceId)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (sourceIds.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ProfileSelectableCapabilityProviders))
+        {
+            if (sourceIds.Contains(contribution.Contribution.ProviderId))
+            {
+                AddPackageId(packageIds, contribution.PackageId);
+            }
+        }
+    }
+
+    private static void AddPackageId(ISet<string> packageIds, string? packageId)
+    {
+        if (!string.IsNullOrWhiteSpace(packageId))
+        {
+            packageIds.Add(packageId.Trim());
+        }
+    }
+
     private static string ResolveProfileId(string profileId, IReadOnlyDictionary<string, string> idRemaps)
         => idRemaps.TryGetValue(profileId, out var remappedId) && !string.IsNullOrWhiteSpace(remappedId)
             ? remappedId
@@ -189,7 +309,7 @@ public sealed class AgentProfileStackContributor(AgentProfileService profileServ
             details.Add(new StackExportItemDetail(
                 "Profile description",
                 profile.Description.Trim(),
-                StackValueSensitivity.PrivateText,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailDescription));
         }
@@ -199,7 +319,7 @@ public sealed class AgentProfileStackContributor(AgentProfileService profileServ
             details.Add(new StackExportItemDetail(
                 "Custom instructions",
                 profile.Instructions.Trim(),
-                StackValueSensitivity.PrivateText,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailInstructions));
         }
@@ -219,7 +339,7 @@ public sealed class AgentProfileStackContributor(AgentProfileService profileServ
             details.Add(new StackExportItemDetail(
                 "Provider connections",
                 string.Join(", ", providers),
-                StackValueSensitivity.NetworkEndpoint,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailProviders));
         }
@@ -239,7 +359,7 @@ public sealed class AgentProfileStackContributor(AgentProfileService profileServ
             details.Add(new StackExportItemDetail(
                 "Model choices",
                 string.Join(", ", models),
-                StackValueSensitivity.NetworkEndpoint,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailModels));
         }
@@ -251,7 +371,7 @@ public sealed class AgentProfileStackContributor(AgentProfileService profileServ
                 string.IsNullOrWhiteSpace(profile.BehaviorLoopSettingsJson)
                     ? profile.BehaviorLoopId
                     : $"{profile.BehaviorLoopId}\n{profile.BehaviorLoopSettingsJson}",
-                StackValueSensitivity.PrivateText,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailBehaviorLoop));
         }
@@ -276,7 +396,7 @@ public sealed class AgentProfileStackContributor(AgentProfileService profileServ
         string? BehaviorLoopSourceId,
         string? BehaviorLoopSettingsJson)
     {
-        public static AgentProfileStackPayload FromProfile(AgentProfileRecord profile, StackExportOptions options, StackExportRequest request)
+        public static AgentProfileStackPayload FromProfile(AgentProfileRecord profile, StackExportRequest request)
             => new(
                 profile.ProfileId,
                 profile.DisplayName,

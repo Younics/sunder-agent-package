@@ -8,7 +8,8 @@ namespace Sunder.Package.Agent.Services;
 
 public sealed class AgentWorkspaceStackContributor(
     AgentWorkspaceService workspaceService,
-    IPackageContext packageContext) : IPackageStackContributor
+    IPackageContext packageContext,
+    IPackageExtensionCatalog? extensionCatalog = null) : IPackageStackContributor, IPackageStackImportAppliedHandler
 {
     private const string PackageId = "sunder.package.agent";
     private const string SchemaId = "sunder.package.agent/workspace";
@@ -47,8 +48,8 @@ public sealed class AgentWorkspaceStackContributor(
     {
         var selectedIds = request.ItemIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var fragments = new List<StackFragmentExport>();
+        var payloads = new List<AgentWorkspaceStackPayload>();
         var warnings = new List<string>();
-        var exportedPathPrompts = false;
         foreach (var workspace in workspaceService.ListWorkspaces()
                      .Where(workspace => selectedIds.Contains(workspace.WorkspaceId)
                                          && !string.Equals(workspace.WorkspaceId, AgentWorkspaceService.UnassignedSessionsWorkspaceId, StringComparison.OrdinalIgnoreCase)))
@@ -56,33 +57,23 @@ public sealed class AgentWorkspaceStackContributor(
             cancellationToken.ThrowIfCancellationRequested();
 
             var bindings = workspaceService.ListBindings(workspace.WorkspaceId);
-            var payload = AgentWorkspaceStackPayload.FromWorkspace(workspace, bindings, request.Options, request);
-            var requiredInputs = BuildRequiredInputs(payload).ToArray();
-            exportedPathPrompts |= requiredInputs.Length > 0;
+            var payload = AgentWorkspaceStackPayload.FromWorkspace(workspace, bindings, request);
+            payloads.Add(payload);
             fragments.Add(new StackFragmentExport(
                 FragmentId: "agent-workspace." + SanitizeIdentifier(workspace.WorkspaceId),
-                OwnerPackageId: PackageId,
                 ContributorId,
                 SchemaId,
                 SchemaVersion: 1,
                 DisplayName: workspace.DisplayName,
                 JsonPayload: JsonSerializer.Serialize(payload, JsonOptions),
-                Safety: BuildSafety(payload),
                 Description: payload.Description,
                 DefaultSelected: true,
-                RequiresPackages: [CreatePackageRequirement()],
-                RequiredInputs: requiredInputs,
                 SourceItemId: workspace.WorkspaceId));
-        }
-
-        if (exportedPathPrompts)
-        {
-            warnings.Add("Workspace local paths were exported as import prompts because machine-specific values are excluded.");
         }
 
         return ValueTask.FromResult(new StackExportContribution(
             fragments,
-            fragments.Count == 0 ? [] : [CreatePackageRequirement()],
+            fragments.Count == 0 ? [] : BuildPackageRequirements(payloads),
             warnings));
     }
 
@@ -91,7 +82,6 @@ public sealed class AgentWorkspaceStackContributor(
         CancellationToken cancellationToken = default)
     {
         var actions = new List<StackImportAction>();
-        var requiredInputs = new List<StackRequiredInputDescriptor>();
         var warnings = new List<string>();
         foreach (var fragment in request.Fragments)
         {
@@ -107,15 +97,9 @@ public sealed class AgentWorkspaceStackContributor(
                 existing is null ? StackImportActionKind.Create : StackImportActionKind.Update,
                 DefaultSelected: true,
                 Description: payload.Description));
-            requiredInputs.AddRange(BuildRequiredInputs(payload));
         }
 
-        if (requiredInputs.Count > 0)
-        {
-            warnings.Add("Workspace Stack exports do not include local paths by default. Provide local paths before import or those workspace paths will be skipped.");
-        }
-
-        return ValueTask.FromResult(new StackImportPreview(actions, requiredInputs, [], warnings));
+        return ValueTask.FromResult(new StackImportPreview(actions, [], [], warnings));
     }
 
     public ValueTask<StackImportResult> ImportAsync(
@@ -183,21 +167,73 @@ public sealed class AgentWorkspaceStackContributor(
         return ValueTask.FromResult(new StackImportResult(errors.Count == 0, imported, idRemaps, warnings, errors));
     }
 
+    public ValueTask OnStackImportAppliedAsync(
+        StackImportAppliedContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (context.ImportedItems.Count > 0)
+        {
+            workspaceService.NotifyWorkspacesImported();
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
     private StackPackageRequirement CreatePackageRequirement()
         => new(PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.0.0");
+
+    private IReadOnlyList<StackPackageRequirement> BuildPackageRequirements(IReadOnlyList<AgentWorkspaceStackPayload> payloads)
+    {
+        var packageIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { PackageId };
+        if (extensionCatalog is not null)
+        {
+            var targetIds = payloads
+                .Select(payload => payload.PrimaryExecutionBinding?.ContributionId)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (targetIds.Count > 0)
+            {
+                foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ExecutionTargets))
+                {
+                    var descriptor = contribution.Contribution.Descriptor;
+                    if (targetIds.Contains(descriptor.TargetId) || targetIds.Contains(descriptor.TargetKind))
+                    {
+                        AddPackageId(packageIds, contribution.PackageId);
+                    }
+                }
+            }
+        }
+
+        return packageIds
+            .OrderBy(packageId => string.Equals(packageId, PackageId, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(packageId => packageId, StringComparer.OrdinalIgnoreCase)
+            .Select(packageId => string.Equals(packageId, PackageId, StringComparison.OrdinalIgnoreCase)
+                ? CreatePackageRequirement()
+                : new StackPackageRequirement(packageId))
+            .ToArray();
+    }
+
+    private static void AddPackageId(ISet<string> packageIds, string? packageId)
+    {
+        if (!string.IsNullOrWhiteSpace(packageId))
+        {
+            packageIds.Add(packageId.Trim());
+        }
+    }
 
     private static IReadOnlyList<StackValueSensitivity> BuildSensitivities(AgentWorkspaceRecord workspace)
     {
         var sensitivities = new List<StackValueSensitivity>();
         if (!string.IsNullOrWhiteSpace(workspace.Description))
         {
-            sensitivities.Add(StackValueSensitivity.PrivateText);
+            sensitivities.Add(StackValueSensitivity.Public);
         }
 
         if (workspace.Paths.Count > 0 || workspace.Documents.Count > 0)
         {
-            sensitivities.Add(StackValueSensitivity.LocalPath);
-            sensitivities.Add(StackValueSensitivity.MachineSpecific);
+            sensitivities.Add(StackValueSensitivity.Public);
         }
 
         return sensitivities.Count == 0 ? [StackValueSensitivity.Public] : sensitivities.Distinct().ToArray();
@@ -213,7 +249,7 @@ public sealed class AgentWorkspaceStackContributor(
             details.Add(new StackExportItemDetail(
                 "Workspace description",
                 workspace.Description.Trim(),
-                StackValueSensitivity.PrivateText,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailDescription));
         }
@@ -223,7 +259,7 @@ public sealed class AgentWorkspaceStackContributor(
             details.Add(new StackExportItemDetail(
                 "Workspace folders",
                 string.Join(Environment.NewLine, workspace.Paths.OrderBy(path => path.SortOrder).Select(path => path.HostPath)),
-                StackValueSensitivity.LocalPath,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Prompt on import",
                 DetailId: DetailPaths));
         }
@@ -233,7 +269,7 @@ public sealed class AgentWorkspaceStackContributor(
             details.Add(new StackExportItemDetail(
                 "Documentation files",
                 string.Join(Environment.NewLine, workspace.Documents.OrderBy(document => document.SortOrder).Select(document => document.FilePath)),
-                StackValueSensitivity.LocalPath,
+                StackValueSensitivity.Public,
                 ValueWhenExcluded: "Prompt on import",
                 DetailId: DetailDocuments));
         }
@@ -253,52 +289,6 @@ public sealed class AgentWorkspaceStackContributor(
         return details.Count == 0
             ? [new StackExportItemDetail("Workspace metadata", "No additional workspace content", StackValueSensitivity.Public)]
             : details;
-    }
-
-    private static StackSafetyDescriptor BuildSafety(AgentWorkspaceStackPayload payload)
-    {
-        var includesMachineValues = (payload.Paths?.Any(path => !string.IsNullOrWhiteSpace(path.HostPath)) == true)
-                                    || (payload.Documents?.Any(document => !string.IsNullOrWhiteSpace(document.FilePath)) == true);
-        return new StackSafetyDescriptor(
-            ContainsSecrets: false,
-            ContainsSecretReferences: false,
-            ContainsLocalPaths: includesMachineValues,
-            ContainsPrivateText: !string.IsNullOrWhiteSpace(payload.Description),
-            ContainsExecutableCommands: false,
-            ContainsNetworkEndpoints: false,
-            ContainsMachineSpecificValues: includesMachineValues);
-    }
-
-    private static IReadOnlyList<StackRequiredInputDescriptor> BuildRequiredInputs(AgentWorkspaceStackPayload payload)
-    {
-        var inputs = new List<StackRequiredInputDescriptor>();
-        if (payload.Paths is not null)
-        {
-            foreach (var path in payload.Paths.Where(path => string.IsNullOrWhiteSpace(path.HostPath) && !string.IsNullOrWhiteSpace(path.InputId)))
-            {
-                inputs.Add(new StackRequiredInputDescriptor(
-                    path.InputId!,
-                    StackRequiredInputKind.LocalPath,
-                    $"{payload.DisplayName} workspace path {path.SortOrder + 1}",
-                    Required: false,
-                    Description: "Provide a local folder for this workspace path. Leave blank to skip this path."));
-            }
-        }
-
-        if (payload.Documents is not null)
-        {
-            foreach (var document in payload.Documents.Where(document => string.IsNullOrWhiteSpace(document.FilePath) && !string.IsNullOrWhiteSpace(document.InputId)))
-            {
-                inputs.Add(new StackRequiredInputDescriptor(
-                    document.InputId!,
-                    StackRequiredInputKind.LocalPath,
-                    $"{payload.DisplayName} documentation file {document.SortOrder + 1}",
-                    Required: false,
-                    Description: "Provide a local documentation file for this workspace. Leave blank to skip this document."));
-            }
-        }
-
-        return inputs;
     }
 
     private static IReadOnlyList<AgentWorkspacePathRecord>? ResolvePathRecords(
@@ -480,10 +470,8 @@ public sealed class AgentWorkspaceStackContributor(
         public static AgentWorkspaceStackPayload FromWorkspace(
             AgentWorkspaceRecord workspace,
             IReadOnlyList<AgentWorkspaceBindingRecord> bindings,
-            StackExportOptions options,
             StackExportRequest request)
         {
-            var hasExplicitDetails = request.GetItemSelection(workspace.WorkspaceId)?.Details is not null;
             var primaryBinding = bindings
                 .FirstOrDefault(binding => binding.IsEnabled
                                            && string.Equals(binding.ExtensionPointId, PackageExtensionPoints.ExecutionTargets.Id, StringComparison.OrdinalIgnoreCase)
@@ -495,13 +483,13 @@ public sealed class AgentWorkspaceStackContributor(
                 request.IsDetailSelected(workspace.WorkspaceId, DetailPaths)
                     ? workspace.Paths
                         .OrderBy(path => path.SortOrder)
-                        .Select(path => WorkspacePathStackEntry.FromPath(workspace.WorkspaceId, path, hasExplicitDetails || options.IncludeMachineSpecificValues))
+                        .Select(path => WorkspacePathStackEntry.FromPath(path))
                         .ToArray()
                     : [],
                 request.IsDetailSelected(workspace.WorkspaceId, DetailDocuments)
                     ? workspace.Documents
                         .OrderBy(document => document.SortOrder)
-                        .Select(document => WorkspaceDocumentStackEntry.FromDocument(workspace.WorkspaceId, document, hasExplicitDetails || options.IncludeMachineSpecificValues))
+                        .Select(WorkspaceDocumentStackEntry.FromDocument)
                         .ToArray()
                     : [],
                 primaryBinding is null || !request.IsDetailSelected(workspace.WorkspaceId, DetailPrimaryExecutionTarget) ? null : new WorkspaceBindingStackEntry(primaryBinding.ContributionId));
@@ -515,16 +503,13 @@ public sealed class AgentWorkspaceStackContributor(
         string? HostPath,
         string? InputId)
     {
-        public static WorkspacePathStackEntry FromPath(
-            string workspaceId,
-            AgentWorkspacePathRecord path,
-            bool includeMachineSpecificValues)
+        public static WorkspacePathStackEntry FromPath(AgentWorkspacePathRecord path)
             => new(
                 path.PathId,
                 path.IsDefault,
                 path.SortOrder,
-                includeMachineSpecificValues ? path.HostPath : null,
-                includeMachineSpecificValues ? null : BuildInputId(workspaceId, "path", path.PathId, path.SortOrder));
+                path.HostPath,
+                null);
     }
 
     private sealed record WorkspaceDocumentStackEntry(
@@ -533,15 +518,12 @@ public sealed class AgentWorkspaceStackContributor(
         string? FilePath,
         string? InputId)
     {
-        public static WorkspaceDocumentStackEntry FromDocument(
-            string workspaceId,
-            AgentWorkspaceDocumentRecord document,
-            bool includeMachineSpecificValues)
+        public static WorkspaceDocumentStackEntry FromDocument(AgentWorkspaceDocumentRecord document)
             => new(
                 document.DocumentId,
                 document.SortOrder,
-                includeMachineSpecificValues ? document.FilePath : null,
-                includeMachineSpecificValues ? null : BuildInputId(workspaceId, "document", document.DocumentId, document.SortOrder));
+                document.FilePath,
+                null);
     }
 
     private sealed record WorkspaceBindingStackEntry(string ContributionId);

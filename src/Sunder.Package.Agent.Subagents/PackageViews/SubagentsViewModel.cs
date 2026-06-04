@@ -23,6 +23,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     private CancellationTokenSource? _successStatusClearCancellation;
     private bool _suppressSelectionHandlers;
     private bool _suppressChatProviderSelection;
+    private bool _suppressSubagentChangeNotifications;
     private bool _disposed;
     private string? _loadedCapabilitySubagentId;
 
@@ -34,6 +35,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         _subagentService = subagentService;
         _extensionCatalog = extensionCatalog;
         _settingsNavigationService = settingsNavigationService;
+        _subagentService.SubagentsChanged += OnSubagentsChanged;
         if (_extensionCatalog is not null)
         {
             _capabilityChangeObserver = new AgentProfileSelectableCapabilityChangeObserver(_extensionCatalog);
@@ -239,7 +241,17 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task CreateSubagentAsync()
     {
-        var created = _subagentService.CreateSubagent("New Subagent");
+        SubagentRecord created;
+        _suppressSubagentChangeNotifications = true;
+        try
+        {
+            created = _subagentService.CreateSubagent("New Subagent");
+        }
+        finally
+        {
+            _suppressSubagentChangeNotifications = false;
+        }
+
         await ReloadAsync(created.SubagentId);
         IsEditorActive = true;
         ClearStatus();
@@ -255,19 +267,29 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
         try
         {
-            var saved = _subagentService.SaveSubagent(
-                SelectedSubagent.SubagentId,
-                DisplayName,
-                Description,
-                Instructions,
-                SelectedChatProvider?.ProviderId,
-                SelectedChatModel?.ModelId,
-                CapabilityOptions
-                    .Where(option => option.IsEnabled)
-                    .Select(option => new AgentProfileSelectableCapabilityAssignmentRecord(option.Kind, option.CapabilityId, option.SourceId))
-                    .Distinct()
-                    .ToArray(),
-                BuildChatModelSettingsJson());
+            SubagentRecord saved;
+            _suppressSubagentChangeNotifications = true;
+            try
+            {
+                saved = _subagentService.SaveSubagent(
+                    SelectedSubagent.SubagentId,
+                    DisplayName,
+                    Description,
+                    Instructions,
+                    SelectedChatProvider?.ProviderId,
+                    SelectedChatModel?.ModelId,
+                    CapabilityOptions
+                        .Where(option => option.IsEnabled)
+                        .Select(option => new AgentProfileSelectableCapabilityAssignmentRecord(option.Kind, option.CapabilityId, option.SourceId))
+                        .Distinct()
+                        .ToArray(),
+                    BuildChatModelSettingsJson());
+            }
+            finally
+            {
+                _suppressSubagentChangeNotifications = false;
+            }
+
             var shouldClearSelection = IsCompactLayout;
             await ReloadAsync(saved.SubagentId);
             if (shouldClearSelection)
@@ -298,7 +320,16 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
         var deletedName = SelectedSubagent.DisplayName;
         var shouldClearSelection = IsCompactLayout;
-        _subagentService.DeleteSubagent(SelectedSubagent.SubagentId);
+        _suppressSubagentChangeNotifications = true;
+        try
+        {
+            _subagentService.DeleteSubagent(SelectedSubagent.SubagentId);
+        }
+        finally
+        {
+            _suppressSubagentChangeNotifications = false;
+        }
+
         await ReloadAsync(null);
         if (shouldClearSelection)
         {
@@ -829,6 +860,33 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     private void OnSelectableCapabilitiesChanged()
         => QueueCapabilitiesRefresh();
 
+    private void OnSubagentsChanged()
+        => RunOnUiThread(() =>
+        {
+            if (!_suppressSubagentChangeNotifications)
+            {
+                _ = ReloadSafelyAsync(SelectedSubagent?.SubagentId);
+            }
+        });
+
+    private async Task ReloadSafelyAsync(string? selectedSubagentId)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            await ReloadAsync(selectedSubagentId);
+        }
+        catch (Exception ex)
+        {
+            ClearEditor();
+            SetStatus(ex.Message, SubagentStatusKind.Error);
+        }
+    }
+
     private void QueueCapabilitiesRefresh()
         => RunOnUiThread(() => _ = RefreshSelectedSubagentCapabilitiesSafelyAsync());
 
@@ -867,6 +925,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
         _disposed = true;
         CancelSuccessStatusClear();
+        _subagentService.SubagentsChanged -= OnSubagentsChanged;
         if (_capabilityChangeObserver is not null)
         {
             _capabilityChangeObserver.Changed -= OnSelectableCapabilitiesChanged;
