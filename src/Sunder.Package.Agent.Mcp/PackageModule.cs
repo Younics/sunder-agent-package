@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Stacks;
 
 namespace Sunder.Package.Agent.Mcp;
 
@@ -13,6 +14,7 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddSingleton<McpServerCatalogService>();
         services.AddSingleton(_ => new McpClientConnectionManager(context.LoggerFactory));
         services.AddSingleton<McpToolSource>();
+        services.AddSingleton<McpServerStackContributor>();
         services.AddTransient<AgentMcpSettingsViewModel>();
     }
 
@@ -22,5 +24,6 @@ public sealed class PackageModule : ISunderPackageModule
         registry.RegisterSettingsView<AgentMcpSettingsView>();
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, services.GetRequiredService<McpToolSource>());
         registry.RegisterExtension(PackageExtensionPoints.ProfileSelectableCapabilityProviders, services.GetRequiredService<McpToolSource>());
+        registry.RegisterExtension(SunderStackExtensionPoints.StackContributors, services.GetRequiredService<McpServerStackContributor>());
     }
 }

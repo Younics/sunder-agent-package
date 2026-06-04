@@ -14,12 +14,14 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
     private readonly SkillImportService _importService;
     private CancellationTokenSource? _successStatusClearCancellation;
     private bool _suppressSelectionHandlers;
+    private bool _suppressSkillChangeNotifications;
     private bool _disposed;
 
     public SkillSettingsViewModel(SkillStore store, SkillImportService importService)
     {
         _store = store;
         _importService = importService;
+        _store.SkillsChanged += OnSkillsChanged;
         Reload();
     }
 
@@ -141,7 +143,16 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
         {
             var displayName = SelectedSkill.DisplayName;
             var shouldClearSelection = IsCompactLayout;
-            _store.DeleteSkill(SelectedSkill.SkillId);
+            _suppressSkillChangeNotifications = true;
+            try
+            {
+                _store.DeleteSkill(SelectedSkill.SkillId);
+            }
+            finally
+            {
+                _suppressSkillChangeNotifications = false;
+            }
+
             Reload();
             if (shouldClearSelection)
             {
@@ -216,7 +227,17 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
         IsBusy = true;
         try
         {
-            var imported = await action();
+            InstalledSkillRecord imported;
+            _suppressSkillChangeNotifications = true;
+            try
+            {
+                imported = await action();
+            }
+            finally
+            {
+                _suppressSkillChangeNotifications = false;
+            }
+
             Reload(imported.SkillId);
             if (IsCompactLayout)
             {
@@ -262,6 +283,15 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
         });
     }
 
+    private void OnSkillsChanged()
+        => RunOnUiThread(() =>
+        {
+            if (!_disposed && !_suppressSkillChangeNotifications)
+            {
+                Reload(SelectedSkill?.SkillId);
+            }
+        });
+
     public void Dispose()
     {
         if (_disposed)
@@ -270,6 +300,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
         }
 
         _disposed = true;
+        _store.SkillsChanged -= OnSkillsChanged;
         CancelSuccessStatusClear();
     }
 

@@ -73,6 +73,23 @@ public sealed class SubagentService(SubagentStore store)
         SubagentsChanged?.Invoke();
     }
 
+    public SubagentRecord ImportSubagent(SubagentRecord record)
+    {
+        var existing = _store.Get(record.SubagentId);
+        var now = DateTimeOffset.UtcNow;
+        var saved = record with
+        {
+            CreatedAtUtc = existing?.CreatedAtUtc ?? now,
+            UpdatedAtUtc = now,
+        };
+        _store.Save(saved);
+        SubagentsChanged?.Invoke();
+        return saved;
+    }
+
+    public void NotifySubagentsImported()
+        => SubagentsChanged?.Invoke();
+
     private static string? Normalize(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 

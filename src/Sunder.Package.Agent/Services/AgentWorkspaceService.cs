@@ -99,6 +99,43 @@ public sealed class AgentWorkspaceService
         WorkspacesChanged?.Invoke();
     }
 
+    public void ImportWorkspace(
+        AgentWorkspaceRecord workspace,
+        IReadOnlyList<AgentWorkspacePathRecord>? paths = null,
+        IReadOnlyList<AgentWorkspaceDocumentRecord>? documents = null)
+    {
+        if (string.IsNullOrWhiteSpace(workspace.WorkspaceId))
+        {
+            throw new InvalidOperationException("Workspace id cannot be empty.");
+        }
+
+        var workspaceId = workspace.WorkspaceId.Trim();
+        var existing = _store.GetWorkspace(workspaceId);
+        var now = DateTimeOffset.UtcNow;
+        var imported = new AgentWorkspaceRecord(
+            workspaceId,
+            string.IsNullOrWhiteSpace(workspace.DisplayName) ? "Imported Workspace" : workspace.DisplayName.Trim(),
+            string.IsNullOrWhiteSpace(workspace.Description) ? null : workspace.Description.Trim(),
+            existing?.CreatedAtUtc ?? (workspace.CreatedAtUtc == default ? now : workspace.CreatedAtUtc),
+            now);
+
+        _store.SaveWorkspace(imported);
+        if (paths is not null)
+        {
+            SaveWorkspacePathsCore(workspaceId, paths);
+        }
+
+        if (documents is not null)
+        {
+            SaveWorkspaceDocumentsCore(workspaceId, documents);
+        }
+
+        WorkspacesChanged?.Invoke();
+    }
+
+    public void NotifyWorkspacesImported()
+        => WorkspacesChanged?.Invoke();
+
     public IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId)
         => _store.ListWorkspaceBindings(workspaceId);
 

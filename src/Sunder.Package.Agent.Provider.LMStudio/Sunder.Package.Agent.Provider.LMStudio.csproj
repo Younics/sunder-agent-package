@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\Sunder.Package.Agent.Shared\Stacks\PackageConfigurationStackContributor.cs" Link="Stacks\PackageConfigurationStackContributor.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
   </ItemGroup>
 

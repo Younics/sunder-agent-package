@@ -20,6 +20,8 @@ public sealed class SkillStore
 
     public string SkillsRootPath => _packageContext.Storage.Files.GetPath(SkillConstants.SkillsRelativeRoot);
 
+    public event Action? SkillsChanged;
+
     public IReadOnlyList<InstalledSkillRecord> ListSkills()
     {
         lock (_syncRoot)
@@ -64,6 +66,8 @@ public sealed class SkillStore
                 .ToArray();
             SaveIndex(skills);
         }
+
+        SkillsChanged?.Invoke();
     }
 
     public bool DeleteSkill(string skillId)
@@ -84,9 +88,14 @@ public sealed class SkillStore
             }
 
             SaveIndex(skills.Where(item => !string.Equals(item.SkillId, skill.SkillId, StringComparison.OrdinalIgnoreCase)).ToArray());
-            return true;
         }
+
+        SkillsChanged?.Invoke();
+        return true;
     }
+
+    public void NotifySkillsImported()
+        => SkillsChanged?.Invoke();
 
     public static string ResolveDisplayName(InstalledSkillRecord skill)
         => string.IsNullOrWhiteSpace(skill.Name) ? skill.SkillId : skill.Name.Trim();

@@ -17,6 +17,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
     private readonly DockerImageCatalogService _imageCatalogService;
     private readonly IPackageContext _packageContext;
     private readonly IBackgroundProcessQueue _backgroundProcessQueue;
+    private bool _suppressImageChangeNotifications;
     private bool _disposed;
 
     public DockerExecutionSettingsViewModel(
@@ -27,6 +28,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         _imageCatalogService = imageCatalogService;
         _packageContext = packageContext;
         _backgroundProcessQueue = backgroundProcessQueue;
+        _imageCatalogService.ImagesChanged += OnImagesChanged;
         _backgroundProcessQueue.ProcessChanged += BackgroundProcessQueue_OnProcessChanged;
         TimeoutSeconds = _packageContext.Storage.State.GetValue(TimeoutKey)
                          ?? _packageContext.Configuration.GetValue(TimeoutKey)
@@ -86,7 +88,17 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
     {
         try
         {
-            var image = _imageCatalogService.AddImage(NewImageReference);
+            DockerImageDefinition image;
+            _suppressImageChangeNotifications = true;
+            try
+            {
+                image = _imageCatalogService.AddImage(NewImageReference);
+            }
+            finally
+            {
+                _suppressImageChangeNotifications = false;
+            }
+
             NewImageReference = string.Empty;
             ReloadImages(image.ImageReference);
             StatusText = $"Added Docker image '{image.ImageReference}'. Pull it before assigning it to workspaces.";
@@ -106,7 +118,16 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         }
 
         var imageReference = SelectedImage.ImageReference;
-        _imageCatalogService.DeleteImage(imageReference);
+        _suppressImageChangeNotifications = true;
+        try
+        {
+            _imageCatalogService.DeleteImage(imageReference);
+        }
+        finally
+        {
+            _suppressImageChangeNotifications = false;
+        }
+
         ReloadImages();
         StatusText = $"Deleted Docker image '{imageReference}' from Sunder settings. Existing Docker images on disk were not removed.";
     }
@@ -288,6 +309,15 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         }, DispatcherPriority.Background);
     }
 
+    private void OnImagesChanged()
+        => RunOnUiThread(() =>
+        {
+            if (!_disposed && !_suppressImageChangeNotifications)
+            {
+                ReloadImages(SelectedImage?.ImageReference);
+            }
+        });
+
     private static bool IsDockerImagePull(BackgroundProcessSnapshot snapshot)
         => string.Equals(snapshot.GroupKey, ImagePullGroupKey, StringComparison.OrdinalIgnoreCase);
 
@@ -311,7 +341,19 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         }
 
         _disposed = true;
+        _imageCatalogService.ImagesChanged -= OnImagesChanged;
         _backgroundProcessQueue.ProcessChanged -= BackgroundProcessQueue_OnProcessChanged;
+    }
+
+    private static void RunOnUiThread(Action action)
+    {
+        if (Avalonia.Application.Current is null || Dispatcher.UIThread.CheckAccess())
+        {
+            action();
+            return;
+        }
+
+        Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
     }
 }
 

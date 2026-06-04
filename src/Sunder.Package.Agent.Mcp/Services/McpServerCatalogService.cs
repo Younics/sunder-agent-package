@@ -12,6 +12,9 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
 
     public event Action? ServersChanged;
 
+    public void NotifyServersImported()
+        => ServersChanged?.Invoke();
+
     public async Task<IReadOnlyList<ConfiguredMcpServerRecord>> ListServersAsync(CancellationToken cancellationToken = default)
     {
         var keys = await _packageContext.Storage.State.ListKeysAsync(ServerKeyPrefix, cancellationToken);

@@ -149,6 +149,20 @@ public sealed class AgentProfileService : IDisposable
         ProfileChanged?.Invoke(profile.ProfileId);
     }
 
+    public void ImportProfile(AgentProfileRecord profile)
+    {
+        _store.SaveProfile(profile with { IsInternal = false });
+        ProfileChanged?.Invoke(profile.ProfileId);
+    }
+
+    public void NotifyProfileImported(string profileId)
+    {
+        if (!string.IsNullOrWhiteSpace(profileId))
+        {
+            ProfileChanged?.Invoke(profileId);
+        }
+    }
+
     public IReadOnlyList<IAgentChatProvider> ListChatProviders()
         => _extensionCatalog.GetExtensions(PackageExtensionPoints.ChatProviders)
             .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)

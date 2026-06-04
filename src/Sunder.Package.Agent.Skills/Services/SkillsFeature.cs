@@ -7,7 +7,11 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.Skills.Services;
 
 public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog extensionCatalog)
-    : IAgentProfileSelectableCapabilityProvider, IAgentToolSource, IAgentSystemPromptContributor, IAgentExecutionResourceProvider
+    : IAgentProfileSelectableCapabilityProvider,
+        IAgentProfileSelectableCapabilityChangeNotifier,
+        IAgentToolSource,
+        IAgentSystemPromptContributor,
+        IAgentExecutionResourceProvider
 {
     private const int MaxSkillToolChars = 60000;
     private const int DefaultReadLimit = 2000;
@@ -63,6 +67,12 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
     public string DisplayName => "Agent Skills";
 
     public string SourceKind => "skills";
+
+    public event Action? SelectableCapabilitiesChanged
+    {
+        add => store.SkillsChanged += value;
+        remove => store.SkillsChanged -= value;
+    }
 
     public ValueTask<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListCapabilitiesAsync(
         AgentProfileSelectableCapabilityRequest request,
