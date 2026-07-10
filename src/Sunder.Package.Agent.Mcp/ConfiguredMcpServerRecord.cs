@@ -30,6 +30,22 @@ public sealed record ConfiguredMcpServerRecord
 
     public string[] EnvironmentVariableNames { get; init; } = [];
 
+    public bool OAuthEnabled { get; init; }
+
+    public string[] OAuthScopes { get; init; } = [];
+
+    public string? OAuthClientId { get; init; }
+
+    public string? SourceKind { get; init; }
+
+    public string? SourceUri { get; init; }
+
+    public string? SourceName { get; init; }
+
+    public string? LastImportedHash { get; init; }
+
+    public bool IsExternallyManaged { get; init; }
+
     public DateTimeOffset CreatedAtUtc { get; init; }
 
     public DateTimeOffset UpdatedAtUtc { get; init; }

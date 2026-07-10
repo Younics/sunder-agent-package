@@ -99,6 +99,9 @@ internal static class McpConfigurationDocument
                 ToolTimeoutMilliseconds = parsed.ToolTimeoutMilliseconds,
                 HeaderNames = [.. parsed.Headers.Keys],
                 EnvironmentVariableNames = [.. parsed.EnvironmentVariables.Keys],
+                OAuthEnabled = parsed.OAuthEnabled,
+                OAuthScopes = parsed.OAuthScopes,
+                OAuthClientId = parsed.OAuthClientId,
                 CreatedAtUtc = existingServer?.CreatedAtUtc ?? now,
                 UpdatedAtUtc = now,
             },
@@ -146,6 +149,7 @@ internal static class McpConfigurationDocument
                 toolTimeout = server.ToolTimeoutMilliseconds,
                 displayName,
                 description = server.Description,
+                oauth = BuildOAuthEditorObject(server),
             },
             _ => throw new InvalidOperationException($"Unsupported MCP transport '{server.TransportType}'."),
         };
@@ -156,11 +160,6 @@ internal static class McpConfigurationDocument
     private static ParsedEditorDocument ParseDocument(JsonElement root)
     {
         var type = ReadRequiredString(root, "type").Trim().ToLowerInvariant();
-        if (root.TryGetProperty("oauth", out _))
-        {
-            throw new InvalidOperationException("The 'oauth' block is not supported yet. Use direct headers for now.");
-        }
-
         return type switch
         {
             "local" => ParseLocal(root),
@@ -209,7 +208,10 @@ internal static class McpConfigurationDocument
             discoveryTimeoutMilliseconds,
             toolTimeoutMilliseconds,
             ReadOptionalString(root, "displayName"),
-            ReadOptionalString(root, "description"));
+            ReadOptionalString(root, "description"),
+            OAuthEnabled: false,
+            OAuthScopes: [],
+            OAuthClientId: null);
     }
 
     private static ParsedEditorDocument ParseRemote(JsonElement root)
@@ -223,6 +225,7 @@ internal static class McpConfigurationDocument
         var legacyTimeoutMilliseconds = ReadOptionalPositiveInt(root, "timeout");
         var discoveryTimeoutMilliseconds = ReadOptionalPositiveInt(root, "discoveryTimeout") ?? legacyTimeoutMilliseconds;
         var toolTimeoutMilliseconds = ReadOptionalPositiveInt(root, "toolTimeout") ?? legacyTimeoutMilliseconds;
+        var oauth = ReadOAuth(root);
 
         return new ParsedEditorDocument(
             ConfiguredMcpTransportType.HttpSse,
@@ -236,7 +239,60 @@ internal static class McpConfigurationDocument
             discoveryTimeoutMilliseconds,
             toolTimeoutMilliseconds,
             ReadOptionalString(root, "displayName"),
-            ReadOptionalString(root, "description"));
+            ReadOptionalString(root, "description"),
+            oauth.Enabled,
+            oauth.Scopes,
+            oauth.ClientId);
+    }
+
+    private static object? BuildOAuthEditorObject(ConfiguredMcpServerRecord server)
+    {
+        if (!server.OAuthEnabled)
+        {
+            return null;
+        }
+
+        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["enabled"] = true,
+        };
+        if (server.OAuthScopes.Length > 0)
+        {
+            payload["scopes"] = server.OAuthScopes;
+        }
+
+        if (!string.IsNullOrWhiteSpace(server.OAuthClientId))
+        {
+            payload["clientId"] = server.OAuthClientId.Trim();
+        }
+
+        return payload;
+    }
+
+    private static ParsedOAuthDocument ReadOAuth(JsonElement root)
+    {
+        if (!root.TryGetProperty("oauth", out var value))
+        {
+            return new ParsedOAuthDocument(false, [], null);
+        }
+
+        if (value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            return new ParsedOAuthDocument(value.GetBoolean(), [], null);
+        }
+
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("'oauth' must be a boolean or object.");
+        }
+
+        var enabled = ReadOptionalBool(value, "enabled") ?? true;
+        var scopes = ReadOptionalStringArray(value, "scopes");
+        var clientId = ReadOptionalString(value, "clientId") ?? ReadOptionalString(value, "client_id");
+        return new ParsedOAuthDocument(
+            enabled,
+            scopes,
+            string.IsNullOrWhiteSpace(clientId) ? null : clientId.Trim());
     }
 
     private static JsonElement ReadRequiredProperty(JsonElement root, string propertyName)
@@ -336,7 +392,43 @@ internal static class McpConfigurationDocument
         return result;
     }
 
+    private static string[] ReadOptionalStringArray(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var value))
+        {
+            return [];
+        }
+
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            var single = value.GetString();
+            return string.IsNullOrWhiteSpace(single)
+                ? []
+                : single.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        if (value.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException($"'{propertyName}' must be a string or array of strings.");
+        }
+
+        var result = new List<string>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
+            {
+                throw new InvalidOperationException($"'{propertyName}' must contain only non-empty strings.");
+            }
+
+            result.Add(item.GetString()!.Trim());
+        }
+
+        return [.. result.Distinct(StringComparer.OrdinalIgnoreCase)];
+    }
+
     private static string Serialize(object value) => JsonSerializer.Serialize(value, JsonSerializerOptions);
+
+    private sealed record ParsedOAuthDocument(bool Enabled, string[] Scopes, string? ClientId);
 
     private sealed record ParsedEditorDocument(
         ConfiguredMcpTransportType TransportType,
@@ -350,5 +442,8 @@ internal static class McpConfigurationDocument
         int? DiscoveryTimeoutMilliseconds,
         int? ToolTimeoutMilliseconds,
         string? DisplayName,
-        string? Description);
+        string? Description,
+        bool OAuthEnabled,
+        string[] OAuthScopes,
+        string? OAuthClientId);
 }

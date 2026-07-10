@@ -4,12 +4,13 @@ using ModelContextProtocol.Client;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
-public sealed class McpClientConnectionManager(ILoggerFactory loggerFactory) : IAsyncDisposable
+public sealed class McpClientConnectionManager(ILoggerFactory loggerFactory, McpOAuthService? oauthService = null) : IAsyncDisposable
 {
     private const int MaxStandardErrorLines = 10;
 
     private readonly ILogger<McpClientConnectionManager> _logger = loggerFactory.CreateLogger<McpClientConnectionManager>();
     private readonly ILoggerFactory _loggerFactory = loggerFactory;
+    private readonly McpOAuthService? _oauthService = oauthService;
     private readonly ConcurrentDictionary<string, CachedMcpSession> _sessions = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, Task> _backgroundRefreshes = new(StringComparer.OrdinalIgnoreCase);
@@ -291,16 +292,21 @@ public sealed class McpClientConnectionManager(ILoggerFactory loggerFactory) : I
             throw new InvalidOperationException($"MCP server '{server.DisplayName}' is missing a command.");
         }
 
+        var launch = await McpCommandResolver.ResolveAsync(
+            server.CommandParts[0],
+            server.WorkingDirectory,
+            environmentVariables,
+            _logger,
+            cancellationToken).ConfigureAwait(false);
+
         var transport = new StdioClientTransport(
             new StdioClientTransportOptions
             {
                 Name = server.DisplayName,
-                Command = server.CommandParts[0],
+                Command = launch.Command,
                 Arguments = server.CommandParts.Skip(1).ToArray(),
-                WorkingDirectory = string.IsNullOrWhiteSpace(server.WorkingDirectory) ? null : server.WorkingDirectory,
-                EnvironmentVariables = environmentVariables.Count == 0
-                    ? null
-                    : environmentVariables.ToDictionary(item => item.Key, item => (string?)item.Value, StringComparer.OrdinalIgnoreCase),
+                WorkingDirectory = launch.WorkingDirectory,
+                EnvironmentVariables = launch.EnvironmentVariables?.ToDictionary(item => item.Key, item => (string?)item.Value, StringComparer.OrdinalIgnoreCase),
                 StandardErrorLines = line => RecordStandardErrorLine(server.ServerId, line),
             },
             _loggerFactory);
@@ -327,6 +333,7 @@ public sealed class McpClientConnectionManager(ILoggerFactory loggerFactory) : I
             TransportMode = HttpTransportMode.AutoDetect,
             ConnectionTimeout = ToSdkTimeout(discoveryTimeoutMilliseconds),
             AdditionalHeaders = headers.Count == 0 ? null : new Dictionary<string, string>(headers, StringComparer.OrdinalIgnoreCase),
+            OAuth = _oauthService?.CreateClientOptions(server, allowInteractive: false),
         };
 
         var httpClient = new HttpClient

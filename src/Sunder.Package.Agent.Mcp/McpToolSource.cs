@@ -9,10 +9,12 @@ namespace Sunder.Package.Agent.Mcp;
 
 public sealed class McpToolSource(
     McpServerCatalogService serverCatalogService,
-    McpClientConnectionManager connectionManager) : IAgentNativeToolSource, IAgentProfileSelectableCapabilityProvider, IAgentProfileSelectableCapabilityChangeNotifier
+    McpClientConnectionManager connectionManager,
+    McpSunderConfigurationSyncService? sunderConfigurationSyncService = null) : IAgentNativeToolSource, IAgentProfileSelectableCapabilityProvider, IAgentProfileSelectableCapabilityChangeNotifier
 {
     private readonly McpServerCatalogService _serverCatalogService = serverCatalogService;
     private readonly McpClientConnectionManager _connectionManager = connectionManager;
+    private readonly McpSunderConfigurationSyncService? _sunderConfigurationSyncService = sunderConfigurationSyncService;
 
     public string SourceId => "mcp";
 
@@ -59,6 +61,7 @@ public sealed class McpToolSource(
 
     public async ValueTask<IReadOnlyList<AgentMcpServerDescriptor>> ListConfiguredServersAsync(CancellationToken cancellationToken = default)
     {
+        await SyncSunderConfigurationsAsync(cancellationToken).ConfigureAwait(false);
         var servers = await _serverCatalogService.ListServersAsync(cancellationToken);
         return servers.Select(server => new AgentMcpServerDescriptor(
                 server.ServerId,
@@ -83,6 +86,8 @@ public sealed class McpToolSource(
         {
             return [];
         }
+
+        await SyncSunderConfigurationsAsync(context.Workspace, cancellationToken).ConfigureAwait(false);
 
         var enabledServerIds = GetSelectableCapabilityAssignments(context.Profile)
             .Where(assignment => string.Equals(assignment.Kind, AgentProfileSelectableCapabilityKinds.ToolGroup, StringComparison.OrdinalIgnoreCase)
@@ -137,6 +142,8 @@ public sealed class McpToolSource(
         {
             return new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "MCP tools require an active session.");
         }
+
+        await SyncSunderConfigurationsAsync(context.Workspace, cancellationToken).ConfigureAwait(false);
 
         var server = await FindServerForToolAsync(toolId, cancellationToken);
         if (server is null)
@@ -283,6 +290,22 @@ public sealed class McpToolSource(
     {
         var refreshTimeoutMilliseconds = McpTimeoutResolver.ResolveBackgroundRefreshTimeoutMilliseconds(effectiveTimeoutMilliseconds);
         _connectionManager.RefreshToolsInBackground(sessionId, server, headers, environmentVariables, refreshTimeoutMilliseconds);
+    }
+
+    private async Task SyncSunderConfigurationsAsync(CancellationToken cancellationToken)
+    {
+        if (_sunderConfigurationSyncService is not null)
+        {
+            await _sunderConfigurationSyncService.SyncAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task SyncSunderConfigurationsAsync(AgentWorkspaceRecord? workspace, CancellationToken cancellationToken)
+    {
+        if (_sunderConfigurationSyncService is not null)
+        {
+            await _sunderConfigurationSyncService.SyncWorkspaceAsync(workspace, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private static TimeoutScope CreateTimeoutScope(int? timeoutMilliseconds, CancellationToken cancellationToken)

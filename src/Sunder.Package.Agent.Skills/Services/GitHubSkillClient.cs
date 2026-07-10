@@ -5,6 +5,10 @@ namespace Sunder.Package.Agent.Skills.Services;
 
 public interface IGitHubSkillClient
 {
+    Task<string?> TryGetDefaultBranchAsync(string owner, string repo, CancellationToken cancellationToken = default);
+
+    Task<GitHubSkillFolder?> TryGetFolderAsync(GitHubSkillFolderRequest request, CancellationToken cancellationToken = default);
+
     Task<GitHubSkillFolder?> TryGetSkillFolderAsync(GitHubSkillFolderRequest request, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<GitHubSkillFile>> ListFilesAsync(GitHubSkillFolder folder, CancellationToken cancellationToken = default);
@@ -20,6 +24,49 @@ public sealed record GitHubSkillFile(string RelativePath, string RepositoryPath,
 
 public sealed class OctokitGitHubSkillClient(GitHubClient client) : IGitHubSkillClient
 {
+    public async Task<string?> TryGetDefaultBranchAsync(string owner, string repo, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            var repository = await client.Repository.Get(owner, repo);
+            return string.IsNullOrWhiteSpace(repository.DefaultBranch) ? null : repository.DefaultBranch;
+        }
+        catch (ApiException ex) when (IsMissingOrInvalidRef(ex))
+        {
+            return null;
+        }
+        catch (ApiException ex) when (IsRateLimit(ex))
+        {
+            throw new InvalidOperationException("GitHub rate limit reached; try again later.", ex);
+        }
+    }
+
+    public async Task<GitHubSkillFolder?> TryGetFolderAsync(GitHubSkillFolderRequest request, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var folderPath = NormalizeGitHubPath(request.FolderPath);
+        try
+        {
+            var commit = await client.Repository.Commit.Get(request.Owner, request.Repo, request.Ref);
+            var treeSha = await ResolveFolderTreeShaAsync(request.Owner, request.Repo, folderPath, request.Ref, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(folderPath) && string.IsNullOrWhiteSpace(treeSha))
+            {
+                return null;
+            }
+
+            return new GitHubSkillFolder(request.Owner, request.Repo, request.Ref, folderPath, commit.Sha, treeSha);
+        }
+        catch (ApiException ex) when (IsMissingOrInvalidRef(ex))
+        {
+            return null;
+        }
+        catch (ApiException ex) when (IsRateLimit(ex))
+        {
+            throw new InvalidOperationException("GitHub rate limit reached; try again later.", ex);
+        }
+    }
+
     public async Task<GitHubSkillFolder?> TryGetSkillFolderAsync(GitHubSkillFolderRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

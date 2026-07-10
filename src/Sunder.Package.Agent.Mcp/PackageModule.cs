@@ -12,7 +12,14 @@ public sealed class PackageModule : ISunderPackageModule
     public void ConfigureServices(IServiceCollection services, IPackageContext context)
     {
         services.AddSingleton<McpServerCatalogService>();
-        services.AddSingleton(_ => new McpClientConnectionManager(context.LoggerFactory));
+        services.AddSingleton<McpOAuthService>();
+        services.AddSingleton(serviceProvider => new McpClientConnectionManager(
+            context.LoggerFactory,
+            serviceProvider.GetRequiredService<McpOAuthService>()));
+        services.AddSingleton<McpEcosystemConfigurationImporter>();
+        services.AddSingleton(serviceProvider => new McpSunderConfigurationSyncService(
+            serviceProvider.GetRequiredService<McpEcosystemConfigurationImporter>(),
+            serviceProvider.GetService<IPackageExtensionCatalog>()));
         services.AddSingleton<McpToolSource>();
         services.AddSingleton<McpServerStackContributor>();
         services.AddTransient<AgentMcpSettingsViewModel>();

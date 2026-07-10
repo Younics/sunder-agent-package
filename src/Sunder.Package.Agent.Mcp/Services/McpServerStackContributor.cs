@@ -229,6 +229,11 @@ internal sealed class McpServerStackContributor(
             sensitivities.Add(StackValueSensitivity.Public);
         }
 
+        if (server.OAuthEnabled)
+        {
+            sensitivities.Add(StackValueSensitivity.Public);
+        }
+
         return sensitivities.Count == 0 ? [StackValueSensitivity.Public] : sensitivities.Distinct().ToArray();
     }
 
@@ -260,6 +265,16 @@ internal sealed class McpServerStackContributor(
                 StackValueSensitivity.Public,
                 ValueWhenExcluded: "Not exported",
                 DetailId: DetailIds.ServerUrl));
+        }
+
+        if (server.TransportType == ConfiguredMcpTransportType.HttpSse && server.OAuthEnabled)
+        {
+            details.Add(new StackExportItemDetail(
+                "OAuth",
+                server.OAuthScopes.Length == 0 ? "Enabled" : "Enabled: " + string.Join(' ', server.OAuthScopes),
+                StackValueSensitivity.Public,
+                ValueWhenExcluded: "Not exported",
+                DetailId: DetailIds.OAuth));
         }
 
         if (server.TransportType == ConfiguredMcpTransportType.Stdio && server.CommandParts.Length > 0)
@@ -378,7 +393,12 @@ internal sealed class McpServerStackContributor(
             server.DiscoveryTimeoutMilliseconds,
             server.ToolTimeoutMilliseconds,
             headers,
-            environmentVariables);
+            environmentVariables)
+        {
+            OAuthEnabled = server.OAuthEnabled && request.IsDetailSelected(server.ServerId, DetailIds.OAuth),
+            OAuthScopes = server.OAuthScopes,
+            OAuthClientId = server.OAuthClientId,
+        };
     }
 
     private static IReadOnlyList<StackRequiredInputDescriptor> BuildRequiredInputs(McpServerStackPayload payload)
@@ -512,6 +532,12 @@ internal sealed class McpServerStackContributor(
         IReadOnlyList<McpStackSecretReference> Headers,
         IReadOnlyList<McpStackSecretReference> EnvironmentVariables)
     {
+        public bool OAuthEnabled { get; init; }
+
+        public IReadOnlyList<string> OAuthScopes { get; init; } = [];
+
+        public string? OAuthClientId { get; init; }
+
         public ConfiguredMcpServerRecord ToServer(DateTimeOffset createdAtUtc, DateTimeOffset updatedAtUtc, bool isEnabled)
             => new()
             {
@@ -531,6 +557,9 @@ internal sealed class McpServerStackContributor(
                 ToolTimeoutMilliseconds = ToolTimeoutMilliseconds,
                 HeaderNames = Headers.Select(header => header.Name).ToArray(),
                 EnvironmentVariableNames = EnvironmentVariables.Select(variable => variable.Name).ToArray(),
+                OAuthEnabled = OAuthEnabled,
+                OAuthScopes = OAuthScopes.ToArray(),
+                OAuthClientId = OAuthClientId,
                 CreatedAtUtc = createdAtUtc,
                 UpdatedAtUtc = updatedAtUtc,
             };
@@ -611,6 +640,7 @@ internal sealed class McpServerStackContributor(
         public const string ServerUrl = "server-url";
         public const string LaunchCommand = "launch-command";
         public const string WorkingFolder = "working-folder";
+        public const string OAuth = "oauth";
 
         public static string Header(string name) => "header." + SanitizeIdentifier(name);
 

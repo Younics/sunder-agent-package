@@ -150,6 +150,68 @@ public sealed class McpConfigurationDocumentTests
     }
 
     [Fact]
+    public void Parse_RemoteOAuthRoundTrips()
+    {
+        var parsed = McpConfigurationDocument.Parse(
+            "server-1",
+            "higgsfield",
+            """
+            {
+              "type": "remote",
+              "enabled": true,
+              "url": "https://mcp.higgsfield.ai/mcp",
+              "oauth": {
+                "enabled": true,
+                "scopes": ["openid", "email", "offline_access"],
+                "clientId": "sunder-test"
+              }
+            }
+            """);
+
+        Assert.True(parsed.Server.OAuthEnabled);
+        Assert.Equal(["openid", "email", "offline_access"], parsed.Server.OAuthScopes);
+        Assert.Equal("sunder-test", parsed.Server.OAuthClientId);
+
+        var editorText = McpConfigurationDocument.BuildEditorText(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
+        using var document = JsonDocument.Parse(editorText);
+        var oauth = document.RootElement.GetProperty("oauth");
+        Assert.True(oauth.GetProperty("enabled").GetBoolean());
+        Assert.Equal("openid", oauth.GetProperty("scopes")[0].GetString());
+        Assert.Equal("sunder-test", oauth.GetProperty("clientId").GetString());
+    }
+
+    [Fact]
+    public void CommandResolver_ResolvesBareCommandFromPath()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-mcp-command-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(root);
+            var commandPath = Path.Combine(root, "npx");
+            File.WriteAllText(commandPath, string.Empty);
+
+            Assert.Equal(commandPath, McpCommandResolver.ResolveBareCommand("npx", root));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void OAuthCallbackListener_SkipsBusyPortsSequentially()
+    {
+        using var first = McpOAuthService.StartCallbackListener(McpOAuthService.PreferredCallbackPort);
+        using var second = McpOAuthService.StartCallbackListener(first.RedirectUri.Port);
+
+        Assert.True(second.RedirectUri.Port > first.RedirectUri.Port);
+        Assert.Equal("/mcp/oauth/callback", second.RedirectUri.AbsolutePath);
+    }
+
+    [Fact]
     public void TimeoutResolver_DefaultsToNoTimeout()
     {
         var server = new ConfiguredMcpServerRecord();

@@ -89,6 +89,11 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         // Clear legacy special-case secrets once the normalized config has been saved.
         _packageContext.Secrets.DeleteSecret(BuildApiKeySecretKey(server.ServerId));
         _packageContext.Secrets.DeleteSecret(BuildAuthorizationSecretKey(server.ServerId));
+        if (existing?.OAuthEnabled == true && !server.OAuthEnabled)
+        {
+            DeleteOAuthSecrets(server.ServerId);
+        }
+
         ServersChanged?.Invoke();
     }
 
@@ -109,6 +114,7 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
 
         _packageContext.Secrets.DeleteSecret(BuildApiKeySecretKey(serverId));
         _packageContext.Secrets.DeleteSecret(BuildAuthorizationSecretKey(serverId));
+        DeleteOAuthSecrets(serverId);
         ServersChanged?.Invoke();
     }
 
@@ -212,6 +218,14 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
             ToolTimeoutMilliseconds = ReadInt(root, "ToolTimeoutMilliseconds") ?? ReadInt(root, "TimeoutMilliseconds"),
             HeaderNames = headerNames,
             EnvironmentVariableNames = ReadStringArray(root, "EnvironmentVariableNames"),
+            OAuthEnabled = ReadBool(root, "OAuthEnabled") ?? false,
+            OAuthScopes = ReadStringArray(root, "OAuthScopes"),
+            OAuthClientId = ReadString(root, "OAuthClientId"),
+            SourceKind = ReadString(root, "SourceKind"),
+            SourceUri = ReadString(root, "SourceUri"),
+            SourceName = ReadString(root, "SourceName"),
+            LastImportedHash = ReadString(root, "LastImportedHash"),
+            IsExternallyManaged = ReadBool(root, "IsExternallyManaged") ?? false,
             CreatedAtUtc = ReadDateTimeOffset(root, "CreatedAtUtc") ?? DateTimeOffset.UtcNow,
             UpdatedAtUtc = ReadDateTimeOffset(root, "UpdatedAtUtc") ?? DateTimeOffset.UtcNow,
         };
@@ -255,6 +269,13 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         }
 
         _packageContext.Secrets.SetSecret(key, value.Trim());
+    }
+
+    private void DeleteOAuthSecrets(string serverId)
+    {
+        _packageContext.Secrets.DeleteSecret(McpOAuthSecretKeys.TokenCache(serverId));
+        _packageContext.Secrets.DeleteSecret(McpOAuthSecretKeys.ClientRegistration(serverId));
+        _packageContext.Secrets.DeleteSecret(McpOAuthSecretKeys.ClientSecret(serverId));
     }
 
     private static string? ReadString(JsonElement root, string propertyName)

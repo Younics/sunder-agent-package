@@ -2,6 +2,7 @@ using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Platform.Storage;
 using AvaloniaEdit.TextMate;
 using Sunder.Package.Agent.Mcp.Services;
 using TextMateSharp.Grammars;
@@ -29,10 +30,12 @@ public partial class AgentMcpSettingsView : UserControl
 
     public AgentMcpSettingsView(
         McpServerCatalogService serverCatalogService,
-        McpClientConnectionManager connectionManager)
+        McpClientConnectionManager connectionManager,
+        McpOAuthService oauthService,
+        McpEcosystemConfigurationImporter configurationImporter)
         : this()
     {
-        DataContext = new AgentMcpSettingsViewModel(serverCatalogService, connectionManager);
+        DataContext = new AgentMcpSettingsViewModel(serverCatalogService, connectionManager, oauthService, configurationImporter);
     }
 
     private void ConfigureEditor()
@@ -101,6 +104,40 @@ public partial class AgentMcpSettingsView : UserControl
 
         var viewModel = _viewModel ?? DataContext as AgentMcpSettingsViewModel;
         viewModel?.ActivateServer(server);
+    }
+
+    private async void OnImportConfigFileClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var viewModel = _viewModel ?? DataContext as AgentMcpSettingsViewModel;
+        if (viewModel is null)
+        {
+            return;
+        }
+
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel?.StorageProvider is null)
+        {
+            return;
+        }
+
+        var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Select MCP Config File",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("MCP config files")
+                {
+                    Patterns = ["*.json", "*.jsonc"],
+                },
+            ],
+        });
+
+        var file = files.FirstOrDefault();
+        if (file is not null)
+        {
+            await viewModel.ImportConfigurationFileAsync(file.Path.LocalPath);
+        }
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)

@@ -9,6 +9,12 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
 {
     private const long MaxFileBytes = 10 * 1024 * 1024;
     private const long MaxTotalBytes = 50 * 1024 * 1024;
+    private static readonly EnumerationOptions SkillFolderEnumerationOptions = new()
+    {
+        RecurseSubdirectories = true,
+        IgnoreInaccessible = true,
+        AttributesToSkip = FileAttributes.ReparsePoint,
+    };
 
     public Task<InstalledSkillRecord> ImportLocalFolderAsync(string folderPath, CancellationToken cancellationToken = default)
     {
@@ -25,6 +31,87 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
             sourceRef: null,
             resolvedCommitSha: null,
             cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<InstalledSkillRecord>> ImportLocalSkillsAsync(string folderPath, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+        {
+            throw new InvalidOperationException("Select an existing skill folder.");
+        }
+
+        if (File.Exists(Path.Combine(folderPath, "SKILL.md")))
+        {
+            return [await ImportLocalFolderAsync(folderPath, cancellationToken).ConfigureAwait(false)];
+        }
+
+        var skillFolders = FindSkillFolders(folderPath).ToArray();
+        if (skillFolders.Length == 0)
+        {
+            throw new InvalidOperationException("Selected folder does not contain any skill folders with SKILL.md files.");
+        }
+
+        var imported = new List<InstalledSkillRecord>();
+        foreach (var skillFolder in skillFolders)
+        {
+            imported.Add(await ImportLocalFolderAsync(skillFolder, cancellationToken).ConfigureAwait(false));
+        }
+
+        return imported;
+    }
+
+    public async Task<IReadOnlyList<InstalledSkillRecord>> ImportCommonSkillFoldersAsync(CancellationToken cancellationToken = default)
+    {
+        var imported = new List<InstalledSkillRecord>();
+        foreach (var folder in EnumerateCommonSkillRoots().Where(Directory.Exists).Distinct(StringComparer.Ordinal))
+        {
+            if (!File.Exists(Path.Combine(folder, "SKILL.md")) && !FindSkillFolders(folder).Any())
+            {
+                continue;
+            }
+
+            imported.AddRange(await ImportLocalSkillsAsync(folder, cancellationToken).ConfigureAwait(false));
+        }
+
+        return imported;
+    }
+
+    public async Task<IReadOnlyList<InstalledSkillRecord>> ImportGitHubAsync(string githubUrl, CancellationToken cancellationToken = default)
+    {
+        var parsedUrl = ParseGitHubUrl(githubUrl) ?? throw new InvalidOperationException("Enter a GitHub repository, tree, blob, or raw URL that points to a skill folder, SKILL.md, or a folder containing skills.");
+        try
+        {
+            return [await ImportGitHubFolderAsync(githubUrl, cancellationToken).ConfigureAwait(false)];
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("root SKILL.md", StringComparison.OrdinalIgnoreCase)
+                                                 || ex.Message.Contains("must include a branch", StringComparison.OrdinalIgnoreCase))
+        {
+        }
+
+        var parent = await ResolveGitHubFolderReferenceAsync(parsedUrl, cancellationToken).ConfigureAwait(false);
+        var files = await gitHubClient.ListFilesAsync(parent, cancellationToken).ConfigureAwait(false);
+        var skillRoots = files
+            .Select(file => NormalizeGitHubPath(file.RelativePath))
+            .Where(path => path.EndsWith("SKILL.md", StringComparison.Ordinal))
+            .Select(TrimSkillMarkdown)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToArray();
+        if (skillRoots.Length == 0)
+        {
+            throw new InvalidOperationException("The selected GitHub folder does not contain any skill folders with SKILL.md files.");
+        }
+
+        var imported = new List<InstalledSkillRecord>();
+        foreach (var skillRoot in skillRoots)
+        {
+            var skillFolderPath = CombineGitHubPath(parent.FolderPath, skillRoot);
+            var skillUrl = $"https://github.com/{parent.Owner}/{parent.Repo}/tree/{parent.Ref}/{skillFolderPath}";
+            imported.Add(await ImportGitHubFolderAsync(skillUrl, cancellationToken).ConfigureAwait(false));
+        }
+
+        return imported;
     }
 
     public async Task<InstalledSkillRecord> ImportGitHubFolderAsync(string githubUrl, CancellationToken cancellationToken = default)
@@ -288,12 +375,48 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
     private static string NormalizeGitHubPath(string path)
         => path.Trim().Trim('/');
 
+    private static string CombineGitHubPath(string left, string right)
+    {
+        left = NormalizeGitHubPath(left);
+        right = NormalizeGitHubPath(right);
+        return string.IsNullOrWhiteSpace(left) ? right : string.IsNullOrWhiteSpace(right) ? left : left + "/" + right;
+    }
+
+    private static IEnumerable<string> FindSkillFolders(string rootPath)
+        => Directory.EnumerateFiles(rootPath, "SKILL.md", SkillFolderEnumerationOptions)
+            .Select(Path.GetDirectoryName)
+            .Where(path => !string.IsNullOrWhiteSpace(path)
+                           && IsSafeRelativePath(Path.GetRelativePath(rootPath, path!))
+                           && !IsIgnoredPath(Path.GetRelativePath(rootPath, path!)))
+            .Select(path => path!)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(path => path, StringComparer.Ordinal);
+
+    private static IEnumerable<string> EnumerateCommonSkillRoots()
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrWhiteSpace(home))
+        {
+            yield break;
+        }
+
+        yield return Path.Combine(home, ".agents", "skills");
+        yield return Path.Combine(home, ".config", "opencode", "skills");
+        yield return Path.Combine(home, ".claude", "skills");
+        yield return Path.Combine(home, "Library", "Application Support", "Claude", "skills");
+    }
+
     private async Task<GitHubSkillFolder> ResolveGitHubReferenceAsync(ParsedGitHubSkillUrl parsedUrl, CancellationToken cancellationToken)
     {
         var segments = parsedUrl.RefAndPathSegments;
         if (segments.Length == 0)
         {
-            throw new InvalidOperationException("GitHub URL must include a branch, tag, or commit reference.");
+            var defaultBranch = await gitHubClient.TryGetDefaultBranchAsync(parsedUrl.Owner, parsedUrl.Repo, cancellationToken).ConfigureAwait(false)
+                                ?? throw new InvalidOperationException("Could not determine the GitHub repository default branch.");
+            var rootFolder = await gitHubClient.TryGetSkillFolderAsync(
+                new GitHubSkillFolderRequest(parsedUrl.Owner, parsedUrl.Repo, defaultBranch, string.Empty),
+                cancellationToken).ConfigureAwait(false);
+            return rootFolder ?? throw new InvalidOperationException("The selected GitHub folder does not contain a root SKILL.md file.");
         }
 
         foreach (var refSegmentCount in EnumerateRefSegmentCounts(segments))
@@ -310,6 +433,35 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
         }
 
         throw new InvalidOperationException("The selected GitHub folder does not contain a root SKILL.md file.");
+    }
+
+    private async Task<GitHubSkillFolder> ResolveGitHubFolderReferenceAsync(ParsedGitHubSkillUrl parsedUrl, CancellationToken cancellationToken)
+    {
+        var segments = parsedUrl.RefAndPathSegments;
+        if (segments.Length == 0)
+        {
+            var defaultBranch = await gitHubClient.TryGetDefaultBranchAsync(parsedUrl.Owner, parsedUrl.Repo, cancellationToken).ConfigureAwait(false)
+                                ?? throw new InvalidOperationException("Could not determine the GitHub repository default branch.");
+            return await gitHubClient.TryGetFolderAsync(
+                       new GitHubSkillFolderRequest(parsedUrl.Owner, parsedUrl.Repo, defaultBranch, string.Empty),
+                       cancellationToken).ConfigureAwait(false)
+                   ?? throw new InvalidOperationException("The selected GitHub repository could not be read.");
+        }
+
+        foreach (var refSegmentCount in EnumerateRefSegmentCounts(segments))
+        {
+            var refName = string.Join('/', segments.Take(refSegmentCount));
+            var folderPath = TrimSkillMarkdown(string.Join('/', segments.Skip(refSegmentCount)));
+            var folder = await gitHubClient.TryGetFolderAsync(
+                new GitHubSkillFolderRequest(parsedUrl.Owner, parsedUrl.Repo, refName, folderPath),
+                cancellationToken).ConfigureAwait(false);
+            if (folder is not null)
+            {
+                return folder;
+            }
+        }
+
+        throw new InvalidOperationException("The selected GitHub folder could not be read.");
     }
 
     private static IEnumerable<int> EnumerateRefSegmentCounts(string[] segments)
@@ -347,7 +499,17 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
             return new ParsedGitHubSkillUrl(segments[0], segments[1], segments.Skip(2).ToArray());
         }
 
-        if (!string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase) || segments.Length < 4)
+        if (!string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase) || segments.Length < 2)
+        {
+            return null;
+        }
+
+        if (segments.Length == 2)
+        {
+            return new ParsedGitHubSkillUrl(segments[0], segments[1], []);
+        }
+
+        if (segments.Length < 4)
         {
             return null;
         }

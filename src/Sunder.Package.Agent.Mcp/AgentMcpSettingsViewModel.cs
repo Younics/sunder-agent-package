@@ -12,6 +12,9 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
 
     private readonly McpServerCatalogService _serverCatalogService;
     private readonly McpClientConnectionManager _connectionManager;
+    private readonly McpOAuthService? _oauthService;
+    private readonly McpEcosystemConfigurationImporter? _configurationImporter;
+    private readonly McpSunderConfigurationSyncService? _sunderConfigurationSyncService;
     private CancellationTokenSource? _successStatusClearCancellation;
     private CancellationTokenSource? _discoveryCancellation;
     private bool _suppressSelectionHandlers;
@@ -21,10 +24,16 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
 
     public AgentMcpSettingsViewModel(
         McpServerCatalogService serverCatalogService,
-        McpClientConnectionManager connectionManager)
+        McpClientConnectionManager connectionManager,
+        McpOAuthService? oauthService = null,
+        McpEcosystemConfigurationImporter? configurationImporter = null,
+        McpSunderConfigurationSyncService? sunderConfigurationSyncService = null)
     {
         _serverCatalogService = serverCatalogService;
         _connectionManager = connectionManager;
+        _oauthService = oauthService;
+        _configurationImporter = configurationImporter;
+        _sunderConfigurationSyncService = sunderConfigurationSyncService;
         _serverCatalogService.ServersChanged += OnServersChanged;
         _connectionManager.StatusChanged += OnConnectionStatusChanged;
         _ = InitializeAsync();
@@ -33,6 +42,8 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
     public ObservableCollection<ConfiguredMcpServerRecord> Servers { get; } = [];
 
     public bool HasSelectedServer => SelectedServer is not null;
+
+    public bool HasSelectedOAuthServer => SelectedServer?.OAuthEnabled == true;
 
     public bool IsListActive => !IsEditorActive;
 
@@ -115,6 +126,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
 
         try
         {
+            await SyncSunderConfigurationsAsync();
             await ReloadServersAsync(selectServerId: null);
         }
         catch (Exception ex)
@@ -124,13 +136,34 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         }
     }
 
+    private async Task SyncSunderConfigurationsAsync()
+    {
+        if (_sunderConfigurationSyncService is null)
+        {
+            return;
+        }
+
+        _suppressServerChangeNotifications = true;
+        try
+        {
+            await _sunderConfigurationSyncService.SyncAsync();
+        }
+        finally
+        {
+            _suppressServerChangeNotifications = false;
+        }
+    }
+
     partial void OnSelectedServerChanged(ConfiguredMcpServerRecord? value)
     {
         DeleteCommand.NotifyCanExecuteChanged();
         DiscoverToolsCommand.NotifyCanExecuteChanged();
         DisconnectMcpServerCommand.NotifyCanExecuteChanged();
         ReconnectMcpServerCommand.NotifyCanExecuteChanged();
+        AuthorizeMcpServerCommand.NotifyCanExecuteChanged();
+        DisconnectMcpServerOAuthCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasSelectedServer));
+        OnPropertyChanged(nameof(HasSelectedOAuthServer));
 
         if (_suppressSelectionHandlers)
         {
@@ -360,6 +393,75 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         CancelDiscoveryCommand.NotifyCanExecuteChanged();
         DisconnectMcpServerCommand.NotifyCanExecuteChanged();
         ReconnectMcpServerCommand.NotifyCanExecuteChanged();
+        AuthorizeMcpServerCommand.NotifyCanExecuteChanged();
+        DisconnectMcpServerOAuthCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIsBusyChanged(bool value)
+    {
+        AuthorizeMcpServerCommand.NotifyCanExecuteChanged();
+        DisconnectMcpServerOAuthCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand]
+    private async Task ImportCommonConfigurationsAsync()
+    {
+        if (_configurationImporter is null)
+        {
+            SetStatus("MCP configuration importer is unavailable.", McpStatusKind.Error);
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            var result = await _configurationImporter.ImportCommonConfigurationsAsync();
+            await ReloadServersAsync(SelectedServer?.ServerId);
+            var warningSuffix = result.Warnings.Count == 0 ? string.Empty : $" {result.Warnings.Count} warning(s).";
+            SetStatus(
+                result.ImportedCount == 0 && result.SkippedCount == 0
+                    ? "No common MCP configuration files were found."
+                    : $"Imported {result.ImportedCount} MCP server(s); skipped {result.SkippedCount}.{warningSuffix}",
+                result.Warnings.Count == 0 ? McpStatusKind.Success : McpStatusKind.Warning,
+                autoClear: result.Warnings.Count == 0);
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message, McpStatusKind.Error);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    public async Task ImportConfigurationFileAsync(string filePath)
+    {
+        if (_configurationImporter is null)
+        {
+            SetStatus("MCP configuration importer is unavailable.", McpStatusKind.Error);
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            var result = await _configurationImporter.ImportFileAsync(filePath);
+            await ReloadServersAsync(SelectedServer?.ServerId);
+            var warningSuffix = result.Warnings.Count == 0 ? string.Empty : $" {result.Warnings.Count} warning(s).";
+            SetStatus(
+                $"Imported {result.ImportedCount} MCP server(s) from config file; skipped {result.SkippedCount}.{warningSuffix}",
+                result.Warnings.Count == 0 ? McpStatusKind.Success : McpStatusKind.Warning,
+                autoClear: result.Warnings.Count == 0);
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message, McpStatusKind.Error);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanDiscoverTools))]
@@ -472,9 +574,68 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         }
     }
 
+    [RelayCommand(CanExecute = nameof(CanManageOAuth))]
+    private async Task AuthorizeMcpServerAsync()
+    {
+        if (SelectedServer is not { } server || _oauthService is null)
+        {
+            return;
+        }
+
+        CancelDiscovery();
+        IsBusy = true;
+        SetStatus($"Starting browser authorization for MCP server '{server.DisplayName}'...", McpStatusKind.None);
+        try
+        {
+            await _oauthService.AuthorizeAsync(server, McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server));
+            await _connectionManager.DisconnectServerAsync(server.ServerId);
+            RefreshConnectionStatus(server);
+            SetStatus($"Authorized MCP server '{server.DisplayName}'.", McpStatusKind.Success, autoClear: true);
+        }
+        catch (Exception ex)
+        {
+            RefreshConnectionStatus(server);
+            SetStatus(ex.Message, McpStatusKind.Error);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanManageOAuth))]
+    private async Task DisconnectMcpServerOAuthAsync()
+    {
+        if (SelectedServer is not { } server || _oauthService is null)
+        {
+            return;
+        }
+
+        CancelDiscovery();
+        IsBusy = true;
+        try
+        {
+            _oauthService.ClearAuthorization(server.ServerId);
+            await _connectionManager.DisconnectServerAsync(server.ServerId);
+            RefreshConnectionStatus(server);
+            SetStatus($"Removed OAuth authorization for MCP server '{server.DisplayName}'.", McpStatusKind.Success, autoClear: true);
+        }
+        catch (Exception ex)
+        {
+            RefreshConnectionStatus(server);
+            SetStatus(ex.Message, McpStatusKind.Error);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     private bool CanDiscoverTools() => SelectedServer is not null && !IsDiscovering;
 
     private bool CanManageConnection() => SelectedServer is not null && !IsDiscovering;
+
+    private bool CanManageOAuth() => SelectedServer?.OAuthEnabled == true && _oauthService is not null && !IsDiscovering && !IsBusy;
 
     private async Task LoadSelectedServerAsync(ConfiguredMcpServerRecord server, int version)
     {
@@ -618,22 +779,26 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         var status = _connectionManager.GetStatus(server);
         ConnectionStatusKind = status.Kind;
         ConnectionStatusText = status.Message;
-        ConnectionStatusDetail = BuildConnectionStatusDetail(status);
-        ConnectionDiagnosticsText = BuildConnectionDiagnosticsText(status);
+        ConnectionStatusDetail = BuildConnectionStatusDetail(status, server);
+        ConnectionDiagnosticsText = BuildConnectionDiagnosticsText(status, server);
     }
 
-    private static string BuildConnectionStatusDetail(McpConnectionStatus status)
+    private string BuildConnectionStatusDetail(McpConnectionStatus status, ConfiguredMcpServerRecord server)
     {
         var lines = new List<string>
         {
             $"Active connection: {(status.ActiveConnectionCount > 0 ? "Yes" : "No")}",
             $"Discovered tools: {status.ToolCount ?? 0}",
         };
+        if (server.OAuthEnabled)
+        {
+            lines.Add($"OAuth authorization: {(_oauthService?.HasCachedAuthorization(server.ServerId) == true ? "Cached" : "Required")}");
+        }
 
         return string.Join(Environment.NewLine, lines);
     }
 
-    private static string BuildConnectionDiagnosticsText(McpConnectionStatus status)
+    private string BuildConnectionDiagnosticsText(McpConnectionStatus status, ConfiguredMcpServerRecord server)
     {
         var lines = new List<string>
         {
@@ -642,6 +807,11 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
             $"Active connection: {(status.ActiveConnectionCount > 0 ? "Yes" : "No")}",
             $"Discovered tools: {status.ToolCount ?? 0}",
         };
+
+        if (server.OAuthEnabled)
+        {
+            lines.Add($"OAuth authorization: {(_oauthService?.HasCachedAuthorization(server.ServerId) == true ? "Cached" : "Required")}");
+        }
 
         if (status.LastChangedAtUtc is not null)
         {

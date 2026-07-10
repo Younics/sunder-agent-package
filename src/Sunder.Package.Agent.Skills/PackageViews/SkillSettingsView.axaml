@@ -227,6 +227,9 @@
                       <Button Content="Import Local Folder"
                               Margin="0,0,10,10"
                               Click="OnAddLocalFolderClick" />
+                      <Button Content="Import Common Folders"
+                              Margin="0,0,10,10"
+                              Command="{Binding ImportCommonSkillFoldersCommand}" />
                     </WrapPanel>
                   </StackPanel>
                 </Border>

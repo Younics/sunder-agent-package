@@ -135,6 +135,82 @@ public sealed class SkillPackageTests
     }
 
     [Fact]
+    public async Task ImportLocalSkillsAsync_ImportsNestedSkillFolders()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var source = Path.Combine(root, "source");
+            Directory.CreateDirectory(Path.Combine(source, "skills", "one"));
+            Directory.CreateDirectory(Path.Combine(source, "skills", "two"));
+            await File.WriteAllTextAsync(Path.Combine(source, "skills", "one", "SKILL.md"), """
+                ---
+                name: one
+                description: First skill.
+                ---
+                # One
+                """);
+            await File.WriteAllTextAsync(Path.Combine(source, "skills", "two", "SKILL.md"), """
+                ---
+                name: two
+                description: Second skill.
+                ---
+                # Two
+                """);
+            var context = new TestPackageContext(root);
+            var store = new SkillStore(context);
+            var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
+
+            var imported = await importer.ImportLocalSkillsAsync(source);
+
+            Assert.Equal(2, imported.Count);
+            Assert.NotNull(store.GetSkill("one"));
+            Assert.NotNull(store.GetSkill("two"));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task ImportGitHubAsync_ImportsRepositoryWithMultipleSkills()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var context = new TestPackageContext(root);
+            var store = new SkillStore(context);
+            var gitHub = new TestGitHubSkillClient();
+            gitHub.AddFolder("meshy-dev", "meshy-3d-agent", "main", string.Empty, "abc123", new Dictionary<string, string>
+            {
+                ["skills/meshy-3d-generation/SKILL.md"] = "---\nname: meshy-3d-generation\ndescription: Generate 3D assets.\n---\n# Meshy 3D Generation",
+                ["skills/meshy-openclaw/SKILL.md"] = "---\nname: meshy-openclaw\ndescription: OpenClaw workflows.\n---\n# Meshy OpenClaw",
+            });
+            gitHub.AddFolder("meshy-dev", "meshy-3d-agent", "main", "skills/meshy-3d-generation", "abc123", new Dictionary<string, string>
+            {
+                ["SKILL.md"] = "---\nname: meshy-3d-generation\ndescription: Generate 3D assets.\n---\n# Meshy 3D Generation",
+            });
+            gitHub.AddFolder("meshy-dev", "meshy-3d-agent", "main", "skills/meshy-openclaw", "abc123", new Dictionary<string, string>
+            {
+                ["SKILL.md"] = "---\nname: meshy-openclaw\ndescription: OpenClaw workflows.\n---\n# Meshy OpenClaw",
+            });
+            var importer = new SkillImportService(store, gitHub, context);
+
+            var imported = await importer.ImportGitHubAsync("https://github.com/meshy-dev/meshy-3d-agent");
+
+            Assert.Equal(2, imported.Count);
+            Assert.NotNull(store.GetSkill("meshy-3d-generation"));
+            Assert.NotNull(store.GetSkill("meshy-openclaw"));
+            Assert.All(imported, skill => Assert.Equal("github", skill.SourceKind));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public void SkillSettingsViewModel_CompactLayout_UsesRowActivationAndReturnsToList()
     {
         var root = CreateTempRoot();
@@ -602,6 +678,7 @@ public sealed class SkillPackageTests
     private sealed class TestGitHubSkillClient : IGitHubSkillClient
     {
         private readonly Dictionary<string, TestGitHubFolder> _folders = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _defaultBranches = new(StringComparer.OrdinalIgnoreCase);
 
         public void AddFolder(
             string owner,
@@ -610,12 +687,24 @@ public sealed class SkillPackageTests
             string folderPath,
             string commitSha,
             IReadOnlyDictionary<string, string> files)
-            => _folders[Key(owner, repo, reference, folderPath)] = new TestGitHubFolder(
+        {
+            _defaultBranches.TryAdd(RepoKey(owner, repo), reference);
+            _folders[Key(owner, repo, reference, folderPath)] = new TestGitHubFolder(
                 new GitHubSkillFolder(owner, repo, reference, folderPath, commitSha, "tree-" + commitSha),
                 files.ToDictionary(pair => pair.Key, pair => Encoding.UTF8.GetBytes(pair.Value), StringComparer.Ordinal));
+        }
+
+        public Task<string?> TryGetDefaultBranchAsync(string owner, string repo, CancellationToken cancellationToken = default)
+            => Task.FromResult(_defaultBranches.GetValueOrDefault(RepoKey(owner, repo)));
+
+        public Task<GitHubSkillFolder?> TryGetFolderAsync(GitHubSkillFolderRequest request, CancellationToken cancellationToken = default)
+            => Task.FromResult(_folders.GetValueOrDefault(Key(request.Owner, request.Repo, request.Ref, request.FolderPath))?.Folder);
 
         public Task<GitHubSkillFolder?> TryGetSkillFolderAsync(GitHubSkillFolderRequest request, CancellationToken cancellationToken = default)
-            => Task.FromResult(_folders.GetValueOrDefault(Key(request.Owner, request.Repo, request.Ref, request.FolderPath))?.Folder);
+        {
+            var folder = _folders.GetValueOrDefault(Key(request.Owner, request.Repo, request.Ref, request.FolderPath));
+            return Task.FromResult(folder?.Files.ContainsKey("SKILL.md") == true ? folder.Folder : null);
+        }
 
         public Task<IReadOnlyList<GitHubSkillFile>> ListFilesAsync(GitHubSkillFolder folder, CancellationToken cancellationToken = default)
         {
@@ -630,6 +719,9 @@ public sealed class SkillPackageTests
 
         private static string Key(string owner, string repo, string reference, string folderPath)
             => string.Join('|', owner, repo, reference, folderPath.Trim().Trim('/'));
+
+        private static string RepoKey(string owner, string repo)
+            => string.Join('|', owner, repo);
 
         private static string CombineGitHubPath(string folderPath, string relativePath)
             => string.IsNullOrWhiteSpace(folderPath) ? relativePath : folderPath.Trim().Trim('/') + "/" + relativePath.Trim().Trim('/');

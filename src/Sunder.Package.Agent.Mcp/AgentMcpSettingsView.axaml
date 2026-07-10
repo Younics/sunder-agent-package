@@ -240,8 +240,14 @@
                               Margin="0,0,10,10"
                               Command="{Binding LoadRemoteTemplateCommand}" />
                       <Button Content="Format"
+                               Margin="0,0,10,10"
+                               Command="{Binding FormatCommand}" />
+                      <Button Content="Import Common Configs"
                               Margin="0,0,10,10"
-                              Command="{Binding FormatCommand}" />
+                              Command="{Binding ImportCommonConfigurationsCommand}" />
+                      <Button Content="Import Config File"
+                              Margin="0,0,10,10"
+                              Click="OnImportConfigFileClick" />
                     </WrapPanel>
                   </StackPanel>
                 </Border>
@@ -294,8 +300,16 @@
                               Margin="0,6,10,0"
                               Command="{Binding DisconnectMcpServerCommand}" />
                       <Button Content="Reconnect"
+                               Margin="0,6,10,0"
+                               Command="{Binding ReconnectMcpServerCommand}" />
+                      <Button Content="Authorize OAuth"
                               Margin="0,6,10,0"
-                              Command="{Binding ReconnectMcpServerCommand}" />
+                              Command="{Binding AuthorizeMcpServerCommand}"
+                              IsVisible="{Binding HasSelectedOAuthServer}" />
+                      <Button Content="Disconnect OAuth"
+                              Margin="0,6,10,0"
+                              Command="{Binding DisconnectMcpServerOAuthCommand}"
+                              IsVisible="{Binding HasSelectedOAuthServer}" />
                     </WrapPanel>
                   </StackPanel>
                 </Border>

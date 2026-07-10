@@ -125,11 +125,15 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
             return;
         }
 
-        await RunImportAsync(() => _importService.ImportGitHubFolderAsync(GithubUrl.Trim()), "Imported skill from GitHub.");
+        await RunImportAsync(() => _importService.ImportGitHubAsync(GithubUrl.Trim()), "Imported skill from GitHub.");
     }
 
     public Task ImportLocalFolderAsync(string folderPath)
-        => RunImportAsync(() => _importService.ImportLocalFolderAsync(folderPath), "Imported local skill folder.");
+        => RunImportAsync(() => _importService.ImportLocalSkillsAsync(folderPath), "Imported local skill folder.");
+
+    [RelayCommand]
+    private Task ImportCommonSkillFoldersAsync()
+        => RunImportAsync(() => _importService.ImportCommonSkillFoldersAsync(), "Imported common skill folder(s).");
 
     [RelayCommand(CanExecute = nameof(CanDeleteSelectedSkill))]
     private void DeleteSelectedSkill()
@@ -222,12 +226,12 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
         }
     }
 
-    private async Task RunImportAsync(Func<Task<InstalledSkillRecord>> action, string successMessage)
+    private async Task RunImportAsync(Func<Task<IReadOnlyList<InstalledSkillRecord>>> action, string successMessage)
     {
         IsBusy = true;
         try
         {
-            InstalledSkillRecord imported;
+            IReadOnlyList<InstalledSkillRecord> imported;
             _suppressSkillChangeNotifications = true;
             try
             {
@@ -238,7 +242,14 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
                 _suppressSkillChangeNotifications = false;
             }
 
-            Reload(imported.SkillId);
+            if (imported.Count == 0)
+            {
+                Reload();
+                SetStatus("No skill folders were found to import.", SkillStatusKind.Warning);
+                return;
+            }
+
+            Reload(imported[0].SkillId);
             if (IsCompactLayout)
             {
                 SelectedSkill = null;
@@ -248,7 +259,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
             else
             {
                 IsDetailActive = true;
-                SetStatus(successMessage, SkillStatusKind.Success, autoClear: true);
+                SetStatus(imported.Count == 1 ? successMessage : $"{successMessage} Imported {imported.Count} skills.", SkillStatusKind.Success, autoClear: true);
             }
         }
         catch (Exception ex)

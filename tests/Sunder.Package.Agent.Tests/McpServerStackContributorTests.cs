@@ -1,5 +1,8 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Sunder.Package.Agent.Contracts;
+using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Mcp;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Sdk.Abstractions;
@@ -151,6 +154,282 @@ public sealed class McpServerStackContributorTests
         }
     }
 
+    [Fact]
+    public async Task ImportFileAsync_ImportsOpenCodeAndClaudeServers()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var context = new TestPackageContext(root);
+            var catalog = new McpServerCatalogService(context);
+            var importer = new McpEcosystemConfigurationImporter(catalog);
+            var configPath = Path.Combine(root, "opencode.jsonc");
+            await File.WriteAllTextAsync(configPath, """
+                {
+                  "mcp": {
+                    "higgsfield": {
+                      "type": "remote",
+                      "url": "https://mcp.higgsfield.ai/mcp",
+                      "oauth": true,
+                    }
+                  },
+                  "mcpServers": {
+                    "meshy": {
+                      "command": "npx",
+                      "args": ["-y", "@meshy/mcp"],
+                      "env": { "MESHY_API_KEY": "secret" }
+                    }
+                  }
+                }
+                """);
+
+            var result = await importer.ImportFileAsync(configPath);
+
+            Assert.True(result.ImportedCount == 2, string.Join(Environment.NewLine, result.Warnings));
+            var servers = await catalog.ListServersAsync();
+            var higgsfield = Assert.Single(servers, server => server.Name == "higgsfield");
+            Assert.True(higgsfield.OAuthEnabled);
+            var meshy = Assert.Single(servers, server => server.Name == "meshy");
+            Assert.Equal(["npx", "-y", "@meshy/mcp"], meshy.CommandParts);
+            Assert.Equal("secret", catalog.GetEnvironmentVariables(meshy)["MESHY_API_KEY"]);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task ImportSunderConfigurationFileAsync_TracksExternalSourceMetadata()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var context = new TestPackageContext(root);
+            var catalog = new McpServerCatalogService(context);
+            var importer = new McpEcosystemConfigurationImporter(catalog);
+            var configPath = Path.Combine(root, ".config", "sunder", "mcp.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+            await File.WriteAllTextAsync(configPath, """
+                {
+                  "mcp": {
+                    "context7": {
+                      "type": "remote",
+                      "url": "https://mcp.context7.com/mcp",
+                      "oauth": {
+                        "enabled": true,
+                        "scopes": ["read"]
+                      }
+                    }
+                  }
+                }
+                """);
+
+            var result = await importer.ImportSunderConfigurationFileAsync(configPath);
+
+            Assert.Equal(1, result.ImportedCount);
+            var server = Assert.Single(await catalog.ListServersAsync());
+            Assert.True(server.IsExternallyManaged);
+            Assert.Equal(McpEcosystemConfigurationImporter.SunderConfigurationSourceKind, server.SourceKind);
+            Assert.Equal(Path.GetFullPath(configPath), server.SourceUri);
+            Assert.Equal("context7", server.SourceName);
+            Assert.False(string.IsNullOrWhiteSpace(server.LastImportedHash));
+            Assert.True(server.OAuthEnabled);
+            Assert.Equal(["read"], server.OAuthScopes);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task ImportSunderConfigurationFileAsync_SkipsManualServerConflict()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var context = new TestPackageContext(root);
+            var catalog = new McpServerCatalogService(context);
+            var importer = new McpEcosystemConfigurationImporter(catalog);
+            var manual = McpConfigurationDocument.Parse(
+                "server-1",
+                "context7",
+                """
+                {
+                  "type": "remote",
+                  "url": "https://old.example.com/mcp"
+                }
+                """);
+            await catalog.SaveServerAsync(manual.Server, manual.Headers, manual.EnvironmentVariables);
+            var configPath = Path.Combine(root, ".config", "sunder", "mcp.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+            await File.WriteAllTextAsync(configPath, """
+                {
+                  "mcp": {
+                    "context7": {
+                      "type": "remote",
+                      "url": "https://new.example.com/mcp"
+                    }
+                  }
+                }
+                """);
+
+            var result = await importer.ImportSunderConfigurationFileAsync(configPath);
+
+            Assert.Equal(0, result.ImportedCount);
+            Assert.Equal(1, result.SkippedCount);
+            Assert.Contains(result.Warnings, warning => warning.Contains("outside this Sunder config source", StringComparison.OrdinalIgnoreCase));
+            var server = await catalog.GetServerAsync("server-1");
+            Assert.NotNull(server);
+            Assert.False(server.IsExternallyManaged);
+            Assert.Equal("https://old.example.com/mcp", server.EndpointUrl);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task ImportSunderConfigurationFileAsync_UpdatesSameManagedSource()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var context = new TestPackageContext(root);
+            var catalog = new McpServerCatalogService(context);
+            var importer = new McpEcosystemConfigurationImporter(catalog);
+            var configPath = Path.Combine(root, ".config", "sunder", "mcp.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+            await File.WriteAllTextAsync(configPath, """
+                {
+                  "mcp": {
+                    "context7": {
+                      "type": "remote",
+                      "url": "https://old.example.com/mcp"
+                    }
+                  }
+                }
+                """);
+            await importer.ImportSunderConfigurationFileAsync(configPath);
+            var original = Assert.Single(await catalog.ListServersAsync());
+
+            await File.WriteAllTextAsync(configPath, """
+                {
+                  "mcp": {
+                    "context7": {
+                      "type": "remote",
+                      "url": "https://new.example.com/mcp"
+                    }
+                  }
+                }
+                """);
+
+            var result = await importer.ImportSunderConfigurationFileAsync(configPath);
+
+            Assert.Equal(1, result.ImportedCount);
+            var updated = Assert.Single(await catalog.ListServersAsync());
+            Assert.Equal(original.ServerId, updated.ServerId);
+            Assert.Equal("https://new.example.com/mcp", updated.EndpointUrl);
+            Assert.True(updated.IsExternallyManaged);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task ImportSunderConfigurationFileAsync_RemovesManagedServersMissingFromSameSource()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var context = new TestPackageContext(root);
+            var catalog = new McpServerCatalogService(context);
+            var importer = new McpEcosystemConfigurationImporter(catalog);
+            var configPath = Path.Combine(root, ".config", "sunder", "mcp.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+            await File.WriteAllTextAsync(configPath, """
+                {
+                  "mcp": {
+                    "one": { "type": "remote", "url": "https://one.example.com/mcp" },
+                    "two": { "type": "remote", "url": "https://two.example.com/mcp" }
+                  }
+                }
+                """);
+            await importer.ImportSunderConfigurationFileAsync(configPath);
+
+            await File.WriteAllTextAsync(configPath, """
+                {
+                  "mcp": {
+                    "one": { "type": "remote", "url": "https://one.example.com/mcp" }
+                  }
+                }
+                """);
+
+            await importer.ImportSunderConfigurationFileAsync(configPath);
+
+            var server = Assert.Single(await catalog.ListServersAsync());
+            Assert.Equal("one", server.Name);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SunderConfigurationSyncService_SyncsGlobalAndWorkspaceConfigurations()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var home = Path.Combine(root, "home");
+            var project = Path.Combine(root, "project");
+            Directory.CreateDirectory(project);
+            var globalConfigPath = Path.Combine(home, ".config", "sunder", "mcp.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(globalConfigPath)!);
+            await File.WriteAllTextAsync(globalConfigPath, """
+                {
+                  "mcp": {
+                    "global_server": { "type": "remote", "url": "https://global.example.com/mcp" }
+                  }
+                }
+                """);
+            var workspaceConfigPath = Path.Combine(project, ".sunder", "mcp.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(workspaceConfigPath)!);
+            await File.WriteAllTextAsync(workspaceConfigPath, """
+                {
+                  "mcp": {
+                    "workspace_server": { "type": "local", "command": ["npx", "-y", "workspace-mcp"] }
+                  }
+                }
+                """);
+
+            var context = new TestPackageContext(Path.Combine(root, "package"));
+            var catalog = new McpServerCatalogService(context);
+            var importer = new McpEcosystemConfigurationImporter(catalog);
+            var workspace = CreateWorkspace(project);
+            var syncService = new McpSunderConfigurationSyncService(
+                importer,
+                new TestExtensionCatalog(new TestRuntimeCatalog([workspace])),
+                userProfilePath: home);
+
+            var result = await syncService.SyncAsync();
+
+            Assert.Equal(2, result.ImportedCount);
+            var servers = await catalog.ListServersAsync();
+            Assert.Contains(servers, server => server.Name == "global_server" && server.EndpointUrl == "https://global.example.com/mcp");
+            Assert.Contains(servers, server => server.Name == "workspace_server" && server.CommandParts.SequenceEqual(["npx", "-y", "workspace-mcp"]));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
     private static string ReadFirstSecretName(string jsonPayload, string propertyName)
     {
         using var document = JsonDocument.Parse(jsonPayload);
@@ -182,6 +461,78 @@ public sealed class McpServerStackContributorTests
         if (Directory.Exists(path))
         {
             Directory.Delete(path, recursive: true);
+        }
+    }
+
+    private static AgentWorkspaceRecord CreateWorkspace(string hostPath)
+    {
+        var now = DateTimeOffset.UtcNow;
+        const string workspaceId = "workspace-1";
+        return new AgentWorkspaceRecord(
+            workspaceId,
+            "Workspace",
+            Description: null,
+            now,
+            now,
+            [new AgentWorkspacePathRecord("path-1", workspaceId, hostPath, IsDefault: true, SortOrder: 0, now, now)]);
+    }
+
+    private sealed class TestExtensionCatalog(params IAgentRuntimeCatalog[] runtimeCatalogs) : IPackageExtensionCatalog
+    {
+        public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
+            => typeof(TContract) == typeof(IAgentRuntimeCatalog)
+                ? runtimeCatalogs.Cast<TContract>().ToArray()
+                : [];
+    }
+
+    private sealed class TestRuntimeCatalog(IReadOnlyList<AgentWorkspaceRecord> workspaces) : IAgentRuntimeCatalog
+    {
+        public event Action<Guid>? SessionChanged;
+
+        public event Action<Guid, AgentTurnRecord>? TurnChanged;
+
+        public event Action<string>? ProfileChanged;
+
+        public IReadOnlyList<AgentSessionRecord> ListSessions() => [];
+
+        public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => [];
+
+        public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId) => [];
+
+        public AgentSessionRecord? GetSession(Guid sessionId) => null;
+
+        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => workspaces;
+
+        public AgentWorkspaceRecord? GetWorkspace(string workspaceId)
+            => workspaces.FirstOrDefault(workspace => string.Equals(workspace.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase));
+
+        public AgentProfileRecord? GetSessionProfile(Guid sessionId) => null;
+
+        public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
+
+        public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;
+
+        public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => null;
+
+        public IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit) => [];
+
+        public IReadOnlyList<AgentTurnRecord> ListTurnsBefore(Guid sessionId, DateTimeOffset beforeCreatedAtUtc, Guid beforeTurnId, int limit) => [];
+
+        public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(Guid sessionId, DateTimeOffset afterCreatedAtUtc, Guid afterTurnId, int limit) => [];
+
+        public IReadOnlyList<AgentProfileRecord> ListProfiles() => [];
+
+        public AgentProfileRecord? GetProfile(string profileId) => null;
+
+        public AgentProfileModelBindingRecord? GetSessionModelBinding(Guid sessionId, string capabilityKind) => null;
+
+        public AgentProfileModelBindingRecord? GetModelBinding(string profileId, string capabilityKind) => null;
+
+        public void RaiseUnusedEvents()
+        {
+            SessionChanged?.Invoke(Guid.Empty);
+            TurnChanged?.Invoke(Guid.Empty, null!);
+            ProfileChanged?.Invoke(string.Empty);
         }
     }
 
