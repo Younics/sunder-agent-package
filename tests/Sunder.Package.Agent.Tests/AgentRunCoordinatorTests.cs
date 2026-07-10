@@ -32,6 +32,9 @@ using Sunder.Sdk.Abstractions;
 using Xunit;
 using AnthropicEffort = Anthropic.Models.Messages.Effort;
 using AnthropicMessageCreateParams = Anthropic.Models.Messages.MessageCreateParams;
+using AnthropicBeta = Anthropic.Models.Beta.AnthropicBeta;
+using AnthropicBetaMessageCreateParams = Anthropic.Models.Beta.Messages.MessageCreateParams;
+using AnthropicBetaSpeed = Anthropic.Models.Beta.Messages.Speed;
 using GeminiGenerateContentConfig = Google.GenAI.Types.GenerateContentConfig;
 using GeminiThinkingLevel = Google.GenAI.Types.ThinkingLevel;
 
@@ -5385,6 +5388,36 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task AgentProfileService_OrdersChatModelsNewestFirstAndUsesNewestDefault()
+    {
+        var provider = new ScriptedProvider(
+            (_, _) => Complete("done"),
+            models:
+            [
+                new AgentModelDescriptor("old", "Old", 128_000, 4_096)
+                {
+                    ReleaseDate = new DateOnly(2024, 1, 1),
+                },
+                new AgentModelDescriptor("new-a", "New A", 128_000, 4_096)
+                {
+                    ReleaseDate = new DateOnly(2026, 1, 1),
+                },
+                new AgentModelDescriptor("new-b", "New B", 128_000, 4_096)
+                {
+                    ReleaseDate = new DateOnly(2026, 1, 1),
+                },
+                new AgentModelDescriptor("undated", "Undated", 128_000, 4_096),
+            ]);
+        using var runtime = AgentTestRuntime.Create(provider);
+
+        var models = await runtime.ProfileService.ListChatModelsAsync(provider.Descriptor.ProviderId);
+        var profile = await runtime.ProfileService.CreateProfileAsync("Newest Model Profile");
+
+        Assert.Equal(["new-a", "new-b", "old", "undated"], models.Select(model => model.ModelId));
+        Assert.Equal("new-a", profile.ChatModelId);
+    }
+
+    [Fact]
     public async Task AgentRunCoordinator_AppliesProfileReasoningVariantToChatOptions()
     {
         var provider = new ScriptedProvider(
@@ -5437,6 +5470,62 @@ public sealed class AgentRunCoordinatorTests
         );
 
         Assert.Single(provider.Requests);
+    }
+
+    [Fact]
+    public async Task AgentRunCoordinator_AppliesProfileSpeedAndModeToChatOptions()
+    {
+        var provider = new ScriptedProvider(
+            (_, _) => Complete("done"),
+            models:
+            [
+                new AgentModelDescriptor(
+                    "test-model",
+                    "Test Model",
+                    128_000,
+                    4_096,
+                    Variants:
+                    [
+                        new AgentModelVariantDescriptor(
+                            "high",
+                            "High",
+                            ReasoningEffort: AgentReasoningEffort.High),
+                    ],
+                    SpeedOptions:
+                    [
+                        new AgentModelSpeedOptionDescriptor("fast", "Fast"),
+                    ],
+                    ModeOptions:
+                    [
+                        new AgentModelModeOptionDescriptor("pro", "Pro"),
+                    ]),
+            ]);
+        using var runtime = AgentTestRuntime.Create(provider);
+        var profile = await runtime.ProfileService.CreateProfileAsync("Test Profile");
+        runtime.ProfileService.SaveProfile(
+            profile.ProfileId,
+            profile.DisplayName,
+            profile.Description,
+            profile.Instructions,
+            profile.ChatProviderId,
+            profile.ChatModelId,
+            profile.EmbeddingProviderId,
+            profile.EmbeddingModelId,
+            chatModelSettingsJson: "{\"reasoningVariantId\":\"high\",\"speedOptionId\":\"fast\",\"modeOptionId\":\"pro\"}");
+        var workspace = runtime.WorkspaceService.CreateWorkspace("Test Workspace");
+        var session = runtime.SessionService.CreateSession("Test Session", workspaceId: workspace.WorkspaceId);
+
+        await runtime.RunCoordinator.QueueUserMessageAsync(
+            session.SessionId,
+            profile.ProfileId,
+            "Use pro mode.",
+            workspace.WorkspaceId);
+
+        var options = Assert.Single(provider.RequestOptions);
+        Assert.Equal("fast", options.AdditionalProperties![AgentChatModelOptionKeys.SpeedOptionId]);
+        Assert.Equal("pro", options.AdditionalProperties![AgentChatModelOptionKeys.ModeOptionId]);
+        Assert.Equal(ReasoningEffort.High, options.Reasoning?.Effort);
+        Assert.Equal(ReasoningOutput.Summary, options.Reasoning?.Output);
     }
 
     [Fact]
@@ -5554,9 +5643,15 @@ public sealed class AgentRunCoordinatorTests
             var provider = new AnthropicAgentProvider(new TestPackageContext(rootPath));
 
             var models = await provider.GetAvailableModelsAsync();
+            Assert.All(models, model => Assert.NotNull(model.ReleaseDate));
 
             var opus = models.Single(model => model.ModelId == "anthropic/claude-opus-4-7");
             Assert.Contains(opus.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.ExtraHigh);
+            Assert.Contains(opus.SpeedOptions ?? [], option => option.SpeedOptionId == "fast");
+
+            var opus48 = models.Single(model => model.ModelId == "anthropic/claude-opus-4-8");
+            Assert.Contains(opus48.SpeedOptions ?? [], option => option.SpeedOptionId == "fast");
+            Assert.DoesNotContain(models, model => model.ModelId.StartsWith("anthropic/claude-opus-4-1", StringComparison.Ordinal));
 
             var sonnet = models.Single(model => model.ModelId == "anthropic/claude-sonnet-4-6");
             Assert.Contains(sonnet.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.High);
@@ -5580,6 +5675,7 @@ public sealed class AgentRunCoordinatorTests
             var provider = new GeminiAgentProvider(new TestPackageContext(rootPath));
 
             var models = await provider.GetAvailableModelsAsync();
+            Assert.All(models, model => Assert.NotNull(model.ReleaseDate));
 
             var pro = models.Single(model => model.ModelId == "gemini/gemini-2.5-pro");
             Assert.Contains(pro.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.High);
@@ -5587,8 +5683,8 @@ public sealed class AgentRunCoordinatorTests
             var flash = models.Single(model => model.ModelId == "gemini/gemini-2.5-flash");
             Assert.Contains(flash.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.Medium);
 
-            var flash20 = models.Single(model => model.ModelId == "gemini/gemini-2.0-flash");
-            Assert.True(flash20.Variants is null || flash20.Variants.Count == 0);
+            Assert.Contains(models, model => model.ModelId == "gemini/gemini-3.5-flash");
+            Assert.DoesNotContain(models, model => model.ModelId == "gemini/gemini-2.0-flash");
         }
         finally
         {
@@ -5651,6 +5747,31 @@ public sealed class AgentRunCoordinatorTests
         var thinkingValue = parameters.Thinking!.Value;
         Assert.NotNull(thinkingValue);
         Assert.Equal("ThinkingConfigEnabled", thinkingValue!.GetType().Name);
+    }
+
+    [Fact]
+    public void AnthropicChatClient_MapsFastSpeed_ToBetaRequest()
+    {
+        var clientType = typeof(AnthropicAgentProvider).Assembly.GetType(
+            "Sunder.Package.Agent.Provider.Anthropic.AnthropicChatClient",
+            throwOnError: true)!;
+        var standardParameters = InvokePrivateStatic<AnthropicMessageCreateParams>(
+            clientType,
+            "BuildMessageCreateParams",
+            [
+                new[] { new ChatMessage(ChatRole.User, "Respond briefly.") },
+                null,
+                "anthropic/claude-opus-4-8",
+                false,
+            ]);
+
+        var fastParameters = InvokePrivateStatic<AnthropicBetaMessageCreateParams>(
+            clientType,
+            "BuildFastMessageCreateParams",
+            [standardParameters]);
+
+        Assert.Equal(AnthropicBetaSpeed.Fast, fastParameters.Speed!.Value());
+        Assert.Contains(fastParameters.Betas ?? [], beta => beta.Value() == AnthropicBeta.FastMode2026_02_01);
     }
 
     [Fact]
@@ -10424,6 +10545,8 @@ public sealed class AgentRunCoordinatorTests
 
         public List<AgentProviderRequest> Requests { get; } = [];
 
+        public List<ChatOptions> RequestOptions { get; } = [];
+
         public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(
             CancellationToken cancellationToken = default
         ) => ValueTask.FromResult(_models);
@@ -10536,6 +10659,11 @@ public sealed class AgentRunCoordinatorTests
                 lock (_provider.Requests)
                 {
                     _provider.Requests.Add(capturedRequest);
+                    if (options is not null)
+                    {
+                        _provider.RequestOptions.Add(options);
+                    }
+
                     requestIndex = _provider.Requests.Count;
                 }
                 var responseId = Guid.NewGuid().ToString("N");

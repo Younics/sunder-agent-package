@@ -46,6 +46,10 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     public ObservableCollection<ModelReasoningOption> ReasoningOptions { get; } = [];
 
+    public ObservableCollection<ModelSpeedOption> SpeedOptions { get; } = [];
+
+    public ObservableCollection<ModelModeOption> ModeOptions { get; } = [];
+
     public ObservableCollection<ProviderOption> EmbeddingProviders { get; } = [];
 
     public ObservableCollection<ModelOption> EmbeddingModels { get; } = [];
@@ -94,6 +98,12 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     [ObservableProperty]
     private ModelReasoningOption? _selectedReasoningOption;
+
+    [ObservableProperty]
+    private ModelSpeedOption? _selectedSpeedOption;
+
+    [ObservableProperty]
+    private ModelModeOption? _selectedModeOption;
 
     [ObservableProperty]
     private ProviderOption? _selectedEmbeddingProvider;
@@ -189,6 +199,12 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     public bool ShowReasoningOptions => ShowChatModelSelection && HasReasoningOptions;
 
+    public bool ShowSpeedOptions => ShowChatModelSelection && HasSpeedOptions;
+
+    public bool ShowModeOptions => ShowChatModelSelection && HasModeOptions;
+
+    public bool IsReasoningSelectionEnabled => SelectedModeOption?.DisablesReasoning != true;
+
     public bool ShowEmbeddingProviderPicker => CanConfigureEmbeddings;
 
     public bool ShowEmbeddingProviderEmptyState => HasEmbeddingConsumers && !HasEmbeddingProviders;
@@ -210,6 +226,10 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     public bool HasToolCallingConfiguration => HasLocalTools || HasPackageCapabilities;
 
     public bool HasReasoningOptions => ReasoningOptions.Count > 0;
+
+    public bool HasSpeedOptions => SpeedOptions.Count > 0;
+
+    public bool HasModeOptions => ModeOptions.Count > 0;
 
     public bool HasStatusText => !string.IsNullOrWhiteSpace(StatusText);
 
@@ -331,12 +351,25 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     partial void OnSelectedChatModelChanged(ModelOption? value)
     {
         OnPropertyChanged(nameof(ShowReasoningOptions));
+        OnPropertyChanged(nameof(ShowSpeedOptions));
+        OnPropertyChanged(nameof(ShowModeOptions));
         if (_suppressSelectionHandlers || SelectedProfile is null)
         {
             return;
         }
 
         ApplyReasoningOptions(value?.Variants, selectedVariantId: null);
+        ApplySpeedOptions(value?.SpeedOptions, selectedSpeedOptionId: null);
+        ApplyModeOptions(value?.ModeOptions, selectedModeOptionId: null);
+    }
+
+    partial void OnSelectedModeOptionChanged(ModelModeOption? value)
+    {
+        OnPropertyChanged(nameof(IsReasoningSelectionEnabled));
+        if (value?.DisablesReasoning == true && SelectedReasoningOption?.VariantId is not null)
+        {
+            SetSelectionSilently(() => SelectedReasoningOption = ReasoningOptions.FirstOrDefault());
+        }
     }
 
     partial void OnSelectedEmbeddingProviderChanged(ProviderOption? value)
@@ -537,6 +570,8 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
                 SelectedChatProvider?.Id,
                 SelectedChatModel?.Id,
                 SelectedReasoningOption?.VariantId,
+                SelectedSpeedOption?.SpeedOptionId,
+                SelectedModeOption?.ModeOptionId,
                 SelectedEmbeddingProvider?.Id,
                 SelectedEmbeddingModel?.Id
             );
@@ -690,10 +725,13 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
             _chatLoadVersion++;
             _embeddingLoadVersion++;
+            var chatModelSettings = AgentChatModelSettingsJson.Parse(chatBinding?.SettingsJson);
             await RefreshProviderSectionsAsync(
                 chatBinding?.ProviderId,
                 chatBinding?.ModelId,
-                AgentChatModelSettingsJson.Parse(chatBinding?.SettingsJson).ReasoningVariantId,
+                chatModelSettings.ReasoningVariantId,
+                chatModelSettings.SpeedOptionId,
+                chatModelSettings.ModeOptionId,
                 embeddingBinding?.ProviderId,
                 embeddingBinding?.ModelId
             );
@@ -789,6 +827,8 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         string? selectedChatProviderId,
         string? selectedChatModelId,
         string? selectedReasoningVariantId,
+        string? selectedSpeedOptionId,
+        string? selectedModeOptionId,
         string? selectedEmbeddingProviderId,
         string? selectedEmbeddingModelId
     )
@@ -841,14 +881,21 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             embeddingReadinessTask
         );
 
+        var availableChatModels = await chatModelsTask;
+        var chatSelection = ResolveLegacyFastSelection(
+            selectedChatModelId,
+            selectedSpeedOptionId,
+            availableChatModels);
         HasEmbeddingConsumers = hasEmbeddingConsumers;
         ApplyChatProviderSelection(
             chatProviders,
             effectiveChatProviderId,
-            await chatModelsTask,
-            selectedChatModelId
+            availableChatModels,
+            chatSelection.ModelId
         );
         ApplyReasoningOptions(SelectedChatModel?.Variants, selectedReasoningVariantId);
+        ApplySpeedOptions(SelectedChatModel?.SpeedOptions, chatSelection.SpeedOptionId);
+        ApplyModeOptions(SelectedChatModel?.ModeOptions, selectedModeOptionId);
         var chatReadiness = await chatReadinessTask;
         ApplyChatProviderReadiness(chatReadiness);
         ChatProviderStatusText = FormatChatProviderStatus(chatReadiness);
@@ -876,6 +923,8 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         ChatModels.Clear();
         SelectedChatModel = null;
         ApplyReasoningOptions(null, selectedVariantId: null);
+        ApplySpeedOptions(null, selectedSpeedOptionId: null);
+        ApplyModeOptions(null, selectedModeOptionId: null);
 
         if (string.IsNullOrWhiteSpace(providerId))
         {
@@ -997,6 +1046,8 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         ChatProviders.Clear();
         ChatModels.Clear();
         ReasoningOptions.Clear();
+        SpeedOptions.Clear();
+        ModeOptions.Clear();
         EmbeddingProviders.Clear();
         EmbeddingModels.Clear();
         BehaviorLoops.Clear();
@@ -1010,6 +1061,8 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         SelectedChatProvider = null;
         SelectedChatModel = null;
         SelectedReasoningOption = null;
+        SelectedSpeedOption = null;
+        SelectedModeOption = null;
         SelectedEmbeddingProvider = null;
         SelectedEmbeddingModel = null;
         SelectedBehaviorLoop = null;
@@ -1026,6 +1079,10 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         PackageCapabilitySelectionSummary = "No package capabilities are enabled for this profile.";
         OnPropertyChanged(nameof(HasReasoningOptions));
         OnPropertyChanged(nameof(ShowReasoningOptions));
+        OnPropertyChanged(nameof(HasSpeedOptions));
+        OnPropertyChanged(nameof(ShowSpeedOptions));
+        OnPropertyChanged(nameof(HasModeOptions));
+        OnPropertyChanged(nameof(ShowModeOptions));
         OnPropertyChanged(nameof(CanSelectEmbeddingModel));
     }
 
@@ -1110,7 +1167,9 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             var model in availableModels.Select(model => new ModelOption(
                 model.ModelId,
                 model.DisplayName,
-                model.Variants
+                model.Variants,
+                model.SpeedOptions,
+                model.ModeOptions
             ))
         )
         {
@@ -1125,6 +1184,8 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         );
         OnPropertyChanged(nameof(ShowChatModelSelection));
         OnPropertyChanged(nameof(ShowReasoningOptions));
+        OnPropertyChanged(nameof(ShowSpeedOptions));
+        OnPropertyChanged(nameof(ShowModeOptions));
     }
 
     private void ApplyReasoningOptions(
@@ -1176,6 +1237,73 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         );
         OnPropertyChanged(nameof(HasReasoningOptions));
         OnPropertyChanged(nameof(ShowReasoningOptions));
+    }
+
+    private void ApplySpeedOptions(
+        IReadOnlyList<AgentModelSpeedOptionDescriptor>? speedOptions,
+        string? selectedSpeedOptionId
+    )
+    {
+        SpeedOptions.Clear();
+        SetSelectionSilently(() => SelectedSpeedOption = null);
+
+        if (speedOptions is null || speedOptions.Count == 0)
+        {
+            OnPropertyChanged(nameof(HasSpeedOptions));
+            OnPropertyChanged(nameof(ShowSpeedOptions));
+            return;
+        }
+
+        SpeedOptions.Add(new ModelSpeedOption(null, "Default", "Use the provider's default speed."));
+        foreach (var option in speedOptions.Where(option => !string.IsNullOrWhiteSpace(option.SpeedOptionId)))
+        {
+            SpeedOptions.Add(new ModelSpeedOption(option.SpeedOptionId, option.DisplayName, option.Description));
+        }
+
+        SetSelectionSilently(() =>
+            SelectedSpeedOption = SpeedOptions.FirstOrDefault(option =>
+                !string.IsNullOrWhiteSpace(selectedSpeedOptionId)
+                && string.Equals(option.SpeedOptionId, selectedSpeedOptionId, StringComparison.OrdinalIgnoreCase))
+                ?? SpeedOptions.FirstOrDefault());
+        OnPropertyChanged(nameof(HasSpeedOptions));
+        OnPropertyChanged(nameof(ShowSpeedOptions));
+    }
+
+    private void ApplyModeOptions(
+        IReadOnlyList<AgentModelModeOptionDescriptor>? modeOptions,
+        string? selectedModeOptionId
+    )
+    {
+        ModeOptions.Clear();
+        SetSelectionSilently(() => SelectedModeOption = null);
+
+        if (modeOptions is null || modeOptions.Count == 0)
+        {
+            OnPropertyChanged(nameof(HasModeOptions));
+            OnPropertyChanged(nameof(ShowModeOptions));
+            OnPropertyChanged(nameof(IsReasoningSelectionEnabled));
+            return;
+        }
+
+        ModeOptions.Add(new ModelModeOption(null, "Default", "Use the provider's default execution mode."));
+        foreach (var option in modeOptions.Where(option => !string.IsNullOrWhiteSpace(option.ModeOptionId)))
+        {
+            ModeOptions.Add(new ModelModeOption(option.ModeOptionId, option.DisplayName, option.Description, option.DisablesReasoning));
+        }
+
+        SetSelectionSilently(() =>
+            SelectedModeOption = ModeOptions.FirstOrDefault(option =>
+                !string.IsNullOrWhiteSpace(selectedModeOptionId)
+                && string.Equals(option.ModeOptionId, selectedModeOptionId, StringComparison.OrdinalIgnoreCase))
+                ?? ModeOptions.FirstOrDefault());
+        if (SelectedModeOption?.DisablesReasoning == true)
+        {
+            SetSelectionSilently(() => SelectedReasoningOption = ReasoningOptions.FirstOrDefault());
+        }
+
+        OnPropertyChanged(nameof(HasModeOptions));
+        OnPropertyChanged(nameof(ShowModeOptions));
+        OnPropertyChanged(nameof(IsReasoningSelectionEnabled));
     }
 
     private void ApplyEmbeddingProviderSelection(
@@ -1644,11 +1772,31 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     }
 
     private string? BuildChatModelSettingsJson() =>
-        !HasReasoningOptions || string.IsNullOrWhiteSpace(SelectedReasoningOption?.VariantId)
-            ? null
-            : AgentChatModelSettingsJson.Serialize(
-                new AgentChatModelSettings(SelectedReasoningOption.VariantId)
-            );
+        AgentChatModelSettingsJson.Serialize(new AgentChatModelSettings(
+            HasReasoningOptions ? SelectedReasoningOption?.VariantId : null,
+            HasSpeedOptions ? SelectedSpeedOption?.SpeedOptionId : null,
+            HasModeOptions ? SelectedModeOption?.ModeOptionId : null));
+
+    private static LegacyModelSelection ResolveLegacyFastSelection(
+        string? modelId,
+        string? speedOptionId,
+        IReadOnlyList<AgentModelDescriptor> availableModels)
+    {
+        const string fastSuffix = "-fast";
+        if (!string.IsNullOrWhiteSpace(modelId)
+            && modelId.EndsWith(fastSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            var baseModelId = modelId[..^fastSuffix.Length];
+            if (availableModels.Any(model => string.Equals(model.ModelId, baseModelId, StringComparison.OrdinalIgnoreCase)))
+            {
+                return new LegacyModelSelection(baseModelId, speedOptionId ?? "fast");
+            }
+        }
+
+        return new LegacyModelSelection(modelId, speedOptionId);
+    }
+
+    private sealed record LegacyModelSelection(string? ModelId, string? SpeedOptionId);
 
     private static IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> GetSelectableCapabilityAssignments(
         AgentProfileRecord profile

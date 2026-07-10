@@ -16,11 +16,7 @@ public sealed partial class GeminiSettingsViewModel : ObservableObject
     }
 
     public ObservableCollection<GeminiUtilityModelOption> UtilityModels { get; } =
-    [
-        new("gemini/gemini-2.5-pro", "Gemini 2.5 Pro"),
-        new(GeminiProviderConfiguration.DefaultUtilityModelId, "Gemini 2.5 Flash"),
-        new("gemini/gemini-2.0-flash", "Gemini 2.0 Flash"),
-    ];
+        [.. GeminiModelCatalog.UtilityModelOptions.Select(option => new GeminiUtilityModelOption(option.Value, option.Label))];
 
     public bool HasStoredApiKey => !string.IsNullOrWhiteSpace(_packageContext.Secrets.GetSecret("auth.apiKey"));
 

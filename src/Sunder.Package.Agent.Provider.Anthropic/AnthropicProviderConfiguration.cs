@@ -38,12 +38,7 @@ public static class AnthropicProviderConfiguration
                         Description: "Used for short background tasks, not regular agent replies.",
                         IsRequired: true,
                         DefaultValue: DefaultUtilityModelId,
-                        Options:
-                        [
-                            new PackageConfigurationOption("anthropic/claude-opus-4-7", "Claude Opus 4.7"),
-                            new PackageConfigurationOption("anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6"),
-                            new PackageConfigurationOption(DefaultUtilityModelId, "Claude Haiku 4.5"),
-                        ]
+                        Options: AnthropicModelCatalog.UtilityModelOptions
                     )
                 ]
             )

@@ -16,13 +16,34 @@ public sealed record ProviderOption(string? Id, string Label, string? PackageId 
 public sealed record ModelOption(
     string? Id,
     string Label,
-    IReadOnlyList<AgentModelVariantDescriptor>? Variants = null
+    IReadOnlyList<AgentModelVariantDescriptor>? Variants = null,
+    IReadOnlyList<AgentModelSpeedOptionDescriptor>? SpeedOptions = null,
+    IReadOnlyList<AgentModelModeOptionDescriptor>? ModeOptions = null
 );
 
 public sealed record ModelReasoningOption(
     string? VariantId,
     string Label,
     string? Description = null
+)
+{
+    public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
+}
+
+public sealed record ModelSpeedOption(
+    string? SpeedOptionId,
+    string Label,
+    string? Description = null
+)
+{
+    public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
+}
+
+public sealed record ModelModeOption(
+    string? ModeOptionId,
+    string Label,
+    string? Description = null,
+    bool DisablesReasoning = false
 )
 {
     public bool HasDescription => !string.IsNullOrWhiteSpace(Description);

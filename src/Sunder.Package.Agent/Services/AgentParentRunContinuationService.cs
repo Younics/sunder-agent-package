@@ -92,11 +92,15 @@ public sealed class AgentParentRunContinuationService(
 
         AgentProviderRunCapabilities runCapabilities;
         AgentModelVariantDescriptor? modelVariant;
+        AgentModelSpeedOptionDescriptor? modelSpeedOption;
+        AgentModelModeOptionDescriptor? modelModeOption;
         try
         {
             var metadata = await _providerResolver.ResolveRunMetadataAsync(provider, chatBinding, cancellationToken).ConfigureAwait(false);
             runCapabilities = metadata.RunCapabilities;
             modelVariant = metadata.ModelVariant;
+            modelSpeedOption = metadata.ModelSpeedOption;
+            modelModeOption = metadata.ModelModeOption;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -134,7 +138,9 @@ public sealed class AgentParentRunContinuationService(
                     runStartedAtUtc,
                     userMessage,
                     parentUserTurn.TurnId,
-                    modelVariant),
+                    modelVariant,
+                    modelSpeedOption,
+                    modelModeOption),
                 host,
                 runHandle.CancellationTokenSource.Token).ConfigureAwait(false);
             loopResult = ResolveStoppedOrInterruptedRunResult(parentSessionId, parentRunRevision, loopResult);

@@ -19,32 +19,6 @@ public sealed class OpenAiAgentProvider(
 {
     private readonly IPackageContext _packageContext = packageContext;
 
-    private static readonly IReadOnlyList<AgentModelVariantDescriptor> ReasoningVariants =
-    [
-        new("none", "None", "Disable reasoning effort when the selected model supports it.", AgentReasoningEffort.None),
-        new("low", "Low", "Use low reasoning effort for faster responses.", AgentReasoningEffort.Low),
-        new("medium", "Medium", "Use balanced reasoning effort.", AgentReasoningEffort.Medium),
-        new("high", "High", "Use high reasoning effort for complex tasks.", AgentReasoningEffort.High),
-        new("xhigh", "Xhigh", "Use extra-high reasoning effort for the hardest tasks.", AgentReasoningEffort.ExtraHigh),
-    ];
-
-    private static readonly IReadOnlyList<AgentModelDescriptor> Models =
-    [
-        new("openai/gpt-5.5-fast", "GPT-5.5 Fast", 400000, 128000, IsRecommended: true, Variants: ReasoningVariants),
-        new("openai/gpt-5.5", "GPT-5.5", 400000, 128000, IsRecommended: true, Variants: ReasoningVariants),
-        new("openai/gpt-5.4", "GPT-5.4", 1050000, 128000, IsRecommended: true, Variants: ReasoningVariants),
-        new("openai/gpt-5.4-mini", "GPT-5.4 Mini", 400000, 128000, Variants: ReasoningVariants),
-        new("openai/gpt-5.3-codex", "GPT-5.3 Codex", 400000, 128000, IsRecommended: true, Variants: ReasoningVariants),
-        new("openai/gpt-5.3-codex-spark", "GPT-5.3 Codex Spark", 400000, 128000, Variants: ReasoningVariants),
-        new("openai/gpt-5.2", "GPT-5.2", 400000, 128000, Variants: ReasoningVariants),
-        new("openai/gpt-5.2-codex", "GPT-5.2 Codex", 400000, 128000, Variants: ReasoningVariants),
-        new("openai/gpt-5.1-codex", "GPT-5.1 Codex", 400000, 128000, Variants: ReasoningVariants),
-        new("openai/gpt-5.1-codex-max", "GPT-5.1 Codex Max", 400000, 128000, Variants: ReasoningVariants),
-        new("openai/gpt-5.1-codex-mini", "GPT-5.1 Codex Mini", 400000, 128000, Variants: ReasoningVariants),
-        new("openai/gpt-5-codex", "GPT-5 Codex", 400000, 128000, Variants: ReasoningVariants),
-        new("openai/codex-mini-latest", "Codex Mini Latest", 200000, 100000, Variants: ReasoningVariants),
-    ];
-
     public AgentProviderDescriptor Descriptor { get; } = new(
         "openai",
         "OpenAI",
@@ -59,13 +33,14 @@ public sealed class OpenAiAgentProvider(
     public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(Models);
+        return ValueTask.FromResult(OpenAiModelCatalog.Models);
     }
 
     public ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var configuredModelId = _packageContext.Configuration.GetValue(OpenAiProviderConfiguration.UtilityModelKey);
+        var configuredModelId = NormalizeLegacyUtilityModelId(
+            _packageContext.Configuration.GetValue(OpenAiProviderConfiguration.UtilityModelKey));
         return ValueTask.FromResult<string?>(IsKnownModel(configuredModelId)
             ? configuredModelId!.Trim()
             : OpenAiProviderConfiguration.DefaultUtilityModelId);
@@ -148,7 +123,7 @@ public sealed class OpenAiAgentProvider(
                 },
                 cancellationToken: cancellationToken);
             var model = OpenAiModelIds.Normalize(context.ModelId);
-            return new OpenAIClient(apiKey).GetResponsesClient().AsIChatClient(model);
+            return new OpenAiModelOptionsChatClient(new OpenAIClient(apiKey).GetResponsesClient().AsIChatClient(model));
         }
 
         var session = await codexConnectedAuthStrategy.TryEnsureAuthenticatedSilentlyAsync(cancellationToken);
@@ -188,5 +163,10 @@ public sealed class OpenAiAgentProvider(
 
     private static bool IsKnownModel(string? modelId) =>
         !string.IsNullOrWhiteSpace(modelId)
-        && Models.Any(model => string.Equals(model.ModelId, modelId.Trim(), StringComparison.OrdinalIgnoreCase));
+        && OpenAiModelCatalog.Models.Any(model => string.Equals(model.ModelId, modelId.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private static string? NormalizeLegacyUtilityModelId(string? modelId)
+        => string.Equals(modelId?.Trim(), "openai/gpt-5.5-fast", StringComparison.OrdinalIgnoreCase)
+            ? "openai/gpt-5.5"
+            : modelId;
 }

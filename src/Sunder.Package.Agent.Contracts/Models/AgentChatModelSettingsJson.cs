@@ -10,22 +10,24 @@ public static class AgentChatModelSettingsJson
     {
         if (string.IsNullOrWhiteSpace(settingsJson))
         {
-            return new AgentChatModelSettings(null);
+            return new AgentChatModelSettings();
         }
 
         try
         {
             return JsonSerializer.Deserialize<AgentChatModelSettings>(settingsJson, JsonOptions)
-                   ?? new AgentChatModelSettings(null);
+                   ?? new AgentChatModelSettings();
         }
         catch (JsonException)
         {
-            return new AgentChatModelSettings(null);
+            return new AgentChatModelSettings();
         }
     }
 
     public static string? Serialize(AgentChatModelSettings settings)
         => string.IsNullOrWhiteSpace(settings.ReasoningVariantId)
+           && string.IsNullOrWhiteSpace(settings.SpeedOptionId)
+           && string.IsNullOrWhiteSpace(settings.ModeOptionId)
             ? null
             : JsonSerializer.Serialize(settings, JsonOptions);
 }

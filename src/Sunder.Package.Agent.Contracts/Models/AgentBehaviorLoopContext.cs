@@ -14,4 +14,6 @@ public sealed record AgentBehaviorLoopContext(
     DateTimeOffset RunStartedAtUtc,
     string UserMessage,
     Guid UserTurnId,
-    AgentModelVariantDescriptor? ModelVariant = null);
+    AgentModelVariantDescriptor? ModelVariant = null,
+    AgentModelSpeedOptionDescriptor? ModelSpeedOption = null,
+    AgentModelModeOptionDescriptor? ModelModeOption = null);

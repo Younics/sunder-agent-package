@@ -51,6 +51,10 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<SubagentReasoningOption> ReasoningOptions { get; } = [];
 
+    public ObservableCollection<SubagentSpeedOption> SpeedOptions { get; } = [];
+
+    public ObservableCollection<SubagentModeOption> ModeOptions { get; } = [];
+
     public ObservableCollection<SubagentCapabilityOptionViewModel> CapabilityOptions { get; } = [];
 
     public ObservableCollection<SubagentCapabilityGroupViewModel> CapabilityGroups { get; } = [];
@@ -95,6 +99,12 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     private SubagentReasoningOption? _selectedReasoningOption;
 
     [ObservableProperty]
+    private SubagentSpeedOption? _selectedSpeedOption;
+
+    [ObservableProperty]
+    private SubagentModeOption? _selectedModeOption;
+
+    [ObservableProperty]
     private bool _hasChatProviderChoices;
 
     [ObservableProperty]
@@ -135,6 +145,10 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     public bool HasReasoningOptions => HasSelectedChatProvider && ReasoningOptions.Count > 0;
 
+    public bool HasSpeedOptions => HasSelectedChatProvider && SpeedOptions.Count > 0;
+
+    public bool HasModeOptions => HasSelectedChatProvider && ModeOptions.Count > 0;
+
     public bool HasNoChatProviderChoices => !HasChatProviderChoices;
 
     public bool ShowChatProviderPicker => HasChatProviderChoices;
@@ -144,6 +158,12 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     public bool ShowChatModelSelection => HasSelectedChatProvider && !HasChatProviderWarning;
 
     public bool ShowReasoningOptions => ShowChatModelSelection && HasReasoningOptions;
+
+    public bool ShowSpeedOptions => ShowChatModelSelection && HasSpeedOptions;
+
+    public bool ShowModeOptions => ShowChatModelSelection && HasModeOptions;
+
+    public bool IsReasoningSelectionEnabled => SelectedModeOption?.DisablesReasoning != true;
 
     public bool CanOpenChatProviderSettings => ShowChatProviderWarning
                                                && _settingsNavigationService is not null
@@ -157,6 +177,8 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     {
         OnPropertyChanged(nameof(HasSelectedChatProvider));
         OnPropertyChanged(nameof(HasReasoningOptions));
+        OnPropertyChanged(nameof(HasSpeedOptions));
+        OnPropertyChanged(nameof(HasModeOptions));
         NotifyChatProviderStateChanged();
         if (_suppressChatProviderSelection)
         {
@@ -169,12 +191,25 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     partial void OnSelectedChatModelChanged(SubagentModelOption? value)
     {
         OnPropertyChanged(nameof(ShowReasoningOptions));
+        OnPropertyChanged(nameof(ShowSpeedOptions));
+        OnPropertyChanged(nameof(ShowModeOptions));
         if (_suppressChatProviderSelection)
         {
             return;
         }
 
         ApplyReasoningOptions(value?.Variants, selectedVariantId: null);
+        ApplySpeedOptions(value?.SpeedOptions, selectedSpeedOptionId: null);
+        ApplyModeOptions(value?.ModeOptions, selectedModeOptionId: null);
+    }
+
+    partial void OnSelectedModeOptionChanged(SubagentModeOption? value)
+    {
+        OnPropertyChanged(nameof(IsReasoningSelectionEnabled));
+        if (value?.DisablesReasoning == true && SelectedReasoningOption?.VariantId is not null)
+        {
+            SetSelectionSilently(() => SelectedReasoningOption = ReasoningOptions.FirstOrDefault());
+        }
     }
 
     partial void OnHasChatProviderChoicesChanged(bool value)
@@ -541,6 +576,8 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         ChatProviders.Clear();
         ChatModels.Clear();
         ReasoningOptions.Clear();
+        SpeedOptions.Clear();
+        ModeOptions.Clear();
         HasChatProviderChoices = false;
         ClearChatProviderWarning();
         _suppressChatProviderSelection = true;
@@ -549,6 +586,8 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
             SelectedChatProvider = null;
             SelectedChatModel = null;
             SelectedReasoningOption = null;
+            SelectedSpeedOption = null;
+            SelectedModeOption = null;
         }
         finally
         {
@@ -558,6 +597,10 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HasSelectedChatProvider));
         OnPropertyChanged(nameof(HasReasoningOptions));
         OnPropertyChanged(nameof(ShowReasoningOptions));
+        OnPropertyChanged(nameof(HasSpeedOptions));
+        OnPropertyChanged(nameof(ShowSpeedOptions));
+        OnPropertyChanged(nameof(HasModeOptions));
+        OnPropertyChanged(nameof(ShowModeOptions));
         CapabilityOptions.Clear();
         CapabilityGroups.Clear();
         _loadedCapabilitySubagentId = null;
@@ -635,9 +678,10 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         }
 
         await LoadChatModelsAsync(SelectedChatProvider?.ProviderId, selectedModelId);
-        ApplyReasoningOptions(
-            SelectedChatModel?.Variants,
-            AgentChatModelSettingsJson.Parse(selectedSettingsJson).ReasoningVariantId);
+        var settings = AgentChatModelSettingsJson.Parse(selectedSettingsJson);
+        ApplyReasoningOptions(SelectedChatModel?.Variants, settings.ReasoningVariantId);
+        ApplySpeedOptions(SelectedChatModel?.SpeedOptions, settings.SpeedOptionId);
+        ApplyModeOptions(SelectedChatModel?.ModeOptions, settings.ModeOptionId);
         NotifyChatProviderStateChanged();
     }
 
@@ -646,6 +690,8 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         ChatModels.Clear();
         SelectedChatModel = null;
         ApplyReasoningOptions(null, selectedVariantId: null);
+        ApplySpeedOptions(null, selectedSpeedOptionId: null);
+        ApplyModeOptions(null, selectedModeOptionId: null);
         if (_extensionCatalog is null || string.IsNullOrWhiteSpace(providerId))
         {
             ClearChatProviderWarning();
@@ -666,9 +712,9 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
             var readiness = await provider.GetReadinessAsync();
             ApplyChatProviderReadiness(readiness);
 
-            foreach (var model in models.OrderBy(model => model.DisplayName, StringComparer.OrdinalIgnoreCase))
+            foreach (var model in models.OrderNewestFirst())
             {
-                ChatModels.Add(new SubagentModelOption(model.ModelId, model.DisplayName, model.Variants));
+                ChatModels.Add(new SubagentModelOption(model.ModelId, model.DisplayName, model.Variants, model.SpeedOptions, model.ModeOptions));
             }
         }
         catch (Exception ex)
@@ -677,8 +723,10 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         }
 
         SelectedChatModel = ChatModels.FirstOrDefault(option => string.Equals(option.ModelId, selectedModelId, StringComparison.OrdinalIgnoreCase))
-                            ?? ChatModels.FirstOrDefault();
+                             ?? ChatModels.FirstOrDefault();
         ApplyReasoningOptions(SelectedChatModel?.Variants, selectedVariantId: null);
+        ApplySpeedOptions(SelectedChatModel?.SpeedOptions, selectedSpeedOptionId: null);
+        ApplyModeOptions(SelectedChatModel?.ModeOptions, selectedModeOptionId: null);
         NotifyChatProviderStateChanged();
     }
 
@@ -708,10 +756,68 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ShowReasoningOptions));
     }
 
+    private void ApplySpeedOptions(IReadOnlyList<AgentModelSpeedOptionDescriptor>? speedOptions, string? selectedSpeedOptionId)
+    {
+        SpeedOptions.Clear();
+        SelectedSpeedOption = null;
+        if (!HasSelectedChatProvider || speedOptions is null || speedOptions.Count == 0)
+        {
+            OnPropertyChanged(nameof(HasSpeedOptions));
+            OnPropertyChanged(nameof(ShowSpeedOptions));
+            return;
+        }
+
+        SpeedOptions.Add(new SubagentSpeedOption(null, "Default", "Use the provider's default speed."));
+        foreach (var option in speedOptions.Where(option => !string.IsNullOrWhiteSpace(option.SpeedOptionId)))
+        {
+            SpeedOptions.Add(new SubagentSpeedOption(option.SpeedOptionId, option.DisplayName, option.Description));
+        }
+
+        SelectedSpeedOption = SpeedOptions.FirstOrDefault(option =>
+                                  !string.IsNullOrWhiteSpace(selectedSpeedOptionId)
+                                  && string.Equals(option.SpeedOptionId, selectedSpeedOptionId, StringComparison.OrdinalIgnoreCase))
+                              ?? SpeedOptions.FirstOrDefault();
+        OnPropertyChanged(nameof(HasSpeedOptions));
+        OnPropertyChanged(nameof(ShowSpeedOptions));
+    }
+
+    private void ApplyModeOptions(IReadOnlyList<AgentModelModeOptionDescriptor>? modeOptions, string? selectedModeOptionId)
+    {
+        ModeOptions.Clear();
+        SelectedModeOption = null;
+        if (!HasSelectedChatProvider || modeOptions is null || modeOptions.Count == 0)
+        {
+            OnPropertyChanged(nameof(HasModeOptions));
+            OnPropertyChanged(nameof(ShowModeOptions));
+            OnPropertyChanged(nameof(IsReasoningSelectionEnabled));
+            return;
+        }
+
+        ModeOptions.Add(new SubagentModeOption(null, "Default", "Use the provider's default execution mode."));
+        foreach (var option in modeOptions.Where(option => !string.IsNullOrWhiteSpace(option.ModeOptionId)))
+        {
+            ModeOptions.Add(new SubagentModeOption(option.ModeOptionId, option.DisplayName, option.Description, option.DisablesReasoning));
+        }
+
+        SelectedModeOption = ModeOptions.FirstOrDefault(option =>
+                                 !string.IsNullOrWhiteSpace(selectedModeOptionId)
+                                 && string.Equals(option.ModeOptionId, selectedModeOptionId, StringComparison.OrdinalIgnoreCase))
+                             ?? ModeOptions.FirstOrDefault();
+        if (SelectedModeOption?.DisablesReasoning == true)
+        {
+            SelectedReasoningOption = ReasoningOptions.FirstOrDefault();
+        }
+
+        OnPropertyChanged(nameof(HasModeOptions));
+        OnPropertyChanged(nameof(ShowModeOptions));
+        OnPropertyChanged(nameof(IsReasoningSelectionEnabled));
+    }
+
     private string? BuildChatModelSettingsJson()
-        => !HasReasoningOptions || string.IsNullOrWhiteSpace(SelectedReasoningOption?.VariantId)
-            ? null
-            : AgentChatModelSettingsJson.Serialize(new AgentChatModelSettings(SelectedReasoningOption.VariantId));
+        => AgentChatModelSettingsJson.Serialize(new AgentChatModelSettings(
+            HasReasoningOptions ? SelectedReasoningOption?.VariantId : null,
+            HasSpeedOptions ? SelectedSpeedOption?.SpeedOptionId : null,
+            HasModeOptions ? SelectedModeOption?.ModeOptionId : null));
 
     private async Task<IReadOnlyList<AgentToolDescriptor>> ListInstalledLocalToolsAsync()
     {
@@ -1042,6 +1148,9 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ShowChatProviderWarning));
         OnPropertyChanged(nameof(ShowChatModelSelection));
         OnPropertyChanged(nameof(ShowReasoningOptions));
+        OnPropertyChanged(nameof(ShowSpeedOptions));
+        OnPropertyChanged(nameof(ShowModeOptions));
+        OnPropertyChanged(nameof(IsReasoningSelectionEnabled));
         OnPropertyChanged(nameof(CanOpenChatProviderSettings));
     }
 
@@ -1115,9 +1224,24 @@ public sealed partial class SubagentCapabilityOptionViewModel(
 
 public sealed record SubagentProviderOption(string? ProviderId, string Label, string? PackageId = null);
 
-public sealed record SubagentModelOption(string ModelId, string Label, IReadOnlyList<AgentModelVariantDescriptor>? Variants = null);
+public sealed record SubagentModelOption(
+    string ModelId,
+    string Label,
+    IReadOnlyList<AgentModelVariantDescriptor>? Variants = null,
+    IReadOnlyList<AgentModelSpeedOptionDescriptor>? SpeedOptions = null,
+    IReadOnlyList<AgentModelModeOptionDescriptor>? ModeOptions = null);
 
 public sealed record SubagentReasoningOption(string? VariantId, string Label, string? Description = null)
+{
+    public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
+}
+
+public sealed record SubagentSpeedOption(string? SpeedOptionId, string Label, string? Description = null)
+{
+    public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
+}
+
+public sealed record SubagentModeOption(string? ModeOptionId, string Label, string? Description = null, bool DisablesReasoning = false)
 {
     public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
 }

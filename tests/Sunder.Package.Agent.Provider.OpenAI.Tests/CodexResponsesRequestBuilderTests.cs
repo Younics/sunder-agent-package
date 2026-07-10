@@ -72,6 +72,38 @@ public sealed class CodexResponsesRequestBuilderTests
         Assert.Equal("priority", request.ServiceTier);
     }
 
+    [Fact]
+    public void Build_Gpt56ConfiguredFastAndProRequest_FallsBackToStandardReasoningForCodex()
+    {
+        var request = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", "openai/gpt-5.6-sol"),
+            [new ChatMessage(ChatRole.User, "Say hi.")],
+            new ChatOptions
+            {
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    [AgentChatModelOptionKeys.SpeedOptionId] = "fast",
+                    [AgentChatModelOptionKeys.ModeOptionId] = "pro",
+                },
+                Reasoning = new ReasoningOptions
+                {
+                    Effort = ReasoningEffort.ExtraHigh,
+                    Output = ReasoningOutput.Summary,
+                },
+            },
+            toolAware: false);
+
+        using var document = JsonDocument.Parse(request.Body);
+        var root = document.RootElement;
+
+        Assert.Equal("gpt-5.6-sol", root.GetProperty("model").GetString());
+        Assert.Equal("priority", root.GetProperty("service_tier").GetString());
+        var reasoning = root.GetProperty("reasoning");
+        Assert.Equal("xhigh", reasoning.GetProperty("effort").GetString());
+        Assert.Equal("auto", reasoning.GetProperty("summary").GetString());
+        Assert.False(reasoning.TryGetProperty("mode", out _));
+    }
+
     [Theory]
     [InlineData(ReasoningEffort.None, "none")]
     [InlineData(ReasoningEffort.High, "high")]

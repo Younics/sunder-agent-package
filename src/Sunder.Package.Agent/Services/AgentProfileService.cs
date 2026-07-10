@@ -42,7 +42,9 @@ public sealed class AgentProfileService : IDisposable
         var chatProvider = chatProviders.FirstOrDefault();
         var chatModel = chatProvider is null
             ? null
-            : (await chatProvider.GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault();
+            : (await chatProvider.GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false))
+                .OrderNewestFirst()
+                .FirstOrDefault();
         var profileId = Guid.NewGuid().ToString("N");
 
         var record = new AgentProfileRecord(
@@ -237,7 +239,7 @@ public sealed class AgentProfileService : IDisposable
         return provider is null
             ? []
             : (await provider.GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false))
-                .OrderBy(model => model.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .OrderNewestFirst()
                 .ToArray();
     }
 

@@ -16,11 +16,7 @@ public sealed partial class AnthropicSettingsViewModel : ObservableObject
     }
 
     public ObservableCollection<AnthropicUtilityModelOption> UtilityModels { get; } =
-    [
-        new("anthropic/claude-opus-4-7", "Claude Opus 4.7"),
-        new("anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6"),
-        new(AnthropicProviderConfiguration.DefaultUtilityModelId, "Claude Haiku 4.5"),
-    ];
+        [.. AnthropicModelCatalog.UtilityModelOptions.Select(option => new AnthropicUtilityModelOption(option.Value, option.Label))];
 
     public bool HasStoredApiKey => !string.IsNullOrWhiteSpace(_packageContext.Secrets.GetSecret("auth.apiKey"));
 

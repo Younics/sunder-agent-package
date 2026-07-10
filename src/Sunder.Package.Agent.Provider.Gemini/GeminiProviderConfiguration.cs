@@ -38,12 +38,7 @@ public static class GeminiProviderConfiguration
                         Description: "Used for short background tasks, not regular agent replies.",
                         IsRequired: true,
                         DefaultValue: DefaultUtilityModelId,
-                        Options:
-                        [
-                            new PackageConfigurationOption("gemini/gemini-2.5-pro", "Gemini 2.5 Pro"),
-                            new PackageConfigurationOption(DefaultUtilityModelId, "Gemini 2.5 Flash"),
-                            new PackageConfigurationOption("gemini/gemini-2.0-flash", "Gemini 2.0 Flash"),
-                        ]
+                        Options: GeminiModelCatalog.UtilityModelOptions
                     )
                 ]
             )

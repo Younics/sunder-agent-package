@@ -152,6 +152,8 @@ public sealed class AgentPermissionResumeCoordinator(
 
             AgentProviderRunCapabilities runCapabilities;
             AgentModelVariantDescriptor? modelVariant;
+            AgentModelSpeedOptionDescriptor? modelSpeedOption;
+            AgentModelModeOptionDescriptor? modelModeOption;
             try
             {
                 var metadata = await _providerResolver
@@ -163,6 +165,8 @@ public sealed class AgentPermissionResumeCoordinator(
                     .ConfigureAwait(false);
                 runCapabilities = metadata.RunCapabilities;
                 modelVariant = metadata.ModelVariant;
+                modelSpeedOption = metadata.ModelSpeedOption;
+                modelModeOption = metadata.ModelModeOption;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -208,7 +212,9 @@ public sealed class AgentPermissionResumeCoordinator(
                         pending.CreatedAtUtc,
                         pending.UserMessage,
                         pending.UserTurnId,
-                        modelVariant
+                        modelVariant,
+                        modelSpeedOption,
+                        modelModeOption
                     ),
                     host,
                     runHandle.CancellationTokenSource.Token

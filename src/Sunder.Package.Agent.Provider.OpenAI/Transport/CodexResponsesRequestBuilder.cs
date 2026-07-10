@@ -27,7 +27,7 @@ internal static class CodexResponsesRequestBuilder
     {
         var modelId = options?.ModelId ?? context.ModelId;
         var model = OpenAiModelIds.Normalize(modelId);
-        var serviceTier = GetServiceTier(modelId);
+        var serviceTier = GetServiceTier(modelId, options);
         var isReasoningModel = IsReasoningModel(model);
         var input = BuildNativeInput(messages, isReasoningModel);
         var conversationItemFingerprints = BuildItemFingerprints(input);
@@ -301,7 +301,9 @@ internal static class CodexResponsesRequestBuilder
            && !model.Contains("codex", StringComparison.OrdinalIgnoreCase)
            && !model.Contains("-chat", StringComparison.OrdinalIgnoreCase);
 
-    private static CodexReasoningOptions? BuildReasoningOptions(bool isReasoningModel, ReasoningOptions? reasoning)
+    private static CodexReasoningOptions? BuildReasoningOptions(
+        bool isReasoningModel,
+        ReasoningOptions? reasoning)
     {
         if (!isReasoningModel)
         {
@@ -309,7 +311,7 @@ internal static class CodexResponsesRequestBuilder
         }
 
         var summary = reasoning?.Output == ReasoningOutput.None ? null : "auto";
-        return new CodexReasoningOptions(ToOpenAiReasoningEffort(reasoning?.Effort) ?? "medium", summary);
+        return new CodexReasoningOptions(ToOpenAiReasoningEffort(reasoning?.Effort) ?? "medium", summary, null);
     }
 
     private static string? ToOpenAiReasoningEffort(ReasoningEffort? effort)
@@ -323,9 +325,16 @@ internal static class CodexResponsesRequestBuilder
             _ => null,
         };
 
-    private static string? GetServiceTier(string modelId)
-        => NormalizeModelVariantId(modelId).EndsWith("-fast", StringComparison.OrdinalIgnoreCase)
+    private static string? GetServiceTier(string modelId, ChatOptions? options)
+        => string.Equals(GetModelOption(options, AgentChatModelOptionKeys.SpeedOptionId), "fast", StringComparison.OrdinalIgnoreCase)
+           || NormalizeModelVariantId(modelId).EndsWith("-fast", StringComparison.OrdinalIgnoreCase)
             ? "priority"
+            : null;
+
+    private static string? GetModelOption(ChatOptions? options, string key) =>
+        options?.AdditionalProperties is { } properties
+        && properties.TryGetValue(key, out var value)
+            ? value as string
             : null;
 
     private static string NormalizeModelVariantId(string modelId)
@@ -517,8 +526,9 @@ internal static class CodexResponsesRequestBuilder
     }
 
     private sealed record CodexReasoningOptions(
-        [property: JsonPropertyName("effort")] string Effort,
-        [property: JsonPropertyName("summary")] string? Summary);
+        [property: JsonPropertyName("effort")] string? Effort,
+        [property: JsonPropertyName("summary")] string? Summary,
+        [property: JsonPropertyName("mode")] string? Mode);
 
     private sealed record CodexTextOptions(
         [property: JsonPropertyName("verbosity")] string Verbosity);

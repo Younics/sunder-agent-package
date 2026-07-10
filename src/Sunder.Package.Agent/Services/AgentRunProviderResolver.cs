@@ -29,8 +29,14 @@ public sealed class AgentRunProviderResolver(
         var runCapabilities = await provider.GetRunCapabilitiesAsync(chatBinding.ModelId, cancellationToken).ConfigureAwait(false);
         var model = await ResolveModelDescriptorAsync(provider, chatBinding.ModelId, cancellationToken).ConfigureAwait(false);
         runCapabilities = EnrichRunCapabilities(runCapabilities, model);
-        var modelVariant = ResolveModelVariant(model, chatBinding);
-        return new AgentRunProviderMetadata(runCapabilities, modelVariant);
+        var settings = AgentChatModelSettingsJson.Parse(chatBinding.SettingsJson);
+        var modelModeOption = ResolveModelModeOption(model, settings);
+        var modelVariant = modelModeOption?.DisablesReasoning == true
+            ? null
+            : ResolveModelVariant(model, settings);
+        var modelSpeedOption = ResolveModelSpeedOption(model, settings)
+                               ?? ResolveLegacyFastSpeedOption(model, chatBinding.ModelId);
+        return new AgentRunProviderMetadata(runCapabilities, modelVariant, modelSpeedOption, modelModeOption);
     }
 
     public async ValueTask<AgentProviderRunCapabilities> ResolveRunCapabilitiesAsync(
@@ -52,8 +58,16 @@ public sealed class AgentRunProviderResolver(
         try
         {
             var models = await provider.GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false);
-            return models.FirstOrDefault(candidate =>
+            var model = models.FirstOrDefault(candidate =>
                 string.Equals(candidate.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
+            if (model is not null || !modelId.EndsWith("-fast", StringComparison.OrdinalIgnoreCase))
+            {
+                return model;
+            }
+
+            var baseModelId = modelId[..^"-fast".Length];
+            return models.FirstOrDefault(candidate =>
+                string.Equals(candidate.ModelId, baseModelId, StringComparison.OrdinalIgnoreCase));
         }
         catch (OperationCanceledException)
         {
@@ -78,9 +92,8 @@ public sealed class AgentRunProviderResolver(
 
     private static AgentModelVariantDescriptor? ResolveModelVariant(
         AgentModelDescriptor? model,
-        AgentProfileModelBindingRecord chatBinding)
+        AgentChatModelSettings settings)
     {
-        var settings = AgentChatModelSettingsJson.Parse(chatBinding.SettingsJson);
         if (string.IsNullOrWhiteSpace(settings.ReasoningVariantId))
         {
             return null;
@@ -89,6 +102,31 @@ public sealed class AgentRunProviderResolver(
         return model?.Variants?.FirstOrDefault(variant =>
             string.Equals(variant.VariantId, settings.ReasoningVariantId, StringComparison.OrdinalIgnoreCase));
     }
+
+    private static AgentModelSpeedOptionDescriptor? ResolveModelSpeedOption(
+        AgentModelDescriptor? model,
+        AgentChatModelSettings settings)
+        => string.IsNullOrWhiteSpace(settings.SpeedOptionId)
+            ? null
+            : model?.SpeedOptions?.FirstOrDefault(option =>
+                string.Equals(option.SpeedOptionId, settings.SpeedOptionId, StringComparison.OrdinalIgnoreCase));
+
+    private static AgentModelModeOptionDescriptor? ResolveModelModeOption(
+        AgentModelDescriptor? model,
+        AgentChatModelSettings settings)
+        => string.IsNullOrWhiteSpace(settings.ModeOptionId)
+            ? null
+            : model?.ModeOptions?.FirstOrDefault(option =>
+                string.Equals(option.ModeOptionId, settings.ModeOptionId, StringComparison.OrdinalIgnoreCase));
+
+    private static AgentModelSpeedOptionDescriptor? ResolveLegacyFastSpeedOption(
+        AgentModelDescriptor? model,
+        string? modelId)
+        => !string.IsNullOrWhiteSpace(modelId)
+           && modelId.EndsWith("-fast", StringComparison.OrdinalIgnoreCase)
+            ? model?.SpeedOptions?.FirstOrDefault(option =>
+                string.Equals(option.SpeedOptionId, "fast", StringComparison.OrdinalIgnoreCase))
+            : null;
 }
 
 public sealed record AgentRunProviderSelection(
@@ -97,4 +135,6 @@ public sealed record AgentRunProviderSelection(
 
 public sealed record AgentRunProviderMetadata(
     AgentProviderRunCapabilities RunCapabilities,
-    AgentModelVariantDescriptor? ModelVariant);
+    AgentModelVariantDescriptor? ModelVariant,
+    AgentModelSpeedOptionDescriptor? ModelSpeedOption,
+    AgentModelModeOptionDescriptor? ModelModeOption);

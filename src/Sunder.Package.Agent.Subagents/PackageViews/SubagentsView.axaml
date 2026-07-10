@@ -371,14 +371,55 @@
                     </StackPanel>
 
                     <StackPanel Spacing="5"
+                                IsVisible="{Binding ShowSpeedOptions}">
+                      <TextBlock Classes="subagent-field-label"
+                                 Text="Speed" />
+                      <shared:SunderComboBox ItemsSource="{Binding SpeedOptions}"
+                                            SelectedItem="{Binding SelectedSpeedOption, Mode=TwoWay}"
+                                            HorizontalAlignment="Stretch">
+                        <shared:SunderComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:SubagentSpeedOption">
+                            <StackPanel Spacing="2">
+                              <TextBlock Text="{Binding Label}" />
+                              <TextBlock Classes="subagent-field-help"
+                                         Text="{Binding Description}"
+                                         IsVisible="{Binding HasDescription}" />
+                            </StackPanel>
+                          </DataTemplate>
+                        </shared:SunderComboBox.ItemTemplate>
+                      </shared:SunderComboBox>
+                    </StackPanel>
+
+                    <StackPanel Spacing="5"
                                 IsVisible="{Binding ShowReasoningOptions}">
                       <TextBlock Classes="subagent-field-label"
                                  Text="Reasoning" />
                       <shared:SunderComboBox ItemsSource="{Binding ReasoningOptions}"
-                                            SelectedItem="{Binding SelectedReasoningOption, Mode=TwoWay}"
+                                             SelectedItem="{Binding SelectedReasoningOption, Mode=TwoWay}"
+                                             IsEnabled="{Binding IsReasoningSelectionEnabled}"
                                             HorizontalAlignment="Stretch">
                         <shared:SunderComboBox.ItemTemplate>
                           <DataTemplate x:DataType="vm:SubagentReasoningOption">
+                            <StackPanel Spacing="2">
+                              <TextBlock Text="{Binding Label}" />
+                              <TextBlock Classes="subagent-field-help"
+                                         Text="{Binding Description}"
+                                         IsVisible="{Binding HasDescription}" />
+                            </StackPanel>
+                          </DataTemplate>
+                        </shared:SunderComboBox.ItemTemplate>
+                      </shared:SunderComboBox>
+                    </StackPanel>
+
+                    <StackPanel Spacing="5"
+                                IsVisible="{Binding ShowModeOptions}">
+                      <TextBlock Classes="subagent-field-label"
+                                 Text="Mode" />
+                      <shared:SunderComboBox ItemsSource="{Binding ModeOptions}"
+                                            SelectedItem="{Binding SelectedModeOption, Mode=TwoWay}"
+                                            HorizontalAlignment="Stretch">
+                        <shared:SunderComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:SubagentModeOption">
                             <StackPanel Spacing="2">
                               <TextBlock Text="{Binding Label}" />
                               <TextBlock Classes="subagent-field-help"

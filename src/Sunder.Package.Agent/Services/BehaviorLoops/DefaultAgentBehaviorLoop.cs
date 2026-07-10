@@ -108,6 +108,7 @@ public sealed partial class DefaultAgentBehaviorLoop(
                 ToolMode = aiTools.Count > 0 ? new AutoChatToolMode() : ChatToolMode.None,
                 AllowMultipleToolCalls = allowMultipleToolCalls,
                 Reasoning = BuildReasoningOptions(context.ModelVariant),
+                AdditionalProperties = BuildModelOptionProperties(context),
             };
             var progressGuard = new AgentRunProgressGuard();
             AgentProviderCycleResult providerCycleResult;
@@ -621,6 +622,27 @@ public sealed partial class DefaultAgentBehaviorLoop(
                     ? ReasoningOutput.None
                     : ReasoningOutput.Summary,
             };
+
+    private static AdditionalPropertiesDictionary? BuildModelOptionProperties(AgentBehaviorLoopContext context)
+    {
+        if (context.ModelSpeedOption is null && context.ModelModeOption is null)
+        {
+            return null;
+        }
+
+        var properties = new AdditionalPropertiesDictionary();
+        if (!string.IsNullOrWhiteSpace(context.ModelSpeedOption?.SpeedOptionId))
+        {
+            properties[AgentChatModelOptionKeys.SpeedOptionId] = context.ModelSpeedOption.SpeedOptionId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(context.ModelModeOption?.ModeOptionId))
+        {
+            properties[AgentChatModelOptionKeys.ModeOptionId] = context.ModelModeOption.ModeOptionId;
+        }
+
+        return properties;
+    }
 
     private static ReasoningEffort ToReasoningEffort(AgentReasoningEffort effort)
         => effort switch

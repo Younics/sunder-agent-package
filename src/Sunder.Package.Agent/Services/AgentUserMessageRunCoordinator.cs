@@ -239,6 +239,8 @@ public sealed partial class AgentUserMessageRunCoordinator(
 
         AgentProviderRunCapabilities runCapabilities;
         AgentModelVariantDescriptor? modelVariant;
+        AgentModelSpeedOptionDescriptor? modelSpeedOption;
+        AgentModelModeOptionDescriptor? modelModeOption;
         try
         {
             var capabilitiesStopwatch = Stopwatch.StartNew();
@@ -247,6 +249,8 @@ public sealed partial class AgentUserMessageRunCoordinator(
                 .ConfigureAwait(false);
             runCapabilities = metadata.RunCapabilities;
             modelVariant = metadata.ModelVariant;
+            modelSpeedOption = metadata.ModelSpeedOption;
+            modelModeOption = metadata.ModelModeOption;
             _runEventLogger.LogRunEvent(
                 PackageLogLevel.Debug,
                 sessionId,
@@ -268,6 +272,8 @@ public sealed partial class AgentUserMessageRunCoordinator(
                     ["provider.supports_audio_input"] = runCapabilities.SupportsAudioInput,
                     ["provider.supports_video_input"] = runCapabilities.SupportsVideoInput,
                     ["model.variant_id"] = modelVariant?.VariantId,
+                    ["model.speed_option_id"] = modelSpeedOption?.SpeedOptionId,
+                    ["model.mode_option_id"] = modelModeOption?.ModeOptionId,
                 }
             );
         }
@@ -489,7 +495,9 @@ public sealed partial class AgentUserMessageRunCoordinator(
                         runStartedAtUtc,
                         userMessage,
                         userTurn.TurnId,
-                        modelVariant
+                        modelVariant,
+                        modelSpeedOption,
+                        modelModeOption
                     ),
                     host,
                     runHandle.CancellationTokenSource.Token

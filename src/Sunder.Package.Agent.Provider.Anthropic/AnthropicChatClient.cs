@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using Anthropic;
+using Anthropic.Models.Beta;
 using Anthropic.Models.Messages;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -11,6 +12,10 @@ using AIChatMessage = Microsoft.Extensions.AI.ChatMessage;
 using AIChatRole = Microsoft.Extensions.AI.ChatRole;
 using AIChatTool = Microsoft.Extensions.AI.AITool;
 using AIChatToolMode = Microsoft.Extensions.AI.ChatToolMode;
+using BetaContentBlock = Anthropic.Models.Beta.Messages.BetaContentBlock;
+using BetaMessageCreateParams = Anthropic.Models.Beta.Messages.MessageCreateParams;
+using BetaRawMessageStreamEvent = Anthropic.Models.Beta.Messages.BetaRawMessageStreamEvent;
+using Speed = Anthropic.Models.Beta.Messages.Speed;
 
 namespace Sunder.Package.Agent.Provider.Anthropic;
 
@@ -59,6 +64,7 @@ internal sealed class AnthropicChatClient(
 
         var modelId = options?.ModelId ?? _context.ModelId;
         var includeTools = options?.ToolMode != AIChatToolMode.None && options?.Tools is { Count: > 0 };
+        var useFastMode = UsesFastMode(options);
         var parameters = BuildMessageCreateParams(messages, options, modelId, includeTools);
         await LogAsync(
             AgentLogLevel.Debug,
@@ -89,17 +95,39 @@ internal sealed class AnthropicChatClient(
         var client = new AnthropicClient { ApiKey = apiKey };
         if (includeTools)
         {
-            await foreach (var update in GetToolAwareResponseAsync(client, parameters, modelId, options?.AllowMultipleToolCalls == true, cancellationToken))
+            if (useFastMode)
             {
-                yield return update;
+                var fastParameters = BuildFastMessageCreateParams(parameters);
+                await foreach (var update in GetToolAwareResponseAsync(client, fastParameters, modelId, options?.AllowMultipleToolCalls == true, cancellationToken))
+                {
+                    yield return update;
+                }
+            }
+            else
+            {
+                await foreach (var update in GetToolAwareResponseAsync(client, parameters, modelId, options?.AllowMultipleToolCalls == true, cancellationToken))
+                {
+                    yield return update;
+                }
             }
 
             yield break;
         }
 
-        await foreach (var update in GetTextStreamingResponseAsync(client, parameters, modelId, cancellationToken))
+        if (useFastMode)
         {
-            yield return update;
+            var fastParameters = BuildFastMessageCreateParams(parameters);
+            await foreach (var update in GetTextStreamingResponseAsync(client, fastParameters, modelId, cancellationToken))
+            {
+                yield return update;
+            }
+        }
+        else
+        {
+            await foreach (var update in GetTextStreamingResponseAsync(client, parameters, modelId, cancellationToken))
+            {
+                yield return update;
+            }
         }
     }
 
@@ -114,18 +142,53 @@ internal sealed class AnthropicChatClient(
     {
     }
 
-    private async IAsyncEnumerable<ChatResponseUpdate> GetToolAwareResponseAsync(
+    private IAsyncEnumerable<ChatResponseUpdate> GetToolAwareResponseAsync(
         AnthropicClient client,
         MessageCreateParams parameters,
+        string modelId,
+        bool allowMultipleToolCalls,
+        CancellationToken cancellationToken)
+        => GetToolAwareResponseAsync(
+            cancellationToken => client.Messages.Create(parameters, cancellationToken),
+            static response => response.Content,
+            GetReasoningText,
+            GetToolCall,
+            GetText,
+            modelId,
+            allowMultipleToolCalls,
+            cancellationToken);
+
+    private IAsyncEnumerable<ChatResponseUpdate> GetToolAwareResponseAsync(
+        AnthropicClient client,
+        BetaMessageCreateParams parameters,
+        string modelId,
+        bool allowMultipleToolCalls,
+        CancellationToken cancellationToken)
+        => GetToolAwareResponseAsync(
+            cancellationToken => client.Beta.Messages.Create(parameters, cancellationToken),
+            static response => response.Content,
+            GetReasoningText,
+            GetToolCall,
+            GetText,
+            modelId,
+            allowMultipleToolCalls,
+            cancellationToken);
+
+    private async IAsyncEnumerable<ChatResponseUpdate> GetToolAwareResponseAsync<TResponse, TContent>(
+        Func<CancellationToken, Task<TResponse>> createResponseAsync,
+        Func<TResponse, IReadOnlyList<TContent>> getContent,
+        Func<TContent, string?> getReasoningText,
+        Func<TContent, AnthropicToolCall?> getToolCall,
+        Func<TContent, string?> getText,
         string modelId,
         bool allowMultipleToolCalls,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        Message response;
+        TResponse response;
         try
         {
-            response = await client.Messages.Create(parameters, cancellationToken).ConfigureAwait(false);
+            response = await createResponseAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -135,7 +198,10 @@ internal sealed class AnthropicChatClient(
 
         var responseId = Guid.NewGuid().ToString("N");
         var messageId = responseId;
-        var reasoningText = ExtractReasoningText(response.Content);
+        var content = getContent(response);
+        var reasoningText = string.Concat(content
+            .Select(getReasoningText)
+            .Where(textPart => !string.IsNullOrWhiteSpace(textPart)));
         if (!string.IsNullOrWhiteSpace(reasoningText))
         {
             await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", "ReasoningDelta", stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
@@ -147,13 +213,9 @@ internal sealed class AnthropicChatClient(
             };
         }
 
-        var toolCalls = response.Content
-            .Where(block => block.TryPickToolUse(out _))
-            .Select(block =>
-            {
-                block.TryPickToolUse(out var toolUse);
-                return toolUse!;
-            })
+        var toolCalls = content
+            .Select(getToolCall)
+            .OfType<AnthropicToolCall>()
             .ToArray();
 
         if (toolCalls.Length > 1 && !allowMultipleToolCalls)
@@ -169,7 +231,7 @@ internal sealed class AnthropicChatClient(
             await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", "ToolCallRequested", stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
             yield return new ChatResponseUpdate(AIChatRole.Assistant,
                 toolCalls.Select(toolCall => new FunctionCallContent(
-                    string.IsNullOrWhiteSpace(toolCall.ID) ? Guid.NewGuid().ToString("N") : toolCall.ID,
+                    string.IsNullOrWhiteSpace(toolCall.Id) ? Guid.NewGuid().ToString("N") : toolCall.Id,
                     string.IsNullOrWhiteSpace(toolCall.Name) ? "unknown_tool" : toolCall.Name,
                     ParseObjectArguments(JsonSerializer.Serialize(toolCall.Input)))).ToArray())
             {
@@ -180,13 +242,8 @@ internal sealed class AnthropicChatClient(
             yield break;
         }
 
-        var text = string.Concat(response.Content
-            .Where(block => block.TryPickText(out _))
-            .Select(block =>
-            {
-                block.TryPickText(out var textBlock);
-                return textBlock?.Text;
-            })
+        var text = string.Concat(content
+            .Select(getText)
             .Where(textPart => !string.IsNullOrWhiteSpace(textPart)));
 
         if (!string.IsNullOrWhiteSpace(text))
@@ -203,16 +260,38 @@ internal sealed class AnthropicChatClient(
         await LogAsync(AgentLogLevel.Debug, "provider.stream.completed", string.IsNullOrWhiteSpace(text) && string.IsNullOrWhiteSpace(reasoningText) ? "Provider stream ended without events." : null, stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
     }
 
-    private async IAsyncEnumerable<ChatResponseUpdate> GetTextStreamingResponseAsync(
+    private IAsyncEnumerable<ChatResponseUpdate> GetTextStreamingResponseAsync(
         AnthropicClient client,
         MessageCreateParams parameters,
         string modelId,
+        CancellationToken cancellationToken)
+        => GetTextStreamingResponseAsync(
+            () => client.Messages.CreateStreaming(parameters, cancellationToken),
+            GetStreamingContent,
+            modelId,
+            cancellationToken);
+
+    private IAsyncEnumerable<ChatResponseUpdate> GetTextStreamingResponseAsync(
+        AnthropicClient client,
+        BetaMessageCreateParams parameters,
+        string modelId,
+        CancellationToken cancellationToken)
+        => GetTextStreamingResponseAsync(
+            () => client.Beta.Messages.CreateStreaming(parameters, cancellationToken),
+            GetStreamingContent,
+            modelId,
+            cancellationToken);
+
+    private async IAsyncEnumerable<ChatResponseUpdate> GetTextStreamingResponseAsync<TStreamEvent>(
+        Func<IAsyncEnumerable<TStreamEvent>> createStream,
+        Func<TStreamEvent, StreamingContent> getStreamingContent,
+        string modelId,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        IAsyncEnumerable<RawMessageStreamEvent> stream;
+        IAsyncEnumerable<TStreamEvent> stream;
         try
         {
-            stream = client.Messages.CreateStreaming(parameters, cancellationToken);
+            stream = createStream();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -226,7 +305,7 @@ internal sealed class AnthropicChatClient(
         await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
         while (true)
         {
-            RawMessageStreamEvent rawEvent;
+            TStreamEvent rawEvent;
             try
             {
                 if (!await enumerator.MoveNextAsync())
@@ -247,12 +326,8 @@ internal sealed class AnthropicChatClient(
                 throw CreateProviderException(ex);
             }
 
-            if (!rawEvent.TryPickContentBlockDelta(out var delta))
-            {
-                continue;
-            }
-
-            if (delta.Delta.TryPickThinking(out var thinking) && !string.IsNullOrWhiteSpace(thinking.Thinking))
+            var content = getStreamingContent(rawEvent);
+            if (!string.IsNullOrWhiteSpace(content.ReasoningText))
             {
                 if (!firstEventRecorded)
                 {
@@ -260,7 +335,7 @@ internal sealed class AnthropicChatClient(
                     await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", "ReasoningDelta", stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
                 }
 
-                yield return new ChatResponseUpdate(AIChatRole.Assistant, [new TextReasoningContent(thinking.Thinking)])
+                yield return new ChatResponseUpdate(AIChatRole.Assistant, [new TextReasoningContent(content.ReasoningText)])
                 {
                     ResponseId = responseId,
                     MessageId = messageId,
@@ -269,7 +344,7 @@ internal sealed class AnthropicChatClient(
                 continue;
             }
 
-            if (!delta.Delta.TryPickText(out var text) || string.IsNullOrWhiteSpace(text.Text))
+            if (string.IsNullOrWhiteSpace(content.Text))
             {
                 continue;
             }
@@ -280,7 +355,7 @@ internal sealed class AnthropicChatClient(
                 await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", "TextDelta", stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
             }
 
-            yield return new ChatResponseUpdate(AIChatRole.Assistant, text.Text)
+            yield return new ChatResponseUpdate(AIChatRole.Assistant, content.Text)
             {
                 ResponseId = responseId,
                 MessageId = messageId,
@@ -295,6 +370,66 @@ internal sealed class AnthropicChatClient(
             stopwatch.ElapsedMilliseconds,
             cancellationToken: cancellationToken);
     }
+
+    private static string? GetReasoningText(ContentBlock block)
+        => block.TryPickThinking(out var thinking) ? thinking?.Thinking : null;
+
+    private static string? GetReasoningText(BetaContentBlock block)
+        => block.TryPickThinking(out var thinking) ? thinking?.Thinking : null;
+
+    private static AnthropicToolCall? GetToolCall(ContentBlock block)
+        => block.TryPickToolUse(out var toolUse)
+            ? new AnthropicToolCall(toolUse!.ID, toolUse.Name, toolUse.Input)
+            : null;
+
+    private static AnthropicToolCall? GetToolCall(BetaContentBlock block)
+        => block.TryPickToolUse(out var toolUse)
+            ? new AnthropicToolCall(toolUse!.ID, toolUse.Name, toolUse.Input)
+            : null;
+
+    private static string? GetText(ContentBlock block)
+        => block.TryPickText(out var text) ? text?.Text : null;
+
+    private static string? GetText(BetaContentBlock block)
+        => block.TryPickText(out var text) ? text?.Text : null;
+
+    private static StreamingContent GetStreamingContent(RawMessageStreamEvent rawEvent)
+    {
+        if (!rawEvent.TryPickContentBlockDelta(out var delta))
+        {
+            return default;
+        }
+
+        if (delta.Delta.TryPickThinking(out var thinking) && !string.IsNullOrWhiteSpace(thinking.Thinking))
+        {
+            return new StreamingContent(thinking.Thinking, null);
+        }
+
+        return delta.Delta.TryPickText(out var text) && !string.IsNullOrWhiteSpace(text.Text)
+            ? new StreamingContent(null, text.Text)
+            : default;
+    }
+
+    private static StreamingContent GetStreamingContent(BetaRawMessageStreamEvent rawEvent)
+    {
+        if (!rawEvent.TryPickContentBlockDelta(out var delta))
+        {
+            return default;
+        }
+
+        if (delta.Delta.TryPickThinking(out var thinking) && !string.IsNullOrWhiteSpace(thinking.Thinking))
+        {
+            return new StreamingContent(thinking.Thinking, null);
+        }
+
+        return delta.Delta.TryPickText(out var text) && !string.IsNullOrWhiteSpace(text.Text)
+            ? new StreamingContent(null, text.Text)
+            : default;
+    }
+
+    private sealed record AnthropicToolCall(string? Id, string? Name, object? Input);
+
+    private readonly record struct StreamingContent(string? ReasoningText, string? Text);
 
     private ValueTask LogAsync(
         AgentLogLevel level,
@@ -349,6 +484,22 @@ internal sealed class AnthropicChatClient(
         return parameters;
     }
 
+    private static BetaMessageCreateParams BuildFastMessageCreateParams(MessageCreateParams parameters)
+        => BetaMessageCreateParams.FromRawUnchecked(
+                parameters.RawHeaderData,
+                parameters.RawQueryData,
+                parameters.RawBodyData)
+            with
+            {
+                Speed = Speed.Fast,
+                Betas = [AnthropicBeta.FastMode2026_02_01],
+            };
+
+    private static bool UsesFastMode(ChatOptions? options)
+        => options?.AdditionalProperties is { } properties
+            && properties.TryGetValue(AgentChatModelOptionKeys.SpeedOptionId, out var value)
+            && string.Equals(value as string, "fast", StringComparison.OrdinalIgnoreCase);
+
     private static ThinkingConfigParam? BuildThinkingConfig(ReasoningOptions? reasoning, long maxTokens)
     {
         if (reasoning?.Output is not (ReasoningOutput.Summary or ReasoningOutput.Full)
@@ -394,16 +545,6 @@ internal sealed class AnthropicChatClient(
             ReasoningEffort.ExtraHigh => Effort.Xhigh,
             _ => null,
         };
-
-    private static string ExtractReasoningText(IEnumerable<ContentBlock> content)
-        => string.Concat(content
-            .Where(block => block.TryPickThinking(out _))
-            .Select(block =>
-            {
-                block.TryPickThinking(out var thinkingBlock);
-                return thinkingBlock?.Thinking;
-            })
-            .Where(textPart => !string.IsNullOrWhiteSpace(textPart)));
 
     private static List<MessageParam> BuildMessages(IEnumerable<AIChatMessage> chatMessages)
     {
