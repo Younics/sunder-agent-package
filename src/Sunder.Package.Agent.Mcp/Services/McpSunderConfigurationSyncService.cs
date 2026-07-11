@@ -15,6 +15,7 @@ public sealed class McpSunderConfigurationSyncService(
     private readonly IPackageExtensionCatalog? _extensionCatalog = extensionCatalog;
     private readonly string? _userProfilePath = userProfilePath;
     private readonly string? _applicationDataPath = applicationDataPath;
+    private readonly SemaphoreSlim _syncGate = new(1, 1);
 
     public Task<McpConfigurationImportResult> SyncAsync(CancellationToken cancellationToken = default)
         => SyncCoreAsync(workspace: null, includeKnownWorkspaces: true, cancellationToken);
@@ -28,22 +29,30 @@ public sealed class McpSunderConfigurationSyncService(
         IEnumerable<string> filePaths,
         CancellationToken cancellationToken = default)
     {
-        var result = new MutableSyncResult();
-        foreach (var path in filePaths.Where(File.Exists).Distinct(GetPathStringComparer()))
+        await _syncGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
+            var result = new MutableSyncResult();
+            foreach (var path in filePaths.Where(File.Exists).Distinct(GetPathStringComparer()))
             {
-                result.Add(await _importer.ImportSunderConfigurationFileAsync(path, cancellationToken).ConfigureAwait(false));
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    result.Add(await _importer.ImportSunderConfigurationFileAsync(path, cancellationToken).ConfigureAwait(false));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    result.Skipped++;
+                    result.Warnings.Add($"Skipped Sunder MCP config '{Path.GetFileName(path)}': {ex.Message}");
+                }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                result.Skipped++;
-                result.Warnings.Add($"Skipped Sunder MCP config '{Path.GetFileName(path)}': {ex.Message}");
-            }
-        }
 
-        return result.ToResult();
+            return result.ToResult();
+        }
+        finally
+        {
+            _syncGate.Release();
+        }
     }
 
     private Task<McpConfigurationImportResult> SyncCoreAsync(

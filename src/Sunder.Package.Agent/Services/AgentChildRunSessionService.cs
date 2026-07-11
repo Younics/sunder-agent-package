@@ -56,12 +56,20 @@ public sealed class AgentChildRunSessionService(
     }
 
     internal AgentChildRunResult BuildResult(AgentSessionRecord childSession, AgentRunCheckpointRecord checkpoint)
-        => new(
+    {
+        if (checkpoint.SessionId != childSession.SessionId)
+        {
+            throw new InvalidOperationException(
+                "The child run checkpoint belongs to a different session.");
+        }
+
+        return new(
             childSession.SessionId,
             checkpoint.Status,
             checkpoint.Summary ?? checkpoint.Status.ToString(),
             RenderLastAssistantText(childSession.SessionId),
             childSession.Title);
+    }
 
     internal string? RenderLastAssistantText(Guid sessionId)
         => _sessionService.ListTurns(sessionId)
@@ -83,7 +91,11 @@ public sealed class AgentChildRunSessionService(
 
         return _sessionService.ListSessions()
             .FirstOrDefault(session => session.ParentSessionId == parentSession.SessionId
-                                       && string.Equals(session.TaskId, taskId, StringComparison.OrdinalIgnoreCase));
+                                       && string.Equals(session.TaskId, taskId, StringComparison.OrdinalIgnoreCase)
+                                       && string.Equals(
+                                           session.ProfileId,
+                                           request.ChildProfile.ProfileId,
+                                           StringComparison.OrdinalIgnoreCase));
     }
 
     private static string? NormalizeTaskId(string? taskId)

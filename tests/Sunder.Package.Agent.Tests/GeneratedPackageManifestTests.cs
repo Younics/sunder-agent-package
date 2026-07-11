@@ -9,22 +9,25 @@ public sealed class GeneratedPackageManifestTests
     [Fact]
     public void RuntimePackages_GenerateExpectedSdkCompatibilityMetadata()
     {
-        var repositoryRoot = FindRepositoryRoot();
         var configuration = ResolveConfiguration();
         var targetFramework = ResolveTargetFramework();
+        var runtimePackages = AgentPackageRepositoryInventory.GetRuntimePackageProjects();
 
-        foreach (var (packageDirectory, expectedCapabilities) in ExpectedPackageCapabilities)
+        Assert.NotEmpty(runtimePackages);
+        Assert.Empty(ExpectedPackageCapabilities.Keys.Except(
+            runtimePackages.Select(static package => package.Name),
+            StringComparer.OrdinalIgnoreCase));
+
+        foreach (var package in runtimePackages)
         {
             var manifestPath = Path.Combine(
-                repositoryRoot,
-                "src",
-                packageDirectory,
+                package.DirectoryPath,
                 "obj",
                 configuration,
                 targetFramework,
                 "sunder-package.json");
 
-            Assert.True(File.Exists(manifestPath), $"Generated manifest was not found for {packageDirectory}: {manifestPath}");
+            Assert.True(File.Exists(manifestPath), $"Generated manifest was not found for {package.Name}: {manifestPath}");
             using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
             var root = document.RootElement;
             Assert.Equal(1, root.GetProperty("manifestVersion").GetInt32());
@@ -38,12 +41,17 @@ public sealed class GeneratedPackageManifestTests
             Assert.Contains(SunderSdkCapabilities.CoreV1, capabilities);
             Assert.Contains(SunderSdkCapabilities.PackagingV1, capabilities);
             Assert.Contains(SunderSdkCapabilities.ContributionsV1, capabilities);
-            foreach (var expectedCapability in expectedCapabilities)
+            foreach (var expectedCapability in ExpectedPackageCapabilities.GetValueOrDefault(package.Name, []))
             {
                 Assert.Contains(expectedCapability, capabilities);
             }
         }
     }
+
+    internal static IReadOnlySet<string> CoveredProjectPaths
+        => AgentPackageRepositoryInventory.GetRuntimePackageProjects()
+            .Select(static package => package.ProjectPath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private static readonly IReadOnlyDictionary<string, string[]> ExpectedPackageCapabilities = new Dictionary<string, string[]>
     {
@@ -58,6 +66,7 @@ public sealed class GeneratedPackageManifestTests
             SunderSdkCapabilities.ShellViewV1,
             SunderSdkCapabilities.StorageV1,
         ],
+        ["Sunder.Package.Agent.Builder"] = [SunderSdkCapabilities.ViewsV1],
         ["Sunder.Package.Agent.Tools.Web"] = [SunderSdkCapabilities.ConfigurationSchemaV1, SunderSdkCapabilities.ExtensionsV1],
         ["Sunder.Package.Agent.Tools.Shell"] = [SunderSdkCapabilities.ExtensionsV1],
         ["Sunder.Package.Agent.Tools.Files"] = [SunderSdkCapabilities.ExtensionsV1],
@@ -102,22 +111,6 @@ public sealed class GeneratedPackageManifestTests
             SunderSdkCapabilities.BackgroundProcessesV1,
         ],
     };
-
-    private static string FindRepositoryRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "Sunder.AgentPackage.slnx")))
-            {
-                return directory.FullName;
-            }
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Could not locate Sunder.AgentPackage.slnx from test output path.");
-    }
 
     private static string ResolveTargetFramework()
         => new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)).Name;

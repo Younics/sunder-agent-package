@@ -1,0 +1,167 @@
+<Styles xmlns="https://github.com/avaloniaui"
+         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+         xmlns:p="using:Sunder.Package.Agent.Shared.Presentation">
+  <Styles.Resources>
+    <DataTemplate x:Key="ModelBindingProviderOptionTemplate"
+                  x:DataType="p:ProviderCatalogOption">
+      <TextBlock Text="{Binding Label}" />
+    </DataTemplate>
+
+    <DataTemplate x:Key="ModelBindingModelOptionTemplate"
+                  x:DataType="p:ProviderModelCatalogOption">
+      <TextBlock Text="{Binding Label}" />
+    </DataTemplate>
+
+    <DataTemplate x:Key="ModelBindingReasoningOptionTemplate"
+                  x:DataType="p:ModelReasoningOption">
+      <StackPanel Spacing="2">
+        <TextBlock Text="{Binding Label}" />
+        <TextBlock Text="{Binding Description}"
+                   IsVisible="{Binding HasDescription}"
+                   FontSize="12"
+                   Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
+                   TextWrapping="Wrap" />
+      </StackPanel>
+    </DataTemplate>
+
+    <DataTemplate x:Key="ModelBindingSpeedOptionTemplate"
+                  x:DataType="p:ModelSpeedOption">
+      <StackPanel Spacing="2">
+        <TextBlock Text="{Binding Label}" />
+        <TextBlock Text="{Binding Description}"
+                   IsVisible="{Binding HasDescription}"
+                   FontSize="12"
+                   Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
+                   TextWrapping="Wrap" />
+      </StackPanel>
+    </DataTemplate>
+
+    <DataTemplate x:Key="ModelBindingModeOptionTemplate"
+                  x:DataType="p:ModelModeOption">
+      <StackPanel Spacing="2">
+        <TextBlock Text="{Binding Label}" />
+        <TextBlock Text="{Binding Description}"
+                   IsVisible="{Binding HasDescription}"
+                   FontSize="12"
+                   Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
+                   TextWrapping="Wrap" />
+      </StackPanel>
+    </DataTemplate>
+
+    <DataTemplate x:Key="CapabilityOptionTemplate"
+                  x:DataType="p:CapabilityOptionState">
+      <Border Padding="0,4">
+        <StackPanel Spacing="4">
+          <CheckBox IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                    IsEnabled="{Binding CanSelect}">
+            <TextBlock Text="{Binding DisplayName}" />
+          </CheckBox>
+          <TextBlock Text="{Binding Description}"
+                     Margin="24,0,0,0"
+                     MaxLines="2"
+                     TextTrimming="CharacterEllipsis"
+                     FontSize="12"
+                     Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate x:Key="CapabilityGroupTemplate"
+                  x:DataType="p:CapabilityGroupState">
+      <StackPanel Spacing="8"
+                  Margin="0,4,0,10">
+        <StackPanel Spacing="2">
+          <TextBlock Text="{Binding Title}"
+                     FontSize="14"
+                     FontWeight="SemiBold"
+                     Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+          <TextBlock Text="{Binding Description}"
+                     MaxLines="2"
+                     TextTrimming="CharacterEllipsis"
+                     IsVisible="{Binding HasDescription}"
+                     FontSize="12"
+                     Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+        <ItemsControl ItemsSource="{Binding Options}"
+                      ItemTemplate="{StaticResource CapabilityOptionTemplate}" />
+      </StackPanel>
+    </DataTemplate>
+  </Styles.Resources>
+
+  <Style Selector="Border.settings-status-pill">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="10,4" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+
+  <Style Selector="Border.settings-status-pill.success">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+  </Style>
+
+  <Style Selector="Border.settings-status-pill.warning">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Selected}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+  </Style>
+
+  <Style Selector="Border.settings-status-pill.danger">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Danger.Soft}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Danger}" />
+  </Style>
+
+  <Style Selector="TextBlock.settings-status-label">
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+  </Style>
+
+  <Style Selector="Border.settings-status-pill.success TextBlock.settings-status-label">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+  </Style>
+
+  <Style Selector="Border.settings-status-pill.danger TextBlock.settings-status-label">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.OnDanger}" />
+  </Style>
+
+  <Style Selector="Border.settings-detail-card">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+    <Setter Property="Padding" Value="12" />
+  </Style>
+
+  <Style Selector="TextBox.secret-field">
+    <Setter Property="PasswordChar" Value="*" />
+  </Style>
+
+  <Style Selector="Border.settings-confirmation-card">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Danger.Soft}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Danger}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+    <Setter Property="Padding" Value="12" />
+  </Style>
+
+  <Style Selector="TextBlock.settings-operation-status">
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+  </Style>
+
+  <Style Selector="TextBlock.settings-operation-status.success">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
+  </Style>
+
+  <Style Selector="TextBlock.settings-operation-status.warning">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+  </Style>
+
+  <Style Selector="TextBlock.settings-operation-status.danger">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Danger}" />
+  </Style>
+</Styles>

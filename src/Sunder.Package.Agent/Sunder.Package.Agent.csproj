@@ -1,11 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+    <SunderPackageProject>true</SunderPackageProject>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <SunderAgentSharedTranscript>true</SunderAgentSharedTranscript>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,8 +14,6 @@
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
-    <ProjectReference Include="..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj" Condition="Exists('..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj')" />
-    <PackageReference Include="Sunder.Sdk" Condition="!Exists('..\..\..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj')" />
     <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
   </ItemGroup>
 
@@ -24,20 +21,6 @@
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\SunderComboBox.cs" Link="PackageViews\SunderComboBox.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptScrollCoordinator.cs" Link="PackageViews\TranscriptScrollCoordinator.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptRowWindow.cs" Link="PackageViews\TranscriptRowWindow.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptRowPresenter.cs" Link="PackageViews\TranscriptRowPresenter.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\ToolDiffViewModels.cs" Link="PackageViews\ToolDiffViewModels.cs" />
-    <AvaloniaResource Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptStyles.axaml" Link="PackageViews\TranscriptStyles.axaml" />
-  </ItemGroup>
-
-  <ItemGroup Condition="!Exists('..\..\..\sunder-core\src\Sdk\Sunder.Package.Build\build\Sunder.Package.Build.targets')">
-    <PackageReference Include="Sunder.Package.Build" PrivateAssets="all" />
-  </ItemGroup>
-
-  <Import Project="..\..\..\sunder-core\src\Sdk\Sunder.Package.Build\build\Sunder.Package.Build.targets"
-          Condition="Exists('..\..\..\sunder-core\src\Sdk\Sunder.Package.Build\build\Sunder.Package.Build.targets')" />
+  <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
 
 </Project>

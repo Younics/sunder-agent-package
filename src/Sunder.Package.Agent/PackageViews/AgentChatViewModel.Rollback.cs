@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.PackageViews;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -32,7 +33,7 @@ public sealed partial class AgentChatViewModel
 
         ClearPendingAttachments();
         PendingRollbackTurnId = turn.TurnId;
-        DraftMessage = ExtractTextContent(turn);
+        DraftMessage = TranscriptRowProjector<AgentTranscriptRowViewModel>.ExtractTextContent(turn);
         selectedSession.DraftMessage = DraftMessage;
         foreach (var upload in attachmentUploads.Uploads)
         {

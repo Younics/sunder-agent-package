@@ -1,15 +1,23 @@
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Configuration;
 
 namespace Sunder.Package.Agent.Provider.Gemini;
 
 internal static class GeminiModelCatalog
 {
-    private static readonly IReadOnlyList<AgentModelVariantDescriptor> ReasoningVariants =
+    private static readonly IReadOnlyList<AgentModelVariantDescriptor> ThinkingLevelVariants =
     [
         new("low", "Low", "Use low thinking effort for faster responses.", AgentReasoningEffort.Low),
         new("medium", "Medium", "Use balanced thinking effort for most tasks.", AgentReasoningEffort.Medium),
         new("high", "High", "Use high thinking effort for complex tasks.", AgentReasoningEffort.High),
+    ];
+
+    private static readonly IReadOnlyList<AgentModelVariantDescriptor> ThinkingBudgetVariants =
+    [
+        new("low", "Low", "Use a low valid thinking-token budget.", AgentReasoningEffort.Low),
+        new("medium", "Medium", "Use a balanced valid thinking-token budget.", AgentReasoningEffort.Medium),
+        new("high", "High", "Use the model family's maximum thinking-token budget.", AgentReasoningEffort.High),
     ];
 
     private static readonly IReadOnlyDictionary<string, DateOnly> ReleaseDates =
@@ -29,26 +37,31 @@ internal static class GeminiModelCatalog
             ["gemini/gemini-2.5-flash-lite"] = new(2025, 6, 17),
         };
 
-    public static IReadOnlyList<AgentModelDescriptor> Models { get; } =
+    private static readonly IReadOnlyList<AgentModelDescriptor> VendorModels =
         ApplyReleaseDates([
-        new("gemini/gemini-3.5-flash", "Gemini 3.5 Flash", 1048576, 65536, IsRecommended: true, Variants: ReasoningVariants),
-        new("gemini/gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", 1048576, 65536, IsRecommended: true, Variants: ReasoningVariants),
-        new("gemini/gemini-3.1-pro-preview-customtools", "Gemini 3.1 Pro Preview Custom Tools", 1048576, 65536, Variants: ReasoningVariants),
-        new("gemini/gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite", 1048576, 65536, Variants: ReasoningVariants),
-        new("gemini/gemini-3-flash-preview", "Gemini 3 Flash Preview", 1048576, 65536, Variants: ReasoningVariants),
-        new("gemini/gemini-2.5-pro", "Gemini 2.5 Pro", 1048576, 65536, Variants: ReasoningVariants),
-        new("gemini/gemini-2.5-flash", "Gemini 2.5 Flash", 1048576, 65536, IsRecommended: true, Variants: ReasoningVariants),
-        new("gemini/gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", 1048576, 65536, Variants: ReasoningVariants),
-        new("gemini/gemini-flash-latest", "Gemini Flash Latest", 1048576, 65536, Variants: ReasoningVariants),
-        new("gemini/gemini-flash-lite-latest", "Gemini Flash Lite Latest", 1048576, 65536, Variants: ReasoningVariants),
+        new("gemini/gemini-3.5-flash", "Gemini 3.5 Flash", 1048576, 65536, IsRecommended: true, Variants: ThinkingLevelVariants),
+        new("gemini/gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", 1048576, 65536, IsRecommended: true, Variants: ThinkingLevelVariants),
+        new("gemini/gemini-3.1-pro-preview-customtools", "Gemini 3.1 Pro Preview Custom Tools", 1048576, 65536, Variants: ThinkingLevelVariants),
+        new("gemini/gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite", 1048576, 65536, Variants: ThinkingLevelVariants),
+        new("gemini/gemini-3-flash-preview", "Gemini 3 Flash Preview", 1048576, 65536, Variants: ThinkingLevelVariants),
+        new("gemini/gemini-2.5-pro", "Gemini 2.5 Pro", 1048576, 65536, Variants: ThinkingBudgetVariants),
+        new("gemini/gemini-2.5-flash", "Gemini 2.5 Flash", 1048576, 65536, IsRecommended: true, Variants: ThinkingBudgetVariants),
+        new("gemini/gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", 1048576, 65536, Variants: ThinkingBudgetVariants),
+        new("gemini/gemini-flash-latest", "Gemini Flash Latest", 1048576, 65536),
+        new("gemini/gemini-flash-lite-latest", "Gemini Flash Lite Latest", 1048576, 65536),
         new("gemini/gemma-4-31b-it", "Gemma 4 31B IT", 262144, 32768),
         new("gemini/gemma-4-26b-a4b-it", "Gemma 4 26B A4B IT", 262144, 32768),
     ]);
 
+    private static readonly ProviderModelCatalogSnapshot Catalog = ProviderModelCatalog.ValidateAndOrder(
+        VendorModels,
+        GeminiProviderConfiguration.DefaultUtilityModelId,
+        static _ => true);
+
+    public static IReadOnlyList<AgentModelDescriptor> Models => Catalog.Models;
+
     public static IReadOnlyList<PackageConfigurationOption> UtilityModelOptions { get; } =
-        Models.OrderNewestFirst()
-            .Select(model => new PackageConfigurationOption(model.ModelId, model.DisplayName))
-            .ToArray();
+        Catalog.UtilityModelOptions;
 
     private static IReadOnlyList<AgentModelDescriptor> ApplyReleaseDates(
         IEnumerable<AgentModelDescriptor> models)

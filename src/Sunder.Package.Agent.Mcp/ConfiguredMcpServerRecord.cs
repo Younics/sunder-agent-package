@@ -2,6 +2,8 @@ namespace Sunder.Package.Agent.Mcp;
 
 public sealed record ConfiguredMcpServerRecord
 {
+    public int PersistenceVersion { get; init; }
+
     public string ServerId { get; init; } = string.Empty;
 
     public string Name { get; init; } = string.Empty;

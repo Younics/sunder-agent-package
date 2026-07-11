@@ -1,118 +1,20 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Sunder.Package.Agent.Provider.Anthropic"
-             xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
              x:Class="Sunder.Package.Agent.Provider.Anthropic.AnthropicSettingsView"
-             x:DataType="vm:AnthropicSettingsViewModel"
-             mc:Ignorable="d">
+             x:DataType="vm:AnthropicSettingsViewModel">
   <UserControl.Styles>
-    <Style Selector="Border.auth-status-pill">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="10" />
-      <Setter Property="Padding" Value="10,4" />
-      <Setter Property="VerticalAlignment" Value="Center" />
-    </Style>
-
-    <Style Selector="Border.auth-status-pill.success">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
-    </Style>
-
-    <Style Selector="Border.auth-status-pill.warning">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Selected}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
-    </Style>
-
-    <Style Selector="TextBlock.auth-status-label">
-      <Setter Property="FontSize" Value="12" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-    </Style>
-
-    <Style Selector="Border.auth-status-pill.success TextBlock.auth-status-label">
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
-    </Style>
-
-    <Style Selector="Border.auth-detail-card">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="12" />
-    </Style>
+    <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
+    <StyleInclude Source="/Provider.Shared/ProviderSettingsStyles.axaml" />
   </UserControl.Styles>
 
   <ScrollViewer>
     <StackPanel Margin="0,0,0,8"
                 Spacing="16">
-      <Border Classes="card-surface">
-        <StackPanel Spacing="14">
-          <Grid ColumnDefinitions="*,Auto"
-                ColumnSpacing="12">
-            <TextBlock Classes="section-title"
-                       Text="API Key"
-                       VerticalAlignment="Center" />
-            <Border Grid.Column="1"
-                    Classes="auth-status-pill"
-                    Classes.success="{Binding IsApiKeyStored}"
-                    Classes.warning="{Binding IsApiKeyStatusWarning}">
-              <TextBlock Classes="auth-status-label"
-                         Text="{Binding ApiKeyStatusLabel}" />
-            </Border>
-          </Grid>
-
-          <Border Classes="auth-detail-card">
-            <StackPanel Spacing="6">
-              <TextBlock Classes="caption"
-                         Text="A stored API key is used for Claude chat. Existing keys remain stored unless you replace them here."
-                         TextWrapping="Wrap" />
-              <TextBlock Classes="muted"
-                         Text="{Binding ApiKeyStatusDetail}"
-                         TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
-
-          <TextBox Text="{Binding ApiKeyValue}"
-                   PlaceholderText="sk-ant-..." />
-          <Button Classes="primary-action"
-                  Content="Save API Key"
-                  HorizontalAlignment="Left"
-                  Command="{Binding SaveSettingsCommand}"
-                  IsEnabled="{Binding CanSaveSettings}" />
-        </StackPanel>
-      </Border>
-
-      <Border Classes="card-surface">
-        <StackPanel Spacing="14">
-          <StackPanel Spacing="6">
-            <TextBlock Classes="section-title"
-                       Text="Utility Model" />
-            <TextBlock Classes="caption"
-                       Text="Used for short background tasks such as generating session names. Regular agent replies keep using the model selected on the Agent profile."
-                       TextWrapping="Wrap" />
-          </StackPanel>
-
-          <shared:SunderComboBox ItemsSource="{Binding UtilityModels}"
-                                 SelectedItem="{Binding SelectedUtilityModel, Mode=TwoWay}"
-                                 HorizontalAlignment="Left">
-            <shared:SunderComboBox.ItemTemplate>
-              <DataTemplate x:DataType="vm:AnthropicUtilityModelOption">
-                <TextBlock Text="{Binding DisplayName}" />
-              </DataTemplate>
-            </shared:SunderComboBox.ItemTemplate>
-          </shared:SunderComboBox>
-
-          <Button Classes="primary-action"
-                  Content="Save Utility Model"
-                  HorizontalAlignment="Left"
-                  Command="{Binding SaveSettingsCommand}"
-                  IsEnabled="{Binding CanSaveSettings}" />
-        </StackPanel>
-      </Border>
+      <ContentControl Content="{Binding ApiKeySettings}"
+                      ContentTemplate="{StaticResource ProviderApiKeySettingsTemplate}" />
+      <ContentControl Content="{Binding UtilityModelSettings}"
+                      ContentTemplate="{StaticResource ProviderUtilityModelSettingsTemplate}" />
     </StackPanel>
   </ScrollViewer>
 </UserControl>

@@ -1,49 +1,77 @@
 using System.Collections.ObjectModel;
-using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
+using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
-public sealed partial class OpenAiSettingsViewModel : ObservableObject
+public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposable
 {
     private static readonly TimeSpan AuthorizationTimeout = TimeSpan.FromMinutes(5);
     private readonly IPackageContext _packageContext;
     private readonly CodexConnectedAuthStrategy _codexConnectedAuthStrategy;
     private CancellationTokenSource? _authorizationCts;
+    private long _statusGeneration;
+
+    internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
+        [OpenAiAuthMode.ConfigurationKey, OpenAiProviderConfiguration.ApiKeySecretKey, OpenAiProviderConfiguration.UtilityModelKey];
 
     public OpenAiSettingsViewModel(
         IPackageContext packageContext,
         CodexConnectedAuthStrategy codexConnectedAuthStrategy)
+        : this(
+            packageContext,
+            codexConnectedAuthStrategy,
+            new ProviderCredentialAccessor(packageContext.Secrets, OpenAiProviderConfiguration.ApiKeySecretKey))
+    {
+    }
+
+    internal OpenAiSettingsViewModel(
+        IPackageContext packageContext,
+        CodexConnectedAuthStrategy codexConnectedAuthStrategy,
+        ProviderCredentialAccessor credentials)
     {
         _packageContext = packageContext;
         _codexConnectedAuthStrategy = codexConnectedAuthStrategy;
-        LoadSettings();
+        _selectedAuthMode = ResolveAuthModeOption(
+            packageContext.Storage.State.GetValue(OpenAiAuthMode.ConfigurationKey)
+            ?? packageContext.Configuration.GetValue(OpenAiAuthMode.ConfigurationKey));
+        ApiKeySettings = new ApiKeySettingsState(
+            credentials,
+            "A stored API key enables embeddings and is used for API-key chat. Blank input retains the current key.",
+            "sk-...",
+            ResolveApiKeyStatus);
+        UtilityModelSettings = new UtilityModelSettingsState(
+            packageContext,
+            OpenAiProviderConfiguration.UtilityModelKey,
+            OpenAiProviderConfiguration.DefaultUtilityModelId,
+            OpenAiProviderConfiguration.UtilityModelOptions.Select(option => (option.Value, option.Label)),
+            NormalizeLegacyUtilityModelId);
+        _ = RefreshStatusAsync();
     }
 
-    public ObservableCollection<OpenAiUtilityModelOption> UtilityModels { get; } = new(
-        OpenAiProviderConfiguration.UtilityModelOptions.Select(option => new OpenAiUtilityModelOption(option.Value, option.Label))
-    );
+    public ObservableCollection<OpenAiAuthModeOption> AuthModes { get; } =
+    [
+        new(OpenAiAuthMode.CodexConnected, "ChatGPT Plus/Pro"),
+        new(OpenAiAuthMode.ApiKey, "API key"),
+    ];
 
-    public bool HasStoredApiKey => !string.IsNullOrWhiteSpace(_packageContext.Secrets.GetSecret("auth.apiKey"));
+    internal ApiKeySettingsState ApiKeySettings { get; }
+
+    internal UtilityModelSettingsState UtilityModelSettings { get; }
 
     public bool CanAuthorize => !IsBusy;
 
     public bool CanCancelAuthorization => IsAuthorizing;
 
-    public bool CanSaveApiKey => !IsBusy;
+    public bool CanSaveAuthMode => !IsBusy;
 
     public bool IsCodexStatusWarning => IsAuthorizing || (!IsCodexConnected && !IsCodexStatusError);
 
-    public bool IsApiKeyStatusWarning => !IsApiKeyStored;
-
     [ObservableProperty]
-    private string? _apiKeyValue;
-
-    [ObservableProperty]
-    private OpenAiUtilityModelOption? _selectedUtilityModel;
+    private OpenAiAuthModeOption? _selectedAuthMode;
 
     [ObservableProperty]
     private bool _isBusy;
@@ -66,19 +94,10 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
     [ObservableProperty]
     private bool _isCodexStatusError;
 
-    [ObservableProperty]
-    private string _apiKeyStatusLabel = string.Empty;
-
-    [ObservableProperty]
-    private string _apiKeyStatusDetail = string.Empty;
-
-    [ObservableProperty]
-    private bool _isApiKeyStored;
-
     partial void OnIsBusyChanged(bool value)
     {
         OnPropertyChanged(nameof(CanAuthorize));
-        OnPropertyChanged(nameof(CanSaveApiKey));
+        OnPropertyChanged(nameof(CanSaveAuthMode));
     }
 
     partial void OnIsAuthorizingChanged(bool value)
@@ -91,16 +110,33 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
 
     partial void OnIsCodexStatusErrorChanged(bool value) => OnPropertyChanged(nameof(IsCodexStatusWarning));
 
-    partial void OnIsApiKeyStoredChanged(bool value) => OnPropertyChanged(nameof(IsApiKeyStatusWarning));
+    partial void OnSelectedAuthModeChanged(OpenAiAuthModeOption? value)
+    {
+        ApiKeySettings.RefreshCredentialStatus();
+        _ = RefreshStatusAsync();
+    }
 
     [RelayCommand]
     private async Task SaveAsync()
     {
+        await SaveAuthModeValueAsync();
+        await ApiKeySettings.SaveCredentialAsync();
+        await UtilityModelSettings.SaveUtilityModelAsync();
+        await RefreshStatusAsync();
+    }
+
+    [RelayCommand]
+    private async Task SaveAuthModeAsync()
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
         IsBusy = true;
         try
         {
-            await SaveStateAsync();
-            OnPropertyChanged(nameof(HasStoredApiKey));
+            await SaveAuthModeValueAsync();
             await RefreshStatusAsync();
         }
         finally
@@ -118,6 +154,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
         }
 
         var authorizationCts = new CancellationTokenSource(AuthorizationTimeout);
+        var authorizationGeneration = Interlocked.Increment(ref _statusGeneration);
         _authorizationCts = authorizationCts;
         IsBusy = true;
         IsAuthorizing = true;
@@ -127,23 +164,29 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
         CodexStatusDetail = "Opened auth.openai.com in your browser. Complete sign-in there; Sunder will finish authorization after the callback.";
         try
         {
-            await SaveStateAsync();
+            await SaveAuthModeValueAsync(authorizationCts.Token);
             await _codexConnectedAuthStrategy.EnsureAuthenticatedAsync(authorizationCts.Token);
-            await RefreshStatusAsync();
+            await RefreshStatusAsync(authorizationCts.Token);
         }
         catch (OperationCanceledException) when (authorizationCts.IsCancellationRequested)
         {
-            IsCodexStatusError = true;
-            IsCodexConnected = false;
-            CodexStatusLabel = "Authorization canceled";
-            CodexStatusDetail = "Authorization was cancelled or timed out. Click Authorize to try again.";
+            if (authorizationGeneration == Volatile.Read(ref _statusGeneration))
+            {
+                IsCodexStatusError = true;
+                IsCodexConnected = false;
+                CodexStatusLabel = "Authorization canceled";
+                CodexStatusDetail = "Authorization was canceled or timed out. Click Authorize to try again.";
+            }
         }
         catch (Exception ex)
         {
-            IsCodexStatusError = true;
-            IsCodexConnected = false;
-            CodexStatusLabel = "Authorization failed";
-            CodexStatusDetail = ex.Message;
+            if (authorizationGeneration == Volatile.Read(ref _statusGeneration))
+            {
+                IsCodexStatusError = true;
+                IsCodexConnected = false;
+                CodexStatusLabel = "Authorization failed";
+                CodexStatusDetail = ex.Message;
+            }
         }
         finally
         {
@@ -178,94 +221,132 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private Task DisconnectAsync()
+    private async Task DisconnectAsync()
     {
-        _codexConnectedAuthStrategy.ClearSession();
+        var disconnectGeneration = Interlocked.Increment(ref _statusGeneration);
+        try
+        {
+            _authorizationCts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        await _codexConnectedAuthStrategy.ClearSessionAsync();
+        if (disconnectGeneration != Volatile.Read(ref _statusGeneration))
+        {
+            return;
+        }
+
         IsCodexConnected = false;
         IsCodexStatusError = false;
         CodexStatusLabel = "Not connected";
         CodexStatusDetail = "ChatGPT Plus/Pro session removed. Click Authorize to sign in again.";
         CanDisconnect = false;
-        return Task.CompletedTask;
     }
 
     [RelayCommand]
-    private Task RefreshStatusAsync()
+    private async Task RefreshStatusAsync(CancellationToken cancellationToken = default)
     {
-        var session = _codexConnectedAuthStrategy.GetCachedSession();
-        CanDisconnect = session is not null;
-        var authMode = OpenAiAuthMode.GetSelected(_packageContext.Configuration);
-        IsCodexStatusError = false;
-        IsCodexConnected = session is not null;
-        if (session is null)
+        var statusGeneration = Interlocked.Increment(ref _statusGeneration);
+        var authMode = SelectedAuthMode?.ModeId ?? OpenAiAuthMode.GetSelected(_packageContext.Configuration);
+        OpenAiCodexSession? activeSession = null;
+        Exception? refreshError = null;
+        try
+        {
+            activeSession = await _codexConnectedAuthStrategy.TryEnsureAuthenticatedSilentlyAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            refreshError = ex;
+        }
+
+        if (statusGeneration != Volatile.Read(ref _statusGeneration))
+        {
+            return;
+        }
+
+        var cachedSession = _codexConnectedAuthStrategy.GetCachedSession();
+        CanDisconnect = cachedSession is not null;
+        IsCodexConnected = activeSession is not null;
+        IsCodexStatusError = refreshError is not null || (cachedSession is not null && activeSession is null);
+        if (activeSession is not null && authMode == OpenAiAuthMode.CodexConnected)
+        {
+            CodexStatusLabel = "Connected, active";
+            CodexStatusDetail = $"Authorized until {activeSession.ExpiresAtUtc:O}. Codex-connected chat mode is active.";
+        }
+        else if (activeSession is not null)
+        {
+            CodexStatusLabel = "Connected";
+            CodexStatusDetail = $"Authorized until {activeSession.ExpiresAtUtc:O}. Inactive for chat while API-key mode is selected.";
+        }
+        else if (cachedSession is not null)
+        {
+            CodexStatusLabel = "Session expired";
+            CodexStatusDetail = refreshError is null
+                ? "The cached ChatGPT session is expired or near expiry and could not be refreshed. Authorize again to reconnect."
+                : $"The cached ChatGPT session could not be refreshed: {refreshError.Message}";
+        }
+        else
         {
             CodexStatusLabel = "Not connected";
             CodexStatusDetail = "Authorize with ChatGPT Plus/Pro to use Codex-connected chat mode.";
         }
-        else if (authMode == OpenAiAuthMode.CodexConnected)
-        {
-            CodexStatusLabel = "Connected, active";
-            CodexStatusDetail = $"Authorized until {session.ExpiresAtUtc:O}. Codex-connected chat mode is active.";
-        }
-        else
-        {
-            CodexStatusLabel = "Connected";
-            CodexStatusDetail = $"Authorized until {session.ExpiresAtUtc:O}. Inactive for chat while API-key mode is selected.";
-        }
 
-        IsApiKeyStored = HasStoredApiKey;
-        if (IsApiKeyStored && authMode == OpenAiAuthMode.ApiKey)
-        {
-            ApiKeyStatusLabel = "Stored, active";
-            ApiKeyStatusDetail = "API-key chat mode and embeddings are ready.";
-        }
-        else if (IsApiKeyStored)
-        {
-            ApiKeyStatusLabel = "Stored";
-            ApiKeyStatusDetail = "Available for embeddings and for chat when API-key mode is selected.";
-        }
-        else if (authMode == OpenAiAuthMode.ApiKey)
-        {
-            ApiKeyStatusLabel = "Missing";
-            ApiKeyStatusDetail = "API-key chat mode and embeddings are unavailable until you add one.";
-        }
-        else
-        {
-            ApiKeyStatusLabel = "Not stored";
-            ApiKeyStatusDetail = "Add an API key to enable embeddings or API-key chat mode.";
-        }
-
-        return Task.CompletedTask;
+        ApiKeySettings.RefreshCredentialStatus();
     }
 
-    private void LoadSettings()
+    public void Dispose()
     {
-        ApiKeyValue = null;
-        SelectedUtilityModel = ResolveUtilityModelOption(
-            _packageContext.Storage.State.GetValue(OpenAiProviderConfiguration.UtilityModelKey)
-            ?? _packageContext.Configuration.GetValue(OpenAiProviderConfiguration.UtilityModelKey)
-            ?? OpenAiProviderConfiguration.DefaultUtilityModelId
-        );
-        _ = RefreshStatusAsync();
-    }
-
-    private async Task SaveStateAsync()
-    {
-        if (!string.IsNullOrWhiteSpace(ApiKeyValue))
+        try
         {
-            _packageContext.Secrets.SetSecret("auth.apiKey", ApiKeyValue.Trim());
-            ApiKeyValue = null;
+            _authorizationCts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
         }
 
-        await _packageContext.Storage.State.SetValueAsync(
-            OpenAiProviderConfiguration.UtilityModelKey,
-            SelectedUtilityModel?.ModelId ?? OpenAiProviderConfiguration.DefaultUtilityModelId
-        );
+        ApiKeySettings.Dispose();
+        UtilityModelSettings.Dispose();
     }
 
-    private OpenAiUtilityModelOption ResolveUtilityModelOption(string? modelId) =>
-        UtilityModels.FirstOrDefault(option => string.Equals(option.ModelId, modelId, StringComparison.OrdinalIgnoreCase))
-        ?? UtilityModels.First(option => option.ModelId == OpenAiProviderConfiguration.DefaultUtilityModelId);
+    private Task SaveAuthModeValueAsync(CancellationToken cancellationToken = default)
+        => _packageContext.Storage.State.SetValueAsync(
+            OpenAiAuthMode.ConfigurationKey,
+            SelectedAuthMode?.ModeId ?? OpenAiAuthMode.CodexConnected,
+            cancellationToken);
+
+    private ApiKeyStatus ResolveApiKeyStatus(bool hasCredential)
+    {
+        var authMode = SelectedAuthMode?.ModeId ?? OpenAiAuthMode.GetSelected(_packageContext.Configuration);
+        if (hasCredential && authMode == OpenAiAuthMode.ApiKey)
+        {
+            return new ApiKeyStatus("Stored, active", "API-key chat mode and embeddings are ready.");
+        }
+
+        if (hasCredential)
+        {
+            return new ApiKeyStatus("Stored", "Available for embeddings and for chat when API-key mode is selected.");
+        }
+
+        return authMode == OpenAiAuthMode.ApiKey
+            ? new ApiKeyStatus("Missing", "API-key chat mode and embeddings are unavailable until you add one.", IsWarning: true)
+            : new ApiKeyStatus("Not stored", "Add an API key to enable embeddings or API-key chat mode.", IsWarning: true);
+    }
+
+    private OpenAiAuthModeOption ResolveAuthModeOption(string? modeId)
+        => AuthModes.First(mode => mode.ModeId == (string.Equals(modeId, OpenAiAuthMode.ApiKey, StringComparison.OrdinalIgnoreCase)
+            ? OpenAiAuthMode.ApiKey
+            : OpenAiAuthMode.CodexConnected));
+
+    internal static string? NormalizeLegacyUtilityModelId(string? modelId)
+        => string.Equals(modelId?.Trim(), "openai/gpt-5.5-fast", StringComparison.OrdinalIgnoreCase)
+            ? "openai/gpt-5.5"
+            : modelId;
 }
 
-public sealed record OpenAiUtilityModelOption(string ModelId, string DisplayName);
+public sealed record OpenAiAuthModeOption(string ModeId, string DisplayName);

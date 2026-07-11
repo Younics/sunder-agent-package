@@ -156,8 +156,18 @@ public sealed partial class AgentLocalStore
         var checkpoint = new AgentRunCheckpointRecord(Guid.NewGuid(), sessionId, runRevision, status, summary, DateTimeOffset.UtcNow);
         using var connection = CreateConnection();
         connection.Open();
-        InsertCheckpoint(connection, checkpoint);
-        TouchSession(connection, sessionId, MapSessionState(status), checkpoint.CreatedAtUtc, transaction: null);
+        using var transaction = connection.BeginTransaction(deferred: false);
+        InsertCheckpoint(connection, transaction, checkpoint);
+        if (HasDurableRun(connection, transaction, sessionId, runRevision)
+            && !ProjectCheckpointToRun(connection, transaction, checkpoint))
+        {
+            transaction.Rollback();
+            throw new InvalidOperationException(
+                $"Run '{sessionId}:{runRevision}' rejected the illegal or stale transition to '{status}'.");
+        }
+
+        TouchSessionForCheckpoint(connection, transaction, checkpoint);
+        transaction.Commit();
         return checkpoint;
     }
 
@@ -168,6 +178,32 @@ public sealed partial class AgentLocalStore
         return GetLatestCheckpoint(connection, sessionId, null);
     }
 
+    internal AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId, long runRevision)
+    {
+        using var connection = CreateConnection();
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT CheckpointId, SessionId, RunRevision, Status, Summary, CreatedAtUtc
+            FROM AgentRunCheckpoints
+            WHERE SessionId = $sessionId AND RunRevision = $runRevision
+            ORDER BY CreatedAtUtc DESC, rowid DESC
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
+        command.Parameters.AddWithValue("$runRevision", runRevision);
+        using var reader = command.ExecuteReader();
+        return reader.Read()
+            ? new AgentRunCheckpointRecord(
+                Guid.Parse(reader.GetString(0)),
+                Guid.Parse(reader.GetString(1)),
+                reader.GetInt64(2),
+                Enum.Parse<AgentRunStatus>(reader.GetString(3), ignoreCase: true),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                DateTimeOffset.Parse(reader.GetString(5)))
+            : null;
+    }
+
     private static AgentRunCheckpointRecord? GetLatestCheckpoint(
         SqliteConnection connection,
         Guid sessionId,
@@ -175,7 +211,7 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT CheckpointId, SessionId, RunRevision, Status, Summary, CreatedAtUtc FROM AgentRunCheckpoints WHERE SessionId = $sessionId ORDER BY CreatedAtUtc DESC LIMIT 1;";
+        command.CommandText = "SELECT CheckpointId, SessionId, RunRevision, Status, Summary, CreatedAtUtc FROM AgentRunCheckpoints WHERE SessionId = $sessionId ORDER BY CreatedAtUtc DESC, rowid DESC LIMIT 1;";
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
 
         using var reader = command.ExecuteReader();
@@ -282,11 +318,7 @@ public sealed partial class AgentLocalStore
     {
         using var connection = CreateConnection();
         connection.Open();
-
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COALESCE(MAX(RunRevision), 0) FROM AgentRunCheckpoints WHERE SessionId = $sessionId;";
-        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
-        return Convert.ToInt64(command.ExecuteScalar()) + 1;
+        return GetNextRunRevision(connection, transaction: null, sessionId);
     }
 
     private static IReadOnlyList<AgentSessionRecord> ListSessions(SqliteConnection connection, SqliteTransaction? transaction = null)
@@ -485,6 +517,18 @@ public sealed partial class AgentLocalStore
         deleteCheckpoints.Parameters.AddWithValue("$sessionId", sessionId);
         deleteCheckpoints.ExecuteNonQuery();
 
+        using var deleteRuns = connection.CreateCommand();
+        deleteRuns.Transaction = transaction;
+        deleteRuns.CommandText = "DELETE FROM AgentRuns WHERE SessionId = $sessionId;";
+        deleteRuns.Parameters.AddWithValue("$sessionId", sessionId);
+        deleteRuns.ExecuteNonQuery();
+
+        using var deleteParentContinuationWork = connection.CreateCommand();
+        deleteParentContinuationWork.Transaction = transaction;
+        deleteParentContinuationWork.CommandText = "DELETE FROM AgentParentContinuationWork WHERE ParentSessionId = $sessionId OR ChildSessionId = $sessionId;";
+        deleteParentContinuationWork.Parameters.AddWithValue("$sessionId", sessionId);
+        deleteParentContinuationWork.ExecuteNonQuery();
+
         using var deleteWorkingSummaries = connection.CreateCommand();
         deleteWorkingSummaries.Transaction = transaction;
         deleteWorkingSummaries.CommandText = "DELETE FROM AgentWorkingSummaries WHERE SessionId = $sessionId;";
@@ -522,9 +566,13 @@ public sealed partial class AgentLocalStore
         deleteSession.ExecuteNonQuery();
     }
 
-    private static void InsertCheckpoint(SqliteConnection connection, AgentRunCheckpointRecord checkpoint)
+    private static void InsertCheckpoint(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        AgentRunCheckpointRecord checkpoint)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "INSERT INTO AgentRunCheckpoints (CheckpointId, SessionId, RunRevision, Status, Summary, CreatedAtUtc) VALUES ($id, $sessionId, $revision, $status, $summary, $created);";
         command.Parameters.AddWithValue("$id", checkpoint.CheckpointId.ToString());
         command.Parameters.AddWithValue("$sessionId", checkpoint.SessionId.ToString());
@@ -534,6 +582,93 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$created", checkpoint.CreatedAtUtc.ToString("O"));
         command.ExecuteNonQuery();
     }
+
+    private static bool ProjectCheckpointToRun(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        AgentRunCheckpointRecord checkpoint)
+    {
+        var isFinished = IsFinishedRunStatus(checkpoint.Status);
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE AgentRuns
+            SET Epoch = Epoch + 1,
+                Status = $status,
+                UpdatedAtUtc = $updatedAtUtc,
+                FinishedAtUtc = $finishedAtUtc,
+                SuspensionKind = CASE WHEN $isFinished = 1 THEN NULL ELSE SuspensionKind END,
+                ContinuationToken = CASE WHEN $isFinished = 1 THEN NULL ELSE ContinuationToken END,
+                SuspensionDataJson = CASE WHEN $isFinished = 1 THEN NULL ELSE SuspensionDataJson END
+            WHERE SessionId = $sessionId
+              AND RunRevision = $runRevision
+              AND FinishedAtUtc IS NULL
+              AND (
+                  (Status IN ('Preparing', 'Idle') AND $status IN ('Running', 'Interrupted', 'Stopped', 'Failed'))
+                  OR (Status = 'Running' AND $status IN ('Running', 'Interrupted', 'Stopped', 'Completed', 'Failed'))
+                  OR (Status = 'WaitingForApproval' AND $status IN ('Interrupted', 'Stopped', 'Failed'))
+              );
+            """;
+        command.Parameters.AddWithValue("$status", checkpoint.Status.ToString());
+        command.Parameters.AddWithValue("$updatedAtUtc", checkpoint.CreatedAtUtc.ToString("O"));
+        command.Parameters.AddWithValue(
+            "$finishedAtUtc",
+            isFinished ? checkpoint.CreatedAtUtc.ToString("O") : DBNull.Value);
+        command.Parameters.AddWithValue("$isFinished", isFinished ? 1 : 0);
+        command.Parameters.AddWithValue("$sessionId", checkpoint.SessionId.ToString());
+        command.Parameters.AddWithValue("$runRevision", checkpoint.RunRevision);
+        return command.ExecuteNonQuery() == 1;
+    }
+
+    private static bool HasDurableRun(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid sessionId,
+        long runRevision)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT 1 FROM AgentRuns WHERE SessionId = $sessionId AND RunRevision = $runRevision LIMIT 1;";
+        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
+        command.Parameters.AddWithValue("$runRevision", runRevision);
+        return command.ExecuteScalar() is not null;
+    }
+
+    private static void TouchSessionForCheckpoint(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        AgentRunCheckpointRecord checkpoint)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE AgentSessions
+            SET State = CASE
+                    WHEN $runRevision >= (
+                        SELECT COALESCE(MAX(RunRevision), $runRevision)
+                        FROM (
+                            SELECT RunRevision FROM AgentRuns WHERE SessionId = $sessionId
+                            UNION ALL
+                            SELECT RunRevision FROM AgentRunCheckpoints WHERE SessionId = $sessionId
+                        )
+                    ) THEN $state
+                    ELSE State
+                END,
+                UpdatedAtUtc = $updatedAtUtc
+            WHERE SessionId = $sessionId;
+            """;
+        command.Parameters.AddWithValue("$runRevision", checkpoint.RunRevision);
+        command.Parameters.AddWithValue("$state", MapSessionState(checkpoint.Status).ToString());
+        command.Parameters.AddWithValue("$updatedAtUtc", checkpoint.CreatedAtUtc.ToString("O"));
+        command.Parameters.AddWithValue("$sessionId", checkpoint.SessionId.ToString());
+        command.ExecuteNonQuery();
+    }
+
+    private static bool IsFinishedRunStatus(AgentRunStatus status)
+        => status is AgentRunStatus.Interrupted
+            or AgentRunStatus.Stopped
+            or AgentRunStatus.Completed
+            or AgentRunStatus.Failed;
 
     private static void InsertSessionContextCheckpoint(SqliteConnection connection, AgentSessionContextCheckpointRecord checkpoint)
     {

@@ -6,13 +6,13 @@ namespace Sunder.Package.Agent.Memory.Semantic.Services;
 
 public sealed class SemanticMemoryRetrievalBackend(
     MemoryLocalStore store,
-    ProfileConfiguredEmbeddingProviderResolver embeddingProviderResolver,
+    SemanticModelRuntimeResolver modelRuntimeResolver,
     MemorySemanticSettingsService settingsService)
 {
     private const int MaxPinnedCandidates = 4;
 
     private readonly MemoryLocalStore _store = store;
-    private readonly ProfileConfiguredEmbeddingProviderResolver _embeddingProviderResolver = embeddingProviderResolver;
+    private readonly SemanticModelRuntimeResolver _modelRuntimeResolver = modelRuntimeResolver;
     private readonly MemorySemanticSettingsService _settingsService = settingsService;
 
     public async Task IndexMemoryAsync(StoredMemoryRecord memory, string profileId, CancellationToken cancellationToken = default)
@@ -22,7 +22,7 @@ public sealed class SemanticMemoryRetrievalBackend(
             return;
         }
 
-        var resolved = await _embeddingProviderResolver.ResolveAsync(profileId, cancellationToken);
+        var resolved = await _modelRuntimeResolver.ResolveForProfileAsync(profileId, cancellationToken);
         if (resolved is null)
         {
             return;
@@ -39,22 +39,40 @@ public sealed class SemanticMemoryRetrievalBackend(
         IReadOnlyList<StoredMemoryRecord> memories,
         CancellationToken cancellationToken = default)
     {
-        if (!_settingsService.IsSemanticRetrievalEnabled() || memories.Count == 0)
+        if (!_settingsService.IsSemanticRetrievalEnabled())
         {
             return 0;
         }
 
-        var resolved = await _embeddingProviderResolver.ResolveAsync(profileId, cancellationToken);
+        var resolved = await _modelRuntimeResolver.ResolveForProfileAsync(profileId, cancellationToken);
         if (resolved is null)
         {
             return 0;
         }
 
-        _store.DeleteEmbeddings(sessionId);
-        var existingEmbeddings = new Dictionary<Guid, StoredMemoryEmbeddingRecord>();
         var preparedMemories = memories.Select(PrepareEmbeddingMemory).ToArray();
-        await EnsureEmbeddingsAsync(sessionId, preparedMemories, resolved, existingEmbeddings, allowLazyReindex: true, cancellationToken);
-        return existingEmbeddings.Count;
+        var generationId = _store.BeginEmbeddingGeneration(
+            sessionId,
+            resolved.ProviderId,
+            resolved.ModelId,
+            preparedMemories.Length);
+        try
+        {
+            await GenerateEmbeddingsAsync(
+                sessionId,
+                preparedMemories,
+                resolved,
+                embedding => _store.StageEmbedding(generationId, embedding),
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            _store.CompleteEmbeddingGeneration(generationId);
+            return preparedMemories.Length;
+        }
+        catch
+        {
+            _store.AbortEmbeddingGeneration(generationId);
+            throw;
+        }
     }
 
     public SemanticMemoryEntryIndexState GetIndexState(
@@ -63,7 +81,7 @@ public sealed class SemanticMemoryRetrievalBackend(
         string modelId)
     {
         var preparedMemory = PrepareEmbeddingMemory(memory);
-        var embedding = _store.GetEmbedding(memory.MemoryId);
+        var embedding = _store.GetEmbedding(memory.MemoryId, providerId, modelId);
         if (embedding is null)
         {
             return SemanticMemoryEntryIndexState.Missing;
@@ -95,7 +113,7 @@ public sealed class SemanticMemoryRetrievalBackend(
             return new Dictionary<Guid, float>();
         }
 
-        var resolved = await _embeddingProviderResolver.ResolveAsync(profileId, cancellationToken);
+        var resolved = await _modelRuntimeResolver.ResolveForProfileAsync(profileId, cancellationToken);
         if (resolved is null)
         {
             return new Dictionary<Guid, float>();
@@ -213,7 +231,26 @@ public sealed class SemanticMemoryRetrievalBackend(
             return;
         }
 
-        foreach (var batch in missingMemories.Chunk(_settingsService.GetEmbeddingBatchSize()))
+        await GenerateEmbeddingsAsync(
+            sessionId,
+            missingMemories,
+            resolved,
+            embedding =>
+            {
+                _store.UpsertEmbedding(embedding);
+                existingEmbeddings[embedding.MemoryId] = embedding;
+            },
+            cancellationToken);
+    }
+
+    private async Task GenerateEmbeddingsAsync(
+        Guid sessionId,
+        IReadOnlyList<PreparedEmbeddingMemory> memories,
+        ResolvedEmbeddingProvider resolved,
+        Action<StoredMemoryEmbeddingRecord> persist,
+        CancellationToken cancellationToken)
+    {
+        foreach (var batch in memories.Chunk(_settingsService.GetEmbeddingBatchSize()))
         {
             var embeddingResults = await resolved.Provider.GenerateEmbeddingsAsync(
                 resolved.ModelId,
@@ -229,7 +266,7 @@ public sealed class SemanticMemoryRetrievalBackend(
                 }
 
                 var now = DateTimeOffset.UtcNow;
-                var existing = _store.GetEmbedding(batch[index].Memory.MemoryId);
+                var existing = _store.GetEmbedding(batch[index].Memory.MemoryId, resolved.ProviderId, resolved.ModelId);
                 var embedding = new StoredMemoryEmbeddingRecord(
                     batch[index].Memory.MemoryId,
                     sessionId,
@@ -240,8 +277,7 @@ public sealed class SemanticMemoryRetrievalBackend(
                     result.Values,
                     existing?.CreatedAtUtc ?? now,
                     now);
-                _store.UpsertEmbedding(embedding);
-                existingEmbeddings[embedding.MemoryId] = embedding;
+                persist(embedding);
             }
         }
     }

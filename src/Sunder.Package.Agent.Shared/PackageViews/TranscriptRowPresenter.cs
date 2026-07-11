@@ -4,7 +4,7 @@ using Avalonia.VisualTree;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
-public sealed class TranscriptRowPresenter : ContentControl
+internal sealed class TranscriptRowPresenter : ContentControl
 {
     public static readonly StyledProperty<object?> AnchorKeyProperty =
         AvaloniaProperty.Register<TranscriptRowPresenter, object?>(nameof(AnchorKey));

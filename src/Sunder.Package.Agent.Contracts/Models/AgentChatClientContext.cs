@@ -19,7 +19,7 @@ public interface IAgentProviderEventSink
 
 public static class AgentChatClientContextLogExtensions
 {
-    public static ValueTask LogProviderEventAsync(
+    public static async ValueTask LogProviderEventAsync(
         this AgentChatClientContext context,
         AgentLogLevel level,
         string eventName,
@@ -32,7 +32,7 @@ public static class AgentChatClientContextLogExtensions
         if (context.EventSink is null)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return ValueTask.CompletedTask;
+            return;
         }
 
         var mergedAttributes = new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -64,7 +64,7 @@ public static class AgentChatClientContextLogExtensions
 
         try
         {
-            return context.EventSink.WriteAsync(level, eventName, message, mergedAttributes, exception, cancellationToken);
+            await context.EventSink.WriteAsync(level, eventName, message, mergedAttributes, exception, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -72,7 +72,7 @@ public static class AgentChatClientContextLogExtensions
         }
         catch
         {
-            return ValueTask.CompletedTask;
+            return;
         }
     }
 }

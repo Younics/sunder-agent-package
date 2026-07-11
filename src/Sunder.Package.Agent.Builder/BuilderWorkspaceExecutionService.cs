@@ -6,6 +6,11 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Builder;
 
+public sealed record BuilderProcessResult(int ExitCode, string StandardOutput, string StandardError)
+{
+    public string CombinedOutput => (StandardOutput + Environment.NewLine + StandardError).Trim();
+}
+
 public sealed class BuilderWorkspaceExecutionService(IPackageExtensionCatalog extensionCatalog)
 {
     public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces()

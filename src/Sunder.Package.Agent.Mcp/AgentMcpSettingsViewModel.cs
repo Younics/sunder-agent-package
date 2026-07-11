@@ -1,61 +1,122 @@
 using System.Collections.ObjectModel;
-using Avalonia.Threading;
+using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Mcp.Services;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Mcp;
 
 public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDisposable
 {
-    private static readonly TimeSpan SuccessStatusDisplayDuration = TimeSpan.FromSeconds(3);
-
-    private readonly McpServerCatalogService _serverCatalogService;
-    private readonly McpClientConnectionManager _connectionManager;
-    private readonly McpOAuthService? _oauthService;
-    private readonly McpEcosystemConfigurationImporter? _configurationImporter;
-    private readonly McpSunderConfigurationSyncService? _sunderConfigurationSyncService;
-    private CancellationTokenSource? _successStatusClearCancellation;
-    private CancellationTokenSource? _discoveryCancellation;
+    private readonly McpSettingsEditorService _editor;
+    private readonly McpServerConnectionService _connections;
+    private readonly McpSettingsOperationsViewModel _operations;
+    private readonly IPresentationDispatcher _uiDispatcher;
+    private readonly Task _initialization;
     private bool _suppressSelectionHandlers;
     private bool _suppressServerChangeNotifications;
+    private bool _suppressEditorTracking;
+    private bool _isDocumentLoading;
+    private bool _isDocumentReady = true;
+    private bool _reloadServersPending;
     private bool _disposed;
     private int _serverLoadVersion;
+    private long _editorRevision;
+    private CancellationTokenSource? _serverLoadCancellation;
+    private Task _currentDocumentLoad = Task.CompletedTask;
+
+    internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } = [];
 
     public AgentMcpSettingsViewModel(
-        McpServerCatalogService serverCatalogService,
+        McpSettingsEditorService editor,
+        McpConfigurationCoordinator configuration,
+        McpServerConnectionService connections,
+        McpOAuthCoordinator oauth)
+        : this(editor, configuration, connections, oauth, PresentationDispatcher.Capture())
+    {
+    }
+
+    internal AgentMcpSettingsViewModel(
+        McpSettingsEditorService editor,
+        McpConfigurationCoordinator configuration,
+        McpServerConnectionService connections,
+        McpOAuthCoordinator oauth,
+        IPresentationDispatcher uiDispatcher)
+    {
+        _editor = editor;
+        _connections = connections;
+        _uiDispatcher = uiDispatcher;
+        _operations = new McpSettingsOperationsViewModel(
+            this,
+            editor,
+            configuration,
+            connections,
+            oauth,
+            uiDispatcher);
+        _editor.ServersChanged += OnServersChanged;
+        _connections.StatusChanged += OnConnectionStatusChanged;
+        _operations.PropertyChanged += OnOperationsPropertyChanged;
+        _initialization = _operations.InitializeAsync();
+    }
+
+    internal AgentMcpSettingsViewModel(
+        McpServerCatalogService catalog,
         McpClientConnectionManager connectionManager,
         McpOAuthService? oauthService = null,
         McpEcosystemConfigurationImporter? configurationImporter = null,
         McpSunderConfigurationSyncService? sunderConfigurationSyncService = null)
+        : this(CreateLegacyDependencies(catalog, connectionManager, oauthService, configurationImporter, sunderConfigurationSyncService))
     {
-        _serverCatalogService = serverCatalogService;
-        _connectionManager = connectionManager;
-        _oauthService = oauthService;
-        _configurationImporter = configurationImporter;
-        _sunderConfigurationSyncService = sunderConfigurationSyncService;
-        _serverCatalogService.ServersChanged += OnServersChanged;
-        _connectionManager.StatusChanged += OnConnectionStatusChanged;
-        _ = InitializeAsync();
+    }
+
+    private AgentMcpSettingsViewModel(LegacyDependencies dependencies)
+        : this(dependencies.Editor, dependencies.Configuration, dependencies.Connections, dependencies.OAuth)
+    {
     }
 
     public ObservableCollection<ConfiguredMcpServerRecord> Servers { get; } = [];
 
+    internal IReadOnlyList<McpCatalogDiagnostic> CatalogDiagnostics => _editor.Diagnostics;
+
+    internal Task Initialization => _initialization;
+
+    public Task InitializeAsync() => _initialization;
+
     public bool HasSelectedServer => SelectedServer is not null;
-
     public bool HasSelectedOAuthServer => SelectedServer?.OAuthEnabled == true;
-
     public bool IsListActive => !IsEditorActive;
-
     public bool ShowWideLayout => !IsCompactLayout;
-
     public bool ShowCompactList => IsCompactLayout && IsListActive;
-
     public bool ShowCompactEditor => IsCompactLayout && IsEditorActive;
-
     public bool ShowListPane => ShowWideLayout || ShowCompactList;
-
     public bool ShowEditorPane => ShowWideLayout || ShowCompactEditor;
+    public bool IsBusy => _operations.IsBusy || IsDocumentLoading;
+    public bool CanStartOperation => !IsBusy;
+    public bool CanNavigateServers => !IsBusy;
+    public bool IsDocumentLoading => _isDocumentLoading;
+    public bool IsDocumentReady => _isDocumentReady;
+    public bool IsEditorReadOnly => IsDocumentLoading;
+    public bool IsDiscovering => _operations.IsDiscovering;
+    public string StatusText => _operations.StatusText;
+    public McpStatusKind StatusKind => _operations.StatusKind;
+    public bool IsStatusSuccess => StatusKind == McpStatusKind.Success;
+    public bool IsStatusWarning => StatusKind == McpStatusKind.Warning;
+    public bool IsStatusError => StatusKind == McpStatusKind.Error;
+    public bool IsConnectionStatusSuccess => ConnectionStatusKind == McpConnectionStatusKind.Connected;
+    public bool IsConnectionStatusWarning => ConnectionStatusKind is McpConnectionStatusKind.Connecting
+        or McpConnectionStatusKind.DiscoveringTools or McpConnectionStatusKind.Disabled or McpConnectionStatusKind.Disconnected;
+    public bool IsConnectionStatusError => ConnectionStatusKind == McpConnectionStatusKind.Error;
+    public bool HasConnectionStatusDetail => !string.IsNullOrWhiteSpace(ConnectionStatusDetail);
+    public IAsyncRelayCommand SaveCommand => _operations.SaveCommand;
+    public IAsyncRelayCommand DeleteCommand => _operations.DeleteCommand;
+    public IAsyncRelayCommand ImportCommonConfigurationsCommand => _operations.ImportCommonConfigurationsCommand;
+    public IAsyncRelayCommand DiscoverToolsCommand => _operations.DiscoverToolsCommand;
+    public IRelayCommand CancelDiscoveryCommand => _operations.CancelDiscoveryCommand;
+    public IAsyncRelayCommand DisconnectMcpServerCommand => _operations.DisconnectMcpServerCommand;
+    public IAsyncRelayCommand ReconnectMcpServerCommand => _operations.ReconnectMcpServerCommand;
+    public IAsyncRelayCommand AuthorizeMcpServerCommand => _operations.AuthorizeMcpServerCommand;
+    public IAsyncRelayCommand DisconnectMcpServerOAuthCommand => _operations.DisconnectMcpServerOAuthCommand;
 
     [ObservableProperty]
     private ConfiguredMcpServerRecord? _selectedServer;
@@ -73,21 +134,6 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
     private string _editorText = string.Empty;
 
     [ObservableProperty]
-    private string _statusText = string.Empty;
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsStatusSuccess))]
-    [NotifyPropertyChangedFor(nameof(IsStatusWarning))]
-    [NotifyPropertyChangedFor(nameof(IsStatusError))]
-    private McpStatusKind _statusKind = McpStatusKind.None;
-
-    [ObservableProperty]
-    private bool _isBusy;
-
-    [ObservableProperty]
-    private bool _isDiscovering;
-
-    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsConnectionStatusSuccess))]
     [NotifyPropertyChangedFor(nameof(IsConnectionStatusWarning))]
     [NotifyPropertyChangedFor(nameof(IsConnectionStatusError))]
@@ -103,89 +149,40 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
     [ObservableProperty]
     private string _connectionDiagnosticsText = string.Empty;
 
-    public bool IsStatusSuccess => StatusKind == McpStatusKind.Success;
-
-    public bool IsStatusWarning => StatusKind == McpStatusKind.Warning;
-
-    public bool IsStatusError => StatusKind == McpStatusKind.Error;
-
-    public bool IsConnectionStatusSuccess => ConnectionStatusKind == McpConnectionStatusKind.Connected;
-
-    public bool IsConnectionStatusWarning => ConnectionStatusKind is McpConnectionStatusKind.Connecting
-        or McpConnectionStatusKind.DiscoveringTools
-        or McpConnectionStatusKind.Disabled
-        or McpConnectionStatusKind.Disconnected;
-
-    public bool IsConnectionStatusError => ConnectionStatusKind == McpConnectionStatusKind.Error;
-
-    public bool HasConnectionStatusDetail => !string.IsNullOrWhiteSpace(ConnectionStatusDetail);
-
-    private async Task InitializeAsync()
-    {
-        SetStatus("Loading MCP servers...", McpStatusKind.None);
-
-        try
-        {
-            await SyncSunderConfigurationsAsync();
-            await ReloadServersAsync(selectServerId: null);
-        }
-        catch (Exception ex)
-        {
-            ClearEditor();
-            SetStatus(ex.Message, McpStatusKind.Error);
-        }
-    }
-
-    private async Task SyncSunderConfigurationsAsync()
-    {
-        if (_sunderConfigurationSyncService is null)
-        {
-            return;
-        }
-
-        _suppressServerChangeNotifications = true;
-        try
-        {
-            await _sunderConfigurationSyncService.SyncAsync();
-        }
-        finally
-        {
-            _suppressServerChangeNotifications = false;
-        }
-    }
-
     partial void OnSelectedServerChanged(ConfiguredMcpServerRecord? value)
     {
-        DeleteCommand.NotifyCanExecuteChanged();
-        DiscoverToolsCommand.NotifyCanExecuteChanged();
-        DisconnectMcpServerCommand.NotifyCanExecuteChanged();
-        ReconnectMcpServerCommand.NotifyCanExecuteChanged();
-        AuthorizeMcpServerCommand.NotifyCanExecuteChanged();
-        DisconnectMcpServerOAuthCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasSelectedServer));
         OnPropertyChanged(nameof(HasSelectedOAuthServer));
-
         if (_suppressSelectionHandlers)
         {
+            _operations.NotifyContextChanged();
             return;
         }
 
+        CancelDocumentLoad(documentReady: value is null);
         if (value is null)
         {
             ClearEditor();
             RefreshConnectionStatus(null);
+            _operations.NotifyContextChanged();
             return;
         }
 
         RefreshConnectionStatus(value);
-        _ = LoadSelectedServerAsync(value, ++_serverLoadVersion);
+        _currentDocumentLoad = LoadSelectedServerAsync(value, CancellationToken.None);
         if (IsCompactLayout)
         {
             IsEditorActive = true;
         }
+
+        _operations.NotifyContextChanged();
     }
 
-    [RelayCommand]
+    partial void OnNameChanged(string value) => TrackEditorChange();
+
+    partial void OnEditorTextChanged(string value) => TrackEditorChange();
+
+    [RelayCommand(CanExecute = nameof(CanEdit))]
     private void CreateServer()
     {
         SelectedServer = null;
@@ -193,16 +190,16 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         EditorText = McpConfigurationDocument.CreateLocalTemplate();
         IsEditorActive = true;
         RefreshConnectionStatus(null);
-        SetStatus("Editing a new MCP server draft. Paste a bare MCP server object or start from a template.", McpStatusKind.Warning);
+        _operations.PresentStatus("Editing a new MCP server draft. Paste a bare MCP server object or start from a template.", McpStatusKind.Warning);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanNavigateServers))]
     private void BackToServerList()
     {
         if (IsCompactLayout)
         {
             SelectedServer = null;
-            ClearStatus();
+            _operations.ClearStatus();
         }
 
         IsEditorActive = false;
@@ -211,16 +208,19 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
     [RelayCommand]
     private void OpenServerEditor(ConfiguredMcpServerRecord? server)
     {
-        if (server is null)
+        if (server is not null)
         {
-            return;
+            ActivateServer(server);
         }
-
-        ActivateServer(server);
     }
 
     public void ActivateServer(ConfiguredMcpServerRecord server)
     {
+        if (!CanNavigateServers)
+        {
+            return;
+        }
+
         if (!string.Equals(SelectedServer?.ServerId, server.ServerId, StringComparison.OrdinalIgnoreCase))
         {
             SelectedServer = server;
@@ -232,133 +232,26 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         }
     }
 
-    [RelayCommand]
-    private void LoadLocalTemplate()
-    {
-        if (string.IsNullOrWhiteSpace(Name))
-        {
-            Name = "mcp_server";
-        }
+    [RelayCommand(CanExecute = nameof(CanEdit))]
+    private void LoadLocalTemplate() => LoadTemplate(McpConfigurationDocument.CreateLocalTemplate(), "Loaded local MCP template.");
 
-        EditorText = McpConfigurationDocument.CreateLocalTemplate();
-        SetStatus("Loaded local MCP template.", McpStatusKind.Success, autoClear: true);
-    }
+    [RelayCommand(CanExecute = nameof(CanEdit))]
+    private void LoadRemoteTemplate() => LoadTemplate(McpConfigurationDocument.CreateRemoteTemplate(), "Loaded remote MCP template.");
 
-    [RelayCommand]
-    private void LoadRemoteTemplate()
-    {
-        if (string.IsNullOrWhiteSpace(Name))
-        {
-            Name = "mcp_server";
-        }
-
-        EditorText = McpConfigurationDocument.CreateRemoteTemplate();
-        SetStatus("Loaded remote MCP template.", McpStatusKind.Success, autoClear: true);
-    }
-
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanEdit))]
     private void Format()
     {
         try
         {
-            var normalizedName = _serverCatalogService.NormalizeServerName(Name);
-            var parsed = McpConfigurationDocument.Parse(SelectedServer?.ServerId ?? Guid.NewGuid().ToString("N"), normalizedName, EditorText, SelectedServer);
-            Name = normalizedName;
-            EditorText = McpConfigurationDocument.BuildEditorText(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
-            SetStatus("MCP configuration formatted.", McpStatusKind.Success, autoClear: true);
+            Name = _editor.NormalizeName(Name);
+            EditorText = _editor.Format(SelectedServer?.ServerId ?? Guid.NewGuid().ToString("N"), Name, EditorText, SelectedServer);
+            _operations.PresentStatus("MCP configuration formatted.", McpStatusKind.Success, autoClear: true);
         }
         catch (Exception ex)
         {
-            SetStatus(ex.Message, McpStatusKind.Error);
+            _operations.PresentStatus(ex.Message, McpStatusKind.Error);
         }
     }
-
-    [RelayCommand]
-    private async Task SaveAsync()
-    {
-        IsBusy = true;
-        try
-        {
-            var normalizedName = _serverCatalogService.NormalizeServerName(Name);
-            var existing = SelectedServer;
-            var serverId = existing?.ServerId ?? Guid.NewGuid().ToString("N");
-            var parsed = McpConfigurationDocument.Parse(serverId, normalizedName, EditorText, existing);
-            _suppressServerChangeNotifications = true;
-            try
-            {
-                await _serverCatalogService.SaveServerAsync(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
-            }
-            finally
-            {
-                _suppressServerChangeNotifications = false;
-            }
-
-            await _connectionManager.DisconnectServerAsync(serverId);
-            var shouldClearSelection = IsCompactLayout;
-            await ReloadServersAsync(serverId);
-            if (shouldClearSelection)
-            {
-                SelectedServer = null;
-                IsEditorActive = false;
-                ClearStatus();
-            }
-            else
-            {
-                SetStatus(
-                    existing is null
-                        ? $"Created MCP server '{parsed.Server.DisplayName}'."
-                        : $"Saved MCP server '{parsed.Server.DisplayName}'.",
-                    McpStatusKind.Success,
-                    autoClear: true);
-            }
-        }
-        catch (Exception ex)
-        {
-            SetStatus(ex.Message, McpStatusKind.Error);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand(CanExecute = nameof(CanDeleteServer))]
-    private async Task DeleteAsync()
-    {
-        if (SelectedServer is null)
-        {
-            return;
-        }
-
-        var deletedName = SelectedServer.DisplayName;
-        var serverId = SelectedServer.ServerId;
-        var shouldClearSelection = IsCompactLayout;
-        _suppressServerChangeNotifications = true;
-        try
-        {
-            await _serverCatalogService.DeleteServerAsync(SelectedServer.ServerId);
-        }
-        finally
-        {
-            _suppressServerChangeNotifications = false;
-        }
-
-        await _connectionManager.DisconnectServerAsync(serverId);
-        await ReloadServersAsync(selectServerId: null);
-        if (shouldClearSelection)
-        {
-            SelectedServer = null;
-            ClearStatus();
-        }
-        else
-        {
-            SetStatus($"Deleted MCP server '{deletedName}'.", McpStatusKind.Success, autoClear: true);
-        }
-
-        IsEditorActive = false;
-    }
-
-    private bool CanDeleteServer() => SelectedServer is not null;
 
     partial void OnIsCompactLayoutChanged(bool value)
     {
@@ -371,355 +264,12 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
             SelectedServer = Servers.FirstOrDefault();
         }
 
-        OnPropertyChanged(nameof(ShowWideLayout));
-        OnPropertyChanged(nameof(ShowCompactList));
-        OnPropertyChanged(nameof(ShowCompactEditor));
-        OnPropertyChanged(nameof(ShowListPane));
-        OnPropertyChanged(nameof(ShowEditorPane));
+        NotifyLayout();
     }
 
-    partial void OnIsEditorActiveChanged(bool value)
-    {
-        OnPropertyChanged(nameof(IsListActive));
-        OnPropertyChanged(nameof(ShowCompactList));
-        OnPropertyChanged(nameof(ShowCompactEditor));
-        OnPropertyChanged(nameof(ShowListPane));
-        OnPropertyChanged(nameof(ShowEditorPane));
-    }
+    partial void OnIsEditorActiveChanged(bool value) => NotifyLayout();
 
-    partial void OnIsDiscoveringChanged(bool value)
-    {
-        DiscoverToolsCommand.NotifyCanExecuteChanged();
-        CancelDiscoveryCommand.NotifyCanExecuteChanged();
-        DisconnectMcpServerCommand.NotifyCanExecuteChanged();
-        ReconnectMcpServerCommand.NotifyCanExecuteChanged();
-        AuthorizeMcpServerCommand.NotifyCanExecuteChanged();
-        DisconnectMcpServerOAuthCommand.NotifyCanExecuteChanged();
-    }
-
-    partial void OnIsBusyChanged(bool value)
-    {
-        AuthorizeMcpServerCommand.NotifyCanExecuteChanged();
-        DisconnectMcpServerOAuthCommand.NotifyCanExecuteChanged();
-    }
-
-    [RelayCommand]
-    private async Task ImportCommonConfigurationsAsync()
-    {
-        if (_configurationImporter is null)
-        {
-            SetStatus("MCP configuration importer is unavailable.", McpStatusKind.Error);
-            return;
-        }
-
-        IsBusy = true;
-        try
-        {
-            var result = await _configurationImporter.ImportCommonConfigurationsAsync();
-            await ReloadServersAsync(SelectedServer?.ServerId);
-            var warningSuffix = result.Warnings.Count == 0 ? string.Empty : $" {result.Warnings.Count} warning(s).";
-            SetStatus(
-                result.ImportedCount == 0 && result.SkippedCount == 0
-                    ? "No common MCP configuration files were found."
-                    : $"Imported {result.ImportedCount} MCP server(s); skipped {result.SkippedCount}.{warningSuffix}",
-                result.Warnings.Count == 0 ? McpStatusKind.Success : McpStatusKind.Warning,
-                autoClear: result.Warnings.Count == 0);
-        }
-        catch (Exception ex)
-        {
-            SetStatus(ex.Message, McpStatusKind.Error);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    public async Task ImportConfigurationFileAsync(string filePath)
-    {
-        if (_configurationImporter is null)
-        {
-            SetStatus("MCP configuration importer is unavailable.", McpStatusKind.Error);
-            return;
-        }
-
-        IsBusy = true;
-        try
-        {
-            var result = await _configurationImporter.ImportFileAsync(filePath);
-            await ReloadServersAsync(SelectedServer?.ServerId);
-            var warningSuffix = result.Warnings.Count == 0 ? string.Empty : $" {result.Warnings.Count} warning(s).";
-            SetStatus(
-                $"Imported {result.ImportedCount} MCP server(s) from config file; skipped {result.SkippedCount}.{warningSuffix}",
-                result.Warnings.Count == 0 ? McpStatusKind.Success : McpStatusKind.Warning,
-                autoClear: result.Warnings.Count == 0);
-        }
-        catch (Exception ex)
-        {
-            SetStatus(ex.Message, McpStatusKind.Error);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand(CanExecute = nameof(CanDiscoverTools))]
-    private async Task DiscoverToolsAsync()
-    {
-        if (SelectedServer is { } server)
-        {
-            await DiscoverToolsCoreAsync(server, reconnectFirst: false);
-        }
-    }
-
-    private async Task DiscoverToolsCoreAsync(ConfiguredMcpServerRecord server, bool reconnectFirst)
-    {
-        CancelDiscovery();
-        var discoveryCancellation = new CancellationTokenSource();
-        _discoveryCancellation = discoveryCancellation;
-        IsDiscovering = true;
-        IsBusy = true;
-        SetStatus(
-            reconnectFirst
-                ? $"Reconnecting MCP server '{server.DisplayName}'..."
-                : $"Discovering MCP tools from '{server.DisplayName}'...",
-            McpStatusKind.None);
-
-        try
-        {
-            if (reconnectFirst)
-            {
-                await _connectionManager.DisconnectServerAsync(server.ServerId);
-                RefreshConnectionStatus(server);
-            }
-
-            var tools = await _connectionManager.GetToolsAsync(
-                Guid.Empty,
-                server,
-                _serverCatalogService.GetHeaders(server),
-                _serverCatalogService.GetEnvironmentVariables(server),
-                McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server),
-                discoveryCancellation.Token);
-            RefreshConnectionStatus(server);
-            var status = _connectionManager.GetStatus(server);
-            SetStatus(
-                status.Kind == McpConnectionStatusKind.Error
-                    ? status.Message
-                    : $"Discovered {tools.Count} MCP tool(s) from '{server.DisplayName}'.",
-                status.Kind == McpConnectionStatusKind.Error ? McpStatusKind.Error : McpStatusKind.Success,
-                autoClear: status.Kind != McpConnectionStatusKind.Error);
-        }
-        catch (OperationCanceledException) when (discoveryCancellation.IsCancellationRequested)
-        {
-            RefreshConnectionStatus(server);
-            SetStatus($"Canceled MCP discovery for '{server.DisplayName}'.", McpStatusKind.Warning, autoClear: true);
-        }
-        catch (Exception ex)
-        {
-            RefreshConnectionStatus(server);
-            SetStatus(ex.Message, McpStatusKind.Error);
-        }
-        finally
-        {
-            if (_discoveryCancellation == discoveryCancellation)
-            {
-                _discoveryCancellation = null;
-            }
-
-            discoveryCancellation.Dispose();
-            IsDiscovering = false;
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand(CanExecute = nameof(IsDiscovering))]
-    private void CancelDiscovery()
-        => _discoveryCancellation?.Cancel();
-
-    [RelayCommand(CanExecute = nameof(CanManageConnection))]
-    private async Task DisconnectMcpServerAsync()
-    {
-        if (SelectedServer is null)
-        {
-            return;
-        }
-
-        var server = SelectedServer;
-        CancelDiscovery();
-        IsBusy = true;
-        try
-        {
-            await _connectionManager.DisconnectServerAsync(server.ServerId);
-            RefreshConnectionStatus(server);
-            SetStatus($"Disconnected MCP server '{server.DisplayName}'.", McpStatusKind.Success, autoClear: true);
-        }
-        catch (Exception ex)
-        {
-            RefreshConnectionStatus(server);
-            SetStatus(ex.Message, McpStatusKind.Error);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand(CanExecute = nameof(CanManageConnection))]
-    private async Task ReconnectMcpServerAsync()
-    {
-        if (SelectedServer is { } server)
-        {
-            await DiscoverToolsCoreAsync(server, reconnectFirst: true);
-        }
-    }
-
-    [RelayCommand(CanExecute = nameof(CanManageOAuth))]
-    private async Task AuthorizeMcpServerAsync()
-    {
-        if (SelectedServer is not { } server || _oauthService is null)
-        {
-            return;
-        }
-
-        CancelDiscovery();
-        IsBusy = true;
-        SetStatus($"Starting browser authorization for MCP server '{server.DisplayName}'...", McpStatusKind.None);
-        try
-        {
-            await _oauthService.AuthorizeAsync(server, McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server));
-            await _connectionManager.DisconnectServerAsync(server.ServerId);
-            RefreshConnectionStatus(server);
-            SetStatus($"Authorized MCP server '{server.DisplayName}'.", McpStatusKind.Success, autoClear: true);
-        }
-        catch (Exception ex)
-        {
-            RefreshConnectionStatus(server);
-            SetStatus(ex.Message, McpStatusKind.Error);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand(CanExecute = nameof(CanManageOAuth))]
-    private async Task DisconnectMcpServerOAuthAsync()
-    {
-        if (SelectedServer is not { } server || _oauthService is null)
-        {
-            return;
-        }
-
-        CancelDiscovery();
-        IsBusy = true;
-        try
-        {
-            _oauthService.ClearAuthorization(server.ServerId);
-            await _connectionManager.DisconnectServerAsync(server.ServerId);
-            RefreshConnectionStatus(server);
-            SetStatus($"Removed OAuth authorization for MCP server '{server.DisplayName}'.", McpStatusKind.Success, autoClear: true);
-        }
-        catch (Exception ex)
-        {
-            RefreshConnectionStatus(server);
-            SetStatus(ex.Message, McpStatusKind.Error);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    private bool CanDiscoverTools() => SelectedServer is not null && !IsDiscovering;
-
-    private bool CanManageConnection() => SelectedServer is not null && !IsDiscovering;
-
-    private bool CanManageOAuth() => SelectedServer?.OAuthEnabled == true && _oauthService is not null && !IsDiscovering && !IsBusy;
-
-    private async Task LoadSelectedServerAsync(ConfiguredMcpServerRecord server, int version)
-    {
-        IsBusy = true;
-        try
-        {
-            var editorText = await _serverCatalogService.ExportServerJsonAsync(server.ServerId) ?? McpConfigurationDocument.CreateLocalTemplate();
-            if (version != _serverLoadVersion || SelectedServer?.ServerId != server.ServerId)
-            {
-                return;
-            }
-
-            Name = server.Name;
-            EditorText = editorText;
-            RefreshConnectionStatus(server);
-            SetStatus($"Editing MCP server '{server.DisplayName}'.", McpStatusKind.None);
-        }
-        catch (Exception ex)
-        {
-            if (version == _serverLoadVersion && SelectedServer?.ServerId == server.ServerId)
-            {
-                SetStatus(ex.Message, McpStatusKind.Error);
-            }
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    private async Task ReloadServersAsync(string? selectServerId)
-    {
-        var currentServerId = SelectedServer?.ServerId;
-        var servers = await _serverCatalogService.ListServersAsync();
-
-        _suppressSelectionHandlers = true;
-        try
-        {
-            Servers.Clear();
-            foreach (var server in servers)
-            {
-                Servers.Add(server);
-            }
-
-            var selectedServer = Servers.FirstOrDefault(server => server.ServerId == selectServerId);
-            if (selectedServer is null && (!IsCompactLayout || selectServerId is not null))
-            {
-                selectedServer = Servers.FirstOrDefault(server => server.ServerId == currentServerId)
-                                 ?? Servers.FirstOrDefault();
-            }
-
-            SelectedServer = selectedServer;
-        }
-        finally
-        {
-            _suppressSelectionHandlers = false;
-        }
-
-        if (SelectedServer is null)
-        {
-            ClearEditor();
-            RefreshConnectionStatus(null);
-        }
-        else
-        {
-            await LoadSelectedServerAsync(SelectedServer, ++_serverLoadVersion);
-        }
-
-        DeleteCommand.NotifyCanExecuteChanged();
-    }
-
-    private void ClearEditor()
-    {
-        if (Servers.Count == 0)
-        {
-            Name = "mcp_server";
-            EditorText = McpConfigurationDocument.CreateLocalTemplate();
-            SetStatus("No MCP servers configured yet. Paste a bare MCP server object or start from a template.", McpStatusKind.Warning);
-            return;
-        }
-
-        Name = string.Empty;
-        EditorText = string.Empty;
-    }
+    public Task ImportConfigurationFileAsync(string filePath) => _operations.ImportFileAsync(filePath);
 
     public void Dispose()
     {
@@ -729,43 +279,85 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         }
 
         _disposed = true;
-        CancelDiscovery();
-        _serverCatalogService.ServersChanged -= OnServersChanged;
-        _connectionManager.StatusChanged -= OnConnectionStatusChanged;
-        CancelSuccessStatusClear();
+        _serverLoadVersion++;
+        _serverLoadCancellation?.Cancel();
+        _serverLoadCancellation?.Dispose();
+        _serverLoadCancellation = null;
+        _editor.ServersChanged -= OnServersChanged;
+        _connections.StatusChanged -= OnConnectionStatusChanged;
+        _operations.PropertyChanged -= OnOperationsPropertyChanged;
+        _operations.Dispose();
     }
 
-    private void OnServersChanged()
-        => RunOnUiThread(() =>
-        {
-            if (!_suppressServerChangeNotifications)
-            {
-                _ = ReloadServersSafelyAsync(SelectedServer?.ServerId);
-            }
-        });
-
-    private async Task ReloadServersSafelyAsync(string? selectServerId)
+    internal async Task ReloadServersAsync(
+        string? selectServerId,
+        CancellationToken cancellationToken,
+        bool loadSelectedDocument = true)
     {
-        if (_disposed)
+        var servers = await _editor.ListAsync(cancellationToken);
+        Task documentLoad = Task.CompletedTask;
+        await _uiDispatcher.InvokeAsync(() =>
         {
-            return;
-        }
+            if (_disposed || cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
 
+            var currentServerId = SelectedServer?.ServerId;
+            _suppressSelectionHandlers = true;
+            try
+            {
+                Servers.Clear();
+                foreach (var server in servers)
+                {
+                    Servers.Add(server);
+                }
+
+                SelectedServer = Servers.FirstOrDefault(server => server.ServerId == selectServerId)
+                    ?? ((!IsCompactLayout || selectServerId is not null)
+                        ? Servers.FirstOrDefault(server => server.ServerId == currentServerId) ?? Servers.FirstOrDefault()
+                        : null);
+            }
+            finally
+            {
+                _suppressSelectionHandlers = false;
+            }
+
+            if (SelectedServer is null)
+            {
+                CancelDocumentLoad(documentReady: true);
+                ClearEditor();
+                RefreshConnectionStatus(null);
+            }
+            else if (loadSelectedDocument)
+            {
+                documentLoad = LoadSelectedServerAsync(SelectedServer, cancellationToken);
+                _currentDocumentLoad = documentLoad;
+            }
+            else
+            {
+                RefreshConnectionStatus(SelectedServer);
+            }
+
+            _operations.NotifyContextChanged();
+        }).ConfigureAwait(false);
+        await documentLoad.ConfigureAwait(false);
+    }
+
+    internal async Task WithSuppressedCatalogEventsAsync(Func<Task> action)
+    {
+        _suppressServerChangeNotifications = true;
         try
         {
-            await ReloadServersAsync(selectServerId);
+            await action();
         }
-        catch (Exception ex)
+        finally
         {
-            ClearEditor();
-            SetStatus(ex.Message, McpStatusKind.Error);
+            _suppressServerChangeNotifications = false;
         }
     }
 
-    private void OnConnectionStatusChanged()
-        => RunOnUiThread(() => RefreshConnectionStatus(SelectedServer));
-
-    private void RefreshConnectionStatus(ConfiguredMcpServerRecord? server)
+    internal void RefreshConnectionStatus(ConfiguredMcpServerRecord? server)
     {
         if (server is null)
         {
@@ -776,137 +368,293 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
             return;
         }
 
-        var status = _connectionManager.GetStatus(server);
-        ConnectionStatusKind = status.Kind;
-        ConnectionStatusText = status.Message;
-        ConnectionStatusDetail = BuildConnectionStatusDetail(status, server);
-        ConnectionDiagnosticsText = BuildConnectionDiagnosticsText(status, server);
+        var presentation = _connections.GetPresentation(server);
+        ConnectionStatusKind = presentation.Status.Kind;
+        ConnectionStatusText = presentation.Status.Message;
+        ConnectionStatusDetail = presentation.Detail;
+        ConnectionDiagnosticsText = presentation.Diagnostics;
     }
 
-    private string BuildConnectionStatusDetail(McpConnectionStatus status, ConfiguredMcpServerRecord server)
+    internal McpEditorSnapshot CaptureEditorSnapshot() => new(
+        SelectedServer,
+        Name,
+        EditorText,
+        IsCompactLayout,
+        _editorRevision);
+
+    internal bool HasEditorChangedSince(long revision) => _editorRevision != revision;
+
+    internal void ApplySavedDocument(ParsedMcpServerConfiguration parsed, long revision)
     {
-        var lines = new List<string>
+        if (_disposed || HasEditorChangedSince(revision))
         {
-            $"Active connection: {(status.ActiveConnectionCount > 0 ? "Yes" : "No")}",
-            $"Discovered tools: {status.ToolCount ?? 0}",
-        };
-        if (server.OAuthEnabled)
-        {
-            lines.Add($"OAuth authorization: {(_oauthService?.HasCachedAuthorization(server.ServerId) == true ? "Cached" : "Required")}");
+            return;
         }
 
-        return string.Join(Environment.NewLine, lines);
+        ApplyEditorDocument(
+            parsed.Server.Name,
+            McpConfigurationDocument.BuildEditorText(
+                parsed.Server,
+                parsed.Headers,
+                parsed.EnvironmentVariables));
     }
 
-    private string BuildConnectionDiagnosticsText(McpConnectionStatus status, ConfiguredMcpServerRecord server)
+    internal Task CurrentDocumentLoad => _currentDocumentLoad;
+
+    internal Task RunOnUiAsync(Action action) => _uiDispatcher.InvokeAsync(() =>
     {
-        var lines = new List<string>
+        if (!_disposed)
         {
-            $"Status: {status.Kind}",
-            $"Message: {status.Message}",
-            $"Active connection: {(status.ActiveConnectionCount > 0 ? "Yes" : "No")}",
-            $"Discovered tools: {status.ToolCount ?? 0}",
-        };
-
-        if (server.OAuthEnabled)
-        {
-            lines.Add($"OAuth authorization: {(_oauthService?.HasCachedAuthorization(server.ServerId) == true ? "Cached" : "Required")}");
+            action();
         }
+    });
 
-        if (status.LastChangedAtUtc is not null)
-        {
-            lines.Add($"Updated: {status.LastChangedAtUtc.Value:yyyy-MM-dd HH:mm:ss} UTC");
-        }
-
-        if (status.ToolNames is { Count: > 0 })
-        {
-            lines.Add(string.Empty);
-            lines.Add("Tools:");
-            lines.AddRange(status.ToolNames.Select(toolName => "- " + toolName));
-        }
-
-        if (!string.IsNullOrWhiteSpace(status.Error))
-        {
-            lines.Add(string.Empty);
-            lines.Add($"Error: {status.Error}");
-        }
-
-        if (status.StandardErrorTail is { Count: > 0 })
-        {
-            lines.Add(string.Empty);
-            lines.Add("stderr:");
-            lines.AddRange(status.StandardErrorTail);
-        }
-
-        return lines.Count == 0 ? "No recent MCP diagnostics." : string.Join(Environment.NewLine, lines);
-    }
-
-    private void ClearStatus()
-        => SetStatus(string.Empty, McpStatusKind.None);
-
-    private void SetStatus(string message, McpStatusKind kind, bool autoClear = false)
+    private Task LoadSelectedServerAsync(
+        ConfiguredMcpServerRecord server,
+        CancellationToken cancellationToken)
     {
-        CancelSuccessStatusClear();
-        StatusKind = string.IsNullOrWhiteSpace(message) ? McpStatusKind.None : kind;
-        StatusText = message;
-        if (autoClear && StatusKind == McpStatusKind.Success)
+        _serverLoadCancellation?.Cancel();
+        _serverLoadCancellation?.Dispose();
+        var loadCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _serverLoadCancellation = loadCancellation;
+        var version = ++_serverLoadVersion;
+        var editRevision = _editorRevision;
+        SetDocumentLoadState(isLoading: true, isReady: false);
+        return LoadSelectedServerCoreAsync(server, version, editRevision, loadCancellation);
+    }
+
+    private async Task LoadSelectedServerCoreAsync(
+        ConfiguredMcpServerRecord server,
+        int version,
+        long editRevision,
+        CancellationTokenSource loadCancellation)
+    {
+        var documentApplied = false;
+        try
         {
-            ScheduleSuccessStatusClear(message);
+            var text = await _editor.LoadDocumentAsync(server.ServerId, loadCancellation.Token)
+                .ConfigureAwait(false)
+                ?? McpConfigurationDocument.CreateLocalTemplate();
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (IsCurrentDocumentLoad(server.ServerId, version, loadCancellation)
+                    && _editorRevision == editRevision)
+                {
+                    ApplyEditorDocument(server.Name, text);
+                    RefreshConnectionStatus(server);
+                    documentApplied = true;
+                }
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (loadCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (IsCurrentDocumentLoad(server.ServerId, version, loadCancellation))
+                {
+                    _operations.PresentStatus(ex.Message, McpStatusKind.Error);
+                }
+            }).ConfigureAwait(false);
+        }
+        finally
+        {
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (IsMatchingDocumentLoad(server.ServerId, version, loadCancellation))
+                {
+                    _serverLoadCancellation = null;
+                    SetDocumentLoadState(isLoading: false, isReady: documentApplied);
+                }
+            }).ConfigureAwait(false);
+            loadCancellation.Dispose();
         }
     }
 
-    private void ScheduleSuccessStatusClear(string message)
+    private void ClearEditor()
     {
-        var cancellation = new CancellationTokenSource();
-        _successStatusClearCancellation = cancellation;
-        _ = ClearSuccessStatusAfterDelayAsync(message, cancellation);
+        ApplyEditorDocument(
+            Servers.Count == 0 ? "mcp_server" : string.Empty,
+            Servers.Count == 0 ? McpConfigurationDocument.CreateLocalTemplate() : string.Empty);
     }
 
-    private async Task ClearSuccessStatusAfterDelayAsync(string message, CancellationTokenSource cancellation)
+    private void LoadTemplate(string template, string status)
+    {
+        if (string.IsNullOrWhiteSpace(Name))
+        {
+            Name = "mcp_server";
+        }
+
+        EditorText = template;
+        _operations.PresentStatus(status, McpStatusKind.Success, autoClear: true);
+    }
+
+    private bool CanEdit() => !IsBusy;
+
+    private void TrackEditorChange()
+    {
+        if (!_suppressEditorTracking)
+        {
+            _editorRevision++;
+        }
+    }
+
+    private void ApplyEditorDocument(string name, string text)
+    {
+        _suppressEditorTracking = true;
+        try
+        {
+            Name = name;
+            EditorText = text;
+        }
+        finally
+        {
+            _suppressEditorTracking = false;
+        }
+    }
+
+    private bool IsCurrentDocumentLoad(
+        string serverId,
+        int version,
+        CancellationTokenSource cancellation)
+        => !_disposed
+            && !cancellation.IsCancellationRequested
+            && IsMatchingDocumentLoad(serverId, version, cancellation);
+
+    private bool IsMatchingDocumentLoad(
+        string serverId,
+        int version,
+        CancellationTokenSource cancellation)
+        => !_disposed
+            && version == _serverLoadVersion
+            && ReferenceEquals(_serverLoadCancellation, cancellation)
+            && string.Equals(SelectedServer?.ServerId, serverId, StringComparison.OrdinalIgnoreCase);
+
+    private void CancelDocumentLoad(bool documentReady)
+    {
+        _serverLoadVersion++;
+        _serverLoadCancellation?.Cancel();
+        _serverLoadCancellation?.Dispose();
+        _serverLoadCancellation = null;
+        SetDocumentLoadState(isLoading: false, isReady: documentReady);
+    }
+
+    private void SetDocumentLoadState(bool isLoading, bool isReady)
+    {
+        if (_disposed || (_isDocumentLoading == isLoading && _isDocumentReady == isReady))
+        {
+            return;
+        }
+
+        _isDocumentLoading = isLoading;
+        _isDocumentReady = isReady;
+        OnPropertyChanged(nameof(IsDocumentLoading));
+        OnPropertyChanged(nameof(IsDocumentReady));
+        OnPropertyChanged(nameof(IsEditorReadOnly));
+        OnPropertyChanged(nameof(IsBusy));
+        OnPropertyChanged(nameof(CanStartOperation));
+        OnPropertyChanged(nameof(CanNavigateServers));
+        CreateServerCommand.NotifyCanExecuteChanged();
+        BackToServerListCommand.NotifyCanExecuteChanged();
+        LoadLocalTemplateCommand.NotifyCanExecuteChanged();
+        LoadRemoteTemplateCommand.NotifyCanExecuteChanged();
+        FormatCommand.NotifyCanExecuteChanged();
+        _operations.NotifyContextChanged();
+        TryReloadPendingServers();
+    }
+
+    private void OnServersChanged() => RunOnUiThread(() =>
+    {
+        if (_suppressServerChangeNotifications)
+        {
+            return;
+        }
+
+        _reloadServersPending = true;
+        TryReloadPendingServers();
+    });
+
+    private void TryReloadPendingServers()
+    {
+        if (_disposed || !_reloadServersPending || IsBusy)
+        {
+            return;
+        }
+
+        _reloadServersPending = false;
+        _ = ReloadServersSafelyAsync(SelectedServer?.ServerId);
+    }
+
+    private async Task ReloadServersSafelyAsync(string? serverId)
     {
         try
         {
-            await Task.Delay(SuccessStatusDisplayDuration, cancellation.Token);
+            await ReloadServersAsync(serverId, CancellationToken.None);
         }
-        catch (OperationCanceledException)
+        catch (Exception ex)
         {
-            return;
+            await RunOnUiAsync(() => _operations.PresentStatus(ex.Message, McpStatusKind.Error));
         }
-
-        RunOnUiThread(() =>
-        {
-            if (_successStatusClearCancellation == cancellation
-                && StatusKind == McpStatusKind.Success
-                && string.Equals(StatusText, message, StringComparison.Ordinal))
-            {
-                ClearStatus();
-            }
-        });
     }
 
-    private void CancelSuccessStatusClear()
+    private void OnConnectionStatusChanged() => RunOnUiThread(() => RefreshConnectionStatus(SelectedServer));
+
+    private void OnOperationsPropertyChanged(object? sender, PropertyChangedEventArgs e) => RunOnUiThread(() =>
     {
-        var cancellation = _successStatusClearCancellation;
-        if (cancellation is null)
-        {
-            return;
-        }
+        OnPropertyChanged(nameof(IsBusy));
+        OnPropertyChanged(nameof(CanStartOperation));
+        OnPropertyChanged(nameof(CanNavigateServers));
+        OnPropertyChanged(nameof(IsDiscovering));
+        OnPropertyChanged(nameof(StatusText));
+        OnPropertyChanged(nameof(StatusKind));
+        OnPropertyChanged(nameof(IsStatusSuccess));
+        OnPropertyChanged(nameof(IsStatusWarning));
+        OnPropertyChanged(nameof(IsStatusError));
+        CreateServerCommand.NotifyCanExecuteChanged();
+        BackToServerListCommand.NotifyCanExecuteChanged();
+        LoadLocalTemplateCommand.NotifyCanExecuteChanged();
+        LoadRemoteTemplateCommand.NotifyCanExecuteChanged();
+        FormatCommand.NotifyCanExecuteChanged();
+        TryReloadPendingServers();
+    });
 
-        _successStatusClearCancellation = null;
-        cancellation.Cancel();
-        cancellation.Dispose();
-    }
-
-    private static void RunOnUiThread(Action action)
+    private void NotifyLayout()
     {
-        if (Avalonia.Application.Current is null || Dispatcher.UIThread.CheckAccess())
-        {
-            action();
-            return;
-        }
-
-        Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
+        OnPropertyChanged(nameof(IsListActive));
+        OnPropertyChanged(nameof(ShowWideLayout));
+        OnPropertyChanged(nameof(ShowCompactList));
+        OnPropertyChanged(nameof(ShowCompactEditor));
+        OnPropertyChanged(nameof(ShowListPane));
+        OnPropertyChanged(nameof(ShowEditorPane));
     }
+
+    private void RunOnUiThread(Action action)
+    {
+        _ = RunOnUiAsync(action);
+    }
+
+    private static LegacyDependencies CreateLegacyDependencies(
+        McpServerCatalogService catalog,
+        McpClientConnectionManager connectionManager,
+        McpOAuthService? oauthService,
+        McpEcosystemConfigurationImporter? configurationImporter,
+        McpSunderConfigurationSyncService? sunderConfigurationSyncService)
+    {
+        var importer = configurationImporter ?? new McpEcosystemConfigurationImporter(catalog);
+        return new LegacyDependencies(
+            new McpSettingsEditorService(catalog),
+            new McpConfigurationCoordinator(importer, sunderConfigurationSyncService),
+            new McpServerConnectionService(catalog, connectionManager, oauthService),
+            new McpOAuthCoordinator(oauthService, connectionManager));
+    }
+
+    private sealed record LegacyDependencies(
+        McpSettingsEditorService Editor,
+        McpConfigurationCoordinator Configuration,
+        McpServerConnectionService Connections,
+        McpOAuthCoordinator OAuth);
 }
 
 public enum McpStatusKind
@@ -916,3 +664,10 @@ public enum McpStatusKind
     Warning,
     Error,
 }
+
+internal sealed record McpEditorSnapshot(
+    ConfiguredMcpServerRecord? ExistingServer,
+    string Name,
+    string EditorText,
+    bool IsCompactLayout,
+    long Revision);

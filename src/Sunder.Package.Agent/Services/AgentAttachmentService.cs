@@ -140,7 +140,15 @@ public sealed class AgentAttachmentService : IAgentAttachmentContentStore, IAgen
 
         var fileName = $"{attachmentId:N}-{info.FileName}";
         var fullPath = Path.Combine(sessionDirectory, fileName);
-        await File.WriteAllBytesAsync(fullPath, upload.Content, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await File.WriteAllBytesAsync(fullPath, upload.Content, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            TryDeleteIncompleteAttachment(fullPath, sessionDirectory);
+            throw;
+        }
 
         var textContent = info.IsText ? DecodeText(upload.Content) : null;
         var wasTruncated = false;
@@ -165,6 +173,27 @@ public sealed class AgentAttachmentService : IAgentAttachmentContentStore, IAgen
         return new AgentStoredAttachment(metadata, textContent);
     }
 
+    private static void TryDeleteIncompleteAttachment(string fullPath, string sessionDirectory)
+    {
+        try
+        {
+            if (File.Exists(fullPath))
+            {
+                File.Delete(fullPath);
+            }
+
+            if (Directory.Exists(sessionDirectory)
+                && !Directory.EnumerateFileSystemEntries(sessionDirectory).Any())
+            {
+                Directory.Delete(sessionDirectory);
+            }
+        }
+        catch
+        {
+            // Preserve the storage or cancellation exception that caused the incomplete write.
+        }
+    }
+
     public async Task<byte[]> ReadAttachmentBytesAsync(AgentAttachmentMetadata metadata, CancellationToken cancellationToken = default)
     {
         var fullPath = ResolveStoredAttachmentPath(metadata.StorageRelativePath);
@@ -174,6 +203,23 @@ public sealed class AgentAttachmentService : IAgentAttachmentContentStore, IAgen
         }
 
         return await File.ReadAllBytesAsync(fullPath, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal void DeleteStoredAttachment(AgentAttachmentMetadata metadata)
+    {
+        var fullPath = ResolveStoredAttachmentPath(metadata.StorageRelativePath);
+        if (File.Exists(fullPath))
+        {
+            File.Delete(fullPath);
+        }
+
+        var sessionDirectory = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrWhiteSpace(sessionDirectory)
+            && Directory.Exists(sessionDirectory)
+            && !Directory.EnumerateFileSystemEntries(sessionDirectory).Any())
+        {
+            Directory.Delete(sessionDirectory);
+        }
     }
 
     private string ResolveStoredAttachmentPath(string relativePath)

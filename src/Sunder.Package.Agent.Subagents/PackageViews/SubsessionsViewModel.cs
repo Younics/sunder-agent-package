@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
+using System.ComponentModel;
+using Avalonia;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -19,51 +20,60 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private const int InitialTranscriptTurnLimit = 60;
     private const int OlderTranscriptTurnPageSize = 30;
     private const int TranscriptVisibleRowLimit = 60;
-    private static readonly TimeSpan DefaultActivityQuietDelay = TimeSpan.FromMilliseconds(900);
 
     private readonly IPackageExtensionCatalog? _extensionCatalog;
-    private readonly SubsessionToolPresentationService _toolPresentationService;
-    private readonly DispatcherTimer _activityQuietTimer;
-    private readonly TimeSpan _activityQuietDelay;
-    private readonly Dictionary<Guid, SubsessionTextTranscriptRowViewModel> _textRowsByTurnId = new();
-    private readonly Dictionary<string, SubsessionToolInvocationRowViewModel> _toolRowsByCallId = new(StringComparer.Ordinal);
-    private readonly AgentTranscriptTurnWindow _transcriptTurnWindow = new(TranscriptVisibleRowLimit * 2);
-    private readonly Dictionary<Guid, AgentTurnRecord> _pendingTranscriptTurnsByTurnId = new();
+    private readonly TranscriptTimelineState<SubsessionTranscriptRowViewModel> _timeline;
+    private readonly AgentRunActivityState _runActivity;
+    private readonly Task _initialization;
     private IAgentRuntimeCatalog? _runtimeCatalog;
-    private SubsessionActivityTranscriptRowViewModel? _activityRow;
-    private string _activityTextBase = "Thinking";
-    private bool _hasVisibleRunActivity;
-    private bool _showActivityAfterQuiet;
     private bool _isReconcilingSubsessionSelection;
     private bool _isRestoringReconciledSubsessionSelection;
-    private bool _isReplacingTranscriptWindow;
-    private bool _isTranscriptDetachedFromLatest;
     private bool _disposed;
 
-    public SubsessionsViewModel(IPackageExtensionCatalog extensionCatalog, TimeSpan? activityQuietDelay = null)
-        : this(extensionCatalog, new SubsessionToolPresentationService(extensionCatalog), activityQuietDelay)
+    public SubsessionsViewModel(
+        IPackageExtensionCatalog extensionCatalog,
+        TimeSpan? activityQuietDelay = null)
+        : this(extensionCatalog, activityQuietDelay, initialize: true)
     {
     }
 
     public SubsessionsViewModel()
-        : this(null, new SubsessionToolPresentationService(), null)
+        : this(null, null, initialize: true)
     {
     }
 
     private SubsessionsViewModel(
         IPackageExtensionCatalog? extensionCatalog,
-        SubsessionToolPresentationService toolPresentationService,
-        TimeSpan? activityQuietDelay)
+        TimeSpan? activityQuietDelay,
+        bool initialize)
     {
         _extensionCatalog = extensionCatalog;
-        _toolPresentationService = toolPresentationService;
-        _activityQuietDelay = activityQuietDelay ?? DefaultActivityQuietDelay;
-        _activityQuietTimer = new DispatcherTimer
-        {
-            Interval = _activityQuietDelay <= TimeSpan.Zero ? TimeSpan.FromMilliseconds(1) : _activityQuietDelay,
-        };
-        _activityQuietTimer.Tick += OnActivityQuietTimerTick;
-        EnsureRuntimeCatalog();
+        var toolPresentation = new TranscriptToolPresentationService(() =>
+            extensionCatalog?.GetExtensions(PackageExtensionPoints.ToolSources)
+                .OfType<IAgentToolPresentationResolver>()
+            ?? []);
+        var rowFactory = new SubsessionTranscriptRowFactory(
+            toolPresentation,
+            ResolveChildSessionLinksFromRuntime);
+        var rowProjector = new TranscriptRowProjector<SubsessionTranscriptRowViewModel>(
+            Messages,
+            rowFactory,
+            TranscriptVisibleRowLimit * 2);
+        _timeline = new TranscriptTimelineState<SubsessionTranscriptRowViewModel>(
+            rowProjector,
+            InitialTranscriptTurnLimit,
+            OlderTranscriptTurnPageSize,
+            TranscriptVisibleRowLimit);
+        _runActivity = new AgentRunActivityState(
+            () => IsSelectedSubsessionRunActive,
+            () => _timeline.IsFollowingLatest,
+            activityQuietDelay);
+        _timeline.RowsChanging += () => TranscriptChanging?.Invoke();
+        _timeline.RowsChanged += OnTimelineRowsChanged;
+        _timeline.PropertyChanged += OnTimelinePropertyChanged;
+        _timeline.TurnProjected += OnTimelineTurnProjected;
+        _runActivity.Changed += OnRunActivityStateChanged;
+        _initialization = initialize ? InitializeCoreAsync() : Task.CompletedTask;
     }
 
     public ObservableCollection<SubsessionListItemViewModel> Subsessions { get; } = [];
@@ -94,9 +104,19 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     public bool ShowEmptyTranscript => HasSelectedSubsession && !HasTranscriptRows;
 
-    public bool CanLoadOlderTranscriptRows => HasOlderTranscriptRows && !IsLoadingOlderTranscriptRows && SelectedSubsession is not null;
+    public bool HasOlderTranscriptRows => _timeline.HasOlderRows;
 
-    public bool CanLoadNewerTranscriptRows => HasNewerTranscriptRows && !IsLoadingNewerTranscriptRows && SelectedSubsession is not null;
+    public bool HasNewerTranscriptRows => _timeline.HasNewerRows;
+
+    public bool IsLoadingOlderTranscriptRows => _timeline.IsLoadingOlder;
+
+    public bool IsLoadingNewerTranscriptRows => _timeline.IsLoadingNewer;
+
+    public bool IsTranscriptLoading => _timeline.IsInitialLoading;
+
+    public bool CanLoadOlderTranscriptRows => _timeline.CanLoadOlder && SelectedSubsession is not null;
+
+    public bool CanLoadNewerTranscriptRows => _timeline.CanLoadNewer && SelectedSubsession is not null;
 
     public bool IsSelectedSubsessionRunActive => SelectedSubsession?.IsRunActive == true;
 
@@ -111,18 +131,6 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     private string _statusText = string.Empty;
-
-    [ObservableProperty]
-    private bool _hasOlderTranscriptRows;
-
-    [ObservableProperty]
-    private bool _hasNewerTranscriptRows;
-
-    [ObservableProperty]
-    private bool _isLoadingOlderTranscriptRows;
-
-    [ObservableProperty]
-    private bool _isLoadingNewerTranscriptRows;
 
     partial void OnSelectedSubsessionChanged(SubsessionListItemViewModel? value)
     {
@@ -171,29 +179,15 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ShowDetailPane));
     }
 
-    partial void OnHasOlderTranscriptRowsChanged(bool value)
-        => OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
-
-    partial void OnHasNewerTranscriptRowsChanged(bool value)
-        => OnPropertyChanged(nameof(CanLoadNewerTranscriptRows));
-
-    partial void OnIsLoadingOlderTranscriptRowsChanged(bool value)
-        => OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
-
-    partial void OnIsLoadingNewerTranscriptRowsChanged(bool value)
-        => OnPropertyChanged(nameof(CanLoadNewerTranscriptRows));
-
-    public Task InitializeAsync()
-    {
-        ReloadSubsessions(null);
-        return Task.CompletedTask;
-    }
-
-    public ValueTask OnNavigatedToAsync(PackageViewNavigationContext context, CancellationToken cancellationToken = default)
+    public ValueTask OnNavigatedToAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var sessionId = TryGetSessionId(context.Parameters);
-        if (sessionId is not null && SelectedSubsession?.SessionId == sessionId.Value && IsDetailActive)
+        if (sessionId is not null
+            && SelectedSubsession?.SessionId == sessionId.Value
+            && IsDetailActive)
         {
             return ValueTask.CompletedTask;
         }
@@ -221,12 +215,10 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void OpenSubsession(SubsessionListItemViewModel? subsession)
     {
-        if (subsession is null)
+        if (subsession is not null)
         {
-            return;
+            ActivateSubsession(subsession);
         }
-
-        ActivateSubsession(subsession);
     }
 
     public void ActivateSubsession(SubsessionListItemViewModel subsession)
@@ -245,12 +237,8 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void OpenChildSession(SubsessionChildSessionLinkViewModel? childSession)
     {
-        if (childSession is null)
-        {
-            return;
-        }
-
-        if (SelectedSubsession?.SessionId == childSession.SessionId && IsDetailActive)
+        if (childSession is null
+            || SelectedSubsession?.SessionId == childSession.SessionId && IsDetailActive)
         {
             return;
         }
@@ -261,197 +249,90 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     public async Task<bool> LoadOlderTranscriptRowsAsync(object? protectedAnchorKey = null)
     {
-        if (!CanLoadOlderTranscriptRows || _runtimeCatalog is null || SelectedSubsession is null || _transcriptTurnWindow.OldestCreatedAtUtc is null || _transcriptTurnWindow.OldestTurnId is null)
+        var runtime = _runtimeCatalog;
+        if (runtime is null)
         {
             return false;
         }
 
-        var transcriptChanged = false;
-        DetachTranscriptFromLatest();
-        IsLoadingOlderTranscriptRows = true;
-        try
+        var loaded = await _timeline.LoadOlderAsync(
+            (sessionId, beforeCreatedAt, beforeTurnId, limit, cancellationToken) => Task.Run(
+                () => runtime.ListTurnsBefore(
+                    sessionId,
+                    beforeCreatedAt,
+                    beforeTurnId,
+                    limit),
+                cancellationToken),
+            protectedAnchorKey);
+        if (loaded)
         {
-            await Task.Yield();
-            var turns = _runtimeCatalog.ListTurnsBefore(
-                SelectedSubsession.SessionId,
-                _transcriptTurnWindow.OldestCreatedAtUtc.Value,
-                _transcriptTurnWindow.OldestTurnId.Value,
-                OlderTranscriptTurnPageSize + 1);
-            if (turns.Count == 0)
-            {
-                HasOlderTranscriptRows = false;
-                return false;
-            }
-
-            var insertIndex = 0;
-            var orderedTurns = turns.OrderBy(turn => turn.CreatedAtUtc).ThenBy(turn => turn.TurnId).ToArray();
-            NotifyTranscriptChanging();
-            foreach (var turn in SelectTranscriptWindow(orderedTurns, OlderTranscriptTurnPageSize))
-            {
-                insertIndex += ApplyTurnToTranscript(turn, InsertMode.Prepend, insertIndex);
-            }
-
-            HasOlderTranscriptRows = orderedTurns.Length > OlderTranscriptTurnPageSize;
-            EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Newest, protectedAnchorKey);
-            NotifyTranscriptStateChanged();
-            transcriptChanged = insertIndex > 0;
-            return true;
+            ApplyRunActivityState();
         }
-        finally
-        {
-            IsLoadingOlderTranscriptRows = false;
-            if (transcriptChanged)
-            {
-                TranscriptChanged?.Invoke();
-            }
-        }
+
+        return loaded;
     }
 
     public async Task<bool> LoadNewerTranscriptRowsAsync(object? protectedAnchorKey = null)
     {
-        var selectedSubsession = SelectedSubsession;
-        if (!CanLoadNewerTranscriptRows || _runtimeCatalog is null || selectedSubsession is null || _transcriptTurnWindow.NewestCreatedAtUtc is null || _transcriptTurnWindow.NewestTurnId is null)
+        var runtime = _runtimeCatalog;
+        if (runtime is null)
         {
             return false;
         }
 
-        var transcriptChanged = false;
-        IsLoadingNewerTranscriptRows = true;
-        try
+        var loaded = await _timeline.LoadNewerAsync(
+            (sessionId, afterCreatedAt, afterTurnId, limit, cancellationToken) => Task.Run(
+                () => runtime.ListTurnsAfter(
+                    sessionId,
+                    afterCreatedAt,
+                    afterTurnId,
+                    limit),
+                cancellationToken),
+            protectedAnchorKey);
+        if (loaded)
         {
-            var sessionId = selectedSubsession.SessionId;
-            await Task.Yield();
-            var turns = _runtimeCatalog.ListTurnsAfter(
-                sessionId,
-                _transcriptTurnWindow.NewestCreatedAtUtc.Value,
-                _transcriptTurnWindow.NewestTurnId.Value,
-                OlderTranscriptTurnPageSize + 1);
-            if (SelectedSubsession?.SessionId != sessionId)
-            {
-                return false;
-            }
-
-            if (turns.Count == 0)
-            {
-                if (HasPendingTranscriptTurns(sessionId))
-                {
-                    NotifyTranscriptChanging();
-                }
-
-                var pendingOnlyApplied = ApplyPendingTranscriptTurns(sessionId) > 0;
-                if (pendingOnlyApplied)
-                {
-                    EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest, protectedAnchorKey);
-                    UpdateActivityRowForCurrentState();
-                    EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest, protectedAnchorKey);
-                    NotifyTranscriptStateChanged();
-                }
-
-                HasNewerTranscriptRows = false;
-                var resumed = ResumeTranscriptFollowingLatestIfCaughtUpCore();
-                transcriptChanged = pendingOnlyApplied || resumed;
-                return transcriptChanged;
-            }
-
-            var insertedRows = 0;
-            var orderedTurns = turns.OrderBy(turn => turn.CreatedAtUtc).ThenBy(turn => turn.TurnId).ToArray();
-            NotifyTranscriptChanging();
-            foreach (var turn in orderedTurns.Take(OlderTranscriptTurnPageSize))
-            {
-                insertedRows += ApplyTurnToTranscript(turn, InsertMode.Append);
-                _pendingTranscriptTurnsByTurnId.Remove(turn.TurnId);
-            }
-
-            HasNewerTranscriptRows = orderedTurns.Length > OlderTranscriptTurnPageSize;
-            EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest, protectedAnchorKey);
-            var pendingApplied = 0;
-            if (!HasNewerTranscriptRows)
-            {
-                pendingApplied = ApplyPendingTranscriptTurns(sessionId);
-                if (pendingApplied > 0)
-                {
-                    EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest, protectedAnchorKey);
-                    UpdateActivityRowForCurrentState();
-                    EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest, protectedAnchorKey);
-                }
-            }
-
-            NotifyTranscriptStateChanged();
-            var resumedFollowingLatest = ResumeTranscriptFollowingLatestIfCaughtUpCore();
-            transcriptChanged = insertedRows > 0
-                                || pendingApplied > 0
-                                || resumedFollowingLatest;
-            return true;
+            _runActivity.NotifyFollowStateChanged();
+            ApplyRunActivityState();
         }
-        finally
-        {
-            IsLoadingNewerTranscriptRows = false;
-            if (transcriptChanged)
-            {
-                TranscriptChanged?.Invoke();
-            }
-        }
+
+        return loaded;
     }
 
     [RelayCommand]
     private void JumpToLatestTranscript()
     {
-        _isTranscriptDetachedFromLatest = false;
-        LoadTranscript(SelectedSubsession?.SessionId);
+        if (_timeline.RequestJumpToLatest())
+        {
+            LoadTranscript(SelectedSubsession?.SessionId);
+        }
     }
 
     public void DetachTranscriptFromLatest()
     {
-        if (_isTranscriptDetachedFromLatest || _isReplacingTranscriptWindow || SelectedSubsession is null)
-        {
-            return;
-        }
-
-        _isTranscriptDetachedFromLatest = true;
-        _activityQuietTimer.Stop();
+        _timeline.DetachFromLatest();
+        _runActivity.NotifyFollowStateChanged();
     }
 
     public void ResumeTranscriptFollowingLatestIfCaughtUp()
     {
-        if (ResumeTranscriptFollowingLatestIfCaughtUpCore())
+        if (_timeline.ResumeFollowingLatestIfCaughtUp())
         {
-            TranscriptChanged?.Invoke();
+            _runActivity.NotifyFollowStateChanged();
+            ApplyRunActivityState();
+            _timeline.NotifyRowsChanged();
         }
     }
 
-    private bool ResumeTranscriptFollowingLatestIfCaughtUpCore()
-    {
-        if (!_isTranscriptDetachedFromLatest || HasNewerTranscriptRows || SelectedSubsession is null)
-        {
-            return false;
-        }
+    internal void SetTranscriptJumpToLatestVisible(bool isVisible)
+        => _timeline.SetJumpToLatestVisible(isVisible);
 
-        _isTranscriptDetachedFromLatest = false;
-        UpdateActivityRowForCurrentState();
-        EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest);
-        NotifyTranscriptStateChanged();
-        return true;
-    }
+    internal void SetTranscriptViewportAnchor(TranscriptViewportAnchorData? anchor)
+        => _timeline.SetViewportAnchor(anchor);
 
-    public void Dispose()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _disposed = true;
-        if (_runtimeCatalog is not null)
-        {
-            _runtimeCatalog.SessionChanged -= OnSessionChanged;
-            _runtimeCatalog.TurnChanged -= OnTurnChanged;
-        }
-
-        _activityQuietTimer.Stop();
-        _activityQuietTimer.Tick -= OnActivityQuietTimerTick;
-        _activityRow?.Dispose();
-        _activityRow = null;
-    }
+    internal void SetTranscriptRowExpanded(
+        SubsessionTranscriptRowViewModel row,
+        bool isExpanded)
+        => _timeline.SetRowExpanded(row, isExpanded);
 
     private void EnsureRuntimeCatalog()
     {
@@ -460,7 +341,9 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        _runtimeCatalog = _extensionCatalog.GetExtensions(PackageExtensionPoints.RuntimeCatalogs).FirstOrDefault();
+        _runtimeCatalog = _extensionCatalog
+            .GetExtensions(PackageExtensionPoints.RuntimeCatalogs)
+            .FirstOrDefault();
         if (_runtimeCatalog is not null)
         {
             _runtimeCatalog.SessionChanged += OnSessionChanged;
@@ -487,7 +370,8 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         ReconcileSubsessions(runtime, subsessions);
 
         OnPropertyChanged(nameof(HasNoSubsessions));
-        var selectedSubsession = Subsessions.FirstOrDefault(session => session.SessionId == currentSelectionId);
+        var selectedSubsession = Subsessions.FirstOrDefault(
+            session => session.SessionId == currentSelectionId);
         if (selectedSubsession is null && (!IsCompactLayout || selectedSessionId is not null))
         {
             selectedSubsession = Subsessions.FirstOrDefault();
@@ -498,16 +382,19 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         StatusText = Subsessions.Count == 0
             ? "No sub-sessions have been created yet."
             : $"{Subsessions.Count} sub-session(s).";
-        UpdateActivityRowForCurrentState();
+        ApplyRunActivityState();
     }
 
-    private void ReconcileSubsessions(IAgentRuntimeCatalog runtime, IReadOnlyList<AgentSessionRecord> sessions)
+    private void ReconcileSubsessions(
+        IAgentRuntimeCatalog runtime,
+        IReadOnlyList<AgentSessionRecord> sessions)
     {
         var desiredSessionIds = sessions.Select(session => session.SessionId).ToHashSet();
         var selectedSessionId = SelectedSubsession?.SessionId;
-        var shouldPreserveSelectedSession = selectedSessionId is not null && desiredSessionIds.Contains(selectedSessionId.Value);
+        var shouldPreserveSelection = selectedSessionId is not null
+            && desiredSessionIds.Contains(selectedSessionId.Value);
 
-        _isReconcilingSubsessionSelection = shouldPreserveSelectedSession;
+        _isReconcilingSubsessionSelection = shouldPreserveSelection;
         try
         {
             for (var index = Subsessions.Count - 1; index >= 0; index--)
@@ -526,7 +413,9 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
                 var checkpoint = runtime.GetLatestCheckpoint(session.SessionId);
                 if (existingIndex < 0)
                 {
-                    Subsessions.Insert(index, new SubsessionListItemViewModel(session, subtitle, checkpoint));
+                    Subsessions.Insert(
+                        index,
+                        new SubsessionListItemViewModel(session, subtitle, checkpoint));
                     continue;
                 }
 
@@ -544,18 +433,17 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             _isReconcilingSubsessionSelection = false;
         }
 
-        RestoreReconciledSubsessionSelection(selectedSessionId, shouldPreserveSelectedSession);
+        RestoreReconciledSubsessionSelection(selectedSessionId, shouldPreserveSelection);
     }
 
-    private void RestoreReconciledSubsessionSelection(Guid? sessionId, bool shouldPreserveSession)
+    private void RestoreReconciledSubsessionSelection(
+        Guid? sessionId,
+        bool shouldPreserveSession)
     {
-        if (!shouldPreserveSession || sessionId is null || SelectedSubsession?.SessionId == sessionId.Value)
-        {
-            return;
-        }
-
-        var session = FindSubsessionItem(sessionId.Value);
-        if (session is null)
+        if (!shouldPreserveSession
+            || sessionId is null
+            || SelectedSubsession?.SessionId == sessionId.Value
+            || FindSubsessionItem(sessionId.Value) is not { } session)
         {
             return;
         }
@@ -598,7 +486,10 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         var profileName = string.IsNullOrWhiteSpace(session.ProfileId)
             ? null
             : runtime.GetProfile(session.ProfileId)?.DisplayName;
-        var subtitle = string.Join(" · ", new[] { FormatAgentKind(profileName, session.AgentKind), parentTitle }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        var subtitle = string.Join(
+            " · ",
+            new[] { FormatAgentKind(profileName, session.AgentKind), parentTitle }
+                .Where(value => !string.IsNullOrWhiteSpace(value)));
         return string.IsNullOrWhiteSpace(subtitle) ? "Subsession" : subtitle;
     }
 
@@ -618,226 +509,109 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     private void LoadTranscript(Guid? sessionId)
     {
-        ResetTranscriptWindow();
-        var runtime = _runtimeCatalog;
-        if (runtime is null || sessionId is null)
+        _runActivity.Reset();
+        if (_runtimeCatalog is null || sessionId is null)
         {
-            NotifyTranscriptStateChanged();
-            _isReplacingTranscriptWindow = false;
-            TranscriptChanged?.Invoke();
+            _timeline.ClearSession();
             return;
         }
 
-        var turns = runtime.ListRecentTurns(sessionId.Value, InitialTranscriptTurnLimit + 1)
-            .OrderBy(turn => turn.CreatedAtUtc)
-            .ThenBy(turn => turn.TurnId)
-            .ToArray();
-        foreach (var turn in SelectTranscriptWindow(turns, InitialTranscriptTurnLimit))
+        var ticket = _timeline.BeginInitialLoad(sessionId.Value);
+        if (Application.Current is null)
         {
-            ApplyTurnToTranscript(turn, InsertMode.Append, trackRunActivity: true, scheduleQuietTimer: false);
+            CompleteTranscriptLoad(
+                ticket,
+                _runtimeCatalog.ListRecentTurns(
+                    sessionId.Value,
+                    InitialTranscriptTurnLimit + 1));
+            return;
         }
 
-        HasOlderTranscriptRows = turns.Length > InitialTranscriptTurnLimit;
-        HasNewerTranscriptRows = false;
-        TrackCheckpointActivity(runtime.GetLatestCheckpoint(sessionId.Value));
-        UpdateActivityRowForCurrentState();
-        EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest);
-        NotifyTranscriptStateChanged();
-        _isReplacingTranscriptWindow = false;
-        TranscriptChanged?.Invoke();
+        _ = LoadTranscriptAsync(ticket);
     }
 
-    private void ResetTranscriptWindow()
+    private async Task LoadTranscriptAsync(TranscriptLoadTicket ticket)
     {
-        _activityRow?.Dispose();
-        _activityRow = null;
-        _textRowsByTurnId.Clear();
-        _toolRowsByCallId.Clear();
-        _transcriptTurnWindow.Reset();
-        _pendingTranscriptTurnsByTurnId.Clear();
-        _activityTextBase = "Thinking";
-        _hasVisibleRunActivity = false;
-        _showActivityAfterQuiet = false;
-        _isReplacingTranscriptWindow = true;
-        _isTranscriptDetachedFromLatest = false;
-        _activityQuietTimer.Stop();
-        HasOlderTranscriptRows = false;
-        HasNewerTranscriptRows = false;
-        IsLoadingOlderTranscriptRows = false;
-        IsLoadingNewerTranscriptRows = false;
-        Messages.Clear();
-        NotifyTranscriptStateChanged();
+        try
+        {
+            var runtime = _runtimeCatalog;
+            if (runtime is null)
+            {
+                _timeline.TryFailInitialLoad(ticket);
+                return;
+            }
+
+            var turns = await Task.Run(
+                () => runtime.ListRecentTurns(ticket.SessionId, InitialTranscriptTurnLimit + 1),
+                ticket.Generation.CancellationToken);
+            await Dispatcher.UIThread.InvokeAsync(
+                () => CompleteTranscriptLoad(ticket, turns),
+                DispatcherPriority.Background);
+        }
+        catch (OperationCanceledException) when (ticket.Generation.CancellationToken.IsCancellationRequested)
+        {
+        }
+        catch
+        {
+            await Dispatcher.UIThread.InvokeAsync(
+                () => _timeline.TryFailInitialLoad(ticket),
+                DispatcherPriority.Background);
+        }
     }
 
-    private int ApplyPendingTranscriptTurns(Guid sessionId)
+    private void CompleteTranscriptLoad(
+        TranscriptLoadTicket ticket,
+        IReadOnlyList<AgentTurnRecord> turns)
     {
-        if (_pendingTranscriptTurnsByTurnId.Count == 0)
+        if (!_timeline.TryCompleteInitialLoad(ticket, turns))
         {
-            return 0;
+            return;
         }
 
-        var turns = _pendingTranscriptTurnsByTurnId.Values
-            .Where(turn => turn.SessionId == sessionId)
-            .OrderBy(turn => turn.CreatedAtUtc)
-            .ThenBy(turn => turn.TurnId)
-            .ToArray();
-        if (turns.Length == 0)
-        {
-            return 0;
-        }
-
-        foreach (var turn in turns)
-        {
-            _pendingTranscriptTurnsByTurnId.Remove(turn.TurnId);
-        }
-
-        foreach (var turn in turns)
-        {
-            ApplyTurnToTranscript(turn, InsertMode.Append, trackRunActivity: true, scheduleQuietTimer: true);
-        }
-
-        return turns.Length;
+        _runActivity.TrackCheckpoint(_runtimeCatalog?.GetLatestCheckpoint(ticket.SessionId));
+        ApplyRunActivityState();
     }
 
-    private bool HasPendingTranscriptTurns(Guid sessionId)
-        => _pendingTranscriptTurnsByTurnId.Values.Any(turn => turn.SessionId == sessionId);
-
-    private static AgentTurnRecord[] SelectTranscriptWindow(AgentTurnRecord[] orderedTurns, int pageSize)
-    {
-        if (orderedTurns.Length <= pageSize)
-        {
-            return orderedTurns;
-        }
-
-        return orderedTurns.Skip(orderedTurns.Length - pageSize).ToArray();
-    }
-
-    private int ApplyTurnToTranscript(
+    private IReadOnlyList<SubsessionChildSessionLinkViewModel> ResolveChildSessionLinksFromRuntime(
         AgentTurnRecord turn,
-        InsertMode insertMode,
-        int prependIndex = 0,
-        bool trackRunActivity = false,
-        bool scheduleQuietTimer = true)
-    {
-        var insertedRows = 0;
-        var isNewTurn = !_transcriptTurnWindow.Contains(turn.TurnId);
-        _transcriptTurnWindow.AddOrUpdate(turn);
-        if (insertMode == InsertMode.Append && trackRunActivity)
-        {
-            TrackVisibleRunActivity(turn, scheduleQuietTimer);
-        }
-
-        switch (turn.Kind)
-        {
-            case AgentTurnKind.ToolCall:
-                foreach (var item in turn.Items.Where(item => item.Kind == AgentTurnItemKind.ToolCall))
-                {
-                    if (!string.IsNullOrWhiteSpace(item.CallId) && _toolRowsByCallId.ContainsKey(item.CallId))
-                    {
-                        continue;
-                    }
-
-                    var row = new SubsessionToolInvocationRowViewModel(turn, item, _toolPresentationService, ResolveChildSessionLinksFromRuntime);
-                    if (!string.IsNullOrWhiteSpace(item.CallId))
-                    {
-                        _toolRowsByCallId[item.CallId] = row;
-                    }
-
-                    InsertTranscriptRow(row, insertMode, prependIndex + insertedRows);
-                    insertedRows++;
-                }
-
-                break;
-
-            case AgentTurnKind.ToolResult:
-                foreach (var item in turn.Items.Where(item => item.Kind == AgentTurnItemKind.ToolResult))
-                {
-                    if (!string.IsNullOrWhiteSpace(item.CallId) && _toolRowsByCallId.TryGetValue(item.CallId, out var existingToolRow))
-                    {
-                        existingToolRow.ApplyResult(turn, item);
-                        continue;
-                    }
-
-                    if (!isNewTurn && !string.IsNullOrWhiteSpace(item.CallId) && _toolRowsByCallId.ContainsKey(item.CallId))
-                    {
-                        continue;
-                    }
-
-                    var row = new SubsessionToolInvocationRowViewModel(turn, item, _toolPresentationService, ResolveChildSessionLinksFromRuntime);
-                    if (!string.IsNullOrWhiteSpace(item.CallId))
-                    {
-                        _toolRowsByCallId[item.CallId] = row;
-                    }
-
-                    InsertTranscriptRow(row, insertMode, prependIndex + insertedRows);
-                    insertedRows++;
-                }
-
-                break;
-
-            default:
-                var textContent = ExtractTextContent(turn);
-                if (string.IsNullOrWhiteSpace(textContent))
-                {
-                    break;
-                }
-
-                if (_textRowsByTurnId.TryGetValue(turn.TurnId, out var existingTextRow))
-                {
-                    existingTextRow.UpdateContent(textContent);
-                    break;
-                }
-
-                var textRow = new SubsessionTextTranscriptRowViewModel(turn, textContent);
-                _textRowsByTurnId[turn.TurnId] = textRow;
-                InsertTranscriptRow(textRow, insertMode, prependIndex + insertedRows);
-                insertedRows++;
-                break;
-        }
-
-        NotifyTranscriptStateChanged();
-        return insertedRows;
-    }
-
-    private void InsertTranscriptRow(SubsessionTranscriptRowViewModel row, InsertMode insertMode, int prependIndex)
-    {
-        if (insertMode == InsertMode.Prepend)
-        {
-            Messages.Insert(Math.Clamp(prependIndex, 0, Messages.Count), row);
-            return;
-        }
-
-        var insertIndex = _activityRow is null ? Messages.Count : Math.Max(0, Messages.IndexOf(_activityRow));
-        Messages.Insert(insertIndex, row);
-    }
-
-    private IReadOnlyList<SubsessionChildSessionLinkViewModel> ResolveChildSessionLinksFromRuntime(AgentTurnRecord turn, AgentTurnItemRecord item)
+        AgentTurnItemRecord item)
     {
         var runtime = _runtimeCatalog;
-        if (runtime is null || !IsSubagentTool(item.ToolId) || string.IsNullOrWhiteSpace(item.CallId))
+        if (runtime is null
+            || !IsSubagentTool(item.ToolId)
+            || string.IsNullOrWhiteSpace(item.CallId))
         {
             return [];
         }
 
         return runtime.ListSessions()
             .Where(session => session.ParentSessionId == turn.SessionId
-                              && string.Equals(session.ParentToolCallId, item.CallId, StringComparison.Ordinal))
+                              && string.Equals(
+                                  session.ParentToolCallId,
+                                  item.CallId,
+                                  StringComparison.Ordinal))
             .OrderBy(session => session.CreatedAtUtc)
             .Select(session =>
             {
-                var profileName = string.IsNullOrWhiteSpace(session.ProfileId) ? null : runtime.GetProfile(session.ProfileId)?.DisplayName;
+                var profileName = string.IsNullOrWhiteSpace(session.ProfileId)
+                    ? null
+                    : runtime.GetProfile(session.ProfileId)?.DisplayName;
                 return new SubsessionChildSessionLinkViewModel(
                     session.SessionId,
                     session.Title,
                     FormatAgentKind(profileName, session.AgentKind) ?? "Subsession",
-                    runtime.GetLatestCheckpoint(session.SessionId)?.Status ?? AgentRunStatus.Idle);
+                    runtime.GetLatestCheckpoint(session.SessionId)?.Status
+                    ?? AgentRunStatus.Idle);
             })
             .ToArray();
     }
 
     private static bool IsSubagentTool(string? toolId)
         => string.Equals(toolId, SubagentConstants.TaskToolId, StringComparison.OrdinalIgnoreCase)
-           || string.Equals(toolId, SubagentConstants.DelegateTasksToolId, StringComparison.OrdinalIgnoreCase);
+           || string.Equals(
+               toolId,
+               SubagentConstants.DelegateTasksToolId,
+               StringComparison.OrdinalIgnoreCase);
 
     private void OnSessionChanged(Guid sessionId)
         => RunOnUiThread(() => ApplySessionChanged(sessionId));
@@ -853,494 +627,76 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         ReloadSubsessions(selectedId);
         if (SelectedSubsession?.SessionId == sessionId)
         {
-            TrackCheckpointActivity(_runtimeCatalog?.GetLatestCheckpoint(sessionId));
-            UpdateActivityRowForCurrentState();
-            EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest);
-            TranscriptChanged?.Invoke();
+            _runActivity.TrackCheckpoint(_runtimeCatalog?.GetLatestCheckpoint(sessionId));
+            ApplyRunActivityState();
+            _timeline.NotifyRowsChanged();
         }
 
-        foreach (var row in _toolRowsByCallId.Values)
-        {
-            row.RefreshChildSessionLink();
-        }
+        _timeline.Projector.RefreshRelatedRows();
     }
 
     private void OnTurnChanged(Guid sessionId, AgentTurnRecord turn)
-        => RunOnUiThread(() => ApplyTurnChanged(sessionId, turn));
-
-    private void ApplyTurnChanged(Guid sessionId, AgentTurnRecord turn)
-    {
-        if (_disposed)
+        => RunOnUiThread(() =>
         {
-            return;
-        }
-
-        if (SelectedSubsession?.SessionId != sessionId)
-        {
-            return;
-        }
-
-        if (_isTranscriptDetachedFromLatest)
-        {
-            QueueDetachedTranscriptTurn(turn);
-            return;
-        }
-
-        if (HasNewerTranscriptRows && !CanApplyHistoricalWindowTurnUpdate(turn))
-        {
-            HasNewerTranscriptRows = true;
-            TranscriptChanged?.Invoke();
-            return;
-        }
-
-        NotifyTranscriptChanging();
-        ApplyTurnToTranscript(turn, InsertMode.Append, trackRunActivity: true, scheduleQuietTimer: true);
-        EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest);
-        UpdateActivityRowForCurrentState();
-        EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest);
-        TranscriptChanged?.Invoke();
-    }
-
-    private void QueueDetachedTranscriptTurn(AgentTurnRecord turn)
-    {
-        var shouldNotify = !HasNewerTranscriptRows;
-        _pendingTranscriptTurnsByTurnId[turn.TurnId] = turn;
-        HasNewerTranscriptRows = true;
-        if (shouldNotify)
-        {
-            TranscriptChanged?.Invoke();
-        }
-    }
-
-    private bool CanApplyHistoricalWindowTurnUpdate(AgentTurnRecord turn)
-        => _transcriptTurnWindow.Contains(turn.TurnId)
-           || turn.Items.Any(item => !string.IsNullOrWhiteSpace(item.CallId) && _toolRowsByCallId.ContainsKey(item.CallId));
-
-    private static void RunOnUiThread(Action action)
-    {
-        if (Avalonia.Application.Current is null || Dispatcher.UIThread.CheckAccess())
-        {
-            action();
-            return;
-        }
-
-        Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
-    }
-
-    private void NotifyTranscriptChanging()
-    {
-        if (!_isReplacingTranscriptWindow)
-        {
-            TranscriptChanging?.Invoke();
-        }
-    }
-
-    private void UpdateActivityRowForCurrentState()
-    {
-        if (_isTranscriptDetachedFromLatest && !_isReplacingTranscriptWindow)
-        {
-            return;
-        }
-
-        if (!IsSelectedSubsessionRunActive)
-        {
-            _activityQuietTimer.Stop();
-            _showActivityAfterQuiet = false;
-        }
-
-        if (IsSelectedSubsessionRunActive && (!_hasVisibleRunActivity || _showActivityAfterQuiet))
-        {
-            if (_activityRow is null)
+            if (!_disposed && SelectedSubsession?.SessionId == sessionId)
             {
-                NotifyTranscriptChanging();
-                _activityRow = new SubsessionActivityTranscriptRowViewModel(_activityTextBase);
-                Messages.Add(_activityRow);
-                NotifyTranscriptStateChanged();
-                return;
+                _timeline.ApplyLiveTurn(turn);
+                ApplyRunActivityState();
             }
+        });
 
-            _activityRow.SetActivityTextBase(_activityTextBase);
-
-            var index = Messages.IndexOf(_activityRow);
-            if (index >= 0 && index != Messages.Count - 1)
-            {
-                NotifyTranscriptChanging();
-                Messages.Move(index, Messages.Count - 1);
-            }
-            else if (index < 0)
-            {
-                NotifyTranscriptChanging();
-                Messages.Add(_activityRow);
-            }
-
-            NotifyTranscriptStateChanged();
-            return;
-        }
-
-        if (_activityRow is null)
-        {
-            return;
-        }
-
-        var activityIndex = Messages.IndexOf(_activityRow);
-        if (activityIndex >= 0)
-        {
-            NotifyTranscriptChanging();
-            Messages.RemoveAt(activityIndex);
-        }
-
-        _activityRow.Dispose();
-        _activityRow = null;
-        NotifyTranscriptStateChanged();
-    }
-
-    private void TrackVisibleRunActivity(AgentTurnRecord turn, bool scheduleQuietTimer)
-    {
-        if (turn.Role == AgentMessageRole.User)
-        {
-            _activityTextBase = "Thinking";
-            _hasVisibleRunActivity = false;
-            _showActivityAfterQuiet = false;
-            _activityQuietTimer.Stop();
-            return;
-        }
-
-        if (HasVisibleRunActivity(turn))
-        {
-            _hasVisibleRunActivity = true;
-            _showActivityAfterQuiet = !scheduleQuietTimer;
-            SetActivityTextBase(ResolveActivityTextBase(turn));
-            if (scheduleQuietTimer)
-            {
-                RestartActivityQuietTimer();
-            }
-        }
-    }
-
-    private void RestartActivityQuietTimer()
-    {
-        _activityQuietTimer.Stop();
-        if (!IsSelectedSubsessionRunActive)
-        {
-            return;
-        }
-
-        if (_activityQuietDelay <= TimeSpan.Zero)
-        {
-            ShowActivityAfterQuietPeriod();
-            return;
-        }
-
-        _activityQuietTimer.Start();
-    }
-
-    private void OnActivityQuietTimerTick(object? sender, EventArgs e)
-    {
-        _activityQuietTimer.Stop();
-        ShowActivityAfterQuietPeriod();
-    }
-
-    private void ShowActivityAfterQuietPeriod()
-    {
-        if (!IsSelectedSubsessionRunActive || _isTranscriptDetachedFromLatest)
-        {
-            return;
-        }
-
-        _showActivityAfterQuiet = true;
-        UpdateActivityRowForCurrentState();
-        EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection.Oldest);
-        TranscriptChanged?.Invoke();
-    }
-
-    private void SetActivityTextBase(string textBase)
-    {
-        var normalized = string.IsNullOrWhiteSpace(textBase) ? "Processing" : textBase.Trim();
-        if (string.Equals(_activityTextBase, normalized, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        _activityTextBase = normalized;
-        _activityRow?.SetActivityTextBase(normalized);
-    }
-
-    private void TrackCheckpointActivity(AgentRunCheckpointRecord? checkpoint)
-    {
-        if (checkpoint?.Status != AgentRunStatus.Running)
-        {
-            _activityQuietTimer.Stop();
-            _showActivityAfterQuiet = false;
-            return;
-        }
-
-        SetActivityTextBase(ResolveActivityTextBase(checkpoint));
-    }
-
-    private static bool HasVisibleRunActivity(AgentTurnRecord turn)
-        => turn.Kind switch
-        {
-            AgentTurnKind.ToolCall => turn.Items.Any(item => item.Kind == AgentTurnItemKind.ToolCall),
-            AgentTurnKind.ToolResult => turn.Items.Any(item => item.Kind == AgentTurnItemKind.ToolResult),
-            _ => turn.Role == AgentMessageRole.Assistant && !string.IsNullOrWhiteSpace(ExtractTextContent(turn)),
-        };
-
-    private static string ResolveActivityTextBase(AgentTurnRecord turn)
-        => turn.Kind switch
-        {
-            AgentTurnKind.ToolCall => ResolveToolCallActivityText(turn),
-            AgentTurnKind.ToolResult => "Processing result",
-            _ => turn.Role == AgentMessageRole.Assistant ? "Processing" : "Thinking",
-        };
-
-    private static string ResolveToolCallActivityText(AgentTurnRecord turn)
-    {
-        var toolId = turn.Items.FirstOrDefault(item => item.Kind == AgentTurnItemKind.ToolCall)?.ToolId;
-        return string.IsNullOrWhiteSpace(toolId)
-            ? "Running tool"
-            : $"Running {HumanizeActivityToolName(toolId)}";
-    }
-
-    private static string ResolveActivityTextBase(AgentRunCheckpointRecord checkpoint)
-    {
-        var summary = checkpoint.Summary ?? string.Empty;
-        if (TryExtractQuotedToolId(summary, "Executing approved tool '", out var toolId)
-            || TryExtractQuotedToolId(summary, "Executing tool '", out toolId))
-        {
-            return $"Running {HumanizeActivityToolName(toolId ?? string.Empty)}";
-        }
-
-        if (summary.Contains("completed. Continuing provider execution", StringComparison.OrdinalIgnoreCase)
-            || summary.Contains("continuing provider execution", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Processing result";
-        }
-
-        if (summary.Contains("Provider execution is starting", StringComparison.OrdinalIgnoreCase)
-            || summary.Contains("User message queued", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Thinking";
-        }
-
-        return "Processing";
-    }
-
-    private static bool TryExtractQuotedToolId(string text, string prefix, out string? toolId)
-    {
-        toolId = null;
-        var start = text.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
-        if (start < 0)
-        {
-            return false;
-        }
-
-        start += prefix.Length;
-        var end = text.IndexOf('\'', start);
-        if (end <= start)
-        {
-            return false;
-        }
-
-        toolId = text[start..end];
-        return !string.IsNullOrWhiteSpace(toolId);
-    }
-
-    private static string HumanizeActivityToolName(string toolId)
-    {
-        var parts = toolId.Split(['_', '-', '.'], StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 0)
-        {
-            return "tool";
-        }
-
-        return string.Join(" ", parts.Select(part => CultureInfo.InvariantCulture.TextInfo.ToTitleCase(part.ToLowerInvariant())));
-    }
-
-    private void EnforceTranscriptWindowLimit(AgentTranscriptTrimDirection trimDirection, object? protectedAnchorKey = null)
-    {
-        var visibleRows = Messages
-            .Where(row => !ReferenceEquals(row, _activityRow))
-            .ToArray();
-        var retainedRowLimit = Math.Max(0, TranscriptVisibleRowLimit - (_activityRow is not null && Messages.Contains(_activityRow) ? 1 : 0));
-        if (visibleRows.Length <= retainedRowLimit)
-        {
-            return;
-        }
-
-        var retainedRows = TranscriptRowWindow.SelectRetainedRows(
-            visibleRows,
-            retainedRowLimit,
-            trimDirection,
-            protectedAnchorKey);
-        var retainedTurnIds = BuildRetainedTurnIdSet(retainedRows);
-        var retainedTurns = _transcriptTurnWindow.OrderedTurns()
-            .Where(turn => retainedTurnIds.Contains(turn.TurnId))
-            .ToArray();
-        if (retainedTurns.Length == _transcriptTurnWindow.Count)
-        {
-            return;
-        }
-
-        RebuildTranscriptWindow(retainedTurns);
-        if (trimDirection == AgentTranscriptTrimDirection.Oldest)
-        {
-            HasOlderTranscriptRows = true;
-        }
-        else
-        {
-            HasNewerTranscriptRows = true;
-        }
-    }
-
-    private static HashSet<Guid> BuildRetainedTurnIdSet(IEnumerable<SubsessionTranscriptRowViewModel> retainedRows)
-    {
-        var retainedTurnIds = new HashSet<Guid>();
-        foreach (var row in retainedRows)
-        {
-            if (row.RowId != Guid.Empty)
-            {
-                retainedTurnIds.Add(row.RowId);
-            }
-
-            if (row is SubsessionToolInvocationRowViewModel { ResultTurnId: { } resultTurnId })
-            {
-                retainedTurnIds.Add(resultTurnId);
-            }
-        }
-
-        return retainedTurnIds;
-    }
-
-    private void RebuildTranscriptWindow(IReadOnlyList<AgentTurnRecord> turns)
-    {
-        NotifyTranscriptChanging();
-        var activityRow = _activityRow;
-        if (activityRow is not null)
-        {
-            Messages.Remove(activityRow);
-        }
-
-        var oldTextRows = new Dictionary<Guid, SubsessionTextTranscriptRowViewModel>(_textRowsByTurnId);
-        var oldToolRows = new Dictionary<string, SubsessionToolInvocationRowViewModel>(_toolRowsByCallId, StringComparer.Ordinal);
-        var orderedTurns = turns.OrderBy(turn => turn.CreatedAtUtc).ThenBy(turn => turn.TurnId).ToArray();
-        var retainedTurnIds = orderedTurns.Select(turn => turn.TurnId).ToHashSet();
-        var desiredRows = new List<SubsessionTranscriptRowViewModel>();
-
-        _textRowsByTurnId.Clear();
-        _toolRowsByCallId.Clear();
-        _transcriptTurnWindow.Reset();
-
-        foreach (var turn in orderedTurns)
-        {
-            _transcriptTurnWindow.AddOrUpdate(turn);
-            AddRetainedTurnRows(turn, retainedTurnIds, oldTextRows, oldToolRows, desiredRows);
-        }
-
-        ReconcileTranscriptRows(desiredRows);
-        _activityRow = activityRow;
-        UpdateActivityRowForCurrentState();
-    }
-
-    private void AddRetainedTurnRows(
+    private void OnTimelineTurnProjected(
         AgentTurnRecord turn,
-        IReadOnlySet<Guid> retainedTurnIds,
-        IReadOnlyDictionary<Guid, SubsessionTextTranscriptRowViewModel> oldTextRows,
-        IReadOnlyDictionary<string, SubsessionToolInvocationRowViewModel> oldToolRows,
-        ICollection<SubsessionTranscriptRowViewModel> desiredRows)
+        bool trackRunActivity,
+        bool scheduleQuietTimer)
     {
-        switch (turn.Kind)
+        if (trackRunActivity)
         {
-            case AgentTurnKind.ToolCall:
-                foreach (var item in turn.Items.Where(item => item.Kind == AgentTurnItemKind.ToolCall))
-                {
-                    if (string.IsNullOrWhiteSpace(item.CallId) || _toolRowsByCallId.ContainsKey(item.CallId))
-                    {
-                        continue;
-                    }
-
-                    var row = oldToolRows.TryGetValue(item.CallId, out var existingRow)
-                              && existingRow.RowId == turn.TurnId
-                              && (existingRow.ResultTurnId is null || retainedTurnIds.Contains(existingRow.ResultTurnId.Value))
-                        ? existingRow
-                        : new SubsessionToolInvocationRowViewModel(turn, item, _toolPresentationService, ResolveChildSessionLinksFromRuntime);
-                    _toolRowsByCallId[item.CallId] = row;
-                    desiredRows.Add(row);
-                }
-
-                break;
-
-            case AgentTurnKind.ToolResult:
-                foreach (var item in turn.Items.Where(item => item.Kind == AgentTurnItemKind.ToolResult))
-                {
-                    if (!string.IsNullOrWhiteSpace(item.CallId) && _toolRowsByCallId.TryGetValue(item.CallId, out var existingToolRow))
-                    {
-                        existingToolRow.ApplyResult(turn, item);
-                        continue;
-                    }
-
-                    var row = !string.IsNullOrWhiteSpace(item.CallId)
-                              && oldToolRows.TryGetValue(item.CallId, out var existingRow)
-                              && existingRow.RowId == turn.TurnId
-                        ? existingRow
-                        : new SubsessionToolInvocationRowViewModel(turn, item, _toolPresentationService, ResolveChildSessionLinksFromRuntime);
-                    if (!string.IsNullOrWhiteSpace(item.CallId))
-                    {
-                        _toolRowsByCallId[item.CallId] = row;
-                    }
-
-                    desiredRows.Add(row);
-                }
-
-                break;
-
-            default:
-                var textContent = ExtractTextContent(turn);
-                if (string.IsNullOrWhiteSpace(textContent))
-                {
-                    break;
-                }
-
-                SubsessionTextTranscriptRowViewModel textRow;
-                if (oldTextRows.TryGetValue(turn.TurnId, out var existingTextRow))
-                {
-                    textRow = existingTextRow;
-                    textRow.UpdateContent(textContent);
-                }
-                else
-                {
-                    textRow = new SubsessionTextTranscriptRowViewModel(turn, textContent);
-                }
-
-                _textRowsByTurnId[turn.TurnId] = textRow;
-                desiredRows.Add(textRow);
-                break;
+            _runActivity.TrackTurn(turn, scheduleQuietTimer);
         }
     }
 
-    private void ReconcileTranscriptRows(IReadOnlyList<SubsessionTranscriptRowViewModel> desiredRows)
+    private void OnRunActivityStateChanged()
     {
-        var desiredRowSet = desiredRows.ToHashSet(ReferenceEqualityComparer.Instance);
-        for (var index = Messages.Count - 1; index >= 0; index--)
+        ApplyRunActivityState();
+        _timeline.NotifyRowsChanged();
+    }
+
+    private void ApplyRunActivityState()
+        => _timeline.ApplyActivity(
+            _runActivity.Text,
+            _runActivity.IsReasoning,
+            _runActivity.ShouldShow);
+
+    private void OnTimelineRowsChanged()
+    {
+        NotifyTranscriptStateChanged();
+        TranscriptChanged?.Invoke();
+    }
+
+    private void OnTimelinePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
         {
-            if (!desiredRowSet.Contains(Messages[index]))
-            {
-                Messages.RemoveAt(index);
-            }
+            case nameof(TranscriptTimelineState<SubsessionTranscriptRowViewModel>.HasOlderRows):
+                OnPropertyChanged(nameof(HasOlderTranscriptRows));
+                break;
+            case nameof(TranscriptTimelineState<SubsessionTranscriptRowViewModel>.HasNewerRows):
+                OnPropertyChanged(nameof(HasNewerTranscriptRows));
+                break;
+            case nameof(TranscriptTimelineState<SubsessionTranscriptRowViewModel>.IsLoadingOlder):
+                OnPropertyChanged(nameof(IsLoadingOlderTranscriptRows));
+                break;
+            case nameof(TranscriptTimelineState<SubsessionTranscriptRowViewModel>.IsLoadingNewer):
+                OnPropertyChanged(nameof(IsLoadingNewerTranscriptRows));
+                break;
+            case nameof(TranscriptTimelineState<SubsessionTranscriptRowViewModel>.IsInitialLoading):
+                OnPropertyChanged(nameof(IsTranscriptLoading));
+                break;
         }
 
-        for (var targetIndex = 0; targetIndex < desiredRows.Count; targetIndex++)
-        {
-            var row = desiredRows[targetIndex];
-            var currentIndex = Messages.IndexOf(row);
-            if (currentIndex < 0)
-            {
-                Messages.Insert(targetIndex, row);
-            }
-            else if (currentIndex != targetIndex)
-            {
-                Messages.Move(currentIndex, targetIndex);
-            }
-        }
+        OnPropertyChanged(nameof(CanLoadOlderTranscriptRows));
+        OnPropertyChanged(nameof(CanLoadNewerTranscriptRows));
     }
 
     private void NotifyTranscriptStateChanged()
@@ -1351,28 +707,34 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanLoadNewerTranscriptRows));
     }
 
-    private static string ExtractTextContent(AgentTurnRecord turn)
-        => string.Join("\n\n", turn.Items
-            .Where(item => item.Kind == AgentTurnItemKind.Text && !string.IsNullOrWhiteSpace(item.TextContent))
-            .Select(item => item.TextContent!.Trim()));
+    private static void RunOnUiThread(Action action)
+    {
+        if (Application.Current is null || Dispatcher.UIThread.CheckAccess())
+        {
+            action();
+            return;
+        }
+
+        Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
+    }
 
     private static Guid? TryGetSessionId(IReadOnlyDictionary<string, string?> parameters)
-        => parameters.TryGetValue(SubagentConstants.SubsessionNavigationSessionIdKey, out var value) && Guid.TryParse(value, out var sessionId)
+        => parameters.TryGetValue(
+               SubagentConstants.SubsessionNavigationSessionIdKey,
+               out var value)
+           && Guid.TryParse(value, out var sessionId)
             ? sessionId
             : null;
-
-    private enum InsertMode
-    {
-        Append,
-        Prepend,
-    }
 }
 
 public sealed partial class SubsessionListItemViewModel : ObservableObject
 {
     private AgentSessionRecord _session;
 
-    public SubsessionListItemViewModel(AgentSessionRecord session, string subtitle, AgentRunCheckpointRecord? checkpoint)
+    public SubsessionListItemViewModel(
+        AgentSessionRecord session,
+        string subtitle,
+        AgentRunCheckpointRecord? checkpoint)
     {
         _session = session;
         Subtitle = subtitle;
@@ -1429,7 +791,9 @@ public sealed partial class SubsessionListItemViewModel : ObservableObject
         }
 
         StatusText = $"Run revision {checkpoint.RunRevision}: {checkpoint.Status} · {checkpoint.Summary}";
-        StatusBadgeText = checkpoint.Status == AgentRunStatus.Completed ? "Done" : checkpoint.Status.ToString();
+        StatusBadgeText = checkpoint.Status == AgentRunStatus.Completed
+            ? "Done"
+            : checkpoint.Status.ToString();
         StatusBrush = ResolveStatusBrush(checkpoint.Status);
         IsRunActive = checkpoint.Status == AgentRunStatus.Running;
     }
@@ -1442,9 +806,8 @@ public sealed partial class SubsessionListItemViewModel : ObservableObject
             AgentRunStatus.Running => SunderThemeKeys.AccentBrush,
             AgentRunStatus.Failed => SunderThemeKeys.DangerBrush,
             AgentRunStatus.Interrupted or AgentRunStatus.Stopped => SunderThemeKeys.WarningBrush,
-            _ => SunderThemeKeys.ForegroundMutedBrush
+            _ => SunderThemeKeys.ForegroundMutedBrush,
         };
-
         return SubagentThemeBrushes.Resolve(resourceKey);
     }
 }

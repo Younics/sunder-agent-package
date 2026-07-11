@@ -2,16 +2,19 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
 public sealed partial class LocalExecutionSettingsViewModel : ObservableObject
 {
     private readonly LocalShellCatalogService _shellCatalogService;
+    private readonly IPackageContext _packageContext;
 
-    public LocalExecutionSettingsViewModel(LocalShellCatalogService shellCatalogService)
+    public LocalExecutionSettingsViewModel(LocalShellCatalogService shellCatalogService, IPackageContext packageContext)
     {
         _shellCatalogService = shellCatalogService;
+        _packageContext = packageContext;
         SyntaxOptions =
         [
             new ShellSyntaxOption(AgentShellSyntaxKinds.PowerShell, "PowerShell"),
@@ -19,8 +22,14 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject
             new ShellSyntaxOption(AgentShellSyntaxKinds.PosixSh, "POSIX sh"),
             new ShellSyntaxOption(AgentShellSyntaxKinds.Custom, "Custom"),
         ];
+        TimeoutSeconds = _packageContext.Storage.State.GetValue(LocalExecutionConfiguration.TimeoutKey)
+                         ?? _packageContext.Configuration.GetValue(LocalExecutionConfiguration.TimeoutKey)
+                         ?? LocalExecutionConfiguration.DefaultTimeoutSeconds;
         Reload();
     }
+
+    internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
+        [LocalExecutionConfiguration.TimeoutKey];
 
     public ObservableCollection<LocalShellRowViewModel> Shells { get; } = [];
 
@@ -31,6 +40,9 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject
 
     [ObservableProperty]
     private string _statusText = string.Empty;
+
+    [ObservableProperty]
+    private string _timeoutSeconds;
 
     [RelayCommand]
     private void AddShell()
@@ -88,6 +100,22 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject
         _shellCatalogService.SaveCustomShells(shells);
         Reload();
         StatusText = "Shell settings saved.";
+    }
+
+    [RelayCommand]
+    private async Task SaveExecutionSettingsAsync()
+    {
+        if (!int.TryParse(TimeoutSeconds, out var timeoutSeconds) || timeoutSeconds <= 0)
+        {
+            StatusText = "Local shell timeout must be a positive number of seconds.";
+            return;
+        }
+
+        await _packageContext.Storage.State.SetValueAsync(
+            LocalExecutionConfiguration.TimeoutKey,
+            timeoutSeconds.ToString());
+        TimeoutSeconds = timeoutSeconds.ToString();
+        StatusText = "Local execution settings saved.";
     }
 
     private bool CanDeleteSelectedShell()

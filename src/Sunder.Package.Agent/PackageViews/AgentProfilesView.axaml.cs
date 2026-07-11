@@ -3,22 +3,34 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Threading;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-public partial class AgentProfilesView : UserControl
+public partial class AgentProfilesView : UserControl, IDisposable
 {
-    private const double WideProfileMinimumWidth = 820;
-
+    private readonly AdaptiveMasterDetail _adaptiveLayout;
     private AgentProfilesViewModel? _viewModel;
+    private bool _disposed;
 
     public AgentProfilesView()
     {
         InitializeComponent();
-        Loaded += (_, _) => ApplyResponsiveLayout();
-        SizeChanged += (_, _) => ApplyResponsiveLayout();
+        _adaptiveLayout = new AdaptiveMasterDetail(
+            this,
+            ProfileAdaptiveLayout,
+            ProfileListPane,
+            ProfileEditorPane,
+            isCompact =>
+            {
+                var viewModel = _viewModel ?? DataContext as AgentProfilesViewModel;
+                if (viewModel is not null)
+                {
+                    viewModel.IsCompactLayout = isCompact;
+                }
+            });
     }
 
     public AgentProfilesView(
@@ -30,22 +42,18 @@ public partial class AgentProfilesView : UserControl
         DataContext = _viewModel;
     }
 
-    private void ApplyResponsiveLayout()
+    public void Dispose()
     {
-        var useCompactLayout = Bounds.Width > 0 && Bounds.Width < WideProfileMinimumWidth;
-        var viewModel = _viewModel ?? DataContext as AgentProfilesViewModel;
-        if (viewModel is not null)
+        if (_disposed)
         {
-            viewModel.IsCompactLayout = useCompactLayout;
+            return;
         }
 
-        ProfileAdaptiveLayout.ColumnSpacing = useCompactLayout ? 0 : 4;
-        ProfileListPane.BorderThickness = useCompactLayout ? new Thickness(0) : new Thickness(0, 0, 1, 0);
-
-        Grid.SetColumn(ProfileListPane, 0);
-        Grid.SetColumn(ProfileEditorPane, useCompactLayout ? 0 : 1);
-        Grid.SetColumnSpan(ProfileListPane, useCompactLayout ? 2 : 1);
-        Grid.SetColumnSpan(ProfileEditorPane, useCompactLayout ? 2 : 1);
+        _disposed = true;
+        _adaptiveLayout.Dispose();
+        _viewModel?.Dispose();
+        DataContext = null;
+        _viewModel = null;
     }
 
     private void OnProfileItemTapped(object? sender, TappedEventArgs e)

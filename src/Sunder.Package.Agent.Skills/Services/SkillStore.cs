@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Sunder.Sdk.Abstractions;
 
@@ -5,17 +6,23 @@ namespace Sunder.Package.Agent.Skills.Services;
 
 public sealed class SkillStore
 {
+    private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(30);
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-    private readonly object _syncRoot = new();
+    private static readonly ConcurrentDictionary<string, object> SharedLocks = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private readonly object _syncRoot;
     private readonly IPackageContext _packageContext;
     private readonly string _indexPath;
+    private readonly string _lockPath;
 
     public SkillStore(IPackageContext packageContext)
     {
         _packageContext = packageContext;
         Directory.CreateDirectory(packageContext.Storage.DataRootPath);
         Directory.CreateDirectory(SkillsRootPath);
-        _indexPath = Path.Combine(packageContext.Storage.DataRootPath, "skills.json");
+        _indexPath = Path.GetFullPath(Path.Combine(packageContext.Storage.DataRootPath, "skills.json"));
+        _lockPath = _indexPath + ".lock";
+        _syncRoot = SharedLocks.GetOrAdd(_indexPath, static _ => new object());
     }
 
     public string SkillsRootPath => _packageContext.Storage.Files.GetPath(SkillConstants.SkillsRelativeRoot);
@@ -24,13 +31,11 @@ public sealed class SkillStore
 
     public IReadOnlyList<InstalledSkillRecord> ListSkills()
     {
-        lock (_syncRoot)
-        {
-            return LoadIndex()
-                .OrderBy(skill => ResolveDisplayName(skill), StringComparer.OrdinalIgnoreCase)
-                .ThenBy(skill => skill.SkillId, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-        }
+        using var transaction = EnterTransaction();
+        return LoadIndex()
+            .OrderBy(skill => ResolveDisplayName(skill), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(skill => skill.SkillId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     public InstalledSkillRecord? GetSkill(string skillId)
@@ -40,10 +45,8 @@ public sealed class SkillStore
             return null;
         }
 
-        lock (_syncRoot)
-        {
-            return LoadIndex().FirstOrDefault(skill => IsSkillMatch(skill, skillId));
-        }
+        using var transaction = EnterTransaction();
+        return LoadIndex().FirstOrDefault(skill => IsSkillMatch(skill, skillId));
     }
 
     public string GetSkillRootPath(InstalledSkillRecord skill)
@@ -57,7 +60,7 @@ public sealed class SkillStore
 
     public void SaveSkill(InstalledSkillRecord record)
     {
-        lock (_syncRoot)
+        using (EnterTransaction())
         {
             var skills = LoadIndex()
                 .Where(skill => !string.Equals(skill.SkillId, record.SkillId, StringComparison.OrdinalIgnoreCase))
@@ -70,9 +73,32 @@ public sealed class SkillStore
         SkillsChanged?.Invoke();
     }
 
+    internal byte[]? CaptureIndexSnapshot()
+    {
+        using var transaction = EnterTransaction();
+        return File.Exists(_indexPath) ? File.ReadAllBytes(_indexPath) : null;
+    }
+
+    internal IDisposable EnterImportTransaction()
+        => EnterTransaction();
+
+    internal void RestoreIndexSnapshot(byte[]? snapshot)
+    {
+        using (EnterTransaction())
+        {
+            if (snapshot is null)
+            {
+                File.Delete(_indexPath);
+                return;
+            }
+
+            WriteIndex(snapshot);
+        }
+    }
+
     public bool DeleteSkill(string skillId)
     {
-        lock (_syncRoot)
+        using (EnterTransaction())
         {
             var skills = LoadIndex();
             var skill = skills.FirstOrDefault(item => IsSkillMatch(item, skillId));
@@ -114,17 +140,94 @@ public sealed class SkillStore
 
         try
         {
-            return JsonSerializer.Deserialize<IReadOnlyList<InstalledSkillRecord>>(File.ReadAllText(_indexPath), JsonOptions) ?? [];
+            return JsonSerializer.Deserialize<IReadOnlyList<InstalledSkillRecord>>(File.ReadAllText(_indexPath), JsonOptions)
+                   ?? throw new InvalidDataException($"The skill index '{_indexPath}' is empty.");
         }
-        catch
+        catch (JsonException ex)
         {
-            return [];
+            throw new InvalidDataException($"The skill index '{_indexPath}' contains malformed JSON.", ex);
         }
     }
 
     private void SaveIndex(IReadOnlyList<InstalledSkillRecord> skills)
+        => WriteIndex(JsonSerializer.SerializeToUtf8Bytes(skills, JsonOptions));
+
+    private void WriteIndex(byte[] content)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_indexPath)!);
-        File.WriteAllText(_indexPath, JsonSerializer.Serialize(skills, JsonOptions));
+        var temporaryPath = _indexPath + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            using (var stream = new FileStream(
+                       temporaryPath,
+                       FileMode.CreateNew,
+                       FileAccess.Write,
+                       FileShare.None,
+                       64 * 1024,
+                       FileOptions.WriteThrough))
+            {
+                stream.Write(content);
+                stream.Flush(flushToDisk: true);
+            }
+
+            File.Move(temporaryPath, _indexPath, overwrite: true);
+        }
+        finally
+        {
+            File.Delete(temporaryPath);
+        }
+    }
+
+    private IDisposable EnterTransaction()
+    {
+        var ownsProcessLock = !Monitor.IsEntered(_syncRoot);
+        Monitor.Enter(_syncRoot);
+        try
+        {
+            return new TransactionLease(
+                _syncRoot,
+                ownsProcessLock ? AcquireProcessLock() : null);
+        }
+        catch
+        {
+            Monitor.Exit(_syncRoot);
+            throw;
+        }
+    }
+
+    private FileStream AcquireProcessLock()
+    {
+        var startedAt = DateTime.UtcNow;
+        IOException? lastError = null;
+        while (DateTime.UtcNow - startedAt < LockTimeout)
+        {
+            try
+            {
+                return new FileStream(_lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException ex)
+            {
+                lastError = ex;
+                Thread.Sleep(10);
+            }
+        }
+
+        throw new IOException($"Timed out waiting for exclusive access to the skill index '{_indexPath}'.", lastError);
+    }
+
+    private sealed class TransactionLease(object syncRoot, FileStream? processLock) : IDisposable
+    {
+        private object? _syncRoot = syncRoot;
+        private FileStream? _processLock = processLock;
+
+        public void Dispose()
+        {
+            var syncRoot = Interlocked.Exchange(ref _syncRoot, null);
+            if (syncRoot is not null)
+            {
+                Interlocked.Exchange(ref _processLock, null)?.Dispose();
+                Monitor.Exit(syncRoot);
+            }
+        }
     }
 }

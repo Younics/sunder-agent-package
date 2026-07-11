@@ -21,7 +21,7 @@ public sealed class CodexResponsesStreamParserTests
             data: {"type":"response.output_text.delta","delta":"Hi"}
 
             event: response.completed
-            data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"output_tokens_details":{}}}}
+            data: {"type":"response.completed","response":{"id":"resp-1","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"output_tokens_details":{}}}}
 
             """);
 
@@ -45,6 +45,9 @@ public sealed class CodexResponsesStreamParserTests
             event: response.function_call_arguments.done
             data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"path\":\"README.md\"}"}
 
+            event: response.completed
+            data: {"type":"response.completed","response":{"id":"resp-1","status":"completed"}}
+
             """);
 
         var updates = await ReadUpdatesAsync(response, toolAware: true);
@@ -65,6 +68,9 @@ public sealed class CodexResponsesStreamParserTests
             event: response.output_text.delta
             data: {"type":"response.output_text.delta","delta":"Done"}
 
+            event: response.completed
+            data: {"type":"response.completed","response":{"id":"resp-1","status":"completed"}}
+
             """);
 
         var updates = await ReadUpdatesAsync(response);
@@ -83,6 +89,9 @@ public sealed class CodexResponsesStreamParserTests
 
             event: response.function_call_arguments.done
             data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"projectId\":\"project-1\",\"modelId\":\"GEMINI_3_PRO\",\"modelId\":\"GEMINI_3_FLASH\"}"}
+
+            event: response.completed
+            data: {"type":"response.completed","response":{"id":"resp-1","status":"completed"}}
 
             """);
 
@@ -121,6 +130,150 @@ public sealed class CodexResponsesStreamParserTests
         });
     }
 
+    [Fact]
+    public async Task ParseAsync_FailedResponse_PreservesPartialUpdatesAndThrows()
+    {
+        using var response = CreateSseResponse("""
+            event: response.output_text.delta
+            data: {"type":"response.output_text.delta","delta":"Partial"}
+
+            event: response.failed
+            data: {"type":"response.failed","response":{"id":"resp-1","status":"failed","error":{"message":"backend failed"}}}
+
+            """);
+        var updates = new List<ChatResponseUpdate>();
+
+        var exception = await Assert.ThrowsAsync<AgentChatProviderException>(async () =>
+        {
+            await foreach (var update in ParseAsync(response))
+            {
+                updates.Add(update);
+            }
+        });
+
+        Assert.Equal("Partial", Assert.Single(updates).Text);
+        Assert.Contains("backend failed", exception.Content, StringComparison.Ordinal);
+        Assert.Contains("7 text characters", exception.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ParseAsync_IncompleteResponse_ThrowsWithReason()
+    {
+        using var response = CreateSseResponse("""
+            event: response.incomplete
+            data: {"type":"response.incomplete","response":{"id":"resp-1","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}
+
+            """);
+
+        var exception = await Assert.ThrowsAsync<AgentChatProviderException>(async () =>
+        {
+            await foreach (var _ in ParseAsync(response))
+            {
+            }
+        });
+
+        Assert.Contains("max_output_tokens", exception.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ParseAsync_PrematureEof_ThrowsInsteadOfCompleting()
+    {
+        using var response = CreateSseResponse("""
+            event: response.output_text.delta
+            data: {"type":"response.output_text.delta","delta":"Partial"}
+
+            """);
+
+        var exception = await Assert.ThrowsAsync<AgentChatProviderException>(async () =>
+        {
+            await foreach (var _ in ParseAsync(response))
+            {
+            }
+        });
+
+        Assert.Contains("before a completed response event", exception.Content, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("incomplete")]
+    public async Task ParseAsync_CompletedEventWithoutCompletedStatus_Throws(string? status)
+    {
+        var statusProperty = status is null ? string.Empty : $",\"status\":\"{status}\"";
+        using var response = CreateSseResponse(
+            "event: response.completed\n"
+            + $"data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp-1\"{statusProperty}}}}}\n");
+
+        var exception = await Assert.ThrowsAsync<AgentChatProviderException>(async () =>
+        {
+            await foreach (var _ in ParseAsync(response))
+            {
+            }
+        });
+
+        Assert.Contains("valid completed status", exception.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ParseAsync_CompletedResponseRejectsUnfinishedToolCall()
+    {
+        using var response = CreateSseResponse("""
+            data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call-1","name":"read"}}
+
+            data: {"type":"response.completed","response":{"id":"resp-1","status":"completed"}}
+
+            """);
+
+        var exception = await Assert.ThrowsAsync<AgentChatProviderException>(async () =>
+        {
+            await foreach (var _ in CodexResponsesStreamParser.ParseAsync(
+                               response,
+                               new AgentChatClientContext("openai", "openai/gpt-5.5"),
+                               new ChatOptions(),
+                               "resp-1",
+                               "msg-1",
+                               toolAware: true,
+                               CancellationToken.None))
+            {
+            }
+        });
+
+        Assert.Equal("openai-malformed-tool-call", exception.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ParseAsync_RejectsMissingToolNameAndMalformedArguments()
+    {
+        using var missingNameResponse = CreateSseResponse("""
+            data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call-1"}}
+
+            data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{}"}
+
+            """);
+        var missingName = await Assert.ThrowsAsync<AgentChatProviderException>(async () =>
+        {
+            await foreach (var _ in ParseToolResponseAsync(missingNameResponse))
+            {
+            }
+        });
+
+        using var malformedArgumentsResponse = CreateSseResponse("""
+            data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call-1","name":"read"}}
+
+            data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{not-json"}
+
+            """);
+        var malformedArguments = await Assert.ThrowsAsync<AgentChatProviderException>(async () =>
+        {
+            await foreach (var _ in ParseToolResponseAsync(malformedArgumentsResponse))
+            {
+            }
+        });
+
+        Assert.Equal("openai-malformed-tool-call", missingName.ErrorCode);
+        Assert.Equal("openai-malformed-tool-call", malformedArguments.ErrorCode);
+    }
+
     private static async Task<IReadOnlyList<ChatResponseUpdate>> ReadUpdatesAsync(HttpResponseMessage response, bool toolAware = false)
     {
         var updates = new List<ChatResponseUpdate>();
@@ -138,6 +291,26 @@ public sealed class CodexResponsesStreamParserTests
 
         return updates;
     }
+
+    private static IAsyncEnumerable<ChatResponseUpdate> ParseAsync(HttpResponseMessage response)
+        => CodexResponsesStreamParser.ParseAsync(
+            response,
+            new AgentChatClientContext("openai", "openai/gpt-5.5"),
+            new ChatOptions { ModelId = "openai/gpt-5.5" },
+            "resp-1",
+            "msg-1",
+            toolAware: false,
+            CancellationToken.None);
+
+    private static IAsyncEnumerable<ChatResponseUpdate> ParseToolResponseAsync(HttpResponseMessage response)
+        => CodexResponsesStreamParser.ParseAsync(
+            response,
+            new AgentChatClientContext("openai", "openai/gpt-5.5"),
+            new ChatOptions(),
+            "resp-1",
+            "msg-1",
+            toolAware: true,
+            CancellationToken.None);
 
     private static HttpResponseMessage CreateSseResponse(string content)
         => new(HttpStatusCode.OK)

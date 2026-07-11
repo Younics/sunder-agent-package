@@ -24,7 +24,8 @@ public sealed class AgentRunCoordinator(
             childRunSession.ChildSession.SessionId,
             childRunSession.ChildProfile.ProfileId,
             request.UserMessage,
-            request.WorkspaceId);
+            request.WorkspaceId,
+            cancellationToken);
         return _childRunSessionService.BuildResult(childRunSession.ChildSession, checkpoint);
     }
 
@@ -36,8 +37,37 @@ public sealed class AgentRunCoordinator(
         string profileId,
         string userMessage,
         string workspaceId,
+        CancellationToken cancellationToken)
+        => QueueUserMessageAsync(
+            sessionId,
+            profileId,
+            userMessage,
+            workspaceId,
+            [],
+            cancellationToken);
+
+    public Task<AgentRunCheckpointRecord> QueueUserMessageAsync(
+        Guid sessionId,
+        string profileId,
+        string userMessage,
+        string workspaceId,
         IReadOnlyList<AgentAttachmentUploadRequest> attachments)
         => _userMessageRunCoordinator.QueueAsync(sessionId, profileId, userMessage, workspaceId, attachments);
+
+    public Task<AgentRunCheckpointRecord> QueueUserMessageAsync(
+        Guid sessionId,
+        string profileId,
+        string userMessage,
+        string workspaceId,
+        IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+        CancellationToken cancellationToken)
+        => _userMessageRunCoordinator.QueueAsync(
+            sessionId,
+            profileId,
+            userMessage,
+            workspaceId,
+            attachments,
+            cancellationToken);
 
     public async Task<AgentRunCheckpointRecord> RollbackAndQueueUserMessageAsync(
         Guid sessionId,
@@ -63,6 +93,6 @@ public sealed class AgentRunCoordinator(
     public Task<AgentRunCheckpointRecord?> ApprovePendingPermissionAsync(Guid sessionId, string requestId)
         => _permissionResumeCoordinator.ApproveAsync(sessionId, requestId);
 
-    public AgentRunCheckpointRecord? DenyPendingPermission(Guid sessionId, string requestId)
-        => _permissionResumeCoordinator.Deny(sessionId, requestId);
+    public Task<AgentRunCheckpointRecord?> DenyPendingPermissionAsync(Guid sessionId, string requestId)
+        => _permissionResumeCoordinator.DenyAsync(sessionId, requestId);
 }

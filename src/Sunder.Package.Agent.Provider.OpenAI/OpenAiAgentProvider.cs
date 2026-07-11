@@ -4,6 +4,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
+using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
 
 #pragma warning disable OPENAI001
@@ -39,11 +40,11 @@ public sealed class OpenAiAgentProvider(
     public ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var configuredModelId = NormalizeLegacyUtilityModelId(
-            _packageContext.Configuration.GetValue(OpenAiProviderConfiguration.UtilityModelKey));
-        return ValueTask.FromResult<string?>(IsKnownModel(configuredModelId)
-            ? configuredModelId!.Trim()
-            : OpenAiProviderConfiguration.DefaultUtilityModelId);
+        return ValueTask.FromResult<string?>(UtilityModelSettingsState.ResolveModelId(
+            OpenAiSettingsViewModel.NormalizeLegacyUtilityModelId(
+                _packageContext.Configuration.GetValue(OpenAiProviderConfiguration.UtilityModelKey)),
+            OpenAiProviderConfiguration.DefaultUtilityModelId,
+            OpenAiProviderConfiguration.UtilityModelOptions.Select(option => option.Value)));
     }
 
     public async ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
@@ -161,12 +162,4 @@ public sealed class OpenAiAgentProvider(
             session);
     }
 
-    private static bool IsKnownModel(string? modelId) =>
-        !string.IsNullOrWhiteSpace(modelId)
-        && OpenAiModelCatalog.Models.Any(model => string.Equals(model.ModelId, modelId.Trim(), StringComparison.OrdinalIgnoreCase));
-
-    private static string? NormalizeLegacyUtilityModelId(string? modelId)
-        => string.Equals(modelId?.Trim(), "openai/gpt-5.5-fast", StringComparison.OrdinalIgnoreCase)
-            ? "openai/gpt-5.5"
-            : modelId;
 }

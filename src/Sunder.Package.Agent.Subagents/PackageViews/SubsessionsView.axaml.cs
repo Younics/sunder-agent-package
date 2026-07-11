@@ -1,47 +1,51 @@
 using System.ComponentModel;
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
-using Avalonia.Threading;
 using Sunder.Package.Agent.Shared.PackageViews;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
 
-public partial class SubsessionsView : UserControl
+public partial class SubsessionsView : UserControl, IDisposable
 {
-    private const double WideSubsessionMinimumWidth = 820;
-
+    private readonly AdaptiveMasterDetail _adaptiveLayout;
+    private readonly TranscriptViewBehavior _transcriptBehavior;
     private SubsessionsViewModel? _viewModel;
-    private TranscriptScrollCoordinator? _transcriptScrollCoordinator;
-    private bool _transcriptChangedBeforeScrollReady;
-    private bool _initialTranscriptPlacementPending = true;
-    private bool _initialTranscriptPlacementQueued;
-    private bool _initialTranscriptVisibilityRetryQueued;
-    private int _initialTranscriptPlacementVersion;
+    private bool _disposed;
 
     public SubsessionsView()
     {
         InitializeComponent();
-        HideTranscriptUntilInitialPlacement();
-        Loaded += (_, _) =>
-        {
-            ApplyResponsiveLayout();
-            if (EnsureTranscriptScrollCoordinator())
+        _adaptiveLayout = new AdaptiveMasterDetail(
+            this,
+            SubsessionAdaptiveLayout,
+            SubsessionListPane,
+            SubsessionDetailPane,
+            isCompact =>
             {
-                HandleTranscriptReadyAfterScrollReady();
-                return;
-            }
-
-            Dispatcher.UIThread.Post(() =>
-            {
-                if (EnsureTranscriptScrollCoordinator())
+                if (ViewModel is { } viewModel)
                 {
-                    HandleTranscriptReadyAfterScrollReady();
+                    viewModel.IsCompactLayout = isCompact;
                 }
-            }, DispatcherPriority.Loaded);
-        };
-        SizeChanged += (_, _) => ApplyResponsiveLayout();
+            });
+        _transcriptBehavior = new TranscriptViewBehavior(
+            this,
+            TranscriptScrollViewer,
+            TranscriptItemsControl,
+            JumpToLatestTranscriptButton,
+            () => ViewModel?.CanLoadOlderTranscriptRows == true,
+            anchor => ViewModel?.LoadOlderTranscriptRowsAsync(anchor) ?? Task.FromResult(false),
+            () => ViewModel?.CanLoadNewerTranscriptRows == true,
+            anchor => ViewModel?.LoadNewerTranscriptRowsAsync(anchor) ?? Task.FromResult(false),
+            () => ViewModel?.HasNewerTranscriptRows == true,
+            () => ViewModel?.IsTranscriptLoading == true,
+            () => ViewModel?.Messages.Count > 0,
+            () => ViewModel?.HasSelectedSubsession == true,
+            () => ViewModel?.DetachTranscriptFromLatest(),
+            () => ViewModel?.ResumeTranscriptFollowingLatestIfCaughtUp(),
+            isVisible => ViewModel?.SetTranscriptJumpToLatestVisible(isVisible),
+            anchor => ViewModel?.SetTranscriptViewportAnchor(anchor));
     }
 
     public SubsessionsView(SubsessionsViewModel viewModel)
@@ -52,33 +56,41 @@ public partial class SubsessionsView : UserControl
         _viewModel.TranscriptChanging += OnTranscriptChanging;
         _viewModel.TranscriptChanged += OnTranscriptChanged;
         DataContext = viewModel;
-        _ = viewModel.InitializeAsync();
+    }
+
+    private SubsessionsViewModel? ViewModel => _viewModel ?? DataContext as SubsessionsViewModel;
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _adaptiveLayout.Dispose();
+        _transcriptBehavior.Dispose();
+        if (_viewModel is not null)
+        {
+            _viewModel.PropertyChanging -= OnViewModelPropertyChanging;
+            _viewModel.TranscriptChanging -= OnTranscriptChanging;
+            _viewModel.TranscriptChanged -= OnTranscriptChanged;
+            _viewModel.Dispose();
+        }
+
+        DataContext = null;
+        _viewModel = null;
     }
 
     private void OnViewModelPropertyChanging(object? sender, PropertyChangingEventArgs e)
     {
-        if (string.Equals(e.PropertyName, nameof(SubsessionsViewModel.SelectedSubsession), StringComparison.Ordinal))
+        if (string.Equals(
+                e.PropertyName,
+                nameof(SubsessionsViewModel.SelectedSubsession),
+                StringComparison.Ordinal))
         {
-            MarkInitialTranscriptPlacementPending();
+            _transcriptBehavior.MarkInitialPlacementPending();
         }
-    }
-
-    private void ApplyResponsiveLayout()
-    {
-        var useCompactLayout = Bounds.Width > 0 && Bounds.Width < WideSubsessionMinimumWidth;
-        var viewModel = _viewModel ?? DataContext as SubsessionsViewModel;
-        if (viewModel is not null)
-        {
-            viewModel.IsCompactLayout = useCompactLayout;
-        }
-
-        SubsessionAdaptiveLayout.ColumnSpacing = useCompactLayout ? 0 : 4;
-        SubsessionListPane.BorderThickness = useCompactLayout ? new Thickness(0) : new Thickness(0, 0, 1, 0);
-
-        Grid.SetColumn(SubsessionListPane, 0);
-        Grid.SetColumn(SubsessionDetailPane, useCompactLayout ? 0 : 1);
-        Grid.SetColumnSpan(SubsessionListPane, useCompactLayout ? 2 : 1);
-        Grid.SetColumnSpan(SubsessionDetailPane, useCompactLayout ? 2 : 1);
     }
 
     private void OnSubsessionItemTapped(object? sender, TappedEventArgs e)
@@ -88,56 +100,25 @@ public partial class SubsessionsView : UserControl
             return;
         }
 
-        var viewModel = _viewModel ?? DataContext as SubsessionsViewModel;
+        var viewModel = ViewModel;
         if (viewModel?.SelectedSubsession?.SessionId != subsession.SessionId)
         {
-            MarkInitialTranscriptPlacementPending();
+            _transcriptBehavior.MarkInitialPlacementPending();
         }
 
         viewModel?.ActivateSubsession(subsession);
     }
 
-    private void OnTranscriptChanged()
-    {
-        if (!EnsureTranscriptScrollCoordinator())
-        {
-            _transcriptChangedBeforeScrollReady = true;
-            return;
-        }
-
-        if (TryHandleInitialTranscriptPlacement())
-        {
-            return;
-        }
-
-        _transcriptScrollCoordinator?.OnTranscriptChanged();
-    }
-
     private void OnTranscriptChanging()
-    {
-        if (_initialTranscriptPlacementPending)
-        {
-            return;
-        }
+        => _transcriptBehavior.OnTranscriptChanging(
+            ViewModel?.IsLoadingOlderTranscriptRows == true
+            || ViewModel?.IsLoadingNewerTranscriptRows == true);
 
-        var viewModel = _viewModel ?? DataContext as SubsessionsViewModel;
-        if (viewModel?.IsLoadingOlderTranscriptRows == true || viewModel?.IsLoadingNewerTranscriptRows == true)
-        {
-            _transcriptScrollCoordinator?.DiscardPendingTranscriptMutation();
-            return;
-        }
-
-        if (!EnsureTranscriptScrollCoordinator())
-        {
-            return;
-        }
-
-        _transcriptScrollCoordinator?.BeginTranscriptMutation();
-    }
+    private void OnTranscriptChanged() => _transcriptBehavior.OnTranscriptChanged();
 
     private void JumpToLatestTranscript_OnClick(object? sender, RoutedEventArgs e)
     {
-        var viewModel = _viewModel ?? DataContext as SubsessionsViewModel;
+        var viewModel = ViewModel;
         if (viewModel is null)
         {
             return;
@@ -145,129 +126,13 @@ public partial class SubsessionsView : UserControl
 
         if (!viewModel.HasNewerTranscriptRows)
         {
-            _transcriptScrollCoordinator?.QueueScrollToBottom();
-            return;
+            _transcriptBehavior.ScrollToBottom();
         }
-
-        if (!viewModel.JumpToLatestTranscriptCommand.CanExecute(null))
+        else if (viewModel.JumpToLatestTranscriptCommand.CanExecute(null))
         {
-            return;
+            _transcriptBehavior.JumpToLatest(
+                () => viewModel.JumpToLatestTranscriptCommand.Execute(null));
         }
-
-        _transcriptScrollCoordinator?.ForceScrollToBottomOnNextTranscriptChanged();
-        viewModel.JumpToLatestTranscriptCommand.Execute(null);
-    }
-
-    private bool EnsureTranscriptScrollCoordinator()
-    {
-        if (_transcriptScrollCoordinator is not null)
-        {
-            return true;
-        }
-
-        _transcriptScrollCoordinator = new TranscriptScrollCoordinator(
-            TranscriptScrollViewer,
-            TranscriptItemsControl,
-            () => _viewModel?.CanLoadOlderTranscriptRows == true,
-            anchorKey => _viewModel?.LoadOlderTranscriptRowsAsync(anchorKey) ?? Task.FromResult(false),
-            () => _viewModel?.CanLoadNewerTranscriptRows == true,
-            anchorKey => _viewModel?.LoadNewerTranscriptRowsAsync(anchorKey) ?? Task.FromResult(false),
-            () => _viewModel?.HasNewerTranscriptRows == true,
-            isVisible => JumpToLatestTranscriptButton.IsVisible = isVisible,
-            () => _viewModel?.DetachTranscriptFromLatest(),
-            () => _viewModel?.ResumeTranscriptFollowingLatestIfCaughtUp());
-        return true;
-    }
-
-    private void HandleTranscriptReadyAfterScrollReady()
-    {
-        if (TryHandleInitialTranscriptPlacement())
-        {
-            return;
-        }
-
-        if (_transcriptChangedBeforeScrollReady)
-        {
-            _transcriptChangedBeforeScrollReady = false;
-            _transcriptScrollCoordinator?.OnTranscriptChanged();
-        }
-    }
-
-    private bool TryHandleInitialTranscriptPlacement()
-    {
-        if (!_initialTranscriptPlacementPending)
-        {
-            return false;
-        }
-
-        var viewModel = _viewModel ?? DataContext as SubsessionsViewModel;
-        _transcriptChangedBeforeScrollReady = false;
-        if (viewModel is null || !viewModel.HasSelectedSubsession || viewModel.Messages.Count == 0)
-        {
-            CompleteInitialTranscriptPlacement(_initialTranscriptPlacementVersion);
-            return true;
-        }
-
-        if (!TranscriptScrollViewer.IsVisible)
-        {
-            QueueInitialTranscriptVisibilityRetry();
-            return true;
-        }
-
-        if (_initialTranscriptPlacementQueued)
-        {
-            return true;
-        }
-
-        _initialTranscriptPlacementQueued = true;
-        var placementVersion = _initialTranscriptPlacementVersion;
-        HideTranscriptUntilInitialPlacement();
-        _transcriptScrollCoordinator?.QueueScrollToBottomAfterLayoutSettles(() => CompleteInitialTranscriptPlacement(placementVersion));
-        return true;
-    }
-
-    private void MarkInitialTranscriptPlacementPending()
-    {
-        if (!_initialTranscriptPlacementPending || _initialTranscriptPlacementQueued)
-        {
-            _initialTranscriptPlacementVersion++;
-        }
-
-        _initialTranscriptPlacementPending = true;
-        _initialTranscriptPlacementQueued = false;
-        _initialTranscriptVisibilityRetryQueued = false;
-        HideTranscriptUntilInitialPlacement();
-    }
-
-    private void QueueInitialTranscriptVisibilityRetry()
-    {
-        if (_initialTranscriptVisibilityRetryQueued)
-        {
-            return;
-        }
-
-        _initialTranscriptVisibilityRetryQueued = true;
-        Dispatcher.UIThread.Post(() =>
-        {
-            _initialTranscriptVisibilityRetryQueued = false;
-            HandleTranscriptReadyAfterScrollReady();
-        }, DispatcherPriority.Loaded);
-    }
-
-    private void HideTranscriptUntilInitialPlacement()
-        => TranscriptScrollViewer.Opacity = 0;
-
-    private void CompleteInitialTranscriptPlacement(int placementVersion)
-    {
-        if (placementVersion != _initialTranscriptPlacementVersion)
-        {
-            return;
-        }
-
-        _initialTranscriptPlacementPending = false;
-        _initialTranscriptPlacementQueued = false;
-        _initialTranscriptVisibilityRetryQueued = false;
-        TranscriptScrollViewer.Opacity = 1;
     }
 
     private void ToolStepHeader_OnClick(object? sender, RoutedEventArgs e)
@@ -277,12 +142,10 @@ public partial class SubsessionsView : UserControl
             return;
         }
 
-        if (EnsureTranscriptScrollCoordinator())
+        _transcriptBehavior.MutateViewport(() =>
         {
-            _transcriptScrollCoordinator?.BeginViewportMutation();
-        }
-
-        toolRow.ToggleExpandedCommand.Execute(null);
-        _transcriptScrollCoordinator?.OnViewportContentChanged();
+            toolRow.ToggleExpandedCommand.Execute(null);
+            ViewModel?.SetTranscriptRowExpanded(toolRow, toolRow.IsExpanded);
+        });
     }
 }

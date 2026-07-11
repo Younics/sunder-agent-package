@@ -74,15 +74,24 @@ public sealed class SubagentService(SubagentStore store)
     }
 
     public SubagentRecord ImportSubagent(SubagentRecord record)
+        => ImportSubagents([record])[0];
+
+    public IReadOnlyList<SubagentRecord> ImportSubagents(IReadOnlyList<SubagentRecord> records)
     {
-        var existing = _store.Get(record.SubagentId);
-        var now = DateTimeOffset.UtcNow;
-        var saved = record with
+        if (records.Count == 0)
         {
-            CreatedAtUtc = existing?.CreatedAtUtc ?? now,
-            UpdatedAtUtc = now,
-        };
-        _store.Save(saved);
+            return [];
+        }
+
+        var existingById = _store.List().ToDictionary(record => record.SubagentId, StringComparer.OrdinalIgnoreCase);
+        var now = DateTimeOffset.UtcNow;
+        var saved = records.Select(record => record with
+            {
+                CreatedAtUtc = existingById.GetValueOrDefault(record.SubagentId)?.CreatedAtUtc ?? now,
+                UpdatedAtUtc = now,
+            })
+            .ToArray();
+        _store.SaveMany(saved);
         SubagentsChanged?.Invoke();
         return saved;
     }

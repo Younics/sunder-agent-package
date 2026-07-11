@@ -19,6 +19,14 @@
     <Project Path="src/Sunder.Package.Agent/Sunder.Package.Agent.csproj" />
   </Folder>
   <Folder Name="/Tests/">
+    <Project Path="tests/Sunder.Package.Agent.Presentation.Tests/Sunder.Package.Agent.Presentation.Tests.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Execution.Local.Tests/Sunder.Package.Agent.Execution.Local.Tests.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Memory.Semantic.Tests/Sunder.Package.Agent.Memory.Semantic.Tests.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Provider.Anthropic.Tests/Sunder.Package.Agent.Provider.Anthropic.Tests.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Provider.Gemini.Tests/Sunder.Package.Agent.Provider.Gemini.Tests.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Provider.LMStudio.Tests/Sunder.Package.Agent.Provider.LMStudio.Tests.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Provider.TestSupport/Sunder.Package.Agent.Provider.TestSupport.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Skills.Tests/Sunder.Package.Agent.Skills.Tests.csproj" />
     <Project Path="tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj" />
     <Project Path="tests/Sunder.Package.Agent.Provider.OpenAI.Tests/Sunder.Package.Agent.Provider.OpenAI.Tests.csproj" />
   </Folder>

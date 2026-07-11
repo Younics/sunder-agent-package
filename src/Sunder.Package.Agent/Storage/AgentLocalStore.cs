@@ -25,6 +25,10 @@ public sealed partial class AgentLocalStore
         EnsureProfileSchemaMigration();
         EnsureProfileModelBindingMigration();
         EnsureFailedSessionStateMigration();
+        ApplySchemaMigrations();
+        RecoverInterruptedPermissionClaims();
+        RecoverAmbiguousParentContinuationWork();
+        RecoverUnownedActiveRuns();
     }
 
     public string DatabasePath { get; }

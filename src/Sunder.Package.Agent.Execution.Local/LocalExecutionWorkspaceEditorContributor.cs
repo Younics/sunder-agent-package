@@ -64,7 +64,8 @@ public sealed class LocalExecutionWorkspaceEditorContributor(
         var selectedShellId = request.Fields.TryGetValue(ShellFieldId, out var shellValue)
             ? shellValue.Value
             : null;
-        configService.SaveConfig(context.ConfigurationId, new LocalExecutionWorkspaceConfig(selectedShellId));
+        var config = configService.GetConfig(context.ConfigurationId);
+        configService.SaveConfig(context.ConfigurationId, config with { SelectedShellId = selectedShellId });
         return ValueTask.FromResult(AgentEditorSaveResult.Ok("Local execution settings saved."));
     }
 }

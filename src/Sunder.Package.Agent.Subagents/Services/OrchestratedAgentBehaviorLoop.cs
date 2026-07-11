@@ -1,12 +1,17 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
-public sealed class OrchestratedAgentBehaviorLoop(IPackageExtensionCatalog extensionCatalog) : IAgentBehaviorLoop
+public sealed class OrchestratedAgentBehaviorLoop : IAgentBehaviorLoop
 {
+    public OrchestratedAgentBehaviorLoop(IPackageExtensionCatalog? extensionCatalog = null)
+    {
+        // Keep the established constructor shape without rediscovering/decorating behavior loops.
+        _ = extensionCatalog;
+    }
+
     public AgentBehaviorLoopDescriptor Descriptor { get; } = new(
         SubagentConstants.OrchestratedBehaviorLoopId,
         "Orchestrated",
@@ -19,15 +24,12 @@ public sealed class OrchestratedAgentBehaviorLoop(IPackageExtensionCatalog exten
         IAgentBehaviorLoopRuntime host,
         CancellationToken cancellationToken = default)
     {
-        var defaultLoop = extensionCatalog.GetExtensions(PackageExtensionPoints.BehaviorLoops)
-            .FirstOrDefault(loop => !ReferenceEquals(loop, this)
-                                    && string.Equals(loop.Descriptor.LoopId, AgentBehaviorLoopIds.Default, StringComparison.OrdinalIgnoreCase));
-        if (defaultLoop is null)
+        if (host is not IAgentInnerBehaviorLoopRuntime innerRuntime)
         {
             var checkpoint = host.SaveCheckpoint(AgentRunStatus.Failed, "Default Agent behavior loop is unavailable.");
             return ValueTask.FromResult(new AgentBehaviorLoopResult(checkpoint, AgentBehaviorLoopCompletionKind.Failed));
         }
 
-        return defaultLoop.RunAsync(context, host, cancellationToken);
+        return innerRuntime.RunDefaultLoopAsync(context, cancellationToken);
     }
 }

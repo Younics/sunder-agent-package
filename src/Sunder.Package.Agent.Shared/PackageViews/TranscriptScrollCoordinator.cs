@@ -5,7 +5,7 @@ using Avalonia.VisualTree;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
-internal sealed class TranscriptScrollCoordinator
+internal sealed class TranscriptScrollCoordinator : IDisposable
 {
     private const double DefaultAutoScrollThreshold = 24;
     private const double DefaultLoadOlderThreshold = 96;
@@ -25,6 +25,7 @@ internal sealed class TranscriptScrollCoordinator
     private readonly Action<bool>? _setJumpToLatestVisible;
     private readonly Action? _onDetachedFromLatest;
     private readonly Action? _onReachedLatest;
+    private readonly Action<TranscriptViewportAnchorData?>? _setViewportAnchor;
     private readonly double _autoScrollThreshold;
     private readonly double _loadOlderThreshold;
     private readonly double _loadNewerThreshold;
@@ -47,6 +48,7 @@ internal sealed class TranscriptScrollCoordinator
     private Action? _pendingSettledScrollCompleted;
     private Action? _pendingBottomPlacementReleaseCompleted;
     private ScrollAnchor? _pendingAnchor;
+    private bool _disposed;
 
     public TranscriptScrollCoordinator(
         ScrollViewer scrollViewer,
@@ -59,6 +61,7 @@ internal sealed class TranscriptScrollCoordinator
         Action<bool>? setJumpToLatestVisible = null,
         Action? onDetachedFromLatest = null,
         Action? onReachedLatest = null,
+        Action<TranscriptViewportAnchorData?>? setViewportAnchor = null,
         double autoScrollThreshold = DefaultAutoScrollThreshold,
         double loadOlderThreshold = DefaultLoadOlderThreshold,
         double loadNewerThreshold = DefaultLoadNewerThreshold)
@@ -73,6 +76,7 @@ internal sealed class TranscriptScrollCoordinator
         _setJumpToLatestVisible = setJumpToLatestVisible;
         _onDetachedFromLatest = onDetachedFromLatest;
         _onReachedLatest = onReachedLatest;
+        _setViewportAnchor = setViewportAnchor;
         _autoScrollThreshold = autoScrollThreshold;
         _loadOlderThreshold = loadOlderThreshold;
         _loadNewerThreshold = loadNewerThreshold;
@@ -90,6 +94,7 @@ internal sealed class TranscriptScrollCoordinator
         Action<bool>? setJumpToLatestVisible = null,
         Action? onDetachedFromLatest = null,
         Action? onReachedLatest = null,
+        Action<TranscriptViewportAnchorData?>? setViewportAnchor = null,
         double autoScrollThreshold = DefaultAutoScrollThreshold,
         double loadOlderThreshold = DefaultLoadOlderThreshold,
         double loadNewerThreshold = DefaultLoadNewerThreshold)
@@ -104,6 +109,7 @@ internal sealed class TranscriptScrollCoordinator
             setJumpToLatestVisible,
             onDetachedFromLatest,
             onReachedLatest,
+            setViewportAnchor,
             autoScrollThreshold,
             loadOlderThreshold,
             loadNewerThreshold)
@@ -112,11 +118,21 @@ internal sealed class TranscriptScrollCoordinator
 
     public void BeginTranscriptMutation()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
         _pendingAnchor ??= CaptureScrollAnchor(ScrollAnchorMode.LiveTranscriptMutation);
     }
 
     public void BeginViewportMutation()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
         _pendingAnchor ??= CaptureScrollAnchor(ScrollAnchorMode.ViewportMutation);
     }
 
@@ -223,6 +239,11 @@ internal sealed class TranscriptScrollCoordinator
 
     private void OnScrollViewerPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs change)
     {
+        if (_disposed)
+        {
+            return;
+        }
+
         if (change.Property == ScrollViewer.OffsetProperty)
         {
             OnScrollOffsetChanged();
@@ -746,12 +767,32 @@ internal sealed class TranscriptScrollCoordinator
     {
         var distanceFromBottom = DistanceFromBottom();
         var itemAnchors = CaptureItemAnchors();
+        var anchorKey = CaptureCurrentScrollAnchorKey();
+        _setViewportAnchor?.Invoke(new TranscriptViewportAnchorData(
+            anchorKey,
+            _scrollViewer.Offset.Y,
+            distanceFromBottom));
         return new ScrollAnchor(
             mode,
             mode == ScrollAnchorMode.LiveTranscriptMutation && IsNearBottom(),
             distanceFromBottom,
             _scrollViewer.Offset.Y,
             itemAnchors);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _scrollViewer.PropertyChanged -= OnScrollViewerPropertyChanged;
+        _pendingAnchor = null;
+        _pendingSettledScrollCompleted = null;
+        _pendingBottomPlacementReleaseCompleted = null;
+        _setViewportAnchor?.Invoke(null);
     }
 
     private object? CaptureCurrentScrollAnchorKey()

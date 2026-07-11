@@ -81,7 +81,7 @@ public sealed partial class AgentSessionTitleService(
                 return;
             }
 
-            var chatClient = await provider.CreateChatClientAsync(
+            using var chatClient = await provider.CreateChatClientAsync(
                 new AgentChatClientContext(
                     provider.Descriptor.ProviderId,
                     modelId,

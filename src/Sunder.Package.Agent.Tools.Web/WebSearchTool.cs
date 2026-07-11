@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Tools.Web.Services;
 
 namespace Sunder.Package.Agent.Tools.Web;
@@ -53,8 +54,8 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
         return new AgentToolPresentation(
             HeaderText: request.ResultSummary ?? (parsed ? args.Query : null),
             DetailMarkdown: !parsed
-                ? WebToolPresentation.BuildRawRequestMarkdown(request.ArgumentsJson, error)
-                : WebToolPresentation.BuildRequestMarkdown(
+                ? AgentToolPresentationMarkdown.BuildRawRequestMarkdown(request.ArgumentsJson, error)
+                : AgentToolPresentationMarkdown.BuildRequestMarkdown(
                     ("Query", args.Query),
                     ("Max results", args.MaxResults?.ToString())),
             OutputText: request.TextContent);
@@ -76,7 +77,7 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
             return new AgentToolResult(
                 Descriptor.ToolId,
                 error!,
-                Content: $"### Web search failed\n\n{error}",
+                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web search failed", error!),
                 IsError: true,
                 ErrorCode: "web-search-args");
         }
@@ -86,7 +87,7 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
             return new AgentToolResult(
                 Descriptor.ToolId,
                 "The query parameter is required.",
-                Content: "### Web search failed\n\nThe `query` parameter is required.",
+                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web search failed", "The `query` parameter is required."),
                 IsError: true,
                 ErrorCode: "web-search-query-required");
         }
@@ -97,7 +98,7 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
             return new AgentToolResult(
                 Descriptor.ToolId,
                 readiness.Message,
-                Content: $"### Web search not ready\n\n{readiness.Message}",
+                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web search not ready", readiness.Message),
                 IsError: true,
                 ErrorCode: "web-search-not-ready");
         }
@@ -119,7 +120,9 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
             return new AgentToolResult(
                 Descriptor.ToolId,
                 ex.Message,
-                Content: $"### Web search failed\n\nThe web search timed out or was canceled before the backend could respond.\n\n{ex.Message}",
+                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown(
+                    "Web search failed",
+                    $"The web search timed out or was canceled before the backend could respond.\n\n{ex.Message}"),
                 IsError: true,
                 ErrorCode: "web-search-http");
         }
@@ -132,7 +135,7 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
             return new AgentToolResult(
                 Descriptor.ToolId,
                 ex.Message,
-                Content: $"### Web search failed\n\n{ex.Message}",
+                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web search failed", ex.Message),
                 IsError: true,
                 ErrorCode: "web-search-http");
         }

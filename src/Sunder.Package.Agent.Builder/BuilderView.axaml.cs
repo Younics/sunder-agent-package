@@ -3,20 +3,31 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Builder;
 
-public partial class BuilderView : UserControl
+public partial class BuilderView : UserControl, IDisposable
 {
-    private const double WideBuilderMinimumWidth = 820;
-
+    private readonly AdaptiveMasterDetail _adaptiveLayout;
     private BuilderViewModel? _viewModel;
 
     public BuilderView()
     {
         InitializeComponent();
-        Loaded += (_, _) => ApplyResponsiveLayout();
-        SizeChanged += (_, _) => ApplyResponsiveLayout();
+        _adaptiveLayout = new AdaptiveMasterDetail(
+            this,
+            BuilderAdaptiveLayout,
+            BuilderListPane,
+            BuilderEditorPane,
+            isCompact =>
+            {
+                var viewModel = _viewModel ?? DataContext as BuilderViewModel;
+                if (viewModel is not null)
+                {
+                    viewModel.IsCompactLayout = isCompact;
+                }
+            });
     }
 
     public BuilderView(BuilderViewModel viewModel)
@@ -27,23 +38,8 @@ public partial class BuilderView : UserControl
         _ = viewModel.InitializeAsync();
     }
 
-    private void ApplyResponsiveLayout()
-    {
-        var useCompactLayout = Bounds.Width > 0 && Bounds.Width < WideBuilderMinimumWidth;
-        var viewModel = _viewModel ?? DataContext as BuilderViewModel;
-        if (viewModel is not null)
-        {
-            viewModel.IsCompactLayout = useCompactLayout;
-        }
-
-        BuilderAdaptiveLayout.ColumnSpacing = useCompactLayout ? 0 : 4;
-        BuilderListPane.BorderThickness = useCompactLayout ? new Thickness(0) : new Thickness(0, 0, 1, 0);
-
-        Grid.SetColumn(BuilderListPane, 0);
-        Grid.SetColumn(BuilderEditorPane, useCompactLayout ? 0 : 1);
-        Grid.SetColumnSpan(BuilderListPane, useCompactLayout ? 2 : 1);
-        Grid.SetColumnSpan(BuilderEditorPane, useCompactLayout ? 2 : 1);
-    }
+    public void Dispose()
+        => _adaptiveLayout.Dispose();
 
     private async void OnRefreshSetupClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {

@@ -199,6 +199,143 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
 
     public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => _store.GetLatestCheckpoint(sessionId);
 
+    internal AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId, long runRevision)
+        => _store.GetLatestCheckpoint(sessionId, runRevision);
+
+    internal AgentDurableRunRecord? GetRun(Guid runId) => _store.GetRun(runId);
+
+    internal AgentDurableRunRecord? GetLatestRun(Guid sessionId) => _store.GetLatestRun(sessionId);
+
+    internal AgentDurableRunLease? GetRunLease(Guid runId)
+        => _store.GetRun(runId) is { } run ? new AgentDurableRunLease(run) : null;
+
+    internal AgentRunTransitionResult? TryTransitionRun(
+        AgentDurableRunLease lease,
+        AgentRunStatus status,
+        string? summary)
+    {
+        lock (lease.SyncRoot)
+        {
+            var transition = _store.TryTransitionRun(lease.Key, lease.Epoch, status, summary);
+            if (transition is null)
+            {
+                return null;
+            }
+
+            lease.AdvanceTo(transition.Run.Epoch);
+            NotifySessionChanged(lease.Key.SessionId);
+            return transition;
+        }
+    }
+
+    internal AgentRunTransitionResult? TryStopRun(
+        AgentDurableRunLease lease,
+        string summary)
+    {
+        lock (lease.SyncRoot)
+        {
+            var transition = _store.TryStopRunAndActivePermissions(
+                lease.Key,
+                lease.Epoch,
+                summary);
+            if (transition is null)
+            {
+                return null;
+            }
+
+            lease.AdvanceTo(transition.Run.Epoch);
+            NotifySessionChanged(lease.Key.SessionId);
+            return transition;
+        }
+    }
+
+    internal AgentRunSuspensionResult? SuspendRun(
+        AgentDurableRunLease lease,
+        AgentRunSuspension suspension,
+        string? summary)
+    {
+        lock (lease.SyncRoot)
+        {
+            var result = _store.SuspendRun(
+                lease.Key,
+                lease.Epoch,
+                suspension,
+                summary);
+            if (result is not null)
+            {
+                lease.AdvanceTo(lease.Epoch + 1);
+                NotifySessionChanged(lease.Key.SessionId);
+            }
+
+            return result;
+        }
+    }
+
+    internal AgentRunSuspensionResult? SuspendRun(
+        AgentDurableRunKey key,
+        AgentRunSuspension suspension,
+        string? summary)
+        => _store.SuspendRun(key, suspension, summary);
+
+    internal AgentChildJoinTransitionResult CompleteChildJoinTask(
+        AgentDurableRunLease lease,
+        string continuationToken,
+        AgentChildJoinTaskResult completedTask)
+    {
+        lock (lease.SyncRoot)
+        {
+            var result = _store.CompleteChildJoinTask(
+                lease.Key,
+                lease.Epoch,
+                continuationToken,
+                completedTask);
+            if (result.Epoch is { } epoch)
+            {
+                lease.AdvanceTo(epoch);
+                NotifySessionChanged(lease.Key.SessionId);
+            }
+
+            return result;
+        }
+    }
+
+    internal AgentChildJoinTransitionResult CompleteChildJoinTask(
+        AgentDurableRunKey key,
+        string continuationToken,
+        AgentChildJoinTaskResult completedTask)
+        => _store.CompleteChildJoinTask(key, continuationToken, completedTask);
+
+    internal IReadOnlyList<AgentParentContinuationWorkRecord> ListDispatchableParentContinuationWork()
+        => _store.ListDispatchableParentContinuationWork();
+
+    internal AgentParentContinuationDispatchResult? TryClaimParentContinuationWork(
+        string workId,
+        AgentDurableRunLease lease,
+        string continuationToken)
+    {
+        lock (lease.SyncRoot)
+        {
+            var result = _store.TryClaimParentContinuationWork(
+                workId,
+                lease.Key,
+                lease.Epoch,
+                continuationToken);
+            if (result is not null && result.Run.Epoch > lease.Epoch)
+            {
+                lease.AdvanceTo(result.Run.Epoch);
+                NotifySessionChanged(lease.Key.SessionId);
+            }
+
+            return result;
+        }
+    }
+
+    internal bool MarkParentContinuationExecutionStarted(string workId)
+        => _store.MarkParentContinuationExecutionStarted(workId);
+
+    internal bool CompleteParentContinuationWork(string workId, bool failed, string? error)
+        => _store.CompleteParentContinuationWork(workId, failed, error);
+
     public void ReportRunActivity(Guid sessionId, long runRevision, AgentRunActivityKind kind, string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -240,6 +377,31 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
         var turn = _store.AppendTextTurn(sessionId, role, content);
         NotifyTurnChanged(sessionId, turn);
         NotifySessionChanged(sessionId);
+        return turn;
+    }
+
+    internal AgentTurnRecord AppendTextTurn(
+        AgentDurableRunLease lease,
+        AgentMessageRole role,
+        string content)
+    {
+        AgentTurnRecord? turn;
+        lock (lease.SyncRoot)
+        {
+            turn = _store.TryAppendTextTurn(
+                lease.Key,
+                lease.Epoch,
+                role,
+                content);
+        }
+
+        if (turn is null)
+        {
+            throw new AgentRunTranscriptWriteRejectedException();
+        }
+
+        NotifyTurnChanged(lease.Key.SessionId, turn);
+        NotifySessionChanged(lease.Key.SessionId);
         return turn;
     }
 
@@ -285,11 +447,65 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
         return turn;
     }
 
+    internal AgentTurnRecord UpdateTextTurn(
+        AgentDurableRunLease lease,
+        Guid turnId,
+        string content)
+    {
+        AgentTurnRecord? turn;
+        lock (lease.SyncRoot)
+        {
+            turn = _store.TryUpdateTextTurn(
+                lease.Key,
+                lease.Epoch,
+                turnId,
+                content);
+        }
+
+        if (turn is null)
+        {
+            throw new AgentRunTranscriptWriteRejectedException();
+        }
+
+        NotifyTurnChanged(lease.Key.SessionId, turn);
+        NotifySessionChanged(lease.Key.SessionId);
+        return turn;
+    }
+
     public AgentTurnRecord AppendToolCallTurn(Guid sessionId, AgentMessageRole role, string callId, string toolId, string argumentsJson)
     {
         var turn = _store.AppendToolCallTurn(sessionId, role, callId, toolId, argumentsJson);
         NotifyTurnChanged(sessionId, turn);
         NotifySessionChanged(sessionId);
+        return turn;
+    }
+
+    internal AgentTurnRecord AppendToolCallTurn(
+        AgentDurableRunLease lease,
+        AgentMessageRole role,
+        string callId,
+        string toolId,
+        string argumentsJson)
+    {
+        AgentTurnRecord? turn;
+        lock (lease.SyncRoot)
+        {
+            turn = _store.TryAppendToolCallTurn(
+                lease.Key,
+                lease.Epoch,
+                role,
+                callId,
+                toolId,
+                argumentsJson);
+        }
+
+        if (turn is null)
+        {
+            throw new AgentRunTranscriptWriteRejectedException();
+        }
+
+        NotifyTurnChanged(lease.Key.SessionId, turn);
+        NotifySessionChanged(lease.Key.SessionId);
         return turn;
     }
 
@@ -327,12 +543,60 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
         return turn;
     }
 
+    internal AgentTurnRecord AppendToolResultTurn(
+        AgentDurableRunLease lease,
+        string callId,
+        string toolId,
+        string? argumentsJson,
+        string? content,
+        string? resultSummary,
+        string? structuredPayloadJson,
+        string? sourcesJson,
+        bool wasTruncated,
+        bool isError,
+        string? errorCode,
+        string? backendId,
+        string? presentationPayloadJson = null)
+    {
+        AgentTurnRecord? turn;
+        lock (lease.SyncRoot)
+        {
+            turn = _store.TryAppendToolResultTurn(
+                lease.Key,
+                lease.Epoch,
+                callId,
+                toolId,
+                argumentsJson,
+                content,
+                resultSummary,
+                structuredPayloadJson,
+                sourcesJson,
+                wasTruncated,
+                isError,
+                errorCode,
+                backendId,
+                presentationPayloadJson);
+        }
+
+        if (turn is null)
+        {
+            throw new AgentRunTranscriptWriteRejectedException();
+        }
+
+        NotifyTurnChanged(lease.Key.SessionId, turn);
+        NotifySessionChanged(lease.Key.SessionId);
+        return turn;
+    }
+
     public AgentRunCheckpointRecord SaveCheckpoint(Guid sessionId, long runRevision, AgentRunStatus status, string? summary)
     {
         var checkpoint = _store.SaveCheckpoint(sessionId, runRevision, status, summary);
         NotifySessionChanged(sessionId);
         return checkpoint;
     }
+
+    internal AgentDurableRunRecord ReserveRun(Guid sessionId, string profileId, string userMessage)
+        => _store.ReserveRun(sessionId, profileId, userMessage);
 
     public AgentWorkingSummaryRecord? SaveWorkingSummary(Guid sessionId, string? summaryText)
     {

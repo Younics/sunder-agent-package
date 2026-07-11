@@ -15,4 +15,6 @@ public static class SubagentConstants
     public const string TaskToolId = "task";
 
     public const string DelegateTasksToolId = "delegate_tasks";
+
+    internal const int MaxBatchDelegationCount = 3;
 }

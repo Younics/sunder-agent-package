@@ -41,18 +41,43 @@ public sealed partial class PackageModule : ISunderPackageModule
         services.AddSingleton<AgentSessionContextProjectionService>();
         services.AddSingleton<AgentSystemPromptComposer>();
         services.AddSingleton<WorkspaceDocumentationContextService>();
-        services.AddSingleton<DefaultAgentBehaviorLoop>();
+        services.AddSingleton<AgentLoopTerminalHandler>();
+        services.AddSingleton<AgentStreamingTurnWriter>();
+        services.AddSingleton<AgentPromptPreparationPipeline>(provider => new AgentPromptPreparationPipeline(
+            provider.GetRequiredService<AgentSystemPromptComposer>(),
+            provider.GetService<IAgentAttachmentContentStore>(),
+            provider.GetRequiredService<AgentSessionContextProjectionService>()
+        ));
+        services.AddSingleton<AgentProviderCycleRunner>();
+        services.AddSingleton<AgentToolCycleCoordinator>();
+        services.AddSingleton(provider => new DefaultAgentBehaviorLoop(
+            provider.GetRequiredService<AgentPromptPreparationPipeline>(),
+            provider.GetRequiredService<AgentProviderCycleRunner>(),
+            provider.GetRequiredService<AgentToolCycleCoordinator>(),
+            provider.GetRequiredService<AgentLoopTerminalHandler>()
+        ));
         services.AddSingleton<AgentBehaviorLoopResolver>();
         services.AddSingleton<AgentBehaviorLoopHostFactory>();
         services.AddSingleton<AgentActiveRunRegistry>();
+        services.AddSingleton<AgentSessionTransitionGate>();
         services.AddSingleton<AgentRunEventLogger>();
         services.AddSingleton<AgentRunProviderResolver>();
         services.AddSingleton<AgentSessionTitleService>();
+        services.AddSingleton<AgentRunPreparationService>();
+        services.AddSingleton<AgentRunStartService>();
+        services.AddSingleton<AgentRunExecutionService>();
         services.AddSingleton<AgentRunStopCoordinator>();
         services.AddSingleton<AgentChildRunSessionService>();
         services.AddSingleton<AgentParentRunContinuationService>();
         services.AddSingleton<AgentPermissionResumeCoordinator>();
-        services.AddSingleton<AgentUserMessageRunCoordinator>();
+        services.AddSingleton(provider => new AgentUserMessageRunCoordinator(
+            provider.GetRequiredService<AgentSessionService>(),
+            provider.GetRequiredService<AgentRunPreparationService>(),
+            provider.GetRequiredService<AgentRunStartService>(),
+            provider.GetRequiredService<AgentRunExecutionService>(),
+            provider.GetRequiredService<AgentActiveRunRegistry>(),
+            provider.GetRequiredService<AgentSessionTransitionGate>()
+        ));
         services.AddSingleton<AgentRunCoordinator>();
         services.AddSingleton<IAgentChildRunExecutor>(provider =>
             provider.GetRequiredService<AgentRunCoordinator>()
@@ -64,6 +89,7 @@ public sealed partial class PackageModule : ISunderPackageModule
         IServiceProvider services
     )
     {
+        services.GetRequiredService<AgentParentRunContinuationService>().StartRecovery();
         registry.RegisterExtension(
             PackageExtensionPoints.RuntimeCatalogs,
             services.GetRequiredService<AgentRuntimeCatalog>()

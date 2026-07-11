@@ -4,38 +4,47 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Platform.Storage;
 using AvaloniaEdit.TextMate;
-using Sunder.Package.Agent.Mcp.Services;
+using Sunder.Package.Agent.Shared.Presentation;
 using TextMateSharp.Grammars;
 
 namespace Sunder.Package.Agent.Mcp;
 
-public partial class AgentMcpSettingsView : UserControl
+public partial class AgentMcpSettingsView : UserControl, IDisposable
 {
-    private const double WideMcpMinimumWidth = 820;
-
+    private readonly AdaptiveMasterDetail _adaptiveLayout;
     private AgentMcpSettingsViewModel? _viewModel;
+    private AgentMcpSettingsViewModel? _ownedViewModel;
     private bool _syncingEditor;
     private bool _syncingViewModel;
+    private bool _disposed;
 
     public AgentMcpSettingsView()
     {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         AttachedToVisualTree += OnAttachedToVisualTree;
-        Loaded += (_, _) => ApplyResponsiveLayout();
-        SizeChanged += (_, _) => ApplyResponsiveLayout();
         ConfigEditor.TextChanged += OnEditorTextChanged;
+        _adaptiveLayout = new AdaptiveMasterDetail(
+            this,
+            McpAdaptiveLayout,
+            McpListPane,
+            McpEditorPane,
+            isCompact =>
+            {
+                var viewModel = _viewModel ?? DataContext as AgentMcpSettingsViewModel;
+                if (viewModel is not null)
+                {
+                    viewModel.IsCompactLayout = isCompact;
+                }
+            });
         ConfigureEditor();
     }
 
-    public AgentMcpSettingsView(
-        McpServerCatalogService serverCatalogService,
-        McpClientConnectionManager connectionManager,
-        McpOAuthService oauthService,
-        McpEcosystemConfigurationImporter configurationImporter)
+    public AgentMcpSettingsView(AgentMcpSettingsViewModel viewModel)
         : this()
     {
-        DataContext = new AgentMcpSettingsViewModel(serverCatalogService, connectionManager, oauthService, configurationImporter);
+        _ownedViewModel = viewModel;
+        DataContext = viewModel;
     }
 
     private void ConfigureEditor()
@@ -69,7 +78,7 @@ public partial class AgentMcpSettingsView : UserControl
 
     private void OnAttachedToVisualTree(object? sender, Avalonia.VisualTreeAttachmentEventArgs e)
     {
-        ApplyResponsiveLayout();
+        _adaptiveLayout.Apply();
         ApplyViewModelText();
         if (McpEditorPane.IsVisible)
         {
@@ -77,22 +86,27 @@ public partial class AgentMcpSettingsView : UserControl
         }
     }
 
-    private void ApplyResponsiveLayout()
+    public void Dispose()
     {
-        var useCompactLayout = Bounds.Width > 0 && Bounds.Width < WideMcpMinimumWidth;
-        var viewModel = _viewModel ?? DataContext as AgentMcpSettingsViewModel;
-        if (viewModel is not null)
+        if (_disposed)
         {
-            viewModel.IsCompactLayout = useCompactLayout;
+            return;
         }
 
-        McpAdaptiveLayout.ColumnSpacing = useCompactLayout ? 0 : 4;
-        McpListPane.BorderThickness = useCompactLayout ? new Thickness(0) : new Thickness(0, 0, 1, 0);
+        _disposed = true;
+        _adaptiveLayout.Dispose();
+        DataContextChanged -= OnDataContextChanged;
+        AttachedToVisualTree -= OnAttachedToVisualTree;
+        ConfigEditor.TextChanged -= OnEditorTextChanged;
+        if (_viewModel is INotifyPropertyChanged viewModel)
+        {
+            viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        }
 
-        Grid.SetColumn(McpListPane, 0);
-        Grid.SetColumn(McpEditorPane, useCompactLayout ? 0 : 1);
-        Grid.SetColumnSpan(McpListPane, useCompactLayout ? 2 : 1);
-        Grid.SetColumnSpan(McpEditorPane, useCompactLayout ? 2 : 1);
+        DataContext = null;
+        _viewModel = null;
+        _ownedViewModel?.Dispose();
+        _ownedViewModel = null;
     }
 
     private void OnServerItemTapped(object? sender, TappedEventArgs e)

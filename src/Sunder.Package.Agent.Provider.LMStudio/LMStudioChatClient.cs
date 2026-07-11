@@ -1,29 +1,20 @@
-using System.ClientModel;
 using System.Runtime.CompilerServices;
-using System.Text;
-using System.Text.Json;
 using Microsoft.Extensions.AI;
-using OpenAI;
 using OpenAI.Chat;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Provider.Shared;
 using AIChatMessage = Microsoft.Extensions.AI.ChatMessage;
 using AIChatRole = Microsoft.Extensions.AI.ChatRole;
-using AIChatToolMode = Microsoft.Extensions.AI.ChatToolMode;
-using AIChatTool = Microsoft.Extensions.AI.AITool;
-using OpenAIChatFinishReason = OpenAI.Chat.ChatFinishReason;
-using OpenAIChatMessage = OpenAI.Chat.ChatMessage;
 
 namespace Sunder.Package.Agent.Provider.LMStudio;
 
 internal sealed class LMStudioChatClient(
     AgentChatClientContext context,
-    Func<string?> baseUrlFactory,
-    Func<string?> apiKeyFactory) : IChatClient
+    LMStudioConnection connection) : IChatClient
 {
     private readonly AgentChatClientContext _context = context;
-    private readonly Func<string?> _baseUrlFactory = baseUrlFactory;
-    private readonly Func<string?> _apiKeyFactory = apiKeyFactory;
+    private readonly LMStudioConnection _connection = connection;
 
     public ChatClientMetadata Metadata { get; } = new("LM Studio");
 
@@ -32,19 +23,11 @@ internal sealed class LMStudioChatClient(
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var responseMessage = new AIChatMessage(AIChatRole.Assistant, []);
-        await foreach (var update in GetStreamingResponseAsync(messages, options, cancellationToken))
-        {
-            foreach (var content in update.Contents)
-            {
-                responseMessage.Contents.Add(content);
-            }
-        }
-
-        return new ChatResponse(responseMessage)
-        {
-            ModelId = options?.ModelId ?? _context.ModelId,
-        };
+        var modelId = options?.ModelId ?? _context.ModelId;
+        return await ProviderChatResponseAggregator.AggregateAsync(
+            GetStreamingResponseAsync(messages, options, cancellationToken),
+            modelId,
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
@@ -52,68 +35,37 @@ internal sealed class LMStudioChatClient(
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var baseUrl = _baseUrlFactory();
-        if (string.IsNullOrWhiteSpace(baseUrl))
+        if (!_connection.TryGetOptions(out var connectionOptions, out var validationError))
         {
-            throw new AgentChatProviderException(
-                "lmstudio-base-url-missing",
-                "### LM Studio base URL missing\n\nOpen **Settings -> Packages -> Sunder Agent Provider LM Studio** and enter a base URL before sending messages.",
-                "lmstudio-base-url-missing");
+            throw LMStudioExceptionMapper.InvalidConfiguration(validationError);
         }
 
         var modelId = options?.ModelId ?? _context.ModelId;
-        var sdkMessages = BuildChatMessages(messages, options?.Instructions);
-        var sdkOptions = BuildChatCompletionOptions(options);
+        var sdkMessages = LMStudioOpenAIMessageTranslator.Translate(messages, options?.Instructions);
+        var sdkOptions = LMStudioOpenAIOptionsTranslator.Translate(options);
         var responseId = Guid.NewGuid().ToString("N");
-        var messageId = responseId;
 
-        await LogAsync(
-            AgentLogLevel.Debug,
-            "provider.request.start",
-            "Provider request started.",
-            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["model.id"] = modelId,
-                ["prompt.turn_count"] = sdkMessages.Count,
-                ["tool.available_count"] = sdkOptions.Tools.Count,
-                ["system_prompt.length"] = options?.Instructions?.Length ?? 0,
-            },
-            cancellationToken: cancellationToken);
-        await LogAsync(
-            AgentLogLevel.Debug,
-            "provider.stream.start",
-            "Provider stream started.",
-            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["provider.id"] = _context.ProviderId,
-                ["model.id"] = modelId,
-                ["tool.count"] = sdkOptions.Tools.Count,
-                ["message.count"] = sdkMessages.Count,
-                ["system_prompt.length"] = options?.Instructions?.Length ?? 0,
-            },
-            cancellationToken: cancellationToken);
+        await LogStartAsync(modelId, sdkMessages.Count, sdkOptions.Tools.Count, options?.Instructions?.Length ?? 0, cancellationToken);
 
-        var client = CreateChatClient(baseUrl, modelId);
         IAsyncEnumerable<StreamingChatCompletionUpdate> stream;
         try
         {
+            var client = _connection.CreateChatClient(modelId, connectionOptions);
             stream = client.CompleteChatStreamingAsync(sdkMessages, sdkOptions, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            throw CreateProviderException(ex);
+            throw LMStudioExceptionMapper.Map(ex);
         }
 
-        var streamStopwatch = System.Diagnostics.Stopwatch.StartNew();
-        var contentBuilder = new StringBuilder();
-        var toolCallAccumulators = new SortedDictionary<int, StreamingToolCallAccumulator>();
-        var allowMultipleToolCalls = options?.AllowMultipleToolCalls == true;
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var firstEventRecorded = false;
+        var translator = new LMStudioOpenAIStreamTranslator(options?.AllowMultipleToolCalls == true);
 
         await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
         while (true)
         {
-            StreamingChatCompletionUpdate? update;
+            StreamingChatCompletionUpdate update;
             try
             {
                 if (!await enumerator.MoveNextAsync())
@@ -123,68 +75,91 @@ internal sealed class LMStudioChatClient(
 
                 update = enumerator.Current;
             }
+            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                await LogAsync(
+                    AgentLogLevel.Error,
+                    "provider.stream.failed",
+                    ex.Message,
+                    stopwatch.ElapsedMilliseconds,
+                    exception: ex,
+                    cancellationToken: CancellationToken.None);
+                throw LMStudioExceptionMapper.ProviderTimeout(ex);
+            }
             catch (OperationCanceledException)
             {
-                await LogAsync(AgentLogLevel.Warning, "provider.stream.canceled", "Provider stream was canceled.", streamStopwatch.ElapsedMilliseconds, cancellationToken: CancellationToken.None);
+                await LogAsync(
+                    AgentLogLevel.Warning,
+                    "provider.stream.canceled",
+                    "Provider stream was canceled.",
+                    stopwatch.ElapsedMilliseconds,
+                    cancellationToken: CancellationToken.None);
                 throw;
             }
             catch (Exception ex)
             {
-                await LogAsync(AgentLogLevel.Error, "provider.stream.failed", ex.Message, streamStopwatch.ElapsedMilliseconds, exception: ex, cancellationToken: CancellationToken.None);
-                throw CreateProviderException(ex);
-            }
-
-            foreach (var contentPart in update.ContentUpdate)
-            {
-                var delta = contentPart.Text;
-                if (string.IsNullOrEmpty(delta))
+                if (LMStudioExceptionMapper.ContainsCancellation(ex))
                 {
-                    continue;
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        await LogAsync(
+                            AgentLogLevel.Warning,
+                            "provider.stream.canceled",
+                            "Provider stream was canceled.",
+                            stopwatch.ElapsedMilliseconds,
+                            cancellationToken: CancellationToken.None);
+                        throw new OperationCanceledException(
+                            "The LM Studio request was canceled by the caller.",
+                            ex,
+                            cancellationToken);
+                    }
+
+                    var timeout = LMStudioExceptionMapper.ProviderTimeout(ex);
+                    await LogAsync(
+                        AgentLogLevel.Error,
+                        "provider.stream.failed",
+                        timeout.Message,
+                        stopwatch.ElapsedMilliseconds,
+                        exception: timeout,
+                        cancellationToken: CancellationToken.None);
+                    throw timeout;
                 }
 
-                contentBuilder.Append(delta);
-                firstEventRecorded = await RecordFirstEventAsync(firstEventRecorded, "TextDelta", streamStopwatch.ElapsedMilliseconds, cancellationToken);
-                yield return new ChatResponseUpdate(AIChatRole.Assistant, delta)
-                {
-                    ResponseId = responseId,
-                    MessageId = messageId,
-                    ModelId = modelId,
-                };
+                await LogAsync(
+                    AgentLogLevel.Error,
+                    "provider.stream.failed",
+                    ex.Message,
+                    stopwatch.ElapsedMilliseconds,
+                    exception: ex,
+                    cancellationToken: CancellationToken.None);
+                throw LMStudioExceptionMapper.Map(ex);
             }
 
-            foreach (var toolCallUpdate in update.ToolCallUpdates)
+            var translated = translator.Translate(update, responseId, responseId, modelId);
+            foreach (var responseUpdate in translated.Updates)
             {
-                ApplyToolCallUpdate(toolCallAccumulators, toolCallUpdate, allowMultipleToolCalls, out var tooManyToolCalls);
-                if (tooManyToolCalls)
-                {
-                    throw new AgentChatProviderException(
-                        "lmstudio-multiple-tool-calls",
-                        "### LM Studio requested multiple tool calls\n\nSunder currently supports one tool call per assistant turn.",
-                        "lmstudio-multiple-tool-calls");
-                }
+                firstEventRecorded = await RecordFirstEventAsync(
+                    firstEventRecorded,
+                    responseUpdate.Contents.OfType<FunctionCallContent>().Any() ? "ToolCallRequested" : "TextDelta",
+                    stopwatch.ElapsedMilliseconds,
+                    cancellationToken);
+                yield return responseUpdate;
             }
 
-            if (update.FinishReason == OpenAIChatFinishReason.ToolCalls && TryBuildToolCalls(toolCallAccumulators, out var completedToolCalls))
+            if (translated.IsTerminal)
             {
-                firstEventRecorded = await RecordFirstEventAsync(firstEventRecorded, "ToolCallRequested", streamStopwatch.ElapsedMilliseconds, cancellationToken);
-                yield return CreateToolCallUpdate(completedToolCalls, responseId, messageId, modelId);
+                await LogAsync(
+                    AgentLogLevel.Debug,
+                    "provider.stream.completed",
+                    firstEventRecorded ? null : "Provider completed without content.",
+                    stopwatch.ElapsedMilliseconds,
+                    cancellationToken: cancellationToken);
                 yield break;
             }
         }
 
-        if (TryBuildToolCalls(toolCallAccumulators, out var finalToolCalls))
-        {
-            firstEventRecorded = await RecordFirstEventAsync(firstEventRecorded, "ToolCallRequested", streamStopwatch.ElapsedMilliseconds, cancellationToken);
-            yield return CreateToolCallUpdate(finalToolCalls, responseId, messageId, modelId);
-            yield break;
-        }
-
-        await LogAsync(
-            AgentLogLevel.Debug,
-            "provider.stream.completed",
-            firstEventRecorded ? null : "Provider stream ended without events.",
-            streamStopwatch.ElapsedMilliseconds,
-            cancellationToken: cancellationToken);
+        throw LMStudioExceptionMapper.IncompleteResponse(
+            "The LM Studio stream ended before a successful finish reason.");
     }
 
     public object? GetService(Type serviceType, object? serviceKey = null)
@@ -196,14 +171,40 @@ internal sealed class LMStudioChatClient(
 
     public void Dispose()
     {
+        // The package-scoped connection owns the shared transport.
     }
 
-    private ChatClient CreateChatClient(string baseUrl, string modelId)
+    private async ValueTask LogStartAsync(
+        string modelId,
+        int messageCount,
+        int toolCount,
+        int systemPromptLength,
+        CancellationToken cancellationToken)
     {
-        var apiKey = _apiKeyFactory();
-        var credential = new ApiKeyCredential(string.IsNullOrWhiteSpace(apiKey) ? "lm-studio" : apiKey);
-        var options = new OpenAIClientOptions { Endpoint = new Uri(baseUrl) };
-        return new OpenAIClient(credential, options).GetChatClient(NormalizeModelId(modelId));
+        var attributes = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["model.id"] = modelId,
+            ["prompt.turn_count"] = messageCount,
+            ["tool.available_count"] = toolCount,
+            ["system_prompt.length"] = systemPromptLength,
+        };
+        await LogAsync(
+            AgentLogLevel.Debug,
+            "provider.request.start",
+            "Provider request started.",
+            attributes: attributes,
+            cancellationToken: cancellationToken);
+        await LogAsync(
+            AgentLogLevel.Debug,
+            "provider.stream.start",
+            "Provider stream started.",
+            attributes: new Dictionary<string, object?>(attributes, StringComparer.Ordinal)
+            {
+                ["provider.id"] = _context.ProviderId,
+                ["tool.count"] = toolCount,
+                ["message.count"] = messageCount,
+            },
+            cancellationToken: cancellationToken);
     }
 
     private async ValueTask<bool> RecordFirstEventAsync(
@@ -217,7 +218,12 @@ internal sealed class LMStudioChatClient(
             return true;
         }
 
-        await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", eventType, elapsedMilliseconds, cancellationToken: cancellationToken);
+        await LogAsync(
+            AgentLogLevel.Debug,
+            "provider.stream.first_event",
+            eventType,
+            elapsedMilliseconds,
+            cancellationToken: cancellationToken);
         return true;
     }
 
@@ -229,330 +235,12 @@ internal sealed class LMStudioChatClient(
         IReadOnlyDictionary<string, object?>? attributes = null,
         Exception? exception = null,
         CancellationToken cancellationToken = default)
-        => _context.LogProviderEventAsync(level, eventName, message ?? eventName, elapsedMilliseconds, attributes, exception, cancellationToken);
-
-    private static IReadOnlyList<OpenAIChatMessage> BuildChatMessages(
-        IEnumerable<AIChatMessage> messages,
-        string? instructions)
-    {
-        var sdkMessages = new List<OpenAIChatMessage>();
-        if (!string.IsNullOrWhiteSpace(instructions))
-        {
-            sdkMessages.Add(OpenAIChatMessage.CreateSystemMessage(instructions));
-        }
-
-        foreach (var message in messages)
-        {
-            AddChatMessages(sdkMessages, message);
-        }
-
-        return sdkMessages;
-    }
-
-    private static void AddChatMessages(ICollection<OpenAIChatMessage> messages, AIChatMessage message)
-    {
-        if (TryAddFunctionCallMessage(messages, message) || TryAddFunctionResultMessages(messages, message))
-        {
-            return;
-        }
-
-        var textBuilder = new StringBuilder();
-        foreach (var content in message.Contents)
-        {
-            switch (content)
-            {
-                case TextContent textContent when !string.IsNullOrWhiteSpace(textContent.Text):
-                    AppendText(textBuilder, textContent.Text);
-                    break;
-
-                case FunctionCallContent functionCall:
-                    FlushTextMessage(messages, message.Role, textBuilder);
-                    messages.Add(OpenAIChatMessage.CreateAssistantMessage([
-                        ChatToolCall.CreateFunctionToolCall(
-                            string.IsNullOrWhiteSpace(functionCall.CallId) ? Guid.NewGuid().ToString("N") : functionCall.CallId,
-                            functionCall.Name,
-                            BinaryData.FromString(SerializeArguments(functionCall.Arguments ?? new Dictionary<string, object?>(StringComparer.Ordinal))))
-                    ]));
-                    break;
-
-                case FunctionResultContent functionResult:
-                    FlushTextMessage(messages, message.Role, textBuilder);
-                    messages.Add(OpenAIChatMessage.CreateToolMessage(functionResult.CallId, RenderFunctionResult(functionResult.Result)));
-                    break;
-            }
-        }
-
-        if (textBuilder.Length == 0 && !string.IsNullOrWhiteSpace(message.Text))
-        {
-            textBuilder.Append(message.Text);
-        }
-
-        FlushTextMessage(messages, message.Role, textBuilder);
-    }
-
-    private static bool TryAddFunctionCallMessage(ICollection<OpenAIChatMessage> messages, AIChatMessage message)
-    {
-        var functionCalls = message.Contents.OfType<FunctionCallContent>().ToArray();
-        if (functionCalls.Length == 0 || functionCalls.Length != message.Contents.Count)
-        {
-            return false;
-        }
-
-        messages.Add(OpenAIChatMessage.CreateAssistantMessage(functionCalls.Select(functionCall =>
-            ChatToolCall.CreateFunctionToolCall(
-                string.IsNullOrWhiteSpace(functionCall.CallId) ? Guid.NewGuid().ToString("N") : functionCall.CallId,
-                functionCall.Name,
-                BinaryData.FromString(SerializeArguments(functionCall.Arguments ?? new Dictionary<string, object?>(StringComparer.Ordinal))))).ToArray()));
-        return true;
-    }
-
-    private static bool TryAddFunctionResultMessages(ICollection<OpenAIChatMessage> messages, AIChatMessage message)
-    {
-        var functionResults = message.Contents.OfType<FunctionResultContent>().ToArray();
-        if (functionResults.Length == 0 || functionResults.Length != message.Contents.Count)
-        {
-            return false;
-        }
-
-        foreach (var functionResult in functionResults)
-        {
-            messages.Add(OpenAIChatMessage.CreateToolMessage(functionResult.CallId, RenderFunctionResult(functionResult.Result)));
-        }
-
-        return true;
-    }
-
-    private static void AppendText(StringBuilder builder, string text)
-    {
-        if (builder.Length > 0)
-        {
-            builder.AppendLine();
-            builder.AppendLine();
-        }
-
-        builder.Append(text);
-    }
-
-    private static void FlushTextMessage(ICollection<OpenAIChatMessage> messages, AIChatRole role, StringBuilder textBuilder)
-    {
-        if (textBuilder.Length == 0)
-        {
-            return;
-        }
-
-        var text = textBuilder.ToString();
-        messages.Add(role == AIChatRole.System
-            ? OpenAIChatMessage.CreateSystemMessage(text)
-            : role == AIChatRole.Assistant
-                ? OpenAIChatMessage.CreateAssistantMessage(text)
-                : OpenAIChatMessage.CreateUserMessage(text));
-        textBuilder.Clear();
-    }
-
-    private static ChatCompletionOptions BuildChatCompletionOptions(ChatOptions? options)
-    {
-        var sdkOptions = new ChatCompletionOptions
-        {
-            AllowParallelToolCalls = options?.AllowMultipleToolCalls == true,
-        };
-
-        if (options?.MaxOutputTokens is { } maxOutputTokens)
-        {
-            sdkOptions.MaxOutputTokenCount = maxOutputTokens;
-        }
-
-        if (options?.ToolMode == AIChatToolMode.None)
-        {
-            return sdkOptions;
-        }
-
-        foreach (var tool in BuildChatTools(options?.Tools ?? []))
-        {
-            sdkOptions.Tools.Add(tool);
-        }
-
-        return sdkOptions;
-    }
-
-    private static IReadOnlyList<ChatTool> BuildChatTools(IList<AIChatTool> tools)
-        => tools
-            .OfType<AIFunctionDeclaration>()
-            .Select(tool => ChatTool.CreateFunctionTool(
-                tool.Name,
-                tool.Description,
-                BinaryData.FromString(BuildToolSchemaJson(tool.JsonSchema))))
-            .ToArray();
-
-    private static string BuildToolSchemaJson(JsonElement schema)
-        => schema.ValueKind == JsonValueKind.Undefined
-            ? JsonSerializer.Serialize(new
-            {
-                type = "object",
-                properties = new { },
-                additionalProperties = false,
-            })
-            : schema.GetRawText();
-
-    private static ChatResponseUpdate CreateToolCallUpdate(IReadOnlyList<AgentToolCallRequest> toolCalls, string responseId, string messageId, string modelId)
-        => new(AIChatRole.Assistant, toolCalls.Select(toolCall => new FunctionCallContent(toolCall.CallId, toolCall.ToolId, ParseArguments(toolCall.ArgumentsJson))).ToArray())
-        {
-            ResponseId = responseId,
-            MessageId = messageId,
-            ModelId = modelId,
-        };
-
-    private static void ApplyToolCallUpdate(
-        IDictionary<int, StreamingToolCallAccumulator> accumulators,
-        StreamingChatToolCallUpdate update,
-        bool allowMultipleToolCalls,
-        out bool tooManyToolCalls)
-    {
-        tooManyToolCalls = false;
-        var index = update.Index;
-        if (!accumulators.TryGetValue(index, out var accumulator))
-        {
-            if (!allowMultipleToolCalls && accumulators.Count > 0)
-            {
-                tooManyToolCalls = true;
-                return;
-            }
-
-            accumulator = new StreamingToolCallAccumulator();
-            accumulators[index] = accumulator;
-        }
-
-        accumulator.Apply(update, out tooManyToolCalls);
-    }
-
-    private static bool TryBuildToolCalls(
-        IReadOnlyDictionary<int, StreamingToolCallAccumulator> accumulators,
-        out IReadOnlyList<AgentToolCallRequest> toolCalls)
-    {
-        var completedToolCalls = new List<AgentToolCallRequest>();
-        foreach (var accumulator in accumulators.Values)
-        {
-            if (accumulator.TryBuild(out var toolCall))
-            {
-                completedToolCalls.Add(toolCall);
-            }
-        }
-
-        toolCalls = completedToolCalls;
-        return completedToolCalls.Count > 0;
-    }
-
-    private static AgentChatProviderException CreateProviderException(Exception exception)
-        => new(
-            exception.Message,
-            $"### LM Studio request failed\n\n{exception.Message}",
-            "lmstudio-sdk-error",
-            exception);
-
-    private static string NormalizeModelId(string modelId)
-    {
-        const string prefix = "lmstudio/";
-        return modelId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-            ? modelId[prefix.Length..]
-            : modelId;
-    }
-
-    private static IDictionary<string, object?> ParseArguments(string argumentsJson)
-    {
-        if (string.IsNullOrWhiteSpace(argumentsJson))
-        {
-            return new Dictionary<string, object?>(StringComparer.Ordinal);
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(argumentsJson);
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                return new Dictionary<string, object?>(StringComparer.Ordinal)
-                {
-                    ["value"] = document.RootElement.Clone(),
-                };
-            }
-
-            return document.RootElement.EnumerateObject()
-                .ToDictionary(property => property.Name, property => (object?)property.Value.Clone(), StringComparer.Ordinal);
-        }
-        catch (JsonException)
-        {
-            return new Dictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["value"] = argumentsJson,
-            };
-        }
-    }
-
-    private static string SerializeArguments(IDictionary<string, object?> arguments)
-        => arguments.Count == 0
-            ? "{}"
-            : JsonSerializer.Serialize(arguments);
-
-    private static string RenderFunctionResult(object? result)
-        => result switch
-        {
-            null => string.Empty,
-            string text => text,
-            JsonElement jsonElement => jsonElement.GetRawText(),
-            _ => JsonSerializer.Serialize(result),
-        };
-
-    private sealed class StreamingToolCallAccumulator
-    {
-        private readonly StringBuilder _argumentsBuilder = new();
-
-        private string? _callId;
-
-        private string? _toolId;
-
-        public void Apply(StreamingChatToolCallUpdate update, out bool tooManyToolCalls)
-        {
-            tooManyToolCalls = false;
-
-            if (!string.IsNullOrWhiteSpace(update.ToolCallId))
-            {
-                if (!string.IsNullOrWhiteSpace(_callId) && !string.Equals(_callId, update.ToolCallId, StringComparison.Ordinal))
-                {
-                    tooManyToolCalls = true;
-                    return;
-                }
-
-                _callId = update.ToolCallId;
-            }
-
-            if (!string.IsNullOrWhiteSpace(update.FunctionName))
-            {
-                if (!string.IsNullOrWhiteSpace(_toolId) && !string.Equals(_toolId, update.FunctionName, StringComparison.Ordinal))
-                {
-                    tooManyToolCalls = true;
-                    return;
-                }
-
-                _toolId = update.FunctionName;
-            }
-
-            if (update.FunctionArgumentsUpdate is not null)
-            {
-                _argumentsBuilder.Append(update.FunctionArgumentsUpdate.ToString());
-            }
-        }
-
-        public bool TryBuild(out AgentToolCallRequest toolCall)
-        {
-            if (string.IsNullOrWhiteSpace(_toolId))
-            {
-                toolCall = null!;
-                return false;
-            }
-
-            toolCall = new AgentToolCallRequest(
-                string.IsNullOrWhiteSpace(_callId) ? Guid.NewGuid().ToString("N") : _callId,
-                _toolId,
-                _argumentsBuilder.Length == 0 ? "{}" : _argumentsBuilder.ToString());
-            return true;
-        }
-    }
+        => _context.LogProviderEventAsync(
+            level,
+            eventName,
+            message ?? eventName,
+            elapsedMilliseconds,
+            attributes,
+            exception,
+            cancellationToken);
 }

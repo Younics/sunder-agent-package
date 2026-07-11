@@ -20,6 +20,10 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddSingleton(serviceProvider => new McpSunderConfigurationSyncService(
             serviceProvider.GetRequiredService<McpEcosystemConfigurationImporter>(),
             serviceProvider.GetService<IPackageExtensionCatalog>()));
+        services.AddSingleton<McpConfigurationCoordinator>();
+        services.AddSingleton<McpSettingsEditorService>();
+        services.AddSingleton<McpServerConnectionService>();
+        services.AddSingleton<McpOAuthCoordinator>();
         services.AddSingleton<McpToolSource>();
         services.AddSingleton<McpServerStackContributor>();
         services.AddTransient<AgentMcpSettingsViewModel>();
@@ -27,6 +31,7 @@ public sealed class PackageModule : ISunderPackageModule
 
     public void RegisterContributions(IPackageContributionRegistry registry, IServiceProvider services)
     {
+        services.GetRequiredService<McpConfigurationCoordinator>().Start();
         registry.RegisterConfigurationSchema(McpPackageConfiguration.Schema);
         registry.RegisterSettingsView<AgentMcpSettingsView>();
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, services.GetRequiredService<McpToolSource>());

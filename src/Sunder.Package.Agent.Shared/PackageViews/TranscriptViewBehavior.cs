@@ -1,0 +1,256 @@
+using Avalonia.Controls;
+using Avalonia.Threading;
+
+namespace Sunder.Package.Agent.Shared.PackageViews;
+
+internal sealed class TranscriptViewBehavior : IDisposable
+{
+    private readonly Control _owner;
+    private readonly ScrollViewer _scrollViewer;
+    private readonly ItemsControl _itemsControl;
+    private readonly Button _jumpToLatestButton;
+    private readonly Func<bool> _isInitialLoading;
+    private readonly Func<bool> _hasRows;
+    private readonly Func<bool> _hasTranscriptSelection;
+    private readonly TranscriptScrollCoordinator _scrollCoordinator;
+    private bool _changedBeforeScrollReady;
+    private bool _initialPlacementPending = true;
+    private bool _initialPlacementQueued;
+    private bool _initialVisibilityRetryQueued;
+    private int _initialPlacementVersion;
+    private bool _loaded;
+    private bool _disposed;
+
+    public TranscriptViewBehavior(
+        Control owner,
+        ScrollViewer scrollViewer,
+        ItemsControl itemsControl,
+        Button jumpToLatestButton,
+        Func<bool> canLoadOlder,
+        Func<object?, Task<bool>> loadOlder,
+        Func<bool> canLoadNewer,
+        Func<object?, Task<bool>> loadNewer,
+        Func<bool> hasNewer,
+        Func<bool> isInitialLoading,
+        Func<bool> hasRows,
+        Func<bool> hasTranscriptSelection,
+        Action detachFromLatest,
+        Action reachedLatest,
+        Action<bool>? jumpVisibilityChanged = null,
+        Action<TranscriptViewportAnchorData?>? viewportAnchorChanged = null)
+    {
+        _owner = owner;
+        _scrollViewer = scrollViewer;
+        _itemsControl = itemsControl;
+        _jumpToLatestButton = jumpToLatestButton;
+        _isInitialLoading = isInitialLoading;
+        _hasRows = hasRows;
+        _hasTranscriptSelection = hasTranscriptSelection;
+        _scrollViewer.Opacity = 0;
+        _scrollCoordinator = new TranscriptScrollCoordinator(
+            scrollViewer,
+            itemsControl,
+            canLoadOlder,
+            loadOlder,
+            canLoadNewer,
+            loadNewer,
+            hasNewer,
+            isVisible =>
+            {
+                jumpToLatestButton.IsVisible = isVisible;
+                jumpVisibilityChanged?.Invoke(isVisible);
+            },
+            detachFromLatest,
+            reachedLatest,
+            viewportAnchorChanged);
+        _owner.Loaded += OnLoaded;
+    }
+
+    public void OnTranscriptChanging(bool isPaging)
+    {
+        if (_disposed || _initialPlacementPending || _isInitialLoading())
+        {
+            return;
+        }
+
+        if (isPaging)
+        {
+            _scrollCoordinator.DiscardPendingTranscriptMutation();
+            return;
+        }
+
+        _scrollCoordinator.BeginTranscriptMutation();
+    }
+
+    public void OnTranscriptChanged()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (!_loaded)
+        {
+            _changedBeforeScrollReady = true;
+            return;
+        }
+
+        if (!TryPlaceInitialTranscript())
+        {
+            _scrollCoordinator.OnTranscriptChanged();
+        }
+    }
+
+    public void MarkInitialPlacementPending()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (!_initialPlacementPending || _initialPlacementQueued)
+        {
+            _initialPlacementVersion++;
+        }
+
+        _initialPlacementPending = true;
+        _initialPlacementQueued = false;
+        _initialVisibilityRetryQueued = false;
+        _scrollViewer.Opacity = 0;
+    }
+
+    public void JumpToLatest(Action jumpToLatest)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (!_jumpToLatestButton.IsVisible)
+        {
+            _scrollCoordinator.QueueScrollToBottom();
+            return;
+        }
+
+        _scrollCoordinator.ForceScrollToBottomOnNextTranscriptChanged();
+        jumpToLatest();
+    }
+
+    public void MutateViewport(Action mutation)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _scrollCoordinator.BeginViewportMutation();
+        mutation();
+        _scrollCoordinator.OnViewportContentChanged();
+    }
+
+    public void ScrollToBottom() => _scrollCoordinator.QueueScrollToBottom();
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _owner.Loaded -= OnLoaded;
+        _scrollCoordinator.Dispose();
+    }
+
+    private void OnLoaded(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        _loaded = true;
+        HandleTranscriptReady();
+    }
+
+    private void HandleTranscriptReady()
+    {
+        if (_disposed || TryPlaceInitialTranscript())
+        {
+            return;
+        }
+
+        if (_changedBeforeScrollReady)
+        {
+            _changedBeforeScrollReady = false;
+            _scrollCoordinator.OnTranscriptChanged();
+        }
+    }
+
+    private bool TryPlaceInitialTranscript()
+    {
+        if (_isInitialLoading())
+        {
+            MarkInitialPlacementPending();
+            return true;
+        }
+
+        if (!_initialPlacementPending)
+        {
+            return false;
+        }
+
+        _changedBeforeScrollReady = false;
+        if (!_hasTranscriptSelection() || !_hasRows())
+        {
+            CompleteInitialPlacement(_initialPlacementVersion);
+            return true;
+        }
+
+        if (!_scrollViewer.IsVisible)
+        {
+            QueueVisibilityRetry();
+            return true;
+        }
+
+        if (_initialPlacementQueued)
+        {
+            return true;
+        }
+
+        _initialPlacementQueued = true;
+        var version = _initialPlacementVersion;
+        _scrollViewer.Opacity = 0;
+        _scrollCoordinator.QueueScrollToBottomAfterLayoutSettles(
+            () => CompleteInitialPlacement(version));
+        return true;
+    }
+
+    private void QueueVisibilityRetry()
+    {
+        if (_initialVisibilityRetryQueued)
+        {
+            return;
+        }
+
+        _initialVisibilityRetryQueued = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _initialVisibilityRetryQueued = false;
+            HandleTranscriptReady();
+        }, DispatcherPriority.Loaded);
+    }
+
+    private void CompleteInitialPlacement(int version)
+    {
+        if (_disposed || version != _initialPlacementVersion)
+        {
+            return;
+        }
+
+        _initialPlacementPending = false;
+        _initialPlacementQueued = false;
+        _initialVisibilityRetryQueued = false;
+        _scrollViewer.Opacity = 1;
+    }
+}

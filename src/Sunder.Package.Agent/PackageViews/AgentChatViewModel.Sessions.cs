@@ -319,9 +319,9 @@ public sealed partial class AgentChatViewModel
         _suppressPermissionState = true;
         try
         {
-            IsUnrestrictedModeEnabled =
-                session is not null
-                && _permissionService.GetSessionState(session.SessionId).IsUnrestrictedModeEnabled;
+            _permissionPanel.LoadSession(session?.SessionId);
+            OnPropertyChanged(nameof(IsUnrestrictedModeEnabled));
+            NotifyPermissionPanelChanged();
         }
         finally
         {
@@ -331,20 +331,14 @@ public sealed partial class AgentChatViewModel
 
     private void ReloadPendingPermissionRequests()
     {
-        PendingPermissionRequests.Clear();
-        if (SelectedSession is not null)
-        {
-            foreach (
-                var request in _permissionService.ListPendingRequestsForSessionTree(
-                    SelectedSession.SessionId
-                )
-            )
-            {
-                PendingPermissionRequests.Add(request);
-            }
-        }
+        _permissionPanel.Reload();
+        NotifyPermissionPanelChanged();
+    }
 
-        HasPendingPermissionRequests = PendingPermissionRequests.Count > 0;
+    private void NotifyPermissionPanelChanged()
+    {
+        OnPropertyChanged(nameof(PendingPermissionRequests));
+        OnPropertyChanged(nameof(HasPendingPermissionRequests));
     }
 
     private void ReconcileSessions(IReadOnlyList<AgentSessionRecord> sessions)
@@ -623,7 +617,7 @@ public sealed partial class AgentChatViewModel
     private void RefreshVisibleChildSessionLinksIfRelevant(AgentSessionRecord changedSession)
     {
         if (
-            _toolRowsByCallId.Count == 0
+            _timeline.Projector.ToolRows.Count == 0
             || changedSession.ParentSessionId is null
             || DisplayedSession is null
         )

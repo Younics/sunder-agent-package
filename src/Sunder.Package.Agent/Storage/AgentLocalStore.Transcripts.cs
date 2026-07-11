@@ -1,11 +1,14 @@
 using Microsoft.Data.Sqlite;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 
 namespace Sunder.Package.Agent.Storage;
 
 public sealed partial class AgentLocalStore
 {
+    internal Action<AgentTranscriptMutationKind>? BeforeFencedTranscriptTransaction { get; set; }
+
     public AgentTranscriptMessageRecord AppendMessage(Guid sessionId, AgentMessageRole role, string content)
     {
         return ProjectTurnToTranscriptMessage(AppendTextTurn(sessionId, role, content));
@@ -15,11 +18,62 @@ public sealed partial class AgentLocalStore
     {
         var now = DateTimeOffset.UtcNow;
         var turn = CreateTextTurn(Guid.NewGuid(), sessionId, role, AgentTurnKind.Message, content, now, now);
+        return AppendTurn(
+            turn,
+            runKey: null,
+            expectedEpoch: null,
+            mutationKind: AgentTranscriptMutationKind.AssistantText)!;
+    }
+
+    internal AgentTurnRecord? TryAppendTextTurn(
+        AgentDurableRunKey runKey,
+        long expectedEpoch,
+        AgentMessageRole role,
+        string content)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var turn = CreateTextTurn(
+            Guid.NewGuid(),
+            runKey.SessionId,
+            role,
+            AgentTurnKind.Message,
+            content,
+            now,
+            now);
+        return AppendTurn(
+            turn,
+            runKey,
+            expectedEpoch,
+            AgentTranscriptMutationKind.AssistantText);
+    }
+
+    private AgentTurnRecord? AppendTurn(
+        AgentTurnRecord turn,
+        AgentDurableRunKey? runKey,
+        long? expectedEpoch,
+        AgentTranscriptMutationKind mutationKind)
+    {
+        if (runKey is not null)
+        {
+            BeforeFencedTranscriptTransaction?.Invoke(mutationKind);
+        }
+
         using var connection = CreateConnection();
         connection.Open();
-        using var transaction = connection.BeginTransaction();
+        using var transaction = connection.BeginTransaction(deferred: runKey is null);
+        if (runKey is { } key
+            && !CanMutateTranscript(
+                connection,
+                transaction,
+                key,
+                expectedEpoch!.Value))
+        {
+            transaction.Rollback();
+            return null;
+        }
+
         InsertTurn(connection, transaction, turn);
-        TouchSession(connection, sessionId, null, null, transaction);
+        TouchSession(connection, turn.SessionId, null, null, transaction);
         transaction.Commit();
         return turn;
     }
@@ -126,6 +180,55 @@ public sealed partial class AgentLocalStore
         return GetTurn(connection, messageId) ?? throw new InvalidOperationException($"Turn '{messageId}' was not found after update.");
     }
 
+    internal AgentTurnRecord? TryUpdateTextTurn(
+        AgentDurableRunKey runKey,
+        long expectedEpoch,
+        Guid turnId,
+        string content)
+    {
+        BeforeFencedTranscriptTransaction?.Invoke(AgentTranscriptMutationKind.AssistantText);
+        using var connection = CreateConnection();
+        connection.Open();
+        using var transaction = connection.BeginTransaction(deferred: false);
+        if (!CanMutateTranscript(connection, transaction, runKey, expectedEpoch))
+        {
+            transaction.Rollback();
+            return null;
+        }
+
+        var updatedAtUtc = DateTimeOffset.UtcNow;
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE AgentTurns SET UpdatedAtUtc = $updatedAtUtc WHERE TurnId = $turnId AND SessionId = $sessionId AND Role = 'Assistant' AND Kind = 'Message';";
+            command.Parameters.AddWithValue("$updatedAtUtc", updatedAtUtc.ToString("O"));
+            command.Parameters.AddWithValue("$turnId", turnId.ToString());
+            command.Parameters.AddWithValue("$sessionId", runKey.SessionId.ToString());
+            if (command.ExecuteNonQuery() != 1)
+            {
+                transaction.Rollback();
+                return null;
+            }
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE AgentTurnItems SET TextContent = $content WHERE TurnId = $turnId AND SequenceNumber = 0 AND Kind = 'Text';";
+            command.Parameters.AddWithValue("$content", content);
+            command.Parameters.AddWithValue("$turnId", turnId.ToString());
+            if (command.ExecuteNonQuery() != 1)
+            {
+                transaction.Rollback();
+                return null;
+            }
+        }
+
+        TouchSession(connection, runKey.SessionId, null, null, transaction);
+        transaction.Commit();
+        return GetTurn(connection, turnId);
+    }
+
     public AgentTurnRecord AppendToolCallTurn(
         Guid sessionId,
         AgentMessageRole role,
@@ -135,13 +238,36 @@ public sealed partial class AgentLocalStore
     {
         var now = DateTimeOffset.UtcNow;
         var turn = CreateToolCallTurn(Guid.NewGuid(), sessionId, role, callId, toolId, argumentsJson, now, now);
-        using var connection = CreateConnection();
-        connection.Open();
-        using var transaction = connection.BeginTransaction();
-        InsertTurn(connection, transaction, turn);
-        TouchSession(connection, sessionId, null, null, transaction);
-        transaction.Commit();
-        return turn;
+        return AppendTurn(
+            turn,
+            runKey: null,
+            expectedEpoch: null,
+            mutationKind: AgentTranscriptMutationKind.ToolCall)!;
+    }
+
+    internal AgentTurnRecord? TryAppendToolCallTurn(
+        AgentDurableRunKey runKey,
+        long expectedEpoch,
+        AgentMessageRole role,
+        string callId,
+        string toolId,
+        string argumentsJson)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var turn = CreateToolCallTurn(
+            Guid.NewGuid(),
+            runKey.SessionId,
+            role,
+            callId,
+            toolId,
+            argumentsJson,
+            now,
+            now);
+        return AppendTurn(
+            turn,
+            runKey,
+            expectedEpoch,
+            AgentTranscriptMutationKind.ToolCall);
     }
 
     public AgentTurnRecord AppendToolResultTurn(
@@ -177,148 +303,16 @@ public sealed partial class AgentLocalStore
             presentationPayloadJson,
             now,
             now);
-        using var connection = CreateConnection();
-        connection.Open();
-        using var transaction = connection.BeginTransaction();
-        InsertTurn(connection, transaction, turn);
-        TouchSession(connection, sessionId, null, null, transaction);
-        transaction.Commit();
-        return turn;
+        return AppendTurn(
+            turn,
+            runKey: null,
+            expectedEpoch: null,
+            mutationKind: AgentTranscriptMutationKind.ToolResult)!;
     }
 
-    private static AgentTurnRecord CreateTextTurn(
-        Guid turnId,
-        Guid sessionId,
-        AgentMessageRole role,
-        AgentTurnKind kind,
-        string content,
-        DateTimeOffset createdAtUtc,
-        DateTimeOffset updatedAtUtc)
-        => new(
-            turnId,
-            sessionId,
-            role,
-            kind,
-            [
-                new AgentTurnItemRecord(
-                    turnId,
-                    turnId,
-                    0,
-                    AgentTurnItemKind.Text,
-                    content,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    false,
-                    false,
-                    null,
-                    null)
-            ],
-            createdAtUtc,
-            updatedAtUtc);
-
-    private static AgentTurnRecord CreateMessageTurn(
-        Guid turnId,
-        Guid sessionId,
-        AgentMessageRole role,
-        string content,
-        IReadOnlyList<AgentStoredAttachment> attachments,
-        DateTimeOffset createdAtUtc,
-        DateTimeOffset updatedAtUtc)
-    {
-        var items = new List<AgentTurnItemRecord>();
-        var sequenceNumber = 0;
-        if (!string.IsNullOrWhiteSpace(content))
-        {
-            items.Add(new AgentTurnItemRecord(
-                Guid.NewGuid(),
-                turnId,
-                sequenceNumber++,
-                AgentTurnItemKind.Text,
-                content,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                false,
-                false,
-                null,
-                null));
-        }
-
-        foreach (var attachment in attachments)
-        {
-            items.Add(new AgentTurnItemRecord(
-                Guid.NewGuid(),
-                turnId,
-                sequenceNumber++,
-                AgentTurnItemKind.Attachment,
-                attachment.TextContent,
-                null,
-                null,
-                null,
-                null,
-                JsonSerializer.Serialize(attachment.Metadata),
-                null,
-                attachment.Metadata.WasTruncated,
-                false,
-                null,
-                attachment.Metadata.AttachmentId.ToString("N")));
-        }
-
-        return new AgentTurnRecord(
-            turnId,
-            sessionId,
-            role,
-            AgentTurnKind.Message,
-            items,
-            createdAtUtc,
-            updatedAtUtc);
-    }
-
-    private static AgentTurnRecord CreateToolCallTurn(
-        Guid turnId,
-        Guid sessionId,
-        AgentMessageRole role,
-        string callId,
-        string toolId,
-        string argumentsJson,
-        DateTimeOffset createdAtUtc,
-        DateTimeOffset updatedAtUtc)
-        => new(
-            turnId,
-            sessionId,
-            role,
-            AgentTurnKind.ToolCall,
-            [
-                new AgentTurnItemRecord(
-                    Guid.NewGuid(),
-                    turnId,
-                    0,
-                    AgentTurnItemKind.ToolCall,
-                    null,
-                    callId,
-                    toolId,
-                    argumentsJson,
-                    null,
-                    null,
-                    null,
-                    false,
-                    false,
-                    null,
-                    null)
-            ],
-            createdAtUtc,
-            updatedAtUtc);
-
-    private static AgentTurnRecord CreateToolResultTurn(
-        Guid turnId,
-        Guid sessionId,
+    internal AgentTurnRecord? TryAppendToolResultTurn(
+        AgentDurableRunKey runKey,
+        long expectedEpoch,
         string callId,
         string toolId,
         string? argumentsJson,
@@ -330,35 +324,63 @@ public sealed partial class AgentLocalStore
         bool isError,
         string? errorCode,
         string? backendId,
-        string? presentationPayloadJson,
-        DateTimeOffset createdAtUtc,
-        DateTimeOffset updatedAtUtc)
-        => new(
-            turnId,
-            sessionId,
-            AgentMessageRole.Tool,
-            AgentTurnKind.ToolResult,
-            [
-                new AgentTurnItemRecord(
-                    Guid.NewGuid(),
-                    turnId,
-                    0,
-                    AgentTurnItemKind.ToolResult,
-                    content,
-                    callId,
-                    toolId,
-                    argumentsJson,
-                    resultSummary,
-                    structuredPayloadJson,
-                    sourcesJson,
-                    wasTruncated,
-                    isError,
-                    errorCode,
-                    backendId,
-                    presentationPayloadJson)
-            ],
-            createdAtUtc,
-            updatedAtUtc);
+        string? presentationPayloadJson = null)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var turn = CreateToolResultTurn(
+            Guid.NewGuid(),
+            runKey.SessionId,
+            callId,
+            toolId,
+            argumentsJson,
+            content,
+            resultSummary,
+            structuredPayloadJson,
+            sourcesJson,
+            wasTruncated,
+            isError,
+            errorCode,
+            backendId,
+            presentationPayloadJson,
+            now,
+            now);
+        return AppendTurn(
+            turn,
+            runKey,
+            expectedEpoch,
+            AgentTranscriptMutationKind.ToolResult);
+    }
+
+    private static bool CanMutateTranscript(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        AgentDurableRunKey key,
+        long expectedEpoch)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT 1
+            FROM AgentRuns
+            WHERE RunId = $runId
+              AND SessionId = $sessionId
+              AND RunRevision = $runRevision
+              AND Epoch = $expectedEpoch
+              AND Status IN ('Running', 'WaitingForApproval')
+              AND FinishedAtUtc IS NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM AgentRuns newer
+                  WHERE newer.SessionId = $sessionId
+                    AND newer.RunRevision > $runRevision)
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$runId", key.RunId.ToString());
+        command.Parameters.AddWithValue("$sessionId", key.SessionId.ToString());
+        command.Parameters.AddWithValue("$runRevision", key.RunRevision);
+        command.Parameters.AddWithValue("$expectedEpoch", expectedEpoch);
+        return command.ExecuteScalar() is not null;
+    }
 
     private static bool CanUpdateProjectedMessage(AgentTurnRecord turn)
         => turn.Kind == AgentTurnKind.Message
@@ -698,4 +720,11 @@ public sealed partial class AgentLocalStore
         command.ExecuteNonQuery();
     }
 
+}
+
+internal enum AgentTranscriptMutationKind
+{
+    AssistantText = 0,
+    ToolCall = 1,
+    ToolResult = 2,
 }

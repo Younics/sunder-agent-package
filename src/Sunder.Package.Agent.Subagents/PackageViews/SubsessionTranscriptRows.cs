@@ -7,13 +7,12 @@ using CommunityToolkit.Mvvm.Input;
 using LiveMarkdown.Avalonia;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
-using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Theming;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
 
 public abstract class SubsessionTranscriptRowViewModel(Guid rowId, DateTimeOffset createdAtUtc, object anchorKey)
-    : ObservableObject, ITranscriptRowAnchor
+    : ObservableObject
 {
     public Guid RowId { get; } = rowId;
 
@@ -156,7 +155,7 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
     private readonly AgentTurnRecord _turn;
     private readonly string _toolId;
     private readonly string _argumentsJson;
-    private readonly SubsessionToolPresentationService _presentationService;
+    private readonly TranscriptToolPresentationService _presentationService;
     private readonly Func<AgentTurnRecord, AgentTurnItemRecord, IReadOnlyList<SubsessionChildSessionLinkViewModel>>? _childSessionLinksResolver;
     private AgentTurnItemRecord _currentItem;
     private Guid? _resultTurnId;
@@ -166,10 +165,10 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
     private string _outputText = string.Empty;
     private ToolDiffViewModel? _toolDiff;
 
-    public SubsessionToolInvocationRowViewModel(
+    internal SubsessionToolInvocationRowViewModel(
         AgentTurnRecord turn,
         AgentTurnItemRecord item,
-        SubsessionToolPresentationService presentationService,
+        TranscriptToolPresentationService presentationService,
         Func<AgentTurnRecord, AgentTurnItemRecord, IReadOnlyList<SubsessionChildSessionLinkViewModel>>? childSessionLinksResolver = null)
         : base(turn.TurnId, turn.CreatedAtUtc, TranscriptRowAnchorKey.Tool(turn, item))
     {
@@ -259,7 +258,7 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
 
     public bool ShowMarkdownDetails => HasMarkdownDetails && (ToolDiff?.ShowMarkdownDetails ?? true);
 
-    public ToolDiffViewModel? ToolDiff
+    internal ToolDiffViewModel? ToolDiff
     {
         get => _toolDiff;
         private set
@@ -276,7 +275,7 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
 
     public bool HasToolDiff => ToolDiff?.HasFiles == true;
 
-    public IReadOnlyList<ToolDiffFileViewModel> ToolDiffFiles => ToolDiff?.Files ?? [];
+    internal IReadOnlyList<ToolDiffFileViewModel> ToolDiffFiles => ToolDiff?.Files ?? [];
 
     public string ToolDiffSectionTitle => ToolDiff?.SectionTitle ?? string.Empty;
 

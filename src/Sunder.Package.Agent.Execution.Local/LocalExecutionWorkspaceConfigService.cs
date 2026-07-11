@@ -41,7 +41,7 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
         var pathEntries = (config.PathEntries ?? [])
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(path => Path.GetFullPath(ExpandPath(path.Trim())))
-            .Distinct(GetPathStringComparer())
+            .Distinct(PathStringComparer)
             .ToArray();
 
         return new LocalExecutionWorkspaceConfig(
@@ -125,18 +125,18 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
     {
         var candidate = Path.GetFullPath(candidatePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var comparison = GetPathStringComparison();
+        var comparison = PathStringComparison;
         return string.Equals(candidate, root, comparison)
                || candidate.StartsWith(root + Path.DirectorySeparatorChar, comparison);
     }
 
-    private static StringComparer GetPathStringComparer()
-        => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+    internal static StringComparer PathStringComparer
+        => OperatingSystem.IsWindows()
             ? StringComparer.OrdinalIgnoreCase
             : StringComparer.Ordinal;
 
-    private static StringComparison GetPathStringComparison()
-        => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+    private static StringComparison PathStringComparison
+        => OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
 

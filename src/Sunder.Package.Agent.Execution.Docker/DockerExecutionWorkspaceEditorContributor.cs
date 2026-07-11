@@ -118,7 +118,12 @@ public sealed class DockerExecutionWorkspaceEditorContributor(
             : null;
         try
         {
-            configService.SaveConfig(context.ConfigurationId, new DockerExecutionWorkspaceConfig(image, null, shellPath));
+            var config = configService.GetConfig(context.ConfigurationId);
+            configService.SaveConfig(context.ConfigurationId, config with
+            {
+                ImageReference = image,
+                ShellPath = shellPath,
+            });
             return AgentEditorSaveResult.Ok("Docker execution settings saved.");
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)

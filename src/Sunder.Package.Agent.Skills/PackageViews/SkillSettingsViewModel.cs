@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Skills.Services;
 
 namespace Sunder.Package.Agent.Skills.PackageViews;
@@ -12,17 +13,20 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
 
     private readonly SkillStore _store;
     private readonly SkillImportService _importService;
-    private CancellationTokenSource? _successStatusClearCancellation;
+    private readonly TimedStatusController _successStatus = new();
+    private readonly Task _initialization;
     private bool _suppressSelectionHandlers;
     private bool _suppressSkillChangeNotifications;
     private bool _disposed;
+
+    internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } = [];
 
     public SkillSettingsViewModel(SkillStore store, SkillImportService importService)
     {
         _store = store;
         _importService = importService;
         _store.SkillsChanged += OnSkillsChanged;
-        Reload();
+        _initialization = InitializeCoreAsync();
     }
 
     public ObservableCollection<InstalledSkillItemViewModel> Skills { get; } = [];
@@ -70,6 +74,8 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
     public bool IsStatusWarning => StatusKind == SkillStatusKind.Warning;
 
     public bool IsStatusError => StatusKind == SkillStatusKind.Error;
+
+    public Task InitializeAsync() => _initialization;
 
     partial void OnSelectedSkillChanged(InstalledSkillItemViewModel? value)
     {
@@ -294,6 +300,20 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
         });
     }
 
+    private Task InitializeCoreAsync()
+    {
+        try
+        {
+            Reload();
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message, SkillStatusKind.Error);
+        }
+
+        return Task.CompletedTask;
+    }
+
     private void OnSkillsChanged()
         => RunOnUiThread(() =>
         {
@@ -312,7 +332,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
 
         _disposed = true;
         _store.SkillsChanged -= OnSkillsChanged;
-        CancelSuccessStatusClear();
+        _successStatus.Dispose();
     }
 
     private void ClearStatus()
@@ -320,55 +340,22 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
 
     private void SetStatus(string message, SkillStatusKind kind, bool autoClear = false)
     {
-        CancelSuccessStatusClear();
+        _successStatus.Cancel();
         StatusKind = string.IsNullOrWhiteSpace(message) ? SkillStatusKind.None : kind;
         StatusText = message;
         if (autoClear && StatusKind == SkillStatusKind.Success)
         {
-            ScheduleSuccessStatusClear(message);
+            _ = _successStatus.ScheduleAsync(
+                SuccessStatusDisplayDuration,
+                () => RunOnUiThread(() =>
+                {
+                    if (StatusKind == SkillStatusKind.Success
+                        && string.Equals(StatusText, message, StringComparison.Ordinal))
+                    {
+                        ClearStatus();
+                    }
+                }));
         }
-    }
-
-    private void ScheduleSuccessStatusClear(string message)
-    {
-        var cancellation = new CancellationTokenSource();
-        _successStatusClearCancellation = cancellation;
-        _ = ClearSuccessStatusAfterDelayAsync(message, cancellation);
-    }
-
-    private async Task ClearSuccessStatusAfterDelayAsync(string message, CancellationTokenSource cancellation)
-    {
-        try
-        {
-            await Task.Delay(SuccessStatusDisplayDuration, cancellation.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            return;
-        }
-
-        RunOnUiThread(() =>
-        {
-            if (_successStatusClearCancellation == cancellation
-                && StatusKind == SkillStatusKind.Success
-                && string.Equals(StatusText, message, StringComparison.Ordinal))
-            {
-                ClearStatus();
-            }
-        });
-    }
-
-    private void CancelSuccessStatusClear()
-    {
-        var cancellation = _successStatusClearCancellation;
-        if (cancellation is null)
-        {
-            return;
-        }
-
-        _successStatusClearCancellation = null;
-        cancellation.Cancel();
-        cancellation.Dispose();
     }
 
     private void SetSelectionSilently(Action action)

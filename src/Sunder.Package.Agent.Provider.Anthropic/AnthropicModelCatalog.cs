@@ -1,4 +1,5 @@
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Configuration;
 
 namespace Sunder.Package.Agent.Provider.Anthropic;
@@ -42,7 +43,7 @@ internal static class AnthropicModelCatalog
             ["anthropic/claude-sonnet-4-5-20250929"] = new(2025, 9, 29),
         };
 
-    public static IReadOnlyList<AgentModelDescriptor> Models { get; } =
+    private static readonly IReadOnlyList<AgentModelDescriptor> VendorModels =
         ApplyReleaseDates([
         new("anthropic/claude-fable-5", "Claude Fable 5", 1000000, 128000, IsRecommended: true, Variants: OpusReasoningVariants),
         new("anthropic/claude-opus-4-8", "Claude Opus 4.8", 1000000, 128000, IsRecommended: true, Variants: OpusReasoningVariants, SpeedOptions: FastSpeedOptions),
@@ -58,10 +59,25 @@ internal static class AnthropicModelCatalog
         new("anthropic/claude-haiku-4-5-20251001", "Claude Haiku 4.5 (2025-10-01)", 200000, 64000),
     ]);
 
+    private static readonly ProviderModelCatalogSnapshot Catalog = ProviderModelCatalog.ValidateAndOrder(
+        VendorModels,
+        AnthropicProviderConfiguration.DefaultUtilityModelId,
+        static _ => true);
+
+    public static IReadOnlyList<AgentModelDescriptor> Models => Catalog.Models;
+
     public static IReadOnlyList<PackageConfigurationOption> UtilityModelOptions { get; } =
-        Models.OrderNewestFirst()
-            .Select(model => new PackageConfigurationOption(model.ModelId, model.DisplayName))
-            .ToArray();
+        Catalog.UtilityModelOptions;
+
+    internal static int? GetMaxOutputTokens(string modelId)
+    {
+        var normalizedModelId = ProviderModelId.RemovePrefix(modelId, "anthropic");
+        return Models.FirstOrDefault(model => string.Equals(
+                ProviderModelId.RemovePrefix(model.ModelId, "anthropic"),
+                normalizedModelId,
+                StringComparison.OrdinalIgnoreCase))
+            ?.MaxOutputTokens;
+    }
 
     private static IReadOnlyList<AgentModelDescriptor> ApplyReleaseDates(
         IEnumerable<AgentModelDescriptor> models)

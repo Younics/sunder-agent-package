@@ -1,22 +1,39 @@
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Provider.Gemini;
 
-public sealed class GeminiAgentProvider(IPackageContext packageContext) : IAgentChatProvider, IAgentUtilityModelProvider
+public sealed class GeminiAgentProvider : IAgentChatProvider, IAgentUtilityModelProvider
 {
-    public AgentProviderDescriptor Descriptor { get; } = new(
-        "gemini",
-        "Google Gemini",
-        [AgentAuthMode.ApiKey],
-        SupportsStreaming: true,
-        SupportsInterruptibleRuns: true
-    )
+    private readonly IPackageContext _packageContext;
+    private readonly ProviderCredentialAccessor _credentials;
+
+    public GeminiAgentProvider(IPackageContext packageContext)
+        : this(
+            packageContext,
+            new ProviderCredentialAccessor(packageContext.Secrets, GeminiProviderConfiguration.ApiKeySecretKey))
     {
-        PackageId = packageContext.PackageId
-    };
+    }
+
+    internal GeminiAgentProvider(IPackageContext packageContext, ProviderCredentialAccessor credentials)
+    {
+        _packageContext = packageContext;
+        _credentials = credentials;
+        Descriptor = new AgentProviderDescriptor(
+            "gemini",
+            "Google Gemini",
+            [AgentAuthMode.ApiKey],
+            SupportsStreaming: true,
+            SupportsInterruptibleRuns: true)
+        {
+            PackageId = packageContext.PackageId,
+        };
+    }
+
+    public AgentProviderDescriptor Descriptor { get; }
 
     public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
     {
@@ -27,16 +44,16 @@ public sealed class GeminiAgentProvider(IPackageContext packageContext) : IAgent
     public ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var configuredModelId = packageContext.Configuration.GetValue(GeminiProviderConfiguration.UtilityModelKey);
-        return ValueTask.FromResult<string?>(IsKnownModel(configuredModelId)
-            ? configuredModelId!.Trim()
-            : GeminiProviderConfiguration.DefaultUtilityModelId);
+        return ValueTask.FromResult<string?>(UtilityModelSettingsState.ResolveModelId(
+            _packageContext.Configuration.GetValue(GeminiProviderConfiguration.UtilityModelKey),
+            GeminiProviderConfiguration.DefaultUtilityModelId,
+            GeminiModelCatalog.UtilityModelOptions.Select(option => option.Value)));
     }
 
     public ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(string.IsNullOrWhiteSpace(GetApiKey())
+        return ValueTask.FromResult(!_credentials.HasCredential
             ? new AgentProviderReadiness(
                 Descriptor.ProviderId,
                 AgentProviderReadinessStatus.NeedsConfiguration,
@@ -64,12 +81,6 @@ public sealed class GeminiAgentProvider(IPackageContext packageContext) : IAgent
     public ValueTask<IChatClient> CreateChatClientAsync(AgentChatClientContext context, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult<IChatClient>(new GeminiChatClient(context, GetApiKey));
+        return ValueTask.FromResult<IChatClient>(new GeminiChatClient(context, _credentials));
     }
-
-    private string? GetApiKey() => packageContext.Secrets.GetSecret("auth.apiKey");
-
-    private static bool IsKnownModel(string? modelId) =>
-        !string.IsNullOrWhiteSpace(modelId)
-        && GeminiModelCatalog.Models.Any(model => string.Equals(model.ModelId, modelId.Trim(), StringComparison.OrdinalIgnoreCase));
 }

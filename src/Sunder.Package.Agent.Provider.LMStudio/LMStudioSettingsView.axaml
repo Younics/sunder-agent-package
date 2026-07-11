@@ -1,48 +1,11 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Sunder.Package.Agent.Provider.LMStudio"
              x:Class="Sunder.Package.Agent.Provider.LMStudio.LMStudioSettingsView"
-             x:DataType="vm:LMStudioSettingsViewModel"
-             mc:Ignorable="d">
+             x:DataType="vm:LMStudioSettingsViewModel">
   <UserControl.Styles>
-    <Style Selector="Border.auth-status-pill">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="10" />
-      <Setter Property="Padding" Value="10,4" />
-      <Setter Property="VerticalAlignment" Value="Center" />
-    </Style>
-
-    <Style Selector="Border.auth-status-pill.success">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
-    </Style>
-
-    <Style Selector="Border.auth-status-pill.warning">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Selected}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
-    </Style>
-
-    <Style Selector="TextBlock.auth-status-label">
-      <Setter Property="FontSize" Value="12" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-    </Style>
-
-    <Style Selector="Border.auth-status-pill.success TextBlock.auth-status-label">
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
-    </Style>
-
-    <Style Selector="Border.auth-detail-card">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="12" />
-    </Style>
+    <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
+    <StyleInclude Source="/Provider.Shared/ProviderSettingsStyles.axaml" />
   </UserControl.Styles>
 
   <ScrollViewer>
@@ -56,67 +19,40 @@
                        Text="Connection"
                        VerticalAlignment="Center" />
             <Border Grid.Column="1"
-                    Classes="auth-status-pill"
+                    Classes="settings-status-pill"
                     Classes.success="{Binding IsConnectionConfigured}"
-                    Classes.warning="{Binding IsConnectionStatusWarning}">
-              <TextBlock Classes="auth-status-label"
+                    Classes.warning="{Binding IsConnectionStatusWarning}"
+                    Classes.danger="{Binding IsConnectionStatusError}">
+              <TextBlock Classes="settings-status-label"
                          Text="{Binding ConnectionStatusLabel}" />
             </Border>
           </Grid>
-
-          <Border Classes="auth-detail-card">
+          <Border Classes="settings-detail-card">
             <StackPanel Spacing="6">
               <TextBlock Classes="caption"
-                         Text="Point the provider at an LM Studio OpenAI-compatible endpoint. The API key is optional unless your endpoint requires one."
+                         Text="Point the provider at an LM Studio OpenAI-compatible endpoint. Endpoint behavior remains local-provider specific."
                          TextWrapping="Wrap" />
               <TextBlock Classes="muted"
                          Text="{Binding ConnectionStatusDetail}"
                          TextWrapping="Wrap" />
             </StackPanel>
           </Border>
-
           <StackPanel Spacing="6">
             <TextBlock Classes="caption"
-                       Text="Base URL"
-                       TextWrapping="Wrap" />
+                       Text="Base URL" />
             <TextBox Text="{Binding BaseUrl, Mode=TwoWay}"
                      PlaceholderText="http://127.0.0.1:1234/v1" />
           </StackPanel>
-
-          <Grid ColumnDefinitions="*,Auto"
-                ColumnSpacing="12">
-            <TextBlock Classes="section-title"
-                       Text="API Key"
-                       VerticalAlignment="Center" />
-            <Border Grid.Column="1"
-                    Classes="auth-status-pill"
-                    Classes.success="{Binding IsApiKeyStored}"
-                    Classes.warning="{Binding IsApiKeyStatusWarning}">
-              <TextBlock Classes="auth-status-label"
-                         Text="{Binding ApiKeyStatusLabel}" />
-            </Border>
-          </Grid>
-
-          <Border Classes="auth-detail-card">
-            <StackPanel Spacing="6">
-              <TextBlock Classes="caption"
-                         Text="Existing keys remain stored unless you replace them here. Leave blank for LM Studio's default local endpoint."
-                         TextWrapping="Wrap" />
-              <TextBlock Classes="muted"
-                         Text="{Binding ApiKeyStatusDetail}"
-                         TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
-
-          <TextBox Text="{Binding ApiKeyValue}"
-                   PlaceholderText="lm-studio-key" />
           <Button Classes="primary-action"
                   Content="Save Connection"
                   HorizontalAlignment="Left"
-                  Command="{Binding SaveSettingsCommand}"
+                  Command="{Binding SaveConnectionCommand}"
                   IsEnabled="{Binding CanSaveSettings}" />
         </StackPanel>
       </Border>
+
+      <ContentControl Content="{Binding ApiKeySettings}"
+                      ContentTemplate="{StaticResource ProviderApiKeySettingsTemplate}" />
 
       <Border Classes="card-surface">
         <StackPanel Spacing="14">
@@ -124,16 +60,15 @@
             <TextBlock Classes="section-title"
                        Text="Utility Model" />
             <TextBlock Classes="caption"
-                       Text="Used for short background tasks such as generating session names. Regular agent replies keep using the model selected on the Agent profile. Leave blank to use the first model returned by LM Studio."
+                       Text="Used for short background tasks. Leave blank to use the first model returned by LM Studio."
                        TextWrapping="Wrap" />
           </StackPanel>
-
           <TextBox Text="{Binding UtilityModelId, Mode=TwoWay}"
                    PlaceholderText="lmstudio/model-name" />
           <Button Classes="primary-action"
                   Content="Save Utility Model"
                   HorizontalAlignment="Left"
-                  Command="{Binding SaveSettingsCommand}"
+                  Command="{Binding SaveUtilityModelCommand}"
                   IsEnabled="{Binding CanSaveSettings}" />
         </StackPanel>
       </Border>

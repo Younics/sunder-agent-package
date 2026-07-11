@@ -2,21 +2,33 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Threading;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Subagents.Models;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
 
-public partial class SubagentsView : UserControl
+public partial class SubagentsView : UserControl, IDisposable
 {
-    private const double WideSubagentMinimumWidth = 820;
-
+    private readonly AdaptiveMasterDetail _adaptiveLayout;
     private SubagentsViewModel? _viewModel;
+    private bool _disposed;
 
     public SubagentsView()
     {
         InitializeComponent();
-        Loaded += (_, _) => ApplyResponsiveLayout();
-        SizeChanged += (_, _) => ApplyResponsiveLayout();
+        _adaptiveLayout = new AdaptiveMasterDetail(
+            this,
+            SubagentAdaptiveLayout,
+            SubagentListPane,
+            SubagentEditorPane,
+            isCompact =>
+            {
+                var viewModel = _viewModel ?? DataContext as SubagentsViewModel;
+                if (viewModel is not null)
+                {
+                    viewModel.IsCompactLayout = isCompact;
+                }
+            });
     }
 
     public SubagentsView(SubagentsViewModel viewModel)
@@ -24,25 +36,20 @@ public partial class SubagentsView : UserControl
     {
         _viewModel = viewModel;
         DataContext = viewModel;
-        _ = viewModel.InitializeAsync();
     }
 
-    private void ApplyResponsiveLayout()
+    public void Dispose()
     {
-        var useCompactLayout = Bounds.Width > 0 && Bounds.Width < WideSubagentMinimumWidth;
-        var viewModel = _viewModel ?? DataContext as SubagentsViewModel;
-        if (viewModel is not null)
+        if (_disposed)
         {
-            viewModel.IsCompactLayout = useCompactLayout;
+            return;
         }
 
-        SubagentAdaptiveLayout.ColumnSpacing = useCompactLayout ? 0 : 4;
-        SubagentListPane.BorderThickness = useCompactLayout ? new Thickness(0) : new Thickness(0, 0, 1, 0);
-
-        Grid.SetColumn(SubagentListPane, 0);
-        Grid.SetColumn(SubagentEditorPane, useCompactLayout ? 0 : 1);
-        Grid.SetColumnSpan(SubagentListPane, useCompactLayout ? 2 : 1);
-        Grid.SetColumnSpan(SubagentEditorPane, useCompactLayout ? 2 : 1);
+        _disposed = true;
+        _adaptiveLayout.Dispose();
+        _viewModel?.Dispose();
+        DataContext = null;
+        _viewModel = null;
     }
 
     private void OnSubagentItemTapped(object? sender, TappedEventArgs e)

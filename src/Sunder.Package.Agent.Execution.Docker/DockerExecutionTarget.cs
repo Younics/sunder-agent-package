@@ -7,7 +7,7 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.Execution.Docker;
 
 public sealed class DockerExecutionTarget
-    : IAgentProcessExecutionTarget, IAgentWorkspaceBindingContributor, IAgentExecutionScopeProvider, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment
+    : IAgentProcessExecutionTarget, IAgentRangedFileExecutionTarget, IAgentWorkspaceBindingContributor, IAgentExecutionScopeProvider, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment
 {
     private readonly DockerExecutionWorkspaceConfigService _configService;
     private readonly DockerContainerLifecycleService _lifecycleService;
@@ -130,7 +130,21 @@ public sealed class DockerExecutionTarget
     {
         cancellationToken.ThrowIfCancellationRequested();
         var config = BuildRuntimeConfig(context);
-        return ValueTask.FromResult(DockerPathResolver.ResolveFileResource(config, path, allowOutsideConfiguredScope: true));
+        var resolved = DockerPathResolver.ResolveFileResource(
+            config,
+            path,
+            allowOutsideConfiguredScope: true,
+            exists: false);
+        if (!DockerPathResolver.IsInsideWorkspacePath(config, resolved.CanonicalReference))
+        {
+            return ValueTask.FromResult(resolved);
+        }
+
+        var mapping = DockerPathResolver.MapToHostPath(config, resolved.CanonicalReference);
+        return ValueTask.FromResult(resolved with
+        {
+            Exists = File.Exists(mapping.HostPath) || Directory.Exists(mapping.HostPath),
+        });
     }
 
     public async ValueTask<AgentShellCommandResult> ExecuteShellAsync(
@@ -160,7 +174,7 @@ public sealed class DockerExecutionTarget
     {
         cancellationToken.ThrowIfCancellationRequested();
         var config = BuildRuntimeConfig(context);
-        return ValueTask.FromResult(DockerPathResolver.MapToHostPath(_configService, config, executionPath));
+        return ValueTask.FromResult(DockerPathResolver.MapToHostPath(config, executionPath));
     }
 
     public ValueTask<IReadOnlyList<string>> ListPathEntriesAsync(

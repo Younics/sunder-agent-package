@@ -672,8 +672,13 @@ public sealed class WorkspaceTests
         var target = new LocalExecutionTarget(scope.Context, configService, shellCatalogService);
         var (workspace, binding) = CreateLocalWorkspace(root, configService);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await target.ReadFileAsync(new AgentExecutionTargetContext(null, null, workspace, binding), new AgentFileReadRequest(Path.Combine(scope.RootPath, "outside.txt"))));
+        var result = await target.ReadFileAsync(
+            new AgentExecutionTargetContext(null, null, workspace, binding),
+            new AgentFileReadRequest(Path.Combine(scope.RootPath, "outside.txt")));
+
+        Assert.True(result.IsError);
+        Assert.Equal(AgentFileReadErrorCodes.OutsideConfiguredScope, result.ErrorCode);
+        Assert.Empty(result.Content);
     }
 
     [Fact]
@@ -689,8 +694,13 @@ public sealed class WorkspaceTests
         var target = new LocalExecutionTarget(scope.Context, configService, shellCatalogService);
         var (workspace, binding) = CreateLocalWorkspace(root, configService);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await target.ReadFileAsync(new AgentExecutionTargetContext(null, null, workspace, binding), new AgentFileReadRequest(binaryPath)));
+        var result = await target.ReadFileAsync(
+            new AgentExecutionTargetContext(null, null, workspace, binding),
+            new AgentFileReadRequest(binaryPath));
+
+        Assert.True(result.IsError);
+        Assert.Equal(AgentFileReadErrorCodes.BinaryFile, result.ErrorCode);
+        Assert.Empty(result.Content);
     }
 
     [Fact]
@@ -902,7 +912,10 @@ public sealed class WorkspaceTests
         {
             dockerCalls.Add((args.ToArray(), standardInput));
             var exitCode = args.Count > 0 && string.Equals(args[0], "inspect", StringComparison.Ordinal) ? 1 : 0;
-            return Task.FromResult(new DockerCliRunResult(exitCode, string.Empty, TimedOut: false, WasTruncated: false));
+            var output = args.Contains(DockerFileOperationScript.Content, StringComparer.Ordinal)
+                ? $"{DockerFileOperationScript.Protocol}|ok|file-written\n"
+                : string.Empty;
+            return Task.FromResult(new DockerCliRunResult(exitCode, output, TimedOut: false, WasTruncated: false));
         });
         var configService = new DockerExecutionWorkspaceConfigService(scope.Context);
         var target = new DockerExecutionTarget(scope.Context, configService, lifecycle, dockerCliRunner: runner);
@@ -942,7 +955,7 @@ public sealed class WorkspaceTests
 
             if (args.Count > 0 && string.Equals(args[0], "exec", StringComparison.Ordinal))
             {
-                return Task.FromResult(new DockerCliRunResult(0, "__SUNDER_NOT_FOUND__\n", TimedOut: false, WasTruncated: false));
+                return Task.FromResult(new DockerCliRunResult(74, $"{DockerFileOperationScript.Protocol}|error|{AgentFileReadErrorCodes.FileNotFound}\n", TimedOut: false, WasTruncated: false));
             }
 
             return Task.FromResult(new DockerCliRunResult(0, string.Empty, TimedOut: false, WasTruncated: false));
@@ -960,7 +973,10 @@ public sealed class WorkspaceTests
 
         Assert.False(result.IsDirectory);
         Assert.Equal($"{containerRoot}/missing.txt", result.Path);
-        Assert.Equal($"File not found: {containerRoot}/missing.txt", result.Content);
+        Assert.True(result.IsError);
+        Assert.Equal(AgentFileReadErrorCodes.FileNotFound, result.ErrorCode);
+        Assert.Equal($"File not found: {containerRoot}/missing.txt", result.ErrorMessage);
+        Assert.Empty(result.Content);
     }
 
     [Fact]
@@ -977,7 +993,7 @@ public sealed class WorkspaceTests
 
             if (args.Count > 0 && string.Equals(args[0], "exec", StringComparison.Ordinal))
             {
-                return Task.FromResult(new DockerCliRunResult(0, "__SUNDER_BINARY__\n", TimedOut: false, WasTruncated: false));
+                return Task.FromResult(new DockerCliRunResult(75, $"{DockerFileOperationScript.Protocol}|error|{AgentFileReadErrorCodes.BinaryFile}\n", TimedOut: false, WasTruncated: false));
             }
 
             return Task.FromResult(new DockerCliRunResult(0, string.Empty, TimedOut: false, WasTruncated: false));
@@ -988,10 +1004,13 @@ public sealed class WorkspaceTests
         var binding = CreateBinding(workspace.WorkspaceId, "docker");
         configService.SaveConfig(binding.BindingId, new DockerExecutionWorkspaceConfig("test-image:latest", "sunder-agent-test", "/bin/sh"));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await target.ReadFileAsync(
-                new AgentExecutionTargetContext(null, null, workspace, binding),
-                new AgentFileReadRequest("image.png")));
+        var result = await target.ReadFileAsync(
+            new AgentExecutionTargetContext(null, null, workspace, binding),
+            new AgentFileReadRequest("image.png"));
+
+        Assert.True(result.IsError);
+        Assert.Equal(AgentFileReadErrorCodes.BinaryFile, result.ErrorCode);
+        Assert.Empty(result.Content);
     }
 
     [Fact]
@@ -1008,7 +1027,7 @@ public sealed class WorkspaceTests
 
             if (args.Count > 0 && string.Equals(args[0], "exec", StringComparison.Ordinal))
             {
-                return Task.FromResult(new DockerCliRunResult(74, "__SUNDER_NOT_FOUND__\n", TimedOut: false, WasTruncated: false));
+                return Task.FromResult(new DockerCliRunResult(74, $"{DockerFileOperationScript.Protocol}|error|path-not-found\n", TimedOut: false, WasTruncated: false));
             }
 
             return Task.FromResult(new DockerCliRunResult(0, string.Empty, TimedOut: false, WasTruncated: false));
@@ -1939,11 +1958,19 @@ public sealed class WorkspaceTests
         var providerResolver = new AgentRunProviderResolver(profileService, catalog);
         var behaviorLoopResolver = new AgentBehaviorLoopResolver(catalog, behaviorLoop);
         var stopCoordinator = new AgentRunStopCoordinator(sessionService, permissionService, memoryCoordinator, activeRunRegistry, profileService);
-        var behaviorLoopHostFactory = new AgentBehaviorLoopHostFactory(sessionService, toolService, permissionService, memoryCoordinator, runEventLogger, activeRunRegistry);
+        var behaviorLoopHostFactory = new AgentBehaviorLoopHostFactory(sessionService, toolService, permissionService, memoryCoordinator, runEventLogger, activeRunRegistry, behaviorLoop);
+        var runPreparationService = new AgentRunPreparationService(sessionService, profileService, workspaceService, runAttachmentStore, runEventLogger, providerResolver);
+        var runStartService = new AgentRunStartService(sessionService, memoryCoordinator, runAttachmentStore, activeRunRegistry, runEventLogger);
+        var runExecutionService = new AgentRunExecutionService(sessionService, workspaceService, memoryCoordinator, activeRunRegistry, runEventLogger, behaviorLoopHostFactory, behaviorLoopResolver);
         var childRunSessionService = new AgentChildRunSessionService(sessionService, profileService);
         var parentRunContinuationService = new AgentParentRunContinuationService(sessionService, profileService, workspaceService, providerResolver, activeRunRegistry, behaviorLoopHostFactory, behaviorLoopResolver, childRunSessionService);
         var permissionResumeCoordinator = new AgentPermissionResumeCoordinator(sessionService, workspaceService, profileService, permissionService, providerResolver, activeRunRegistry, runEventLogger, behaviorLoopHostFactory, behaviorLoopResolver, parentRunContinuationService);
-        var userMessageRunCoordinator = new AgentUserMessageRunCoordinator(sessionService, profileService, workspaceService, memoryCoordinator, runAttachmentStore, activeRunRegistry, runEventLogger, providerResolver, behaviorLoopHostFactory, behaviorLoopResolver);
+        var userMessageRunCoordinator = new AgentUserMessageRunCoordinator(
+            sessionService,
+            runPreparationService,
+            runStartService,
+            runExecutionService,
+            activeRunRegistry);
         var runCoordinator = new AgentRunCoordinator(userMessageRunCoordinator, stopCoordinator, childRunSessionService, permissionResumeCoordinator);
         var warmupService = new AgentExecutionTargetWarmupService(workspaceService, executionTargetService);
         var firstWorkspace = workspaceService.CreateWorkspace("First Workspace");

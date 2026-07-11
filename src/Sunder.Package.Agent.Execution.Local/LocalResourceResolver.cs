@@ -21,20 +21,22 @@ internal static class LocalResourceResolver
     public static AgentResolvedResource ResolveFileResource(LocalExecutionRuntimeConfig config, string path, bool allowOutsideConfiguredScope)
     {
         var resolved = LocalPathResolver.ResolvePath(config, path, allowOutsideConfiguredScope);
-        var boundary = LocalPathResolver.IsInsideWorkspacePath(config, resolved)
+        var physicalPath = LocalPathResolver.ResolvePhysicalPath(resolved);
+        var boundary = LocalPathResolver.IsInsidePhysicalWorkspacePath(config, physicalPath)
             ? AgentPermissionBoundaryIds.ConfiguredScope
             : AgentPermissionBoundaryIds.OutsideConfiguredScope;
         return new AgentResolvedResource(
             "file",
             resolved,
-            resolved,
+            physicalPath,
             boundary,
-            File.Exists(resolved) || Directory.Exists(resolved));
+            File.Exists(physicalPath) || Directory.Exists(physicalPath));
     }
 
     public static AgentExecutionPathMapping MapToHostPath(LocalExecutionRuntimeConfig config, string executionPath)
     {
         var resolved = LocalPathResolver.ResolvePath(config, executionPath, allowOutsideConfiguredScope: false);
-        return new AgentExecutionPathMapping(resolved, resolved, LocalPathResolver.IsInsideWorkspacePath(config, resolved));
+        var hostPath = LocalPathResolver.ResolveFileSystemPath(config, executionPath, allowOutsideConfiguredScope: false);
+        return new AgentExecutionPathMapping(resolved, hostPath, IsInsideAllowedRoot: true);
     }
 }

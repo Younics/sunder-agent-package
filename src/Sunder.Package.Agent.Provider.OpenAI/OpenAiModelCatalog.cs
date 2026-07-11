@@ -1,10 +1,23 @@
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Configuration;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
 internal static class OpenAiModelCatalog
 {
+    private static readonly IReadOnlySet<string> LowTextVerbosityModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+        "gpt-5.5",
+        "gpt-5.6",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    };
+
     private static readonly IReadOnlyList<AgentModelVariantDescriptor> ReasoningVariants =
     [
         new("none", "None", "Disable reasoning effort when the selected model supports it.", AgentReasoningEffort.None),
@@ -75,7 +88,7 @@ internal static class OpenAiModelCatalog
             ["openai/gpt-3.5-turbo"] = new(2023, 3, 1),
         };
 
-    public static IReadOnlyList<AgentModelDescriptor> Models { get; } =
+    private static readonly IReadOnlyList<AgentModelDescriptor> VendorModels =
         ApplyReleaseDates([
         new("openai/gpt-5.6", "GPT-5.6", 1050000, 128000, IsRecommended: true, Variants: ReasoningVariants, SpeedOptions: FastSpeedOptions, ModeOptions: ProModeOptions),
         new("openai/gpt-5.6-sol", "GPT-5.6 Sol", 1050000, 128000, IsRecommended: true, Variants: ReasoningVariants, SpeedOptions: FastSpeedOptions, ModeOptions: ProModeOptions),
@@ -126,10 +139,27 @@ internal static class OpenAiModelCatalog
         new("openai/codex-mini-latest", "Codex Mini Latest", 200000, 100000, Variants: ReasoningVariants),
     ]);
 
+    private static readonly ProviderModelCatalogSnapshot Catalog = ProviderModelCatalog.ValidateAndOrder(
+        VendorModels,
+        OpenAiProviderConfiguration.DefaultUtilityModelId,
+        static _ => true);
+
+    public static IReadOnlyList<AgentModelDescriptor> Models => Catalog.Models;
+
     public static IReadOnlyList<PackageConfigurationOption> UtilityModelOptions { get; } =
-        Models.OrderNewestFirst()
-            .Select(model => new PackageConfigurationOption(model.ModelId, model.DisplayName))
-            .ToArray();
+        Catalog.UtilityModelOptions;
+
+    internal static OpenAiModelCapabilities GetCapabilities(string modelId)
+    {
+        var normalizedModelId = OpenAiModelIds.Normalize(modelId);
+        var descriptor = Models.FirstOrDefault(model => string.Equals(
+            OpenAiModelIds.Normalize(model.ModelId),
+            normalizedModelId,
+            StringComparison.OrdinalIgnoreCase));
+        return new OpenAiModelCapabilities(
+            descriptor?.Variants is { Count: > 0 },
+            LowTextVerbosityModels.Contains(normalizedModelId));
+    }
 
     private static IReadOnlyList<AgentModelDescriptor> ApplyReleaseDates(
         IEnumerable<AgentModelDescriptor> models)
@@ -138,3 +168,7 @@ internal static class OpenAiModelCatalog
                 : model)
             .ToArray();
 }
+
+internal readonly record struct OpenAiModelCapabilities(
+    bool SupportsReasoning,
+    bool UseLowTextVerbosity);

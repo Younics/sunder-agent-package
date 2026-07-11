@@ -6,14 +6,14 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-public partial class AgentWorkspacesView : UserControl
+public partial class AgentWorkspacesView : UserControl, IDisposable
 {
-    private const double WideWorkspaceMinimumWidth = 820;
     private const int WorkspaceInlineEditFocusRetryLimit = 12;
     private static readonly FilePickerFileType WorkspaceDocumentFileType = new("Workspace documents")
     {
@@ -21,17 +21,27 @@ public partial class AgentWorkspacesView : UserControl
     };
 
     private AgentWorkspacesViewModel? _viewModel;
+    private readonly AdaptiveMasterDetail _adaptiveLayout;
     private string? _pendingWorkspacePathEditId;
     private string? _pendingWorkspaceDocumentEditId;
+    private bool _disposed;
 
     public AgentWorkspacesView()
     {
         InitializeComponent();
-        Loaded += (_, _) =>
-        {
-            ApplyResponsiveLayout();
-        };
-        SizeChanged += (_, _) => ApplyResponsiveLayout();
+        _adaptiveLayout = new AdaptiveMasterDetail(
+            this,
+            WorkspaceAdaptiveLayout,
+            WorkspaceListPane,
+            WorkspaceEditorPane,
+            isCompact =>
+            {
+                var viewModel = _viewModel ?? DataContext as AgentWorkspacesViewModel;
+                if (viewModel is not null)
+                {
+                    viewModel.IsCompactLayout = isCompact;
+                }
+            });
     }
 
     public AgentWorkspacesView(
@@ -46,22 +56,18 @@ public partial class AgentWorkspacesView : UserControl
         DataContext = _viewModel;
     }
 
-    private void ApplyResponsiveLayout()
+    public void Dispose()
     {
-        var useCompactLayout = Bounds.Width > 0 && Bounds.Width < WideWorkspaceMinimumWidth;
-        var viewModel = _viewModel ?? DataContext as AgentWorkspacesViewModel;
-        if (viewModel is not null)
+        if (_disposed)
         {
-            viewModel.IsCompactLayout = useCompactLayout;
+            return;
         }
 
-        WorkspaceAdaptiveLayout.ColumnSpacing = useCompactLayout ? 0 : 4;
-        WorkspaceListPane.BorderThickness = useCompactLayout ? new Thickness(0) : new Thickness(0, 0, 1, 0);
-
-        Grid.SetColumn(WorkspaceListPane, 0);
-        Grid.SetColumn(WorkspaceEditorPane, useCompactLayout ? 0 : 1);
-        Grid.SetColumnSpan(WorkspaceListPane, useCompactLayout ? 2 : 1);
-        Grid.SetColumnSpan(WorkspaceEditorPane, useCompactLayout ? 2 : 1);
+        _disposed = true;
+        _adaptiveLayout.Dispose();
+        _viewModel?.Dispose();
+        DataContext = null;
+        _viewModel = null;
     }
 
     private async void OnAddEditorPathItemClick(object? sender, RoutedEventArgs e)

@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
-public sealed class ToolDiffViewModel
+internal sealed class ToolDiffViewModel
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private const int MaxRenderedLinesPerFile = 500;
@@ -425,7 +425,7 @@ public sealed class ToolDiffViewModel
         => count == 1 ? $"1 {noun}" : $"{count} {noun}s";
 }
 
-public sealed record ToolDiffFileViewModel(
+internal sealed record ToolDiffFileViewModel(
     string Path,
     string OperationText,
     int AddedLineCount,
@@ -441,7 +441,7 @@ public sealed record ToolDiffFileViewModel(
     public string DeletedLineCountText => $"-{DeletedLineCount}";
 }
 
-public sealed class ToolDiffLineViewModel
+internal sealed class ToolDiffLineViewModel
 {
     private ToolDiffLineViewModel(string lineNumberText, string oldLineNumberText, string newLineNumberText, string text, ToolDiffLineKind kind)
     {
@@ -494,13 +494,13 @@ public sealed class ToolDiffLineViewModel
         => lineNumber > 0 ? lineNumber.ToString() : string.Empty;
 }
 
-public sealed record FileDiffPresentationPayload(string? Schema, IReadOnlyList<FileDiffPayloadFile> Files);
+internal sealed record FileDiffPresentationPayload(string? Schema, IReadOnlyList<FileDiffPayloadFile> Files);
 
-public sealed record FileDiffPayloadFile(string Path, string? Operation, int AddedLineCount, int DeletedLineCount, IReadOnlyList<FileDiffPayloadLine> Lines);
+internal sealed record FileDiffPayloadFile(string Path, string? Operation, int AddedLineCount, int DeletedLineCount, IReadOnlyList<FileDiffPayloadLine> Lines);
 
-public sealed record FileDiffPayloadLine(string? Kind, int? LineNumber, string Text);
+internal sealed record FileDiffPayloadLine(string? Kind, int? LineNumber, string Text);
 
-public enum ToolDiffLineKind
+internal enum ToolDiffLineKind
 {
     Context,
     Added,

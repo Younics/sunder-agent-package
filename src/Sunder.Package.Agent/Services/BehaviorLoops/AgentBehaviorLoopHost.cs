@@ -8,7 +8,7 @@ using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
-internal sealed class AgentBehaviorLoopHost(
+internal sealed partial class AgentBehaviorLoopHost(
     AgentSessionService sessionService,
     AgentToolService toolService,
     AgentPermissionService permissionService,
@@ -23,7 +23,9 @@ internal sealed class AgentBehaviorLoopHost(
     DateTimeOffset runStartedAtUtc,
     string userMessage,
     Guid userTurnId,
-    Func<bool> isCurrentRun) : IAgentBehaviorLoopRuntime, IAgentRunActivitySink
+    AgentDurableRunLease runLease,
+    IAgentBehaviorLoop defaultBehaviorLoop,
+    Func<bool> isCurrentRun) : IAgentBehaviorLoopRuntime, IAgentInnerBehaviorLoopRuntime, IAgentRunActivitySink
 {
     private const int MaxParallelToolExecutions = 4;
 
@@ -41,12 +43,19 @@ internal sealed class AgentBehaviorLoopHost(
     private readonly DateTimeOffset _runStartedAtUtc = runStartedAtUtc;
     private readonly string _userMessage = userMessage;
     private readonly Guid _userTurnId = userTurnId;
+    private readonly AgentDurableRunLease _runLease = runLease;
+    private readonly IAgentBehaviorLoop _defaultBehaviorLoop = defaultBehaviorLoop;
     private readonly Func<bool> _isCurrentRun = isCurrentRun;
     private IReadOnlyDictionary<string, AgentToolDescriptor>? _availableToolsById;
     private readonly Dictionary<string, AgentToolResult> _readOnlyToolResultCache = new(StringComparer.Ordinal);
     private readonly object _readOnlyToolResultCacheSync = new();
 
     public bool IsCurrentRun() => _isCurrentRun();
+
+    public ValueTask<AgentBehaviorLoopResult> RunDefaultLoopAsync(
+        AgentBehaviorLoopContext context,
+        CancellationToken cancellationToken = default)
+        => _defaultBehaviorLoop.RunAsync(context, this, cancellationToken);
 
     public IReadOnlyList<AgentTurnRecord> ListTurns() => _sessionService.ListTurns(_session.SessionId);
 
@@ -136,7 +145,27 @@ internal sealed class AgentBehaviorLoopHost(
         }, cancellationToken);
 
     public AgentRunCheckpointRecord SaveCheckpoint(AgentRunStatus status, string? summary)
-        => _sessionService.SaveCheckpoint(_session.SessionId, _runRevision, status, summary);
+    {
+        var transition = _sessionService.TryTransitionRun(_runLease, status, summary);
+        if (transition is not null)
+        {
+            return transition.Checkpoint;
+        }
+
+        var latest = _sessionService.GetLatestCheckpoint(_session.SessionId);
+        if (latest is not null
+            && latest.RunRevision == _runRevision
+            && latest.Status is AgentRunStatus.Interrupted
+                or AgentRunStatus.Stopped
+                or AgentRunStatus.Completed
+                or AgentRunStatus.Failed)
+        {
+            return latest;
+        }
+
+        throw new InvalidOperationException(
+            $"Run '{_runId}' rejected a stale or illegal transition to '{status}'.");
+    }
 
     public void ReportRunActivity(AgentRunActivityKind kind, string text)
         => _sessionService.ReportRunActivity(_session.SessionId, _runRevision, kind, text);
@@ -191,40 +220,19 @@ internal sealed class AgentBehaviorLoopHost(
         }
     }
 
-    private static PackageLogLevel ToPackageLogLevel(AgentLogLevel level)
-        => level switch
-        {
-            AgentLogLevel.Trace => PackageLogLevel.Trace,
-            AgentLogLevel.Debug => PackageLogLevel.Debug,
-            AgentLogLevel.Information => PackageLogLevel.Information,
-            AgentLogLevel.Warning => PackageLogLevel.Warning,
-            AgentLogLevel.Error => PackageLogLevel.Error,
-            AgentLogLevel.Critical => PackageLogLevel.Critical,
-            _ => PackageLogLevel.Information,
-        };
-
-    private sealed class ProviderEventSink(IPackageEventLogger eventLogger) : IAgentProviderEventSink
-    {
-        public ValueTask WriteAsync(
-            AgentLogLevel level,
-            string eventName,
-            string message,
-            IReadOnlyDictionary<string, object?>? attributes = null,
-            Exception? exception = null,
-            CancellationToken cancellationToken = default)
-            => eventLogger.WriteAsync(ToPackageLogLevel(level), eventName, message, attributes, exception, cancellationToken);
-    }
-
     public AgentTurnRecord UpsertAssistantTurn(AgentTurnRecord? assistantTurn, string content)
     {
         if (assistantTurn is null)
         {
-            return _sessionService.AppendTextTurn(_session.SessionId, AgentMessageRole.Assistant, content);
+            return _sessionService.AppendTextTurn(
+                _runLease,
+                AgentMessageRole.Assistant,
+                content);
         }
 
         return string.Equals(RenderTextContent(assistantTurn), content, StringComparison.Ordinal)
             ? assistantTurn
-            : _sessionService.UpdateTextTurn(assistantTurn.TurnId, content);
+            : _sessionService.UpdateTextTurn(_runLease, assistantTurn.TurnId, content);
     }
 
     private static string RenderTextContent(AgentTurnRecord turn)
@@ -253,76 +261,27 @@ internal sealed class AgentBehaviorLoopHost(
             isInterrupted,
             cancellationToken));
 
-    public async ValueTask<AgentToolCallOutcome> InvokeToolAsync(
-        AgentToolCallRequest toolCall,
-        AgentTurnRecord? assistantTurn,
-        CancellationToken cancellationToken = default)
-    {
-        var outcomes = await InvokeToolsAsync([toolCall], assistantTurn, cancellationToken);
-        if (outcomes.Count > 0)
-        {
-            return outcomes[0];
-        }
-
-        var failedCheckpoint = SaveCheckpoint(AgentRunStatus.Failed, "Tool invocation produced no outcome.");
-        return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Failed, failedCheckpoint);
-    }
-
-    public async ValueTask<IReadOnlyList<AgentToolCallOutcome>> InvokeToolsAsync(
-        IReadOnlyList<AgentToolCallRequest> toolCalls,
-        AgentTurnRecord? assistantTurn,
-        CancellationToken cancellationToken = default)
-    {
-        if (toolCalls.Count == 0)
-        {
-            return [];
-        }
-
-        var availableToolsById = await GetAvailableToolsByIdAsync(cancellationToken);
-        var outcomes = new List<AgentToolCallOutcome>(toolCalls.Count);
-        foreach (var batch in BuildToolExecutionBatches(toolCalls, availableToolsById))
-        {
-            foreach (var toolCall in batch)
-            {
-                var permissionOutcome = await EvaluateToolPermissionAsync(toolCall, assistantTurn, cancellationToken);
-                if (permissionOutcome is not null)
-                {
-                    outcomes.Add(permissionOutcome);
-                    return outcomes;
-                }
-            }
-
-            foreach (var toolCall in batch)
-            {
-                RecordToolCallStart(toolCall);
-            }
-
-            var executedResults = await ExecuteToolBatchAsync(batch, availableToolsById, cancellationToken);
-            foreach (var executedResult in executedResults)
-            {
-                var outcome = await RecordExecutedToolResultAsync(executedResult, cancellationToken);
-                outcomes.Add(outcome);
-                if (outcome.Kind != AgentToolCallOutcomeKind.Executed)
-                {
-                    return outcomes;
-                }
-            }
-        }
-
-        return outcomes;
-    }
-
     private async Task<AgentToolCallOutcome?> EvaluateToolPermissionAsync(
         AgentToolCallRequest toolCall,
         AgentTurnRecord? assistantTurn,
+        IReadOnlyDictionary<string, AgentToolDescriptor> availableToolsById,
         CancellationToken cancellationToken)
     {
+        if (!availableToolsById.TryGetValue(toolCall.ToolId, out var advertisedDescriptor))
+        {
+            return await RecordSecurityDenialAsync(
+                toolCall,
+                $"Tool '{toolCall.ToolId}' was not advertised as ready and assigned for this run.",
+                AgentToolSecurityErrorCodes.NotAdvertised,
+                cancellationToken);
+        }
+
         var permissionStopwatch = Stopwatch.StartNew();
         LogEvent(AgentLogLevel.Debug, "tool.permission.start", "Evaluating tool permission.", attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["tool.id"] = toolCall.ToolId,
         });
-        var permissionRequest = await _toolService.BuildPermissionRequestAsync(
+        var permissionResolution = await _toolService.ResolvePermissionRequirementAsync(
             toolCall.ToolId,
             toolCall.ArgumentsJson,
             _session.SessionId,
@@ -332,7 +291,27 @@ internal sealed class AgentBehaviorLoopHost(
             runRevision: _runRevision,
             userTurnId: _userTurnId,
             toolCallId: toolCall.CallId,
+            advertisedDescriptor: advertisedDescriptor,
             cancellationToken: cancellationToken);
+        if (permissionResolution is null)
+        {
+            return await RecordSecurityDenialAsync(
+                toolCall,
+                $"Tool '{toolCall.ToolId}' is no longer in the ready, assigned tool catalog for this run.",
+                AgentToolSecurityErrorCodes.NotAdvertised,
+                cancellationToken);
+        }
+
+        if (!string.IsNullOrWhiteSpace(permissionResolution.DeniedReason))
+        {
+            return await RecordSecurityDenialAsync(
+                toolCall,
+                permissionResolution.DeniedReason,
+                AgentToolSecurityErrorCodes.PermissionContextInsufficient,
+                cancellationToken);
+        }
+
+        var permissionRequest = permissionResolution.PermissionRequest;
         LogEvent(
                 AgentLogLevel.Debug,
             "tool.permission.completed",
@@ -375,12 +354,12 @@ internal sealed class AgentBehaviorLoopHost(
             if (permissionEvaluation.Decision == AgentPermissionDecision.Ask)
             {
                 _sessionService.AppendToolCallTurn(
-                    _session.SessionId,
+                    _runLease,
                     AgentMessageRole.Assistant,
                     toolCall.CallId,
                     toolCall.ToolId,
                     toolCall.ArgumentsJson);
-                _permissionService.SavePendingRequest(new AgentPendingPermissionRequestRecord(
+                var pendingRequest = new AgentPendingPermissionRequestRecord(
                     Guid.NewGuid().ToString("N"),
                     _session.SessionId,
                     _runId,
@@ -403,8 +382,27 @@ internal sealed class AgentBehaviorLoopHost(
                     permissionRequest.IsMutation,
                     DateTimeOffset.UtcNow,
                     _session.ParentSessionId,
-                    _session.RootSessionId ?? _session.SessionId));
-                var waitingCheckpoint = SaveCheckpoint(AgentRunStatus.WaitingForApproval, permissionRequest.Summary);
+                    _session.RootSessionId ?? _session.SessionId,
+                    ExecutionFingerprint: AgentPermissionFingerprint.Create(
+                        _runId,
+                        _runRevision,
+                        permissionResolution.Descriptor,
+                        toolCall.CallId,
+                        toolCall.ArgumentsJson,
+                        _workspace,
+                        permissionResolution.ExecutionBinding,
+                        permissionResolution.ExecutionTarget,
+                        permissionRequest));
+                if (_permissionService.SavePendingRequestAndSuspendRun(
+                        pendingRequest,
+                        _runLease) is null)
+                {
+                    throw new InvalidOperationException("The run changed before its permission suspension could be persisted.");
+                }
+
+
+                var waitingCheckpoint = _sessionService.GetLatestCheckpoint(_session.SessionId)
+                    ?? throw new InvalidOperationException("The permission suspension checkpoint was not persisted.");
                 return new AgentToolCallOutcome(AgentToolCallOutcomeKind.WaitingForApproval, waitingCheckpoint);
             }
         }
@@ -412,11 +410,40 @@ internal sealed class AgentBehaviorLoopHost(
         return null;
     }
 
+    private async Task<AgentToolCallOutcome> RecordSecurityDenialAsync(
+        AgentToolCallRequest toolCall,
+        string summary,
+        string errorCode,
+        CancellationToken cancellationToken)
+    {
+        _sessionService.AppendToolCallTurn(
+            _runLease,
+            AgentMessageRole.Assistant,
+            toolCall.CallId,
+            toolCall.ToolId,
+            toolCall.ArgumentsJson);
+        var result = new AgentToolResult(
+            toolCall.ToolId,
+            summary,
+            Content: $"### Tool denied\n\n{summary}",
+            IsError: true,
+            ErrorCode: errorCode);
+        var resultTurn = AppendToolResult(toolCall.CallId, toolCall.ToolId, toolCall.ArgumentsJson, result);
+        var checkpoint = SaveCheckpoint(AgentRunStatus.Failed, summary);
+        await PublishLifecycleEventAsync(
+            AgentLifecycleEventKind.RunFailed,
+            AgentRunStatus.Failed,
+            triggerTurn: resultTurn,
+            checkpoint: checkpoint,
+            cancellationToken: cancellationToken);
+        return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Denied, checkpoint, result);
+    }
+
     private void RecordToolCallStart(AgentToolCallRequest toolCall)
     {
         SaveCheckpoint(AgentRunStatus.Running, $"Executing tool '{toolCall.ToolId}'.");
         _sessionService.AppendToolCallTurn(
-            _session.SessionId,
+            _runLease,
             AgentMessageRole.Assistant,
             toolCall.CallId,
             toolCall.ToolId,
@@ -500,10 +527,36 @@ internal sealed class AgentBehaviorLoopHost(
             throw new OperationCanceledException(cancellationToken);
         }
 
-        if (string.Equals(toolResult.ErrorCode, AgentToolResultErrorCodes.ChildWaitingForApproval, StringComparison.OrdinalIgnoreCase))
+        if (AgentToolSuspensionCompatibility.TryCreateChildJoin(
+                toolCall,
+                toolResult,
+                _userTurnId,
+                out var childJoin))
         {
-            var waitingCheckpoint = SaveCheckpoint(AgentRunStatus.WaitingForApproval, toolResult.Summary);
-            return new AgentToolCallOutcome(AgentToolCallOutcomeKind.WaitingForApproval, waitingCheckpoint, toolResult);
+            var suspended = _sessionService.SuspendRun(
+                _runLease,
+                childJoin!,
+                toolResult.Summary);
+            if (suspended is null)
+            {
+                throw new InvalidOperationException("The parent run changed before its child-join suspension could be persisted.");
+            }
+
+            return new AgentToolCallOutcome(
+                AgentToolCallOutcomeKind.WaitingForApproval,
+                suspended.Checkpoint,
+                toolResult);
+        }
+
+        if (string.Equals(
+                toolResult.ErrorCode,
+                AgentToolResultErrorCodes.ChildWaitingForApproval,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            var failedCheckpoint = SaveCheckpoint(
+                AgentRunStatus.Failed,
+                "A waiting child task did not provide a durable child-session identity.");
+            return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Failed, failedCheckpoint, toolResult);
         }
 
         LogEvent(
@@ -537,6 +590,12 @@ internal sealed class AgentBehaviorLoopHost(
         SaveCheckpoint(AgentRunStatus.Running, $"Tool '{toolCall.ToolId}' completed. Continuing provider execution.");
         return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: toolResult);
     }
+
+    private static bool RequiresTerminalRecordingLast(ExecutedToolResult executedResult)
+        => string.Equals(
+            executedResult.Result.ErrorCode,
+            AgentToolResultErrorCodes.ChildWaitingForApproval,
+            StringComparison.OrdinalIgnoreCase);
 
     private static IReadOnlyList<IReadOnlyList<AgentToolCallRequest>> BuildToolExecutionBatches(
         IReadOnlyList<AgentToolCallRequest> toolCalls,
@@ -584,16 +643,89 @@ internal sealed class AgentBehaviorLoopHost(
 
     public async ValueTask<AgentToolCallOutcome> HandleApprovedToolCallAsync(
         AgentPendingPermissionRequestRecord pending,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken,
+        Func<CancellationToken, ValueTask<bool>> beginExecutionAsync)
     {
+        var availableToolsById = await GetAvailableToolsByIdAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(pending.ToolId)
+            || !availableToolsById.TryGetValue(pending.ToolId, out var advertisedDescriptor))
+        {
+            return await RecordApprovedSecurityDenialAsync(
+                pending,
+                $"Approved tool '{pending.ToolId}' is no longer in the ready, assigned tool catalog.",
+                AgentToolSecurityErrorCodes.NotAdvertised,
+                cancellationToken);
+        }
+
+        var permissionResolution = await _toolService.ResolvePermissionRequirementAsync(
+            pending.ToolId,
+            pending.ArgumentsJson,
+            pending.SessionId,
+            _profile.ProfileId,
+            _workspace,
+            pending.RunId,
+            pending.RunRevision,
+            pending.UserTurnId,
+            pending.CallId,
+            advertisedDescriptor,
+            cancellationToken);
+        if (permissionResolution is null || !string.IsNullOrWhiteSpace(permissionResolution.DeniedReason))
+        {
+            return await RecordApprovedSecurityDenialAsync(
+                pending,
+                permissionResolution?.DeniedReason
+                    ?? $"Approved tool '{pending.ToolId}' is no longer available from its advertised source.",
+                AgentToolSecurityErrorCodes.PermissionContextChanged,
+                cancellationToken);
+        }
+
+        var currentFingerprint = AgentPermissionFingerprint.Create(
+            pending.RunId,
+            pending.RunRevision,
+            permissionResolution.Descriptor,
+            pending.CallId,
+            pending.ArgumentsJson,
+            _workspace,
+            permissionResolution.ExecutionBinding,
+            permissionResolution.ExecutionTarget,
+            permissionResolution.PermissionRequest);
+        if (string.IsNullOrWhiteSpace(pending.ExecutionFingerprint)
+            || !string.Equals(pending.ExecutionFingerprint, currentFingerprint, StringComparison.Ordinal))
+        {
+            return await RecordApprovedSecurityDenialAsync(
+                pending,
+                "The approved tool execution context changed after permission was requested.",
+                AgentToolSecurityErrorCodes.PermissionContextChanged,
+                cancellationToken);
+        }
+
+        if (!await beginExecutionAsync(cancellationToken).ConfigureAwait(false))
+        {
+            throw new OperationCanceledException(
+                "The approved tool execution was stopped before it began.",
+                cancellationToken);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
         SaveCheckpoint(AgentRunStatus.Running, $"Executing approved tool '{pending.ToolId}'.");
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsCurrentRun())
+        {
+            throw new OperationCanceledException(
+                "The approved tool execution was stopped before it began.",
+                cancellationToken);
+        }
 
         var executionStopwatch = Stopwatch.StartNew();
         LogEvent(AgentLogLevel.Information, "tool.approved_execution.start", "Executing approved tool.", attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["tool.id"] = pending.ToolId,
         });
-        var toolResult = await ExecuteApprovedToolAsync(pending, cancellationToken);
+        var toolResult = await ExecuteApprovedToolAsync(
+            pending,
+            permissionResolution.Descriptor,
+            cancellationToken);
         LogEvent(
             toolResult.IsError ? AgentLogLevel.Error : AgentLogLevel.Information,
             toolResult.IsError ? "tool.approved_execution.failed" : "tool.approved_execution.completed",
@@ -608,6 +740,31 @@ internal sealed class AgentBehaviorLoopHost(
                 ["tool.error_code"] = toolResult.ErrorCode,
                 ["tool.content_length"] = toolResult.Content?.Length ?? 0,
             });
+        var approvedToolCall = new AgentToolCallRequest(
+            pending.CallId,
+            pending.ToolId ?? string.Empty,
+            pending.ArgumentsJson);
+        if (AgentToolSuspensionCompatibility.TryCreateChildJoin(
+                approvedToolCall,
+                toolResult,
+                pending.UserTurnId,
+                out var childJoin))
+        {
+            var suspended = _sessionService.SuspendRun(
+                _runLease,
+                childJoin!,
+                toolResult.Summary);
+            if (suspended is null)
+            {
+                throw new InvalidOperationException("The approved run changed before its child-join suspension could be persisted.");
+            }
+
+            return new AgentToolCallOutcome(
+                AgentToolCallOutcomeKind.WaitingForApproval,
+                suspended.Checkpoint,
+                toolResult);
+        }
+
         var toolResultTurn = AppendToolResult(pending.CallId, pending.ToolId ?? string.Empty, pending.ArgumentsJson, toolResult);
 
         await PublishLifecycleEventAsync(
@@ -625,9 +782,36 @@ internal sealed class AgentBehaviorLoopHost(
         return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: toolResult);
     }
 
+    private async Task<AgentToolCallOutcome> RecordApprovedSecurityDenialAsync(
+        AgentPendingPermissionRequestRecord pending,
+        string summary,
+        string errorCode,
+        CancellationToken cancellationToken)
+    {
+        var result = new AgentToolResult(
+            pending.ToolId ?? string.Empty,
+            summary,
+            Content: $"### Approved tool not executed\n\n{summary}",
+            IsError: true,
+            ErrorCode: errorCode);
+        var resultTurn = AppendToolResult(
+            pending.CallId,
+            pending.ToolId ?? string.Empty,
+            pending.ArgumentsJson,
+            result);
+        var checkpoint = SaveCheckpoint(AgentRunStatus.Failed, summary);
+        await PublishLifecycleEventAsync(
+            AgentLifecycleEventKind.RunFailed,
+            AgentRunStatus.Failed,
+            triggerTurn: resultTurn,
+            checkpoint: checkpoint,
+            cancellationToken: cancellationToken);
+        return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Denied, checkpoint, result);
+    }
+
     private AgentTurnRecord AppendToolResult(string callId, string toolId, string? argumentsJson, AgentToolResult toolResult)
         => _sessionService.AppendToolResultTurn(
-            _session.SessionId,
+            _runLease,
             callId,
             toolId,
             argumentsJson,
@@ -668,7 +852,10 @@ internal sealed class AgentBehaviorLoopHost(
                 }
             }
 
-            var executedResult = await ExecuteToolAsync(requestedToolCall, cancellationToken);
+            var executedResult = await ExecuteToolAsync(
+                requestedToolCall,
+                availableToolsById[requestedToolCall.ToolId],
+                cancellationToken);
             if (!executedResult.IsError)
             {
                 lock (_readOnlyToolResultCacheSync)
@@ -680,11 +867,15 @@ internal sealed class AgentBehaviorLoopHost(
             return executedResult;
         }
 
-        return await ExecuteToolAsync(requestedToolCall, cancellationToken);
+        return await ExecuteToolAsync(
+            requestedToolCall,
+            availableToolsById[requestedToolCall.ToolId],
+            cancellationToken);
     }
 
     private async Task<AgentToolResult> ExecuteToolAsync(
         AgentToolCallRequest requestedToolCall,
+        AgentToolDescriptor advertisedDescriptor,
         CancellationToken runCancellationToken)
     {
         return await _toolService.ExecuteAsync(
@@ -698,11 +889,13 @@ internal sealed class AgentBehaviorLoopHost(
             runRevision: _runRevision,
             userTurnId: _userTurnId,
             toolCallId: requestedToolCall.CallId,
+            advertisedDescriptor: advertisedDescriptor,
             cancellationToken: runCancellationToken);
     }
 
     private async Task<AgentToolResult> ExecuteApprovedToolAsync(
         AgentPendingPermissionRequestRecord pending,
+        AgentToolDescriptor advertisedDescriptor,
         CancellationToken cancellationToken)
     {
         var allowOutsideConfiguredScope = string.Equals(pending.BoundaryId, AgentPermissionBoundaryIds.OutsideConfiguredScope, StringComparison.OrdinalIgnoreCase);
@@ -717,6 +910,7 @@ internal sealed class AgentBehaviorLoopHost(
             runRevision: pending.RunRevision,
             userTurnId: pending.UserTurnId,
             toolCallId: pending.CallId,
+            advertisedDescriptor: advertisedDescriptor,
             cancellationToken: cancellationToken);
     }
 

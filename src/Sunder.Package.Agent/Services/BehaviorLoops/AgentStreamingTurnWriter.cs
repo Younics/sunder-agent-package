@@ -1,0 +1,302 @@
+using System.Diagnostics;
+using System.Text;
+using Microsoft.Extensions.AI;
+using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
+
+namespace Sunder.Package.Agent.Services.BehaviorLoops;
+
+internal sealed class AgentStreamingTurnWriter(AgentLoopTerminalHandler terminalHandler)
+{
+    private static readonly TimeSpan AssistantStreamFlushInterval = TimeSpan.FromMilliseconds(150);
+    private readonly AgentLoopTerminalHandler _terminalHandler = terminalHandler;
+
+    public AgentStreamingTurnState BeginCycle(
+        IAgentBehaviorLoopRuntime host,
+        AgentBehaviorLoopContext context,
+        AgentAssistantTurnState assistantTurnState,
+        Stopwatch loopStopwatch)
+        => new(host, context, assistantTurnState, loopStopwatch);
+
+    public void ResetForRetry(AgentStreamingTurnState state)
+    {
+        if (state.AssistantTurnState.Turn is not null && state.Content.Length > 0)
+        {
+            state.AssistantTurnState.Turn = state.Host.UpsertAssistantTurn(
+                state.AssistantTurnState.Turn,
+                string.Empty);
+        }
+
+        state.Content.Clear();
+        state.ToolCalls.Clear();
+        state.LastAssistantFlushElapsed = TimeSpan.MinValue;
+    }
+
+    public async Task WriteAttemptAsync(
+        AgentStreamingTurnState state,
+        IChatClient chatClient,
+        IReadOnlyList<ChatMessage> promptMessages,
+        ChatOptions chatOptions,
+        CancellationToken cancellationToken)
+    {
+        await foreach (var streamUpdate in chatClient.GetStreamingResponseAsync(
+                           promptMessages,
+                           chatOptions,
+                           cancellationToken))
+        {
+            if (!state.Host.IsCurrentRun())
+            {
+                state.TerminalResult = new AgentBehaviorLoopResult(
+                    state.Context.RunningCheckpoint,
+                    AgentBehaviorLoopCompletionKind.Interrupted);
+                return;
+            }
+
+            foreach (var functionCall in streamUpdate.Contents.OfType<FunctionCallContent>())
+            {
+                state.ToolCalls.Add(functionCall);
+            }
+
+            foreach (var reasoningContent in streamUpdate.Contents.OfType<TextReasoningContent>())
+            {
+                state.ReasoningActivity.Append(reasoningContent.Text, state.LoopStopwatch.Elapsed);
+            }
+
+            if (string.IsNullOrEmpty(streamUpdate.Text))
+            {
+                continue;
+            }
+
+            state.Content.Append(streamUpdate.Text);
+            if (AgentVisibleResponseGuard.ContainsProtocolLeak(state.Content.ToString()))
+            {
+                await BlockProtocolLeakAsync(state, cancellationToken);
+                return;
+            }
+
+            if (ShouldFlushAssistantStream(state))
+            {
+                state.AssistantTurnState.Turn = state.Host.UpsertAssistantTurn(
+                    state.AssistantTurnState.Turn,
+                    state.Content.ToString());
+                state.LastAssistantFlushElapsed = state.LoopStopwatch.Elapsed;
+            }
+        }
+    }
+
+    public AgentProviderCycleResult CompleteCycle(AgentStreamingTurnState state)
+    {
+        state.ReasoningActivity.Flush();
+        if (state.TerminalResult is not null)
+        {
+            return new AgentProviderCycleResult(
+                state.Content.ToString(),
+                state.ToolCalls,
+                state.TerminalResult);
+        }
+
+        if (state.Content.Length > 0)
+        {
+            state.AssistantTurnState.Turn = state.Host.UpsertAssistantTurn(
+                state.AssistantTurnState.Turn,
+                state.Content.ToString());
+        }
+
+        return new AgentProviderCycleResult(
+            state.Content.ToString(),
+            state.ToolCalls,
+            TerminalResult: null);
+    }
+
+    private async Task BlockProtocolLeakAsync(
+        AgentStreamingTurnState state,
+        CancellationToken cancellationToken)
+    {
+        state.TerminalResult = await _terminalHandler.FailAsync(
+            state.Host,
+            state.AssistantTurnState,
+            AgentVisibleResponseGuard.BlockedResponseContent,
+            "Assistant response contained internal protocol syntax.",
+            cancellationToken);
+        state.Host.LogEvent(
+            AgentLogLevel.Warning,
+            "assistant.response.protocol_leak_blocked",
+            "Assistant response contained internal protocol syntax.",
+            state.LoopStopwatch.ElapsedMilliseconds,
+            new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["assistant.response_length"] = state.Content.Length,
+            });
+    }
+
+    private static bool ShouldFlushAssistantStream(AgentStreamingTurnState state)
+        => state.AssistantTurnState.Turn is null
+           || state.LastAssistantFlushElapsed == TimeSpan.MinValue
+           || state.LoopStopwatch.Elapsed - state.LastAssistantFlushElapsed >= AssistantStreamFlushInterval;
+}
+
+internal sealed class AgentStreamingTurnState(
+    IAgentBehaviorLoopRuntime host,
+    AgentBehaviorLoopContext context,
+    AgentAssistantTurnState assistantTurnState,
+    Stopwatch loopStopwatch)
+{
+    public IAgentBehaviorLoopRuntime Host { get; } = host;
+
+    public AgentBehaviorLoopContext Context { get; } = context;
+
+    public AgentAssistantTurnState AssistantTurnState { get; } = assistantTurnState;
+
+    public Stopwatch LoopStopwatch { get; } = loopStopwatch;
+
+    public StringBuilder Content { get; } = new();
+
+    public List<FunctionCallContent> ToolCalls { get; } = [];
+
+    public ReasoningActivityReporter ReasoningActivity { get; } = new(host as IAgentRunActivitySink);
+
+    public TimeSpan LastAssistantFlushElapsed { get; set; } = TimeSpan.MinValue;
+
+    public AgentBehaviorLoopResult? TerminalResult { get; set; }
+}
+
+internal sealed record AgentProviderCycleResult(
+    string Text,
+    IReadOnlyList<FunctionCallContent> ToolCalls,
+    AgentBehaviorLoopResult? TerminalResult);
+
+internal sealed class ReasoningActivityReporter(IAgentRunActivitySink? activitySink)
+{
+    private static readonly TimeSpan ReportInterval = TimeSpan.FromMilliseconds(240);
+    private const int MaxDisplayLines = 5;
+    private const int MaxSegmentCharacters = 4096;
+    private readonly IAgentRunActivitySink? _activitySink = activitySink;
+    private readonly List<string> _completedSegments = [];
+    private readonly StringBuilder _currentSegment = new();
+    private TimeSpan _lastReportElapsed = TimeSpan.MinValue;
+    private string _lastReportedText = string.Empty;
+
+    public void Append(string? text, TimeSpan elapsed)
+    {
+        if (_activitySink is null || string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        AppendReasoningText(text);
+        var displayText = CreateDisplayText();
+        if (string.IsNullOrWhiteSpace(displayText)
+            || string.Equals(displayText, _lastReportedText, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (_lastReportElapsed != TimeSpan.MinValue && elapsed - _lastReportElapsed < ReportInterval)
+        {
+            return;
+        }
+
+        Report(displayText, elapsed);
+    }
+
+    public void Flush()
+    {
+        if (_activitySink is null
+            || (_completedSegments.Count == 0 && _currentSegment.Length == 0))
+        {
+            return;
+        }
+
+        var displayText = CreateDisplayText();
+        if (!string.IsNullOrWhiteSpace(displayText)
+            && !string.Equals(displayText, _lastReportedText, StringComparison.Ordinal))
+        {
+            Report(displayText, TimeSpan.MaxValue);
+        }
+    }
+
+    private void Report(string displayText, TimeSpan elapsed)
+    {
+        _lastReportedText = displayText;
+        _lastReportElapsed = elapsed;
+        _activitySink?.ReportRunActivity(AgentRunActivityKind.Reasoning, displayText);
+    }
+
+    private void AppendReasoningText(string text)
+    {
+        foreach (var character in text)
+        {
+            if (character is '\r' or '\n')
+            {
+                CompleteCurrentSegment();
+                continue;
+            }
+
+            if (char.IsWhiteSpace(character))
+            {
+                AppendCurrentSegmentSpace();
+                continue;
+            }
+
+            if (_currentSegment.Length < MaxSegmentCharacters)
+            {
+                _currentSegment.Append(character);
+            }
+
+            if (IsSentenceTerminator(character))
+            {
+                CompleteCurrentSegment();
+            }
+        }
+    }
+
+    private void AppendCurrentSegmentSpace()
+    {
+        if (_currentSegment.Length == 0
+            || _currentSegment.Length >= MaxSegmentCharacters
+            || _currentSegment[^1] == ' ')
+        {
+            return;
+        }
+
+        _currentSegment.Append(' ');
+    }
+
+    private void CompleteCurrentSegment()
+    {
+        var segment = NormalizeSegment(_currentSegment.ToString());
+        _currentSegment.Clear();
+        if (string.IsNullOrWhiteSpace(segment) || !segment.Any(char.IsLetterOrDigit))
+        {
+            return;
+        }
+
+        _completedSegments.Add(segment);
+        while (_completedSegments.Count > MaxDisplayLines)
+        {
+            _completedSegments.RemoveAt(0);
+        }
+    }
+
+    private string CreateDisplayText()
+    {
+        var segments = new List<string>(_completedSegments);
+        var currentSegment = NormalizeSegment(_currentSegment.ToString());
+        if (!string.IsNullOrWhiteSpace(currentSegment)
+            && currentSegment.Any(char.IsLetterOrDigit))
+        {
+            segments.Add(currentSegment);
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            segments.Skip(Math.Max(0, segments.Count - MaxDisplayLines)));
+    }
+
+    private static string NormalizeSegment(string text)
+        => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    private static bool IsSentenceTerminator(char character)
+        => character is '.' or '?' or '!';
+}

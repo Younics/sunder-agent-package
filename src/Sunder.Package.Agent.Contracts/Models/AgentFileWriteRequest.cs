@@ -3,4 +3,7 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public sealed record AgentFileWriteRequest(
     string Path,
     string Content,
-    bool Overwrite = true);
+    bool Overwrite = true)
+{
+    public string? ExpectedContentHash { get; init; }
+}

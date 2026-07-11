@@ -5,5 +5,9 @@
         <Nullable>enable</Nullable>
         <AnalysisLevel>latest</AnalysisLevel>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <SunderSdkProject>$(MSBuildThisFileDirectory)..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj</SunderSdkProject>
+        <SunderPackageBuildTargets>$(MSBuildThisFileDirectory)..\sunder-core\src\Sdk\Sunder.Package.Build\build\Sunder.Package.Build.targets</SunderPackageBuildTargets>
+        <SunderUseSourceSdk Condition="'$(SunderUseSourceSdk)' == '' and Exists('$(SunderSdkProject)')">true</SunderUseSourceSdk>
+        <SunderUseSourceSdk Condition="'$(SunderUseSourceSdk)' == ''">false</SunderUseSourceSdk>
     </PropertyGroup>
 </Project>

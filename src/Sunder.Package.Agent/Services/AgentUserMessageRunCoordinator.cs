@@ -1,52 +1,135 @@
-using System.Diagnostics;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services.BehaviorLoops;
-using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed partial class AgentUserMessageRunCoordinator(
-    AgentSessionService sessionService,
-    AgentProfileService profileService,
-    AgentWorkspaceService workspaceService,
-    AgentMemoryCoordinator memoryCoordinator,
-    AgentRunAttachmentStore attachmentStore,
-    AgentActiveRunRegistry activeRunRegistry,
-    AgentRunEventLogger runEventLogger,
-    AgentRunProviderResolver providerResolver,
-    AgentBehaviorLoopHostFactory behaviorLoopHostFactory,
-    AgentBehaviorLoopResolver behaviorLoopResolver,
-    AgentSessionTitleService? sessionTitleService = null
-)
+public sealed class AgentUserMessageRunCoordinator
 {
-    private readonly AgentSessionService _sessionService = sessionService;
-    private readonly AgentProfileService _profileService = profileService;
-    private readonly AgentWorkspaceService _workspaceService = workspaceService;
-    private readonly AgentMemoryCoordinator _memoryCoordinator = memoryCoordinator;
-    private readonly AgentRunAttachmentStore _attachmentStore = attachmentStore;
-    private readonly AgentActiveRunRegistry _activeRunRegistry = activeRunRegistry;
-    private readonly AgentRunEventLogger _runEventLogger = runEventLogger;
-    private readonly AgentRunProviderResolver _providerResolver = providerResolver;
-    private readonly AgentBehaviorLoopHostFactory _behaviorLoopHostFactory =
-        behaviorLoopHostFactory;
-    private readonly AgentBehaviorLoopResolver _behaviorLoopResolver = behaviorLoopResolver;
-    private readonly AgentSessionTitleService? _sessionTitleService = sessionTitleService;
+    private readonly AgentSessionService _sessionService;
+    private readonly AgentRunPreparationService _preparationService;
+    private readonly AgentRunStartService _startService;
+    private readonly AgentRunExecutionService _executionService;
+    private readonly AgentActiveRunRegistry _activeRunRegistry;
+    private readonly AgentSessionTransitionGate _transitionGate;
+
+    internal AgentUserMessageRunCoordinator(
+        AgentSessionService sessionService,
+        AgentRunPreparationService preparationService,
+        AgentRunStartService startService,
+        AgentRunExecutionService executionService,
+        AgentActiveRunRegistry activeRunRegistry,
+        AgentSessionTransitionGate? transitionGate = null)
+    {
+        _sessionService = sessionService;
+        _preparationService = preparationService;
+        _startService = startService;
+        _executionService = executionService;
+        _activeRunRegistry = activeRunRegistry;
+        _transitionGate = transitionGate ?? AgentSessionTransitionGate.Shared;
+    }
+
+    public AgentUserMessageRunCoordinator(
+        AgentSessionService sessionService,
+        AgentProfileService profileService,
+        AgentWorkspaceService workspaceService,
+        AgentMemoryCoordinator memoryCoordinator,
+        AgentRunAttachmentStore attachmentStore,
+        AgentActiveRunRegistry activeRunRegistry,
+        AgentRunEventLogger runEventLogger,
+        AgentRunProviderResolver providerResolver,
+        AgentBehaviorLoopHostFactory behaviorLoopHostFactory,
+        AgentBehaviorLoopResolver behaviorLoopResolver,
+        AgentSessionTitleService? sessionTitleService = null)
+        : this(
+            sessionService,
+            new AgentRunPreparationService(
+                sessionService,
+                profileService,
+                workspaceService,
+                attachmentStore,
+                runEventLogger,
+                providerResolver,
+                sessionTitleService),
+            new AgentRunStartService(
+                sessionService,
+                memoryCoordinator,
+                attachmentStore,
+                activeRunRegistry,
+                runEventLogger,
+                sessionTitleService),
+            new AgentRunExecutionService(
+                sessionService,
+                workspaceService,
+                memoryCoordinator,
+                activeRunRegistry,
+                runEventLogger,
+                behaviorLoopHostFactory,
+                behaviorLoopResolver),
+            activeRunRegistry)
+    {
+    }
 
     public Task<AgentRunCheckpointRecord> QueueAsync(
         Guid sessionId,
         string profileId,
         string userMessage,
-        string workspaceId
-    ) => QueueAsync(sessionId, profileId, userMessage, workspaceId, []);
+        string workspaceId) =>
+        QueueAsync(sessionId, profileId, userMessage, workspaceId, []);
 
-    public async Task<AgentRunCheckpointRecord> QueueAsync(
+    public Task<AgentRunCheckpointRecord> QueueAsync(
         Guid sessionId,
         string profileId,
         string userMessage,
         string workspaceId,
-        IReadOnlyList<AgentAttachmentUploadRequest> attachments
-    ) => await QueueAsync(sessionId, profileId, userMessage, workspaceId, attachments, rollbackAnchorTurnId: null).ConfigureAwait(false);
+        CancellationToken cancellationToken) =>
+        QueueAsync(sessionId, profileId, userMessage, workspaceId, [], cancellationToken);
+
+    public Task<AgentRunCheckpointRecord> QueueAsync(
+        Guid sessionId,
+        string profileId,
+        string userMessage,
+        string workspaceId,
+        IReadOnlyList<AgentAttachmentUploadRequest> attachments) =>
+        QueueAsync(
+            sessionId,
+            profileId,
+            userMessage,
+            workspaceId,
+            attachments,
+            rollbackAnchorTurnId: null);
+
+    public Task<AgentRunCheckpointRecord> QueueAsync(
+        Guid sessionId,
+        string profileId,
+        string userMessage,
+        string workspaceId,
+        IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+        CancellationToken cancellationToken) =>
+        QueueAsync(
+            sessionId,
+            profileId,
+            userMessage,
+            workspaceId,
+            attachments,
+            rollbackAnchorTurnId: null,
+            cancellationToken);
+
+    public Task<AgentRunCheckpointRecord> QueueAsync(
+        Guid sessionId,
+        string profileId,
+        string userMessage,
+        string workspaceId,
+        IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+        Guid? rollbackAnchorTurnId) =>
+        QueueAsync(
+            sessionId,
+            profileId,
+            userMessage,
+            workspaceId,
+            attachments,
+            rollbackAnchorTurnId,
+            CancellationToken.None);
 
     public async Task<AgentRunCheckpointRecord> QueueAsync(
         Guid sessionId,
@@ -54,530 +137,147 @@ public sealed partial class AgentUserMessageRunCoordinator(
         string userMessage,
         string workspaceId,
         IReadOnlyList<AgentAttachmentUploadRequest> attachments,
-        Guid? rollbackAnchorTurnId
-    )
+        Guid? rollbackAnchorTurnId,
+        CancellationToken cancellationToken)
     {
-        var session =
-            _sessionService.GetSession(sessionId)
+        cancellationToken.ThrowIfCancellationRequested();
+        var session = _sessionService.GetSession(sessionId)
             ?? throw new InvalidOperationException($"Session '{sessionId}' was not found.");
-        var nextRevision = _sessionService.GetNextRunRevision(sessionId);
-        var runId = Guid.NewGuid();
-        var runStartedAtUtc = DateTimeOffset.UtcNow;
-        var runStopwatch = Stopwatch.StartNew();
-        var shouldGenerateSessionTitle =
-            _sessionTitleService?.ShouldGenerateTitleForFirstUserMessage(session) == true;
-
-        var workspace = ResolveWorkspace(workspaceId);
-        if (workspace is null)
+        AgentDurableRunRecord reservedRun;
+        AgentActiveRunHandle runHandle;
+        using (await _transitionGate.EnterAsync(sessionId, cancellationToken).ConfigureAwait(false))
         {
-            return _sessionService.SaveCheckpoint(
-                sessionId,
-                nextRevision,
-                AgentRunStatus.Failed,
-                "The selected workspace was not found."
-            );
-        }
-
-        if (string.IsNullOrWhiteSpace(session.WorkspaceId))
-        {
-            return _sessionService.SaveCheckpoint(
-                sessionId,
-                nextRevision,
-                AgentRunStatus.Failed,
-                "The selected session is not assigned to a workspace."
-            );
-        }
-        else if (!string.Equals(session.WorkspaceId, workspace.WorkspaceId, StringComparison.OrdinalIgnoreCase))
-        {
-            return _sessionService.SaveCheckpoint(
-                sessionId,
-                nextRevision,
-                AgentRunStatus.Failed,
-                "The selected session belongs to a different workspace."
-            );
-        }
-
-        var profile = ResolveProfile(profileId);
-        if (profile is null)
-        {
-            return _sessionService.SaveCheckpoint(
-                sessionId,
-                nextRevision,
-                AgentRunStatus.Failed,
-                "The selected agent was not found."
-            );
-        }
-
-        if (
-            !string.Equals(session.ProfileId, profile.ProfileId, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(
-                session.BehaviorLoopId,
-                profile.BehaviorLoopId,
-                StringComparison.OrdinalIgnoreCase
-            )
-        )
-        {
-            session = session with
+            reservedRun = _sessionService.ReserveRun(sessionId, profileId, userMessage);
+            var runCancellationSource = cancellationToken.CanBeCanceled
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : new CancellationTokenSource();
+            runHandle = new AgentActiveRunHandle(
+                reservedRun.Key.RunId,
+                reservedRun.Key.RunRevision,
+                reservedRun.StartedAtUtc,
+                reservedRun.ProfileId,
+                reservedRun.UserMessage,
+                runCancellationSource)
             {
-                ProfileId = profile.ProfileId,
-                BehaviorLoopId = profile.BehaviorLoopId,
-                UpdatedAtUtc = DateTimeOffset.UtcNow,
+                DurableLease = new AgentDurableRunLease(reservedRun),
             };
-            _sessionService.UpdateSession(session);
-        }
-
-        var providerSelection = _providerResolver.ResolveChatProvider(profile);
-        var chatBinding = providerSelection.ChatBinding;
-        var provider = providerSelection.Provider;
-
-        _runEventLogger.LogRunEvent(
-            PackageLogLevel.Information,
-            sessionId,
-            runId,
-            nextRevision,
-            "run.started",
-            "Agent run started.",
-            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+            var activation = _activeRunRegistry.Activate(sessionId, runHandle);
+            if (!activation.IsAccepted)
             {
-                ["profile.id"] = profile.ProfileId,
-                ["profile.display_name"] = profile.DisplayName,
-                ["provider.id"] = chatBinding?.ProviderId,
-                ["model.id"] = chatBinding?.ModelId,
-                ["workspace.id"] = workspace.WorkspaceId,
+                runCancellationSource.Dispose();
+                throw new InvalidOperationException("The newly reserved run was rejected by the active-run registry.");
             }
-        );
 
-        if (
-            provider is null
-            || chatBinding is null
-            || string.IsNullOrWhiteSpace(chatBinding.ModelId)
-        )
-        {
-            _runEventLogger.LogRunEvent(
-                PackageLogLevel.Error,
-                sessionId,
-                runId,
-                nextRevision,
-                "run.failed",
-                "No installed provider matches this profile yet, or no model is selected.",
-                runStopwatch.ElapsedMilliseconds
-            );
-            return _sessionService.SaveCheckpoint(
-                sessionId,
-                nextRevision,
-                AgentRunStatus.Failed,
-                "No installed provider matches this profile yet, or no model is selected."
-            );
+            if (activation.DisplacedRun is { } displacedRun)
+            {
+                displacedRun.CancellationTokenSource.Cancel();
+                if (displacedRun.DurableLease is { } displacedLease)
+                {
+                    _sessionService.TryTransitionRun(
+                        displacedLease,
+                        AgentRunStatus.Interrupted,
+                        "Superseded by a newer user message during preparation or execution.");
+                }
+            }
         }
 
         try
         {
-            var readinessStopwatch = Stopwatch.StartNew();
-            _runEventLogger.LogRunEvent(
-                PackageLogLevel.Information,
-                sessionId,
-                runId,
-                nextRevision,
-                "provider.model.selected",
-                "Provider model selected.",
-                attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
-                {
-                    ["provider.id"] = provider.Descriptor.ProviderId,
-                    ["model.id"] = chatBinding.ModelId,
-                }
-            );
-            var readiness = await provider
-                .GetReadinessAsync(CancellationToken.None)
-                .ConfigureAwait(false);
-            _runEventLogger.LogRunEvent(
-                PackageLogLevel.Debug,
-                sessionId,
-                runId,
-                nextRevision,
-                "provider.readiness.completed",
-                readiness.Message,
-                readinessStopwatch.ElapsedMilliseconds,
-                new Dictionary<string, object?>(StringComparer.Ordinal)
-                {
-                    ["provider.id"] = provider.Descriptor.ProviderId,
-                    ["provider.readiness_status"] = readiness.Status,
-                }
-            );
-            if (readiness.Status != AgentProviderReadinessStatus.Ready)
+            var preparation = await _preparationService.PrepareAsync(
+                session,
+                reservedRun,
+                runHandle,
+                profileId,
+                workspaceId,
+                attachments,
+                rollbackAnchorTurnId,
+                runHandle.CancellationTokenSource.Token).ConfigureAwait(false);
+            if (preparation is AgentRunPreparationFailed preparationFailure)
             {
-                return _sessionService.SaveCheckpoint(
-                    sessionId,
-                    nextRevision,
-                    AgentRunStatus.Failed,
-                    readiness.Message
-                );
+                return _sessionService.TryTransitionRun(
+                           runHandle.DurableLease!,
+                           AgentRunStatus.Failed,
+                           preparationFailure.Summary)?.Checkpoint
+                       ?? GetTerminalCheckpoint(reservedRun);
             }
+
+            var preparedPlan = ((AgentRunPrepared)preparation).Plan;
+            var start = await _startService
+                .StartAsync(preparedPlan, runHandle.CancellationTokenSource.Token)
+                .ConfigureAwait(false);
+            return start switch
+            {
+                AgentRunStartInterrupted interrupted => interrupted.Checkpoint,
+                AgentRunStarted started => await _executionService
+                    .ExecuteAsync(started)
+                    .ConfigureAwait(false),
+                _ => throw new InvalidOperationException("Unknown agent run start result."),
+            };
         }
         catch (OperationCanceledException)
         {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _runEventLogger.LogRunEvent(
-                PackageLogLevel.Error,
+            var wasCurrent = _activeRunRegistry.IsCurrent(
                 sessionId,
-                runId,
-                nextRevision,
-                "provider.readiness.failed",
-                "Provider readiness check failed.",
-                runStopwatch.ElapsedMilliseconds,
-                exception: ex
-            );
-            return _sessionService.SaveCheckpoint(
-                sessionId,
-                nextRevision,
-                AgentRunStatus.Failed,
-                ex.Message
-            );
-        }
-
-        AgentProviderRunCapabilities runCapabilities;
-        AgentModelVariantDescriptor? modelVariant;
-        AgentModelSpeedOptionDescriptor? modelSpeedOption;
-        AgentModelModeOptionDescriptor? modelModeOption;
-        try
-        {
-            var capabilitiesStopwatch = Stopwatch.StartNew();
-            var metadata = await _providerResolver
-                .ResolveRunMetadataAsync(provider, chatBinding, CancellationToken.None)
-                .ConfigureAwait(false);
-            runCapabilities = metadata.RunCapabilities;
-            modelVariant = metadata.ModelVariant;
-            modelSpeedOption = metadata.ModelSpeedOption;
-            modelModeOption = metadata.ModelModeOption;
-            _runEventLogger.LogRunEvent(
-                PackageLogLevel.Debug,
-                sessionId,
-                runId,
-                nextRevision,
-                "provider.capabilities.completed",
-                runCapabilities.Summary,
-                capabilitiesStopwatch.ElapsedMilliseconds,
-                new Dictionary<string, object?>(StringComparer.Ordinal)
-                {
-                    ["provider.supports_native_tool_calling"] =
-                        runCapabilities.SupportsNativeToolCalling,
-                    ["provider.supports_streaming_tool_calls"] =
-                        runCapabilities.SupportsStreamingToolCalls,
-                    ["provider.supports_multiple_tool_calls"] =
-                        runCapabilities.SupportsMultipleToolCalls,
-                    ["provider.supports_image_input"] = runCapabilities.SupportsImageInput,
-                    ["provider.supports_pdf_input"] = runCapabilities.SupportsPdfInput,
-                    ["provider.supports_audio_input"] = runCapabilities.SupportsAudioInput,
-                    ["provider.supports_video_input"] = runCapabilities.SupportsVideoInput,
-                    ["model.variant_id"] = modelVariant?.VariantId,
-                    ["model.speed_option_id"] = modelSpeedOption?.SpeedOptionId,
-                    ["model.mode_option_id"] = modelModeOption?.ModeOptionId,
-                }
-            );
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _runEventLogger.LogRunEvent(
-                PackageLogLevel.Error,
-                sessionId,
-                runId,
-                nextRevision,
-                "provider.capabilities.failed",
-                "Provider capability lookup failed.",
-                runStopwatch.ElapsedMilliseconds,
-                exception: ex
-            );
-            return _sessionService.SaveCheckpoint(
-                sessionId,
-                nextRevision,
-                AgentRunStatus.Failed,
-                ex.Message
-            );
-        }
-
-        IReadOnlyList<AgentStoredAttachment> storedAttachments;
-        try
-        {
-            storedAttachments = await _attachmentStore
-                .StoreAsync(sessionId, attachments, CancellationToken.None)
-                .ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _runEventLogger.LogRunEvent(
-                PackageLogLevel.Error,
-                sessionId,
-                runId,
-                nextRevision,
-                "attachment.store.failed",
-                ex.Message,
-                runStopwatch.ElapsedMilliseconds,
-                exception: ex
-            );
-            return _sessionService.SaveCheckpoint(
-                sessionId,
-                nextRevision,
-                AgentRunStatus.Failed,
-                ex.Message
-            );
-        }
-
-        var interruptedRun = _activeRunRegistry.Remove(sessionId);
-        var interruptedCheckpoint = interruptedRun is null
-            ? null
-            : _sessionService.SaveCheckpoint(
-                sessionId,
-                interruptedRun.RunRevision,
+                reservedRun.Key.RunId,
+                reservedRun.Key.RunRevision);
+            var summary = !wasCurrent && !cancellationToken.IsCancellationRequested
+                ? "Superseded by a newer user message before provider execution started."
+                : "Agent run was canceled before provider execution started.";
+            var checkpoint = TryTerminateReservedRun(
+                runHandle,
                 AgentRunStatus.Interrupted,
-                "Interrupted by a newer user message before provider execution completed."
-            );
-
-        if (interruptedRun is not null && interruptedCheckpoint is not null)
-        {
-            await _memoryCoordinator
-                .PublishLifecycleEventAsync(
-                    AgentLifecycleEventKind.RunInterrupted,
-                    session,
-                    profile,
-                    interruptedRun.RunId,
-                    interruptedRun.RunRevision,
-                    AgentRunStatus.Interrupted,
-                    interruptedRun.StartedAtUtc,
-                    interruptedRun.UserMessage,
-                    checkpoint: interruptedCheckpoint,
-                    isInterrupted: true,
-                    cancellationToken: CancellationToken.None
-                )
-                .ConfigureAwait(false);
-        }
-
-        interruptedRun?.CancellationTokenSource.Cancel();
-        interruptedRun?.CancellationTokenSource.Dispose();
-
-        if (rollbackAnchorTurnId is { } anchorTurnId)
-        {
-            _sessionService.RollbackTranscript(sessionId, anchorTurnId);
-            session = _sessionService.GetSession(sessionId)
-                ?? throw new InvalidOperationException($"Session '{sessionId}' was not found after rollback.");
-        }
-
-        var userTurn =
-            storedAttachments.Count == 0
-                ? _sessionService.AppendTextTurn(sessionId, AgentMessageRole.User, userMessage)
-                : _sessionService.AppendUserTurn(
-                    sessionId,
-                    AgentMessageRole.User,
-                    userMessage,
-                    storedAttachments
-                );
-        if (shouldGenerateSessionTitle)
-        {
-            _sessionTitleService?.ScheduleTitleFromFirstUserMessage(
-                session,
-                profile,
-                userMessage,
-                runId,
-                nextRevision);
-        }
-
-        _runEventLogger.LogRunEvent(
-            PackageLogLevel.Debug,
-            sessionId,
-            runId,
-            nextRevision,
-            "turn.user.appended",
-            "User turn appended.",
-            runStopwatch.ElapsedMilliseconds,
-            new Dictionary<string, object?>(StringComparer.Ordinal)
+                summary);
+            if (cancellationToken.IsCancellationRequested || wasCurrent)
             {
-                ["turn.content_length"] = userMessage.Length,
-                ["turn.attachment_count"] = storedAttachments.Count,
-                ["turn.attachment_bytes"] = storedAttachments.Sum(attachment =>
-                    attachment.Metadata.SizeBytes
-                ),
+                throw;
             }
-        );
-        await _memoryCoordinator
-            .PublishLifecycleEventAsync(
-                AgentLifecycleEventKind.UserTurnAdded,
-                session,
-                profile,
-                runId,
-                nextRevision,
-                AgentRunStatus.Running,
-                runStartedAtUtc,
-                userMessage,
-                triggerTurn: userTurn,
-                cancellationToken: CancellationToken.None
-            )
-            .ConfigureAwait(false);
-        var profileHasCapabilityAssignments =
-            (profile.SelectableCapabilityAssignments?.Count ?? 0) > 0;
-        var runningSummary =
-            runCapabilities.SupportsNativeToolCalling
-                ? "User message queued. Provider execution is starting."
-            : profileHasCapabilityAssignments
-                ? $"User message queued. Provider execution is starting in text-only mode. {runCapabilities.Summary}"
-            : "User message queued. Provider execution is starting.";
-        var runningCheckpoint = _sessionService.SaveCheckpoint(
-            sessionId,
-            nextRevision,
-            AgentRunStatus.Running,
-            runningSummary
-        );
-        _runEventLogger.LogRunEvent(
-            PackageLogLevel.Debug,
-            sessionId,
-            runId,
-            nextRevision,
-            "run.running_checkpoint.saved",
-            runningSummary,
-            runStopwatch.ElapsedMilliseconds
-        );
 
-        var runHandle = new AgentActiveRunHandle(
-            runId,
-            nextRevision,
-            runStartedAtUtc,
-            profile.ProfileId,
-            userMessage,
-            new CancellationTokenSource()
-        );
-        _activeRunRegistry.Set(sessionId, runHandle);
-
-        try
-        {
-            var executionBinding = ResolveExecutionBinding(workspace);
-            var host = _behaviorLoopHostFactory.Create(
-                provider,
-                session,
-                profile,
-                workspace,
-                runId,
-                nextRevision,
-                runStartedAtUtc,
-                userMessage,
-                userTurn.TurnId
-            );
-            var behaviorLoop = _behaviorLoopResolver.Resolve(profile);
-            _runEventLogger.LogRunEvent(
-                PackageLogLevel.Debug,
-                sessionId,
-                runId,
-                nextRevision,
-                "behavior.loop.selected",
-                "Behavior loop selected.",
-                runStopwatch.ElapsedMilliseconds,
-                new Dictionary<string, object?>(StringComparer.Ordinal)
-                {
-                    ["behavior.loop_id"] = behaviorLoop.Descriptor.LoopId,
-                }
-            );
-            var loopResult = await behaviorLoop
-                .RunAsync(
-                    new AgentBehaviorLoopContext(
-                        session,
-                        profile,
-                        provider.Descriptor.ProviderId,
-                        chatBinding.ModelId,
-                        runCapabilities,
-                        workspace,
-                        executionBinding,
-                        runId,
-                        nextRevision,
-                        runningCheckpoint,
-                        runStartedAtUtc,
-                        userMessage,
-                        userTurn.TurnId,
-                        modelVariant,
-                        modelSpeedOption,
-                        modelModeOption
-                    ),
-                    host,
-                    runHandle.CancellationTokenSource.Token
-                )
-                .ConfigureAwait(false);
-            loopResult = ResolveStoppedOrInterruptedRunResult(sessionId, nextRevision, loopResult);
-            _runEventLogger.LogRunCompletion(
-                sessionId,
-                runId,
-                nextRevision,
-                loopResult,
-                runStopwatch.ElapsedMilliseconds
-            );
-            return loopResult.Checkpoint;
-        }
-        catch (OperationCanceledException)
-        {
-            _runEventLogger.LogRunEvent(
-                PackageLogLevel.Warning,
-                sessionId,
-                runId,
-                nextRevision,
-                "run.canceled",
-                "Agent run was canceled.",
-                runStopwatch.ElapsedMilliseconds
-            );
-            return GetStoppedOrInterruptedCheckpoint(sessionId, nextRevision)
-                ?? interruptedCheckpoint
-                ?? runningCheckpoint;
+            return checkpoint;
         }
         catch (Exception ex)
         {
-            if (!_activeRunRegistry.IsCurrent(sessionId, nextRevision))
-            {
-                return interruptedCheckpoint ?? runningCheckpoint;
-            }
-
-            var assistantTurn = _sessionService.AppendTextTurn(
-                sessionId,
-                AgentMessageRole.Assistant,
-                $"### Agent run failed\n\n{ex.Message}"
-            );
-
-            var failedCheckpoint = _sessionService.SaveCheckpoint(
-                sessionId,
-                nextRevision,
-                AgentRunStatus.Failed,
-                ex.Message
-            );
-            _runEventLogger.LogRunEvent(
-                PackageLogLevel.Error,
-                sessionId,
-                runId,
-                nextRevision,
-                "run.failed",
-                ex.Message,
-                runStopwatch.ElapsedMilliseconds,
-                exception: ex
-            );
-            await _memoryCoordinator
-                .PublishLifecycleEventAsync(
-                    AgentLifecycleEventKind.RunFailed,
-                    session,
-                    profile,
-                    runId,
-                    nextRevision,
-                    AgentRunStatus.Failed,
-                    runStartedAtUtc,
-                    userMessage,
-                    triggerTurn: assistantTurn,
-                    checkpoint: failedCheckpoint,
-                    cancellationToken: CancellationToken.None
-                )
-                .ConfigureAwait(false);
-            return failedCheckpoint;
+            _ = TryTerminateReservedRun(runHandle, AgentRunStatus.Failed, ex.Message);
+            throw;
         }
         finally
         {
-            _activeRunRegistry.CleanupCurrent(sessionId, nextRevision);
+            _activeRunRegistry.TryCleanupCurrent(
+                sessionId,
+                reservedRun.Key.RunId,
+                reservedRun.Key.RunRevision);
+            runHandle.CancellationTokenSource.Dispose();
         }
     }
 
+    private AgentRunCheckpointRecord TryTerminateReservedRun(
+        AgentActiveRunHandle runHandle,
+        AgentRunStatus status,
+        string summary)
+    {
+        try
+        {
+            if (runHandle.DurableLease is { } lease
+                && _sessionService.TryTransitionRun(lease, status, summary) is { } transition)
+            {
+                return transition.Checkpoint;
+            }
+        }
+        catch
+        {
+            // Preserve the original execution outcome if termination persistence also fails.
+        }
+
+        return GetTerminalCheckpoint(
+            runHandle.DurableLease!.Key.SessionId,
+            runHandle.RunRevision);
+    }
+
+    private AgentRunCheckpointRecord GetTerminalCheckpoint(AgentDurableRunRecord run)
+        => GetTerminalCheckpoint(run.Key.SessionId, run.Key.RunRevision);
+
+    private AgentRunCheckpointRecord GetTerminalCheckpoint(Guid sessionId, long runRevision)
+    {
+        return _sessionService.GetLatestCheckpoint(sessionId, runRevision)
+            ?? throw new InvalidOperationException("The run ended without a durable terminal checkpoint.");
+    }
 }

@@ -1,0 +1,129 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:provider="using:Sunder.Package.Agent.Provider.Shared"
+        xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews">
+  <Styles.Resources>
+    <DataTemplate x:Key="ProviderApiKeySettingsTemplate"
+                  x:DataType="provider:ApiKeySettingsState">
+      <Border Classes="card-surface">
+        <StackPanel Spacing="14">
+          <Grid ColumnDefinitions="*,Auto"
+                ColumnSpacing="12">
+            <TextBlock Classes="section-title"
+                       Text="API Key"
+                       VerticalAlignment="Center" />
+            <Border Grid.Column="1"
+                    Classes="settings-status-pill"
+                    Classes.success="{Binding HasStoredCredential}"
+                    Classes.warning="{Binding IsCredentialStatusWarning}">
+              <TextBlock Classes="settings-status-label"
+                         Text="{Binding CredentialStatusLabel}" />
+            </Border>
+          </Grid>
+
+          <Border Classes="settings-detail-card">
+            <StackPanel Spacing="6">
+              <TextBlock Classes="caption"
+                         Text="{Binding Description}"
+                         TextWrapping="Wrap" />
+              <TextBlock Classes="muted"
+                         Text="{Binding CredentialStatusDetail}"
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+
+          <TextBox Classes="secret-field"
+                   Text="{Binding EnteredCredential, Mode=TwoWay}"
+                   PasswordChar="*"
+                   PlaceholderText="{Binding Placeholder}" />
+
+          <TextBlock Text="{Binding OperationStatus}"
+                     IsVisible="{Binding HasOperationStatus}"
+                     Classes="settings-operation-status"
+                     Classes.success="{Binding IsOperationStatusSuccess}"
+                     Classes.warning="{Binding IsOperationStatusWarning}"
+                     Classes.danger="{Binding IsOperationStatusError}"
+                     TextWrapping="Wrap" />
+
+          <StackPanel Orientation="Horizontal"
+                      Spacing="10"
+                      IsVisible="{Binding !IsClearConfirmationRequested}">
+            <Button Classes="primary-action"
+                    Content="Save API Key"
+                    Command="{Binding SaveCredentialCommand}"
+                    IsEnabled="{Binding CanSaveCredential}" />
+            <Button Classes="secondary-action"
+                    Content="Clear Stored Key"
+                    Command="{Binding RequestClearCredentialCommand}"
+                    IsEnabled="{Binding CanRequestClearCredential}"
+                    IsVisible="{Binding HasStoredCredential}" />
+          </StackPanel>
+
+          <Border Classes="settings-confirmation-card"
+                  IsVisible="{Binding IsClearConfirmationRequested}">
+            <StackPanel Spacing="10">
+              <TextBlock Text="Clear the stored API key? This cannot be undone."
+                         TextWrapping="Wrap" />
+              <StackPanel Orientation="Horizontal"
+                          Spacing="10">
+                <Button Classes="danger-action"
+                        Content="Clear API Key"
+                        Command="{Binding ClearCredentialCommand}"
+                        IsEnabled="{Binding CanConfirmClearCredential}" />
+                <Button Classes="secondary-action"
+                        Content="Cancel"
+                        Command="{Binding CancelClearCredentialCommand}" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate x:Key="ProviderUtilityModelSettingsTemplate"
+                  x:DataType="provider:UtilityModelSettingsState">
+      <Border Classes="card-surface">
+        <StackPanel Spacing="14">
+          <StackPanel Spacing="6">
+            <TextBlock Classes="section-title"
+                       Text="Utility Model" />
+            <TextBlock Classes="caption"
+                       Text="Used for short background tasks such as generating session names. Regular agent replies keep using the model selected on the Agent profile."
+                       TextWrapping="Wrap" />
+          </StackPanel>
+
+          <shared:SunderComboBox ItemsSource="{Binding UtilityModels}"
+                                 SelectedItem="{Binding SelectedUtilityModel, Mode=TwoWay}"
+                                 HorizontalAlignment="Left">
+            <shared:SunderComboBox.ItemTemplate>
+              <DataTemplate x:DataType="provider:ProviderUtilityModelOption">
+                <TextBlock Text="{Binding DisplayName}" />
+              </DataTemplate>
+            </shared:SunderComboBox.ItemTemplate>
+          </shared:SunderComboBox>
+
+          <TextBlock Text="{Binding OperationStatus}"
+                     IsVisible="{Binding HasOperationStatus}"
+                     Classes="settings-operation-status"
+                     Classes.success="{Binding IsOperationStatusSuccess}"
+                     Classes.warning="{Binding IsOperationStatusWarning}"
+                     Classes.danger="{Binding IsOperationStatusError}"
+                     TextWrapping="Wrap" />
+
+          <StackPanel Orientation="Horizontal"
+                      Spacing="10">
+            <Button Classes="primary-action"
+                    Content="Save Utility Model"
+                    Command="{Binding SaveUtilityModelCommand}"
+                    IsEnabled="{Binding CanSaveUtilityModel}" />
+            <Button Classes="secondary-action"
+                    Content="Cancel"
+                    Command="{Binding CancelUtilityModelSaveCommand}"
+                    IsEnabled="{Binding CanCancelUtilityModelSave}"
+                    IsVisible="{Binding CanCancelUtilityModelSave}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+  </Styles.Resources>
+</Styles>

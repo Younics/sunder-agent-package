@@ -4,6 +4,7 @@ namespace Sunder.Package.Agent.Provider.Gemini;
 
 public static class GeminiProviderConfiguration
 {
+    public const string ApiKeySecretKey = "auth.apiKey";
     public const string UtilityModelKey = "utility.modelId";
     public const string DefaultUtilityModelId = "gemini/gemini-2.5-flash";
 
@@ -18,7 +19,7 @@ public static class GeminiProviderConfiguration
                 "Gemini currently uses direct API-key access.",
                 [
                     new PackageConfigurationField(
-                        "auth.apiKey",
+                        ApiKeySecretKey,
                         "API key",
                         PackageConfigurationFieldKind.Secret,
                         Description: "Gemini API key used for Gemini Developer API access.",

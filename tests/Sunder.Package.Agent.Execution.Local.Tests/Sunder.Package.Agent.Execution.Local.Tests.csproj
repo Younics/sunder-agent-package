@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Docker\Sunder.Package.Agent.Execution.Docker.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Local\Sunder.Package.Agent.Execution.Local.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Tools.Files\Sunder.Package.Agent.Tools.Files.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Tools.Shell\Sunder.Package.Agent.Tools.Shell.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Tools.Web\Sunder.Package.Agent.Tools.Web.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestInfrastructure.cs" Link="RegressionTestInfrastructure.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

@@ -3,7 +3,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-internal sealed class DockerCommandRunner(IPackageContext packageContext, DockerCliRunner dockerCliRunner)
+internal sealed class DockerCommandRunner(IPackageContext packageContext, DockerCliRunner dockerCliRunner) : IDockerCommandExecutor
 {
     private const int DefaultTimeoutSeconds = 300;
 

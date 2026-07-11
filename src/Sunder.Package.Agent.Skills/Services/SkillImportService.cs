@@ -5,16 +5,37 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Skills.Services;
 
-public sealed partial class SkillImportService(SkillStore store, IGitHubSkillClient gitHubClient, IPackageContext packageContext)
+public sealed partial class SkillImportService
 {
     private const long MaxFileBytes = 10 * 1024 * 1024;
     private const long MaxTotalBytes = 50 * 1024 * 1024;
+    private readonly SkillStore _store;
+    private readonly IGitHubSkillClient _gitHubClient;
+    private readonly IPackageContext _packageContext;
+    private readonly Action<SkillImportFaultPoint>? _faultInjector;
     private static readonly EnumerationOptions SkillFolderEnumerationOptions = new()
     {
         RecurseSubdirectories = true,
         IgnoreInaccessible = true,
         AttributesToSkip = FileAttributes.ReparsePoint,
     };
+
+    public SkillImportService(SkillStore store, IGitHubSkillClient gitHubClient, IPackageContext packageContext)
+        : this(store, gitHubClient, packageContext, null)
+    {
+    }
+
+    internal SkillImportService(
+        SkillStore store,
+        IGitHubSkillClient gitHubClient,
+        IPackageContext packageContext,
+        Action<SkillImportFaultPoint>? faultInjector)
+    {
+        _store = store;
+        _gitHubClient = gitHubClient;
+        _packageContext = packageContext;
+        _faultInjector = faultInjector;
+    }
 
     public Task<InstalledSkillRecord> ImportLocalFolderAsync(string folderPath, CancellationToken cancellationToken = default)
     {
@@ -90,7 +111,7 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
         }
 
         var parent = await ResolveGitHubFolderReferenceAsync(parsedUrl, cancellationToken).ConfigureAwait(false);
-        var files = await gitHubClient.ListFilesAsync(parent, cancellationToken).ConfigureAwait(false);
+        var files = await _gitHubClient.ListFilesAsync(parent, cancellationToken).ConfigureAwait(false);
         var skillRoots = files
             .Select(file => NormalizeGitHubPath(file.RelativePath))
             .Where(path => path.EndsWith("SKILL.md", StringComparison.Ordinal))
@@ -118,7 +139,7 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
     {
         var parsedUrl = ParseGitHubUrl(githubUrl) ?? throw new InvalidOperationException("Enter a GitHub tree/blob/raw URL that points to a skill folder or SKILL.md.");
         var reference = await ResolveGitHubReferenceAsync(parsedUrl, cancellationToken);
-        var files = await gitHubClient.ListFilesAsync(reference, cancellationToken);
+        var files = await _gitHubClient.ListFilesAsync(reference, cancellationToken);
         if (files.All(file => !string.Equals(file.RelativePath, "SKILL.md", StringComparison.Ordinal)))
         {
             throw new InvalidOperationException("The selected GitHub folder does not contain a root SKILL.md file.");
@@ -144,7 +165,7 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
 
                 var targetPath = Path.Combine(stagingRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-                var bytes = await gitHubClient.ReadFileAsync(reference, file, cancellationToken);
+                var bytes = await _gitHubClient.ReadFileAsync(reference, file, cancellationToken);
                 if (bytes.Length > MaxFileBytes)
                 {
                     throw new InvalidOperationException($"GitHub file is too large: {relativePath}");
@@ -200,22 +221,20 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
         var parsed = SkillMarkdownParser.Parse(await File.ReadAllTextAsync(skillMarkdownPath, cancellationToken));
         var skillId = ResolveSkillId(parsed.Name, folderPath, parsed.RawContent);
         var relativeRoot = string.Concat(SkillConstants.SkillsRelativeRoot, "/", skillId);
-        var targetRoot = packageContext.Storage.Files.GetPath(relativeRoot);
+        var targetRoot = _packageContext.Storage.Files.GetPath(relativeRoot);
         var stagingRoot = CreateStagingRoot();
+        string? backupRoot = null;
+        byte[]? indexSnapshot = null;
+        var swapStarted = false;
+        var backupCreated = false;
+        var stagedContentMoved = false;
+        using var importTransaction = _store.EnterImportTransaction();
         try
         {
             var warnings = CopySkillFolder(folderPath, stagingRoot);
             var contentHash = ComputeContentHash(stagingRoot);
             var now = DateTimeOffset.UtcNow;
-            if (Directory.Exists(targetRoot))
-            {
-                Directory.Delete(targetRoot, recursive: true);
-            }
-
-            Directory.CreateDirectory(Path.GetDirectoryName(targetRoot)!);
-            Directory.Move(stagingRoot, targetRoot);
-
-            var existing = store.GetSkill(skillId);
+            var existing = _store.GetSkill(skillId);
             var record = new InstalledSkillRecord(
                 skillId,
                 relativeRoot,
@@ -232,13 +251,70 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
                 now,
                 parsed.Metadata,
                 warnings);
-            store.SaveSkill(record);
+
+            indexSnapshot = _store.CaptureIndexSnapshot();
+            backupRoot = targetRoot + ".backup-" + Guid.NewGuid().ToString("N");
+            swapStarted = true;
+            if (Directory.Exists(targetRoot))
+            {
+                Directory.Move(targetRoot, backupRoot);
+                backupCreated = true;
+            }
+
+            _faultInjector?.Invoke(SkillImportFaultPoint.AfterBackup);
+            Directory.CreateDirectory(Path.GetDirectoryName(targetRoot)!);
+            Directory.Move(stagingRoot, targetRoot);
+            stagedContentMoved = true;
+            _faultInjector?.Invoke(SkillImportFaultPoint.AfterStagedMove);
+
+            _store.SaveSkill(record);
+            TryDeleteDirectory(backupRoot);
             return record;
         }
-        catch
+        catch (Exception importError)
+        {
+            if (!swapStarted)
+            {
+                throw;
+            }
+
+            var compensationErrors = new List<Exception>();
+            try
+            {
+                if (stagedContentMoved && Directory.Exists(targetRoot))
+                {
+                    Directory.Delete(targetRoot, recursive: true);
+                }
+
+                if (backupCreated && backupRoot is not null && Directory.Exists(backupRoot))
+                {
+                    Directory.Move(backupRoot, targetRoot);
+                }
+            }
+            catch (Exception compensationError)
+            {
+                compensationErrors.Add(compensationError);
+            }
+
+            try
+            {
+                _store.RestoreIndexSnapshot(indexSnapshot);
+            }
+            catch (Exception compensationError)
+            {
+                compensationErrors.Add(compensationError);
+            }
+
+            if (compensationErrors.Count > 0)
+            {
+                throw new AggregateException("Skill import failed and its prior state could not be fully restored.", [importError, .. compensationErrors]);
+            }
+
+            throw;
+        }
+        finally
         {
             TryDeleteDirectory(stagingRoot);
-            throw;
         }
     }
 
@@ -317,7 +393,7 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
 
     private string CreateStagingRoot()
     {
-        var root = Path.Combine(packageContext.Storage.CacheRootPath, "skill-import-" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(_packageContext.Storage.CacheRootPath, "skill-import-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         return root;
     }
@@ -411,9 +487,9 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
         var segments = parsedUrl.RefAndPathSegments;
         if (segments.Length == 0)
         {
-            var defaultBranch = await gitHubClient.TryGetDefaultBranchAsync(parsedUrl.Owner, parsedUrl.Repo, cancellationToken).ConfigureAwait(false)
+            var defaultBranch = await _gitHubClient.TryGetDefaultBranchAsync(parsedUrl.Owner, parsedUrl.Repo, cancellationToken).ConfigureAwait(false)
                                 ?? throw new InvalidOperationException("Could not determine the GitHub repository default branch.");
-            var rootFolder = await gitHubClient.TryGetSkillFolderAsync(
+            var rootFolder = await _gitHubClient.TryGetSkillFolderAsync(
                 new GitHubSkillFolderRequest(parsedUrl.Owner, parsedUrl.Repo, defaultBranch, string.Empty),
                 cancellationToken).ConfigureAwait(false);
             return rootFolder ?? throw new InvalidOperationException("The selected GitHub folder does not contain a root SKILL.md file.");
@@ -423,7 +499,7 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
         {
             var refName = string.Join('/', segments.Take(refSegmentCount));
             var folderPath = TrimSkillMarkdown(string.Join('/', segments.Skip(refSegmentCount)));
-            var folder = await gitHubClient.TryGetSkillFolderAsync(
+            var folder = await _gitHubClient.TryGetSkillFolderAsync(
                 new GitHubSkillFolderRequest(parsedUrl.Owner, parsedUrl.Repo, refName, folderPath),
                 cancellationToken);
             if (folder is not null)
@@ -440,9 +516,9 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
         var segments = parsedUrl.RefAndPathSegments;
         if (segments.Length == 0)
         {
-            var defaultBranch = await gitHubClient.TryGetDefaultBranchAsync(parsedUrl.Owner, parsedUrl.Repo, cancellationToken).ConfigureAwait(false)
+            var defaultBranch = await _gitHubClient.TryGetDefaultBranchAsync(parsedUrl.Owner, parsedUrl.Repo, cancellationToken).ConfigureAwait(false)
                                 ?? throw new InvalidOperationException("Could not determine the GitHub repository default branch.");
-            return await gitHubClient.TryGetFolderAsync(
+            return await _gitHubClient.TryGetFolderAsync(
                        new GitHubSkillFolderRequest(parsedUrl.Owner, parsedUrl.Repo, defaultBranch, string.Empty),
                        cancellationToken).ConfigureAwait(false)
                    ?? throw new InvalidOperationException("The selected GitHub repository could not be read.");
@@ -452,7 +528,7 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
         {
             var refName = string.Join('/', segments.Take(refSegmentCount));
             var folderPath = TrimSkillMarkdown(string.Join('/', segments.Skip(refSegmentCount)));
-            var folder = await gitHubClient.TryGetFolderAsync(
+            var folder = await _gitHubClient.TryGetFolderAsync(
                 new GitHubSkillFolderRequest(parsedUrl.Owner, parsedUrl.Repo, refName, folderPath),
                 cancellationToken).ConfigureAwait(false);
             if (folder is not null)
@@ -539,4 +615,10 @@ public sealed partial class SkillImportService(SkillStore store, IGitHubSkillCli
     private static partial Regex GitShaRegex();
 
     private sealed record ParsedGitHubSkillUrl(string Owner, string Repo, string[] RefAndPathSegments);
+}
+
+internal enum SkillImportFaultPoint
+{
+    AfterBackup,
+    AfterStagedMove,
 }

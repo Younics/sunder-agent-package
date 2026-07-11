@@ -2,16 +2,33 @@ using Avalonia.Controls;
 
 namespace Sunder.Package.Agent.Memory.Semantic.PackageViews;
 
-public partial class MemoryInspectorView : UserControl
+public partial class MemoryInspectorView : UserControl, IDisposable
 {
+    private MemoryInspectorViewModel? _viewModel;
+    private bool _disposed;
+
     public MemoryInspectorView()
     {
         InitializeComponent();
     }
 
-    public MemoryInspectorView(MemoryInspectorService memoryInspectorService)
+    public MemoryInspectorView(MemoryInspectorViewModel viewModel)
         : this()
     {
-        DataContext = new MemoryInspectorViewModel(memoryInspectorService);
+        _viewModel = viewModel;
+        DataContext = viewModel;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _viewModel?.Dispose();
+        DataContext = null;
+        _viewModel = null;
     }
 }

@@ -10,6 +10,8 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject
 {
     private readonly AgentPermissionService _permissionService;
 
+    internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } = [];
+
     public AgentPermissionsViewModel(AgentPermissionService permissionService)
     {
         _permissionService = permissionService;

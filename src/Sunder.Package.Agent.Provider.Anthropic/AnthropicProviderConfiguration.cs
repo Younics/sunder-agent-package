@@ -4,6 +4,7 @@ namespace Sunder.Package.Agent.Provider.Anthropic;
 
 public static class AnthropicProviderConfiguration
 {
+    public const string ApiKeySecretKey = "auth.apiKey";
     public const string UtilityModelKey = "utility.modelId";
     public const string DefaultUtilityModelId = "anthropic/claude-haiku-4-5";
 
@@ -18,7 +19,7 @@ public static class AnthropicProviderConfiguration
                 "Anthropic currently uses direct API-key access.",
                 [
                     new PackageConfigurationField(
-                        "auth.apiKey",
+                        ApiKeySecretKey,
                         "API key",
                         PackageConfigurationFieldKind.Secret,
                         Description: "Anthropic API key used for Claude API access.",

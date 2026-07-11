@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Data.Sqlite;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -30,13 +31,6 @@ using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Package.Agent.Tools.Files;
 using Sunder.Sdk.Abstractions;
 using Xunit;
-using AnthropicEffort = Anthropic.Models.Messages.Effort;
-using AnthropicMessageCreateParams = Anthropic.Models.Messages.MessageCreateParams;
-using AnthropicBeta = Anthropic.Models.Beta.AnthropicBeta;
-using AnthropicBetaMessageCreateParams = Anthropic.Models.Beta.Messages.MessageCreateParams;
-using AnthropicBetaSpeed = Anthropic.Models.Beta.Messages.Speed;
-using GeminiGenerateContentConfig = Google.GenAI.Types.GenerateContentConfig;
-using GeminiThinkingLevel = Google.GenAI.Types.ThinkingLevel;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -333,6 +327,61 @@ public sealed class AgentRunCoordinatorTests
             turn => turn.Role == AgentMessageRole.Assistant
         );
         Assert.Equal("final answer", RenderTurnText(assistantTurn));
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_RetriesTransientFailureBeforeAnyOutput()
+    {
+        var provider = new ScriptedProvider(
+            (_, requestIndex) =>
+                requestIndex switch
+                {
+                    1 => [TransientStreamError()],
+                    2 => [Complete("final answer after pre-output retry")],
+                    _ => throw new Xunit.Sdk.XunitException(
+                        $"Unexpected provider request {requestIndex}.")
+                });
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Retry before producing output.",
+            runtime.CurrentWorkspaceId);
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(2, provider.Requests.Count);
+        var assistantTurn = Assert.Single(
+            runtime.SessionService.ListTurns(sessionId),
+            turn => turn.Role == AgentMessageRole.Assistant);
+        Assert.Equal("final answer after pre-output retry", RenderTurnText(assistantTurn));
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_PersistsTerminalProviderFailureAndPublishesLifecycle()
+    {
+        var provider = new ScriptedProvider((_, _) => TerminalStreamError());
+        using var runtime = AgentTestRuntime.Create(provider);
+        var memoryFeature = new CapturingMemoryFeature();
+        runtime.AddMemoryFeature(memoryFeature);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Trigger a terminal provider failure.",
+            runtime.CurrentWorkspaceId);
+
+        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
+        Assert.Equal("invalid-request", checkpoint.Summary);
+        Assert.Single(provider.Requests);
+        Assert.Contains(
+            runtime.SessionService.ListTurns(sessionId),
+            turn => turn.Role == AgentMessageRole.Assistant
+                    && RenderTurnText(turn).Contains("The provider rejected the request.", StringComparison.Ordinal));
+        Assert.Equal(AgentLifecycleEventKind.RunFailed, memoryFeature.LastLifecycleEvent?.Kind);
+        Assert.Equal(checkpoint.CheckpointId, memoryFeature.LastLifecycleEvent?.Checkpoint?.CheckpointId);
     }
 
     [Fact]
@@ -1053,6 +1102,476 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task QueueUserMessageAsync_ReturnsFailedCheckpoint_WhenProviderPreparationFails()
+    {
+        const string readinessMessage = "Configure the test provider before running.";
+        var provider = new ScriptedProvider(
+            (_, _) => Complete("must not execute"),
+            readinessStatus: AgentProviderReadinessStatus.NeedsConfiguration,
+            readinessMessage: readinessMessage);
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Do not execute this message.",
+            runtime.CurrentWorkspaceId);
+
+        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
+        Assert.Equal(readinessMessage, checkpoint.Summary);
+        Assert.Empty(provider.Requests);
+        Assert.Empty(runtime.SessionService.ListTurns(sessionId));
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_UnexpectedPreparationExceptionTerminalizesRunWithoutAttachmentArtifacts()
+    {
+        ValueTask<AgentProviderReadiness> ThrowUnexpectedAsync(CancellationToken _)
+            => throw new InvalidOperationException("unexpected preparation failure");
+        var provider = new ScriptedProvider(
+            (_, _) => Complete("must not execute"),
+            readinessHandler: ThrowUnexpectedAsync);
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Fail during preparation.",
+            runtime.CurrentWorkspaceId,
+            [new AgentAttachmentUploadRequest(
+                "orphan.txt",
+                "text/plain",
+                Encoding.UTF8.GetBytes("must not remain"))]);
+
+        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
+        Assert.Equal(AgentDurableRunStatus.Failed, runtime.Store.GetLatestRun(sessionId)?.Status);
+        Assert.Empty(provider.Requests);
+        Assert.Empty(runtime.SessionService.ListTurns(sessionId));
+        Assert.False(Directory.Exists(Path.Combine(
+            runtime.RootPath,
+            "data",
+            "agent-attachments",
+            sessionId.ToString("N"))));
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_PropagatesCancellationDuringPreparationBeforeExecution()
+    {
+        var readinessEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        async ValueTask<AgentProviderReadiness> WaitForCancellationAsync(
+            CancellationToken cancellationToken)
+        {
+            readinessEntered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new AgentProviderReadiness(
+                "test-provider",
+                AgentProviderReadinessStatus.Ready,
+                "Ready.");
+        }
+
+        var provider = new ScriptedProvider(
+            (_, _) => Complete("must not execute"),
+            readinessHandler: WaitForCancellationAsync);
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        using var cancellationSource = new CancellationTokenSource();
+
+        var runTask = runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Cancel during preparation.",
+            runtime.CurrentWorkspaceId,
+            [],
+            cancellationSource.Token);
+        await readinessEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        cancellationSource.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => runTask);
+        Assert.Empty(provider.Requests);
+        Assert.Empty(runtime.SessionService.ListTurns(sessionId));
+        Assert.Equal(AgentRunStatus.Interrupted, runtime.SessionService.GetLatestCheckpoint(sessionId)?.Status);
+        Assert.Equal(
+            [AgentDurableRunStatus.Interrupted],
+            ListDurableRunStatuses(runtime, sessionId));
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_CancellationAfterExecutionStartsInterruptsDurableRun()
+    {
+        var executionStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        async ValueTask WaitForCancellationAsync(CancellationToken cancellationToken)
+        {
+            executionStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+
+        var provider = new ScriptedProvider(
+            (_, _) => Complete("must not complete"),
+            beforeExecutionHandler: WaitForCancellationAsync);
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        using var cancellationSource = new CancellationTokenSource();
+
+        var runTask = runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Cancel after provider execution starts.",
+            runtime.CurrentWorkspaceId,
+            [],
+            cancellationSource.Token);
+        await executionStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        cancellationSource.Cancel();
+
+        var checkpoint = await runTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(AgentRunStatus.Interrupted, checkpoint.Status);
+        Assert.Equal(AgentDurableRunStatus.Interrupted, runtime.Store.GetLatestRun(sessionId)?.Status);
+    }
+
+    [Fact]
+    public async Task StreamingAssistantWrite_SupersededBeforeTransactionPersistsNoStaleTurn()
+    {
+        var provider = new ScriptedProvider(
+            (_, requestIndex) => requestIndex switch
+            {
+                1 => Complete("stale assistant response"),
+                _ => throw new Xunit.Sdk.XunitException(
+                    $"Unexpected provider request {requestIndex}."),
+            });
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        var writeAttempted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWrite = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var blocked = 0;
+        runtime.Store.BeforeFencedTranscriptTransaction = kind =>
+        {
+            if (kind != AgentTranscriptMutationKind.AssistantText
+                || Interlocked.Exchange(ref blocked, 1) != 0)
+            {
+                return;
+            }
+
+            writeAttempted.TrySetResult();
+            releaseWrite.Task.GetAwaiter().GetResult();
+        };
+
+        var staleRun = Task.Run(() => runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Start stale streaming run.",
+            runtime.CurrentWorkspaceId));
+        await writeAttempted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var newerRun = runtime.SessionService.ReserveRun(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Supersede stale streaming run.");
+        releaseWrite.TrySetResult();
+
+        var staleCheckpoint = await staleRun.WaitAsync(TimeSpan.FromSeconds(10));
+        var assistantText = runtime.SessionService.ListTurns(sessionId)
+            .Where(turn => turn.Role == AgentMessageRole.Assistant)
+            .Select(RenderTurnText)
+            .ToArray();
+
+        Assert.Equal(AgentRunStatus.Interrupted, staleCheckpoint.Status);
+        Assert.True(newerRun.Key.RunRevision > staleCheckpoint.RunRevision);
+        Assert.DoesNotContain("stale assistant response", assistantText);
+    }
+
+    [Fact]
+    public async Task ToolResultWrite_SupersededBeforeTransactionPersistsNoStaleResult()
+    {
+        const string toolId = "blocking_tool";
+        var provider = new ScriptedProvider(
+            (_, requestIndex) => requestIndex switch
+            {
+                1 => ToolRequest("stale-call", toolId, "{}"),
+                _ => throw new Xunit.Sdk.XunitException(
+                    $"Unexpected provider request {requestIndex}."),
+            });
+        var tool = new BlockingTool(toolId);
+        using var runtime = AgentTestRuntime.Create(provider, tool);
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        var writeAttempted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWrite = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var blocked = 0;
+
+        var staleRun = Task.Run(() => runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Start stale tool run.",
+            runtime.CurrentWorkspaceId));
+        await tool.Started.WaitAsync(TimeSpan.FromSeconds(10));
+        runtime.Store.BeforeFencedTranscriptTransaction = kind =>
+        {
+            if (kind != AgentTranscriptMutationKind.ToolResult
+                || Interlocked.Exchange(ref blocked, 1) != 0)
+            {
+                return;
+            }
+
+            writeAttempted.TrySetResult();
+            releaseWrite.Task.GetAwaiter().GetResult();
+        };
+        tool.Release();
+        await writeAttempted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var newerRun = runtime.SessionService.ReserveRun(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Supersede stale tool run.");
+        releaseWrite.TrySetResult();
+
+        var staleCheckpoint = await staleRun.WaitAsync(TimeSpan.FromSeconds(10));
+        var items = runtime.SessionService.ListTurns(sessionId)
+            .SelectMany(turn => turn.Items)
+            .ToArray();
+
+        Assert.Equal(AgentRunStatus.Interrupted, staleCheckpoint.Status);
+        Assert.True(newerRun.Key.RunRevision > staleCheckpoint.RunRevision);
+        Assert.DoesNotContain(
+            items,
+            item => item.Kind == AgentTurnItemKind.ToolResult
+                    && item.CallId == "stale-call");
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_DoesNotReserveRun_WhenTokenIsAlreadyCanceled()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("must not execute")));
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        using var cancellationSource = new CancellationTokenSource();
+        cancellationSource.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            runtime.RunCoordinator.QueueUserMessageAsync(
+                sessionId,
+                runtime.CurrentProfileId,
+                "Do not reserve this run.",
+                runtime.CurrentWorkspaceId,
+                [],
+                cancellationSource.Token));
+
+        Assert.Empty(ListDurableRunStatuses(runtime, sessionId));
+        Assert.Equal(1, runtime.SessionService.GetNextRunRevision(sessionId));
+    }
+
+    [Fact]
+    public async Task RollbackAndQueueUserMessageAsync_CleansActivationAndAttachments_WhenStartFails()
+    {
+        var provider = new ScriptedProvider((_, _) => Complete("must not execute"));
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        var missingAnchorTurnId = Guid.NewGuid();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            runtime.RunCoordinator.RollbackAndQueueUserMessageAsync(
+                sessionId,
+                missingAnchorTurnId,
+                runtime.CurrentProfileId,
+                "Fail before committing this turn.",
+                runtime.CurrentWorkspaceId,
+                [
+                    new AgentAttachmentUploadRequest(
+                        "orphan.txt",
+                        "text/plain",
+                        Encoding.UTF8.GetBytes("must be removed")),
+                ]));
+
+        Assert.Contains(missingAnchorTurnId.ToString(), exception.Message, StringComparison.Ordinal);
+        Assert.False(runtime.ActiveRunRegistry.IsActive(sessionId));
+        Assert.Equal(AgentRunStatus.Failed, runtime.SessionService.GetLatestCheckpoint(sessionId)?.Status);
+        Assert.Equal([AgentDurableRunStatus.Failed], ListDurableRunStatuses(runtime, sessionId));
+        Assert.Empty(runtime.SessionService.ListTurns(sessionId));
+        Assert.Empty(provider.Requests);
+        Assert.False(Directory.Exists(Path.Combine(
+            runtime.RootPath,
+            "data",
+            "agent-attachments",
+            sessionId.ToString("N"))));
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_CleansActivation_WhenStartLifecycleIsCanceled()
+    {
+        var provider = new ScriptedProvider((_, _) => Complete("must not execute"));
+        using var runtime = AgentTestRuntime.Create(provider);
+        var observer = new CancelingUserTurnLifecycleObserver();
+        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.LifecycleObservers, observer);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            runtime.RunCoordinator.QueueUserMessageAsync(
+                sessionId,
+                runtime.CurrentProfileId,
+                "Cancel in the start lifecycle.",
+                runtime.CurrentWorkspaceId));
+
+        Assert.True(observer.ReceivedCancelableToken);
+        Assert.False(runtime.ActiveRunRegistry.IsActive(sessionId));
+        Assert.Equal(AgentRunStatus.Interrupted, runtime.SessionService.GetLatestCheckpoint(sessionId)?.Status);
+        Assert.Equal(
+            [AgentDurableRunStatus.Interrupted],
+            ListDurableRunStatuses(runtime, sessionId));
+        Assert.Single(runtime.SessionService.ListTurns(sessionId));
+        Assert.Empty(provider.Requests);
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_InterruptsOlderRun_WhenItsPreparationFinishesLate()
+    {
+        var olderPreparationEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseOlderPreparation = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var newerExecutionEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseNewerExecution = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var readinessCallCount = 0;
+
+        async ValueTask<AgentProviderReadiness> CoordinateReadinessAsync(
+            CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref readinessCallCount) == 1)
+            {
+                olderPreparationEntered.TrySetResult();
+                await releaseOlderPreparation.Task.WaitAsync(cancellationToken);
+            }
+
+            return new AgentProviderReadiness(
+                "test-provider",
+                AgentProviderReadinessStatus.Ready,
+                "Ready.");
+        }
+
+        async ValueTask HoldExecutionAsync(CancellationToken cancellationToken)
+        {
+            newerExecutionEntered.TrySetResult();
+            await releaseNewerExecution.Task.WaitAsync(cancellationToken);
+        }
+
+        var provider = new ScriptedProvider(
+            (_, _) => Complete("newer completed"),
+            readinessHandler: CoordinateReadinessAsync,
+            beforeExecutionHandler: HoldExecutionAsync);
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+
+        var olderRun = runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "older message",
+            runtime.CurrentWorkspaceId);
+        await olderPreparationEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var newerRun = runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "newer message",
+            runtime.CurrentWorkspaceId);
+
+        try
+        {
+            await newerExecutionEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            releaseOlderPreparation.TrySetResult();
+            var olderCheckpoint = await olderRun.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(AgentRunStatus.Interrupted, olderCheckpoint.Status);
+            Assert.Contains("Superseded", olderCheckpoint.Summary, StringComparison.Ordinal);
+        }
+        finally
+        {
+            releaseOlderPreparation.TrySetResult();
+            releaseNewerExecution.TrySetResult();
+        }
+
+        var newerCheckpoint = await newerRun.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(AgentRunStatus.Completed, newerCheckpoint.Status);
+        Assert.Single(provider.Requests);
+        Assert.DoesNotContain(
+            runtime.SessionService.ListTurns(sessionId),
+            turn => RenderTurnText(turn).Contains("older message", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task StopAsync_CancelsRegisteredPreparationAndPreventsLateStartWithoutDisposingLiveOwner()
+    {
+        var readinessEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReadiness = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        async ValueTask<AgentProviderReadiness> IgnoreCancellationAsync(CancellationToken _)
+        {
+            readinessEntered.TrySetResult();
+            await releaseReadiness.Task;
+            return new AgentProviderReadiness(
+                "test-provider",
+                AgentProviderReadinessStatus.Ready,
+                "Ready.");
+        }
+
+        var provider = new ScriptedProvider(
+            (_, _) => Complete("must not execute"),
+            readinessHandler: IgnoreCancellationAsync);
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        var runTask = runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Stop during preparation.",
+            runtime.CurrentWorkspaceId);
+        await readinessEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var handle = Assert.IsType<AgentActiveRunHandle>(runtime.ActiveRunRegistry.GetCurrent(
+            sessionId,
+            runtime.Store.GetLatestRun(sessionId)!.Key.RunId,
+            runtime.Store.GetLatestRun(sessionId)!.Key.RunRevision));
+
+        var stopped = await runtime.RunCoordinator.StopAsync(sessionId);
+
+        Assert.Equal(AgentRunStatus.Stopped, stopped?.Status);
+        _ = handle.CancellationTokenSource.Token;
+        Assert.Empty(provider.Requests);
+        releaseReadiness.TrySetResult();
+        var runResult = await runTask.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(AgentRunStatus.Stopped, runResult.Status);
+        Assert.Empty(provider.Requests);
+        Assert.False(runtime.ActiveRunRegistry.IsActive(sessionId));
+        Assert.Throws<ObjectDisposedException>(() => _ = handle.CancellationTokenSource.Token);
+        Assert.Equal(AgentDurableRunStatus.Stopped, runtime.Store.GetLatestRun(sessionId)?.Status);
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_RecordsExecutionFailureThroughFacade()
+    {
+        var provider = new ScriptedProvider(
+            (_, _) => ThrowExecutionFailure("execution exploded"));
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Trigger execution failure.",
+            runtime.CurrentWorkspaceId);
+
+        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
+        Assert.Equal("execution exploded", checkpoint.Summary);
+        Assert.Single(provider.Requests);
+        Assert.Contains(
+            runtime.SessionService.ListTurns(sessionId),
+            turn => turn.Role == AgentMessageRole.Assistant
+                && RenderTurnText(turn).Contains("execution exploded", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task QueueUserMessageAsync_AllowsToolFromLegacyAliasAssignment()
     {
         const string toolId = "shell";
@@ -1613,6 +2132,126 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task QueueUserMessageAsync_PersistsCompletedParallelOutcomeBeforeChildSuspension()
+    {
+        const string waitingToolId = "waiting_child_tool";
+        const string completedToolId = "completed_parallel_tool";
+        var provider = new ScriptedProvider(
+            (_, requestIndex) =>
+                requestIndex == 1
+                    ? [ToolRequests(
+                        new AgentToolCallRequest("waiting-call", waitingToolId, "{}"),
+                        new AgentToolCallRequest("completed-call", completedToolId, "{}"))]
+                    : throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}."),
+            supportsMultipleToolCalls: true);
+        var waitingTool = new WaitingChildTool(waitingToolId);
+        var completedTool = new TestTool(
+            completedToolId,
+            concurrencyMode: AgentToolConcurrencyMode.ParallelSafe);
+        using var runtime = AgentTestRuntime.Create(provider, waitingTool, completedTool);
+        var sessionId = await runtime.CreateSessionAsync(waitingToolId);
+        var profile = runtime.CurrentProfile;
+        runtime.ProfileService.SaveProfile(
+            profile.ProfileId,
+            profile.DisplayName,
+            profile.Description,
+            profile.Instructions,
+            profile.ChatProviderId,
+            profile.ChatModelId,
+            profile.EmbeddingProviderId,
+            profile.EmbeddingModelId,
+            selectableCapabilityAssignments:
+            [
+                new AgentProfileSelectableCapabilityAssignmentRecord(
+                    AgentProfileSelectableCapabilityKinds.Tool,
+                    waitingToolId),
+                new AgentProfileSelectableCapabilityAssignmentRecord(
+                    AgentProfileSelectableCapabilityKinds.Tool,
+                    completedToolId),
+            ]);
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Run both parallel tools.",
+            runtime.CurrentWorkspaceId);
+
+        Assert.True(
+            checkpoint.Status == AgentRunStatus.WaitingForApproval,
+            checkpoint.Summary ?? checkpoint.Status.ToString());
+        Assert.Equal(1, waitingTool.ExecutionCount);
+        Assert.Equal(1, completedTool.ExecutionCount);
+        Assert.Contains(
+            runtime.SessionService.ListTurns(sessionId),
+            turn => turn.Kind == AgentTurnKind.ToolResult
+                    && turn.Items.Any(item => item.CallId == "completed-call"));
+        Assert.Equal(
+            AgentRunStatus.WaitingForApproval,
+            runtime.SessionService.GetLatestCheckpoint(sessionId)?.Status);
+    }
+
+    [Fact]
+    public async Task ToolBatch_PreservesPositionAndPairsCallsAfterPermissionSuspension()
+    {
+        const string firstToolId = "batch_first";
+        const string permissionToolId = "batch_permission";
+        const string canceledToolId = "batch_canceled";
+        var provider = new ScriptedProvider(
+            (_, requestIndex) => requestIndex == 1
+                ? [ToolRequests(
+                    new AgentToolCallRequest("call-1", firstToolId, "{}"),
+                    new AgentToolCallRequest("call-2", permissionToolId, "{}"),
+                    new AgentToolCallRequest("call-3", canceledToolId, "{}"))]
+                : throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}."),
+            supportsMultipleToolCalls: true);
+        var firstTool = new TestTool(
+            firstToolId,
+            concurrencyMode: AgentToolConcurrencyMode.ParallelSafe);
+        var canceledTool = new TestTool(canceledToolId);
+        using var runtime = AgentTestRuntime.Create(provider, firstTool, canceledTool);
+        var permissionTool = new PermissionedToolSource(permissionToolId);
+        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, permissionTool);
+        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, permissionTool);
+        var sessionId = await runtime.CreateSessionAsync(firstToolId);
+        var profile = runtime.CurrentProfile;
+        runtime.ProfileService.SaveProfile(
+            profile.ProfileId,
+            profile.DisplayName,
+            profile.Description,
+            profile.Instructions,
+            profile.ChatProviderId,
+            profile.ChatModelId,
+            profile.EmbeddingProviderId,
+            profile.EmbeddingModelId,
+            selectableCapabilityAssignments:
+            [
+                new(AgentProfileSelectableCapabilityKinds.Tool, firstToolId),
+                new(AgentProfileSelectableCapabilityKinds.Tool, permissionToolId),
+                new(AgentProfileSelectableCapabilityKinds.Tool, canceledToolId),
+            ]);
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Run the batch.",
+            runtime.CurrentWorkspaceId);
+
+        Assert.True(
+            checkpoint.Status == AgentRunStatus.WaitingForApproval,
+            checkpoint.Summary ?? checkpoint.Status.ToString());
+        Assert.Equal("call-2", Assert.Single(runtime.PermissionService.ListPendingRequests(sessionId)).CallId);
+        Assert.Equal(1, firstTool.ExecutionCount);
+        Assert.Equal(0, permissionTool.ExecutionCount);
+        Assert.Equal(0, canceledTool.ExecutionCount);
+        var items = runtime.SessionService.ListTurns(sessionId).SelectMany(turn => turn.Items).ToArray();
+        Assert.Contains(items, item => item.CallId == "call-1" && item.Kind == AgentTurnItemKind.ToolResult);
+        Assert.Contains(items, item => item.CallId == "call-2" && item.Kind == AgentTurnItemKind.ToolCall);
+        Assert.Contains(items, item => item.CallId == "call-3"
+                                      && item.Kind == AgentTurnItemKind.ToolResult
+                                      && item.ErrorCode == "tool-batch-canceled");
+    }
+
+    [Fact]
     public async Task ApprovePendingPermissionAsync_ContinuesProviderAfterApprovedToolResult()
     {
         const string toolId = "approval_tool";
@@ -1647,6 +2286,13 @@ public sealed class AgentRunCoordinatorTests
 
         Assert.Equal(AgentRunStatus.WaitingForApproval, waitingCheckpoint.Status);
         var pending = Assert.Single(runtime.PermissionService.ListPendingRequests(sessionId));
+        var suspendedRun = Assert.IsType<AgentDurableRunRecord>(runtime.Store.GetRun(pending.RunId));
+        Assert.Equal(AgentDurableRunStatus.WaitingForApproval, suspendedRun.Status);
+        Assert.IsType<AgentPermissionRunSuspension>(suspendedRun.Suspension);
+        Assert.Contains(
+            runtime.SessionService.ListTurns(sessionId),
+            turn => turn.Kind == AgentTurnKind.ToolCall
+                    && turn.Items.Any(item => item.CallId == pending.CallId));
 
         var completedCheckpoint = await runtime.RunCoordinator.ApprovePendingPermissionAsync(
             sessionId,
@@ -1738,8 +2384,17 @@ public sealed class AgentRunCoordinatorTests
             parentSessionId,
             AgentMessageRole.User,
             "Parent task that delegated work.");
-        var parentRunId = Guid.NewGuid();
-        const long parentRunRevision = 1;
+        var parentRun = runtime.SessionService.ReserveRun(
+            parentSessionId,
+            runtime.CurrentProfileId,
+            "Parent task that delegated work.");
+        var parentRunId = parentRun.Key.RunId;
+        var parentRunRevision = parentRun.Key.RunRevision;
+        runtime.SessionService.SaveCheckpoint(
+            parentSessionId,
+            parentRunRevision,
+            AgentRunStatus.Running,
+            "Parent running.");
         runtime.SessionService.AppendToolCallTurn(parentSessionId, AgentMessageRole.Assistant, "task-call", "task", "{}");
         var childSession = runtime.SessionService.CreateSession(
             "Child task",
@@ -1749,6 +2404,17 @@ public sealed class AgentRunCoordinatorTests
             parentRunRevision: parentRunRevision,
             parentToolCallId: "task-call",
             profileId: runtime.CurrentProfileId);
+        Assert.NotNull(runtime.SessionService.SuspendRun(
+            parentRun.Key,
+            new AgentChildJoinRunSuspension(
+                parentUserTurn.TurnId,
+                "task",
+                "{}",
+                [new AgentChildJoinTask(childSession.SessionId, "task-call", childSession.Title)],
+                []),
+            "Waiting for child."));
+        runtime.SessionService.UpdateSession(
+            runtime.SessionService.GetSession(parentSessionId)! with { ProfileId = "mutable-session-profile" });
         runtime.SessionService.AppendTextTurn(childSession.SessionId, AgentMessageRole.Assistant, "Child task result.");
         var childCheckpoint = runtime.SessionService.SaveCheckpoint(childSession.SessionId, 1, AgentRunStatus.Completed, "Child completed.");
 
@@ -1761,6 +2427,298 @@ public sealed class AgentRunCoordinatorTests
         Assert.NotNull(resumedCheckpoint);
         Assert.Equal(AgentRunStatus.Completed, resumedCheckpoint!.Status);
         Assert.Contains(runtime.SessionService.ListTurns(parentSessionId), turn => turn.TurnId == parentUserTurn.TurnId);
+    }
+
+    [Fact]
+    public async Task ParentRunContinuation_ConcurrentChildrenConsumeOneFinalDurableWorkItem()
+    {
+        var provider = new ScriptedProvider((_, requestIndex) =>
+            requestIndex == 1
+                ? Complete("parent resumed once")
+                : throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}."));
+        using var runtime = AgentTestRuntime.Create(provider);
+        var parentSessionId = await runtime.CreateSessionAsync("noop");
+        var parentSession = runtime.SessionService.GetSession(parentSessionId)!;
+        runtime.SessionService.UpdateSession(parentSession with { ProfileId = runtime.CurrentProfileId });
+        var userTurn = runtime.SessionService.AppendTextTurn(
+            parentSessionId,
+            AgentMessageRole.User,
+            "Delegate two tasks.");
+        var run = runtime.SessionService.ReserveRun(
+            parentSessionId,
+            runtime.CurrentProfileId,
+            "Delegate two tasks.");
+        var running = Assert.IsType<AgentRunTransitionResult>(runtime.Store.TryTransitionRun(
+            run.Key,
+            run.Epoch,
+            AgentRunStatus.Running,
+            "Parent running."));
+        runtime.SessionService.AppendToolCallTurn(
+            parentSessionId,
+            AgentMessageRole.Assistant,
+            "task-call",
+            "delegate_tasks",
+            "{}");
+        var firstChild = runtime.SessionService.CreateSession(
+            "First child",
+            parentSessionId: parentSessionId,
+            rootSessionId: parentSessionId,
+            parentRunId: run.Key.RunId,
+            parentRunRevision: run.Key.RunRevision,
+            parentToolCallId: "task-call",
+            profileId: runtime.CurrentProfileId);
+        var secondChild = runtime.SessionService.CreateSession(
+            "Second child",
+            parentSessionId: parentSessionId,
+            rootSessionId: parentSessionId,
+            parentRunId: run.Key.RunId,
+            parentRunRevision: run.Key.RunRevision,
+            parentToolCallId: "task-call",
+            profileId: runtime.CurrentProfileId);
+        Assert.NotNull(runtime.Store.SuspendRun(
+            run.Key,
+            running.Run.Epoch,
+            new AgentChildJoinRunSuspension(
+                userTurn.TurnId,
+                "delegate_tasks",
+                "{}",
+                [
+                    new AgentChildJoinTask(firstChild.SessionId, "task-call", firstChild.Title),
+                    new AgentChildJoinTask(secondChild.SessionId, "task-call", secondChild.Title),
+                ],
+                []),
+            "Waiting for children."));
+        runtime.SessionService.AppendTextTurn(firstChild.SessionId, AgentMessageRole.Assistant, "First result.");
+        runtime.SessionService.AppendTextTurn(secondChild.SessionId, AgentMessageRole.Assistant, "Second result.");
+        var firstCheckpoint = runtime.SessionService.SaveCheckpoint(
+            firstChild.SessionId,
+            1,
+            AgentRunStatus.Completed,
+            "First completed.");
+        var secondCheckpoint = runtime.SessionService.SaveCheckpoint(
+            secondChild.SessionId,
+            1,
+            AgentRunStatus.Completed,
+            "Second completed.");
+        var unwindingHandle = new AgentActiveRunHandle(
+            run.Key.RunId,
+            run.Key.RunRevision,
+            run.StartedAtUtc,
+            run.ProfileId,
+            run.UserMessage,
+            new CancellationTokenSource());
+        Assert.True(runtime.ActiveRunRegistry.Activate(parentSessionId, unwindingHandle).IsAccepted);
+
+        await Task.WhenAll(
+            runtime.ParentRunContinuationService.TryResumeAfterChildCompletionAsync(
+                firstChild,
+                firstCheckpoint,
+                runtime.CurrentWorkspaceId,
+                CancellationToken.None),
+            runtime.ParentRunContinuationService.TryResumeAfterChildCompletionAsync(
+                secondChild,
+                secondCheckpoint,
+                runtime.CurrentWorkspaceId,
+                CancellationToken.None));
+
+        Assert.Empty(provider.Requests);
+        runtime.ActiveRunRegistry.CleanupCurrent(
+            parentSessionId,
+            run.Key.RunId,
+            run.Key.RunRevision);
+        unwindingHandle.CancellationTokenSource.Dispose();
+        await WaitUntilAsync(() => provider.Requests.Count == 1);
+
+        Assert.Single(provider.Requests);
+        Assert.Equal(AgentDurableRunStatus.Completed, runtime.Store.GetRun(run.Key.RunId)?.Status);
+        Assert.Single(
+            runtime.SessionService.ListTurns(parentSessionId)
+                .SelectMany(turn => turn.Items),
+            item => item.Kind == AgentTurnItemKind.ToolResult && item.CallId == "task-call");
+        Assert.Empty(runtime.Store.ListDispatchableParentContinuationWork());
+    }
+
+    [Fact]
+    public async Task ParentRunContinuation_CancellationAfterExecutionStartsInterruptsDurableRun()
+    {
+        var executionStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        async ValueTask WaitForCancellationAsync(CancellationToken cancellationToken)
+        {
+            executionStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+
+        var provider = new ScriptedProvider(
+            (_, _) => Complete("must not complete"),
+            beforeExecutionHandler: WaitForCancellationAsync);
+        using var runtime = AgentTestRuntime.Create(provider);
+        var parentSessionId = await runtime.CreateSessionAsync("noop");
+        var parentSession = runtime.SessionService.GetSession(parentSessionId)!;
+        runtime.SessionService.UpdateSession(parentSession with { ProfileId = runtime.CurrentProfileId });
+        var userTurn = runtime.SessionService.AppendTextTurn(
+            parentSessionId,
+            AgentMessageRole.User,
+            "Delegate one task.");
+        var run = runtime.SessionService.ReserveRun(
+            parentSessionId,
+            runtime.CurrentProfileId,
+            "Delegate one task.");
+        var running = Assert.IsType<AgentRunTransitionResult>(runtime.Store.TryTransitionRun(
+            run.Key,
+            run.Epoch,
+            AgentRunStatus.Running,
+            "Parent running."));
+        runtime.SessionService.AppendToolCallTurn(
+            parentSessionId,
+            AgentMessageRole.Assistant,
+            "task-call",
+            "task",
+            "{}");
+        var child = runtime.SessionService.CreateSession(
+            "Child",
+            parentSessionId: parentSessionId,
+            rootSessionId: parentSessionId,
+            parentRunId: run.Key.RunId,
+            parentRunRevision: run.Key.RunRevision,
+            parentToolCallId: "task-call",
+            profileId: runtime.CurrentProfileId);
+        Assert.NotNull(runtime.Store.SuspendRun(
+            run.Key,
+            running.Run.Epoch,
+            new AgentChildJoinRunSuspension(
+                userTurn.TurnId,
+                "task",
+                "{}",
+                [new AgentChildJoinTask(child.SessionId, "task-call", child.Title)],
+                []),
+            "Waiting for child."));
+        runtime.SessionService.AppendTextTurn(child.SessionId, AgentMessageRole.Assistant, "Child result.");
+        var childCheckpoint = runtime.SessionService.SaveCheckpoint(
+            child.SessionId,
+            1,
+            AgentRunStatus.Completed,
+            "Child completed.");
+
+        var continuation = runtime.ParentRunContinuationService.TryResumeAfterChildCompletionAsync(
+            child,
+            childCheckpoint,
+            runtime.CurrentWorkspaceId,
+            CancellationToken.None);
+        await executionStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var active = runtime.ActiveRunRegistry.GetCurrent(
+            parentSessionId,
+            run.Key.RunId,
+            run.Key.RunRevision);
+        Assert.NotNull(active);
+        active!.CancellationTokenSource.Cancel();
+
+        var checkpoint = await continuation.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(AgentRunStatus.Interrupted, checkpoint?.Status);
+        Assert.Equal(AgentDurableRunStatus.Interrupted, runtime.Store.GetRun(run.Key.RunId)?.Status);
+        Assert.Empty(runtime.Store.ListDispatchableParentContinuationWork());
+    }
+
+    [Fact]
+    public async Task ParentRunContinuation_StaleReadyWorkIsInterruptedWithoutTranscriptMutation()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("must not execute")));
+        var parentSessionId = await runtime.CreateSessionAsync("noop");
+        var parentSession = runtime.SessionService.GetSession(parentSessionId)!;
+        runtime.SessionService.UpdateSession(parentSession with { ProfileId = runtime.CurrentProfileId });
+        var userTurn = runtime.SessionService.AppendTextTurn(
+            parentSessionId,
+            AgentMessageRole.User,
+            "Delegate stale task.");
+        var run = runtime.SessionService.ReserveRun(
+            parentSessionId,
+            runtime.CurrentProfileId,
+            "Delegate stale task.");
+        var running = Assert.IsType<AgentRunTransitionResult>(runtime.Store.TryTransitionRun(
+            run.Key,
+            run.Epoch,
+            AgentRunStatus.Running,
+            "Parent running."));
+        runtime.SessionService.AppendToolCallTurn(
+            parentSessionId,
+            AgentMessageRole.Assistant,
+            "task-call",
+            "task",
+            "{}");
+        var child = runtime.SessionService.CreateSession(
+            "Child",
+            parentSessionId: parentSessionId,
+            rootSessionId: parentSessionId,
+            parentRunId: run.Key.RunId,
+            parentRunRevision: run.Key.RunRevision,
+            parentToolCallId: "task-call",
+            profileId: runtime.CurrentProfileId);
+        var suspended = Assert.IsType<AgentRunSuspensionResult>(runtime.Store.SuspendRun(
+            run.Key,
+            running.Run.Epoch,
+            new AgentChildJoinRunSuspension(
+                userTurn.TurnId,
+                "task",
+                "{}",
+                [new AgentChildJoinTask(child.SessionId, "task-call", child.Title)],
+                []),
+            "Waiting for child."));
+        var ready = runtime.Store.CompleteChildJoinTask(
+            run.Key,
+            suspended.ContinuationToken,
+            new AgentChildJoinTaskResult(
+                child.SessionId,
+                "task-call",
+                AgentRunStatus.Completed,
+                "Child completed.",
+                "Child result.",
+                child.Title));
+        Assert.True(ready.IsReady);
+        _ = runtime.SessionService.ReserveRun(
+            parentSessionId,
+            runtime.CurrentProfileId,
+            "Newer message.");
+
+        await runtime.ParentRunContinuationService.ProcessPendingWorkAsync(CancellationToken.None);
+
+        Assert.Equal(AgentDurableRunStatus.Interrupted, runtime.Store.GetRun(run.Key.RunId)?.Status);
+        Assert.DoesNotContain(
+            runtime.SessionService.ListTurns(parentSessionId).SelectMany(turn => turn.Items),
+            item => item.Kind == AgentTurnItemKind.ToolResult && item.CallId == "task-call");
+        Assert.Empty(runtime.Store.ListDispatchableParentContinuationWork());
+    }
+
+    [Fact]
+    public async Task ChildRunResult_RejectsCheckpointFromDifferentSession()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("unused")));
+        var parentSessionId = await runtime.CreateSessionAsync("noop");
+        var child = runtime.SessionService.CreateSession(
+            "Child",
+            parentSessionId: parentSessionId,
+            rootSessionId: parentSessionId,
+            profileId: runtime.CurrentProfileId);
+        var foreignCheckpoint = new AgentRunCheckpointRecord(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            1,
+            AgentRunStatus.Completed,
+            "Foreign checkpoint.",
+            DateTimeOffset.UtcNow);
+        var childSessions = new AgentChildRunSessionService(
+            runtime.SessionService,
+            runtime.ProfileService);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            childSessions.BuildResult(child, foreignCheckpoint));
+        Assert.Null(await runtime.ParentRunContinuationService.TryResumeAfterChildCompletionAsync(
+            child,
+            foreignCheckpoint,
+            runtime.CurrentWorkspaceId,
+            CancellationToken.None));
     }
 
     [Fact]
@@ -3233,7 +4191,7 @@ public sealed class AgentRunCoordinatorTests
         Assert.Equal(AgentRunStatus.WaitingForApproval, waitingCheckpoint.Status);
         var pending = Assert.Single(runtime.PermissionService.ListPendingRequests(sessionId));
 
-        var deniedCheckpoint = runtime.RunCoordinator.DenyPendingPermission(
+        var deniedCheckpoint = await runtime.RunCoordinator.DenyPendingPermissionAsync(
             sessionId,
             pending.RequestId
         );
@@ -3978,7 +4936,8 @@ public sealed class AgentRunCoordinatorTests
         );
         var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
         using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
-        await WaitUntilAsync(() => viewModel.SelectedProfile?.ProfileId == profile.ProfileId);
+        await WaitUntilAsync(() =>
+            viewModel.SelectedProfile?.ProfileId == profile.ProfileId && !viewModel.IsBusy);
         viewModel.Profiles.CollectionChanged += (_, args) =>
         {
             if (args.Action == NotifyCollectionChangedAction.Reset)
@@ -5690,136 +6649,6 @@ public sealed class AgentRunCoordinatorTests
         {
             TryDeleteDirectory(rootPath);
         }
-    }
-
-    [Fact]
-    public void AnthropicChatClient_MapsReasoningEffort_ToOutputConfig()
-    {
-        var parameters = InvokePrivateStatic<AnthropicMessageCreateParams>(
-            typeof(AnthropicAgentProvider).Assembly.GetType(
-                "Sunder.Package.Agent.Provider.Anthropic.AnthropicChatClient",
-                throwOnError: true
-            )!,
-            "BuildMessageCreateParams",
-            [
-                new[] { new ChatMessage(ChatRole.User, "Think carefully.") },
-                new ChatOptions
-                {
-                    MaxOutputTokens = 4096,
-                    Reasoning = new ReasoningOptions { Effort = ReasoningEffort.ExtraHigh },
-                },
-                "anthropic/claude-opus-4-7",
-                false,
-            ]
-        );
-
-        Assert.NotNull(parameters.OutputConfig);
-        Assert.Equal(AnthropicEffort.Xhigh, parameters.OutputConfig!.Effort!.Value());
-        Assert.Null(parameters.Thinking);
-    }
-
-    [Fact]
-    public void AnthropicChatClient_RequestsSummarizedThinking_WhenReasoningOutputRequested()
-    {
-        var parameters = InvokePrivateStatic<AnthropicMessageCreateParams>(
-            typeof(AnthropicAgentProvider).Assembly.GetType(
-                "Sunder.Package.Agent.Provider.Anthropic.AnthropicChatClient",
-                throwOnError: true
-            )!,
-            "BuildMessageCreateParams",
-            [
-                new[] { new ChatMessage(ChatRole.User, "Think carefully.") },
-                new ChatOptions
-                {
-                    MaxOutputTokens = 8192,
-                    Reasoning = new ReasoningOptions
-                    {
-                        Effort = ReasoningEffort.High,
-                        Output = ReasoningOutput.Summary,
-                    },
-                },
-                "anthropic/claude-sonnet-4-6",
-                false,
-            ]
-        );
-
-        Assert.NotNull(parameters.Thinking);
-        var thinkingValue = parameters.Thinking!.Value;
-        Assert.NotNull(thinkingValue);
-        Assert.Equal("ThinkingConfigEnabled", thinkingValue!.GetType().Name);
-    }
-
-    [Fact]
-    public void AnthropicChatClient_MapsFastSpeed_ToBetaRequest()
-    {
-        var clientType = typeof(AnthropicAgentProvider).Assembly.GetType(
-            "Sunder.Package.Agent.Provider.Anthropic.AnthropicChatClient",
-            throwOnError: true)!;
-        var standardParameters = InvokePrivateStatic<AnthropicMessageCreateParams>(
-            clientType,
-            "BuildMessageCreateParams",
-            [
-                new[] { new ChatMessage(ChatRole.User, "Respond briefly.") },
-                null,
-                "anthropic/claude-opus-4-8",
-                false,
-            ]);
-
-        var fastParameters = InvokePrivateStatic<AnthropicBetaMessageCreateParams>(
-            clientType,
-            "BuildFastMessageCreateParams",
-            [standardParameters]);
-
-        Assert.Equal(AnthropicBetaSpeed.Fast, fastParameters.Speed!.Value());
-        Assert.Contains(fastParameters.Betas ?? [], beta => beta.Value() == AnthropicBeta.FastMode2026_02_01);
-    }
-
-    [Fact]
-    public void GeminiChatClient_MapsReasoningEffort_ToThinkingConfig()
-    {
-        var config = InvokePrivateStatic<GeminiGenerateContentConfig>(
-            typeof(GeminiAgentProvider).Assembly.GetType(
-                "Sunder.Package.Agent.Provider.Gemini.GeminiChatClient",
-                throwOnError: true
-            )!,
-            "BuildConfig",
-            [
-                new ChatOptions
-                {
-                    Reasoning = new ReasoningOptions { Effort = ReasoningEffort.Medium },
-                },
-                false,
-            ]
-        );
-
-        Assert.NotNull(config.ThinkingConfig);
-        Assert.Equal(GeminiThinkingLevel.Medium, config.ThinkingConfig.ThinkingLevel);
-    }
-
-    [Fact]
-    public void GeminiChatClient_IncludesThoughts_WhenReasoningOutputRequested()
-    {
-        var config = InvokePrivateStatic<GeminiGenerateContentConfig>(
-            typeof(GeminiAgentProvider).Assembly.GetType(
-                "Sunder.Package.Agent.Provider.Gemini.GeminiChatClient",
-                throwOnError: true
-            )!,
-            "BuildConfig",
-            [
-                new ChatOptions
-                {
-                    Reasoning = new ReasoningOptions
-                    {
-                        Effort = ReasoningEffort.Medium,
-                        Output = ReasoningOutput.Summary,
-                    },
-                },
-                false,
-            ]
-        );
-
-        Assert.NotNull(config.ThinkingConfig);
-        Assert.True(config.ThinkingConfig.IncludeThoughts);
     }
 
     [Fact]
@@ -9155,25 +9984,24 @@ public sealed class AgentRunCoordinatorTests
         var settings = new MemorySemanticSettingsService(context);
         var extensionCatalog = new TestExtensionCatalog();
         var metrics = new SemanticMemoryMetricsService();
+        var resolver = new SemanticModelRuntimeResolver(extensionCatalog, settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
-            new ProfileConfiguredEmbeddingProviderResolver(extensionCatalog),
+            resolver,
             settings
         );
         var indexingBackgroundService = new SemanticMemoryIndexingBackgroundService(
             store,
-            extensionCatalog,
+            resolver,
             settings,
             retrievalBackend,
             metrics
         );
         var inspector = new MemoryInspectorService(
-            extensionCatalog,
             store,
             retrievalBackend,
-            settings,
             indexingBackgroundService,
-            new SemanticEmbeddingContextResolver(extensionCatalog, settings),
+            resolver,
             metrics
         );
         var sessionId = Guid.NewGuid();
@@ -9241,25 +10069,24 @@ public sealed class AgentRunCoordinatorTests
         var store = new MemoryLocalStore(context);
         var settings = new MemorySemanticSettingsService(context);
         var metrics = new SemanticMemoryMetricsService();
+        var resolver = new SemanticModelRuntimeResolver(runtime.ExtensionCatalog, settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
-            new ProfileConfiguredEmbeddingProviderResolver(runtime.ExtensionCatalog),
+            resolver,
             settings
         );
         var indexingBackgroundService = new SemanticMemoryIndexingBackgroundService(
             store,
-            runtime.ExtensionCatalog,
+            resolver,
             settings,
             retrievalBackend,
             metrics
         );
         var inspector = new MemoryInspectorService(
-            runtime.ExtensionCatalog,
             store,
             retrievalBackend,
-            settings,
             indexingBackgroundService,
-            new SemanticEmbeddingContextResolver(runtime.ExtensionCatalog, settings),
+            resolver,
             metrics
         );
         var memory = store.UpsertMemory(
@@ -9335,25 +10162,24 @@ public sealed class AgentRunCoordinatorTests
 
         var settings = new MemorySemanticSettingsService(context);
         var metrics = new SemanticMemoryMetricsService();
+        var resolver = new SemanticModelRuntimeResolver(runtime.ExtensionCatalog, settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
-            new ProfileConfiguredEmbeddingProviderResolver(runtime.ExtensionCatalog),
+            resolver,
             settings
         );
         var indexingBackgroundService = new SemanticMemoryIndexingBackgroundService(
             store,
-            runtime.ExtensionCatalog,
+            resolver,
             settings,
             retrievalBackend,
             metrics
         );
         var inspector = new MemoryInspectorService(
-            runtime.ExtensionCatalog,
             store,
             retrievalBackend,
-            settings,
             indexingBackgroundService,
-            new SemanticEmbeddingContextResolver(runtime.ExtensionCatalog, settings),
+            resolver,
             metrics
         );
 
@@ -9382,25 +10208,24 @@ public sealed class AgentRunCoordinatorTests
         var store = new MemoryLocalStore(context);
         var settings = new MemorySemanticSettingsService(context);
         var metrics = new SemanticMemoryMetricsService();
+        var resolver = new SemanticModelRuntimeResolver(runtime.ExtensionCatalog, settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
-            new ProfileConfiguredEmbeddingProviderResolver(runtime.ExtensionCatalog),
+            resolver,
             settings
         );
         var indexingBackgroundService = new SemanticMemoryIndexingBackgroundService(
             store,
-            runtime.ExtensionCatalog,
+            resolver,
             settings,
             retrievalBackend,
             metrics
         );
         var inspector = new MemoryInspectorService(
-            runtime.ExtensionCatalog,
             store,
             retrievalBackend,
-            settings,
             indexingBackgroundService,
-            new SemanticEmbeddingContextResolver(runtime.ExtensionCatalog, settings),
+            resolver,
             metrics
         );
 
@@ -9443,15 +10268,16 @@ public sealed class AgentRunCoordinatorTests
         );
         var store = new MemoryLocalStore(context);
         var settings = new MemorySemanticSettingsService(context);
+        var resolver = new SemanticModelRuntimeResolver(runtime.ExtensionCatalog, settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
-            new ProfileConfiguredEmbeddingProviderResolver(runtime.ExtensionCatalog),
+            resolver,
             settings
         );
         var metrics = new SemanticMemoryMetricsService();
         var backgroundService = new SemanticMemoryIndexingBackgroundService(
             store,
-            runtime.ExtensionCatalog,
+            resolver,
             settings,
             retrievalBackend,
             metrics
@@ -9540,15 +10366,16 @@ public sealed class AgentRunCoordinatorTests
         );
         var store = new MemoryLocalStore(context);
         var settings = new MemorySemanticSettingsService(context);
+        var resolver = new SemanticModelRuntimeResolver(extensionCatalog, settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
-            new ProfileConfiguredEmbeddingProviderResolver(extensionCatalog),
+            resolver,
             settings
         );
         var metrics = new SemanticMemoryMetricsService();
         var backgroundService = new SemanticMemoryIndexingBackgroundService(
             store,
-            extensionCatalog,
+            resolver,
             settings,
             retrievalBackend,
             metrics
@@ -9709,14 +10536,15 @@ public sealed class AgentRunCoordinatorTests
         );
         var settings = new MemorySemanticSettingsService(settingsContext);
         var metrics = new SemanticMemoryMetricsService();
+        var resolver = new SemanticModelRuntimeResolver(catalog, settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
-            new ProfileConfiguredEmbeddingProviderResolver(catalog),
+            resolver,
             settings
         );
         var indexingBackgroundService = new SemanticMemoryIndexingBackgroundService(
             store,
-            catalog,
+            resolver,
             settings,
             retrievalBackend,
             metrics
@@ -10063,6 +10891,9 @@ public sealed class AgentRunCoordinatorTests
     private static AgentProviderStreamEvent Complete(string content) =>
         new(AgentProviderStreamEventType.Completed, Response: new AgentProviderResponse(content));
 
+    private static AgentProviderStreamEvent ThrowExecutionFailure(string message) =>
+        throw new InvalidOperationException(message);
+
     private static AgentProviderStreamEvent TransientStreamError() =>
         new(
             AgentProviderStreamEventType.Error,
@@ -10072,6 +10903,14 @@ public sealed class AgentRunCoordinatorTests
                 ErrorCode: "ResponseEnded"
             )
         );
+
+    private static AgentProviderStreamEvent TerminalStreamError() =>
+        new(
+            AgentProviderStreamEventType.Error,
+            Response: new AgentProviderResponse(
+                "The provider rejected the request.",
+                IsError: true,
+                ErrorCode: "invalid-request"));
 
     private static bool RequestContainsUserText(AgentProviderRequest request, string text) =>
         request.Turns.Any(turn =>
@@ -10088,6 +10927,30 @@ public sealed class AgentRunCoordinatorTests
                 )
                 .Select(item => item.TextContent!.Trim())
         );
+
+    private static IReadOnlyList<AgentDurableRunStatus> ListDurableRunStatuses(
+        AgentTestRuntime runtime,
+        Guid sessionId)
+    {
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = runtime.Store.DatabasePath,
+            Pooling = false,
+        }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT Status FROM AgentRuns WHERE SessionId = $sessionId ORDER BY RunRevision;";
+        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
+        using var reader = command.ExecuteReader();
+        var statuses = new List<AgentDurableRunStatus>();
+        while (reader.Read())
+        {
+            statuses.Add(Enum.Parse<AgentDurableRunStatus>(reader.GetString(0), ignoreCase: true));
+        }
+
+        return statuses;
+    }
 
     private static ConfiguredMcpServerRecord CreateMcpServer(
         string serverId,
@@ -10200,6 +11063,131 @@ public sealed class AgentRunCoordinatorTests
         );
     }
 
+    [Fact]
+    public async Task TranscriptRowsAndToolPresentation_AreEquivalentAcrossMainAndSubsessionFacades()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done"))
+        );
+        var rootSessionId = await runtime.CreateSessionAsync("noop");
+        var root = runtime.SessionService.GetSession(rootSessionId)!;
+        var child = runtime.SessionService.CreateSession(
+            "Child parity session",
+            parentSessionId: root.SessionId,
+            rootSessionId: root.SessionId,
+            profileId: runtime.CurrentProfileId,
+            workspaceId: runtime.CurrentWorkspaceId,
+            agentKind: "subagent"
+        );
+        foreach (var sessionId in new[] { root.SessionId, child.SessionId })
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                AgentMessageRole.Assistant,
+                "Shared response."
+            );
+            runtime.SessionService.AppendToolCallTurn(
+                sessionId,
+                AgentMessageRole.Assistant,
+                "parity-call",
+                "read_file",
+                "{\"path\":\"README.md\"}"
+            );
+            runtime.SessionService.AppendToolResultTurn(
+                sessionId,
+                "parity-call",
+                "read_file",
+                "{\"path\":\"README.md\"}",
+                "Read complete.",
+                "file contents",
+                structuredPayloadJson: null,
+                sourcesJson: null,
+                wasTruncated: false,
+                isError: false,
+                errorCode: null,
+                backendId: null
+            );
+        }
+
+        using var main = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+        using var subsessions = new SubsessionsViewModel(runtime.ExtensionCatalog);
+        await subsessions.OnNavigatedToAsync(
+            new PackageViewNavigationContext(
+                SubagentConstants.SubsessionsViewId,
+                new Dictionary<string, string?>
+                {
+                    [SubagentConstants.SubsessionNavigationSessionIdKey] = child.SessionId.ToString("D"),
+                }
+            )
+        );
+
+        var mainText = main.Messages.OfType<AgentTextTranscriptRowViewModel>()
+            .Single(row => row.Content == "Shared response.");
+        var childText = subsessions.Messages.OfType<SubsessionTextTranscriptRowViewModel>()
+            .Single(row => row.Content == "Shared response.");
+        Assert.Equal(mainText.Role, childText.Role);
+        Assert.Equal(mainText.RoleGlyph, childText.RoleGlyph);
+        Assert.Equal(mainText.Content, childText.Content);
+
+        var mainTool = Assert.Single(main.Messages.OfType<AgentToolInvocationRowViewModel>());
+        var childTool = Assert.Single(
+            subsessions.Messages.OfType<SubsessionToolInvocationRowViewModel>()
+        );
+        Assert.Equal(mainTool.ToolLabel, childTool.ToolLabel);
+        Assert.Equal(mainTool.HeaderDetailText, childTool.HeaderDetailText);
+        Assert.Equal(mainTool.StatusText, childTool.StatusText);
+        Assert.Equal(mainTool.OutputText, childTool.OutputText);
+    }
+
+    [Fact]
+    public async Task AgentPermissionPanelState_DenyActionRefreshesRequestsAndRunState()
+    {
+        const string toolId = "approval_tool";
+        var provider = new ScriptedProvider(
+            (request, requestIndex) => requestIndex switch
+            {
+                1 => ToolRequest("permission-call", toolId, "{\"path\":\"~\"}"),
+                _ => throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}."),
+            }
+        );
+        using var runtime = AgentTestRuntime.Create(provider);
+        var toolSource = new PermissionedToolSource(toolId);
+        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, toolSource);
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        var waiting = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Use the approval tool.",
+            runtime.CurrentWorkspaceId
+        );
+        Assert.Equal(AgentRunStatus.WaitingForApproval, waiting.Status);
+
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+        var request = Assert.Single(viewModel.PendingPermissionRequests);
+
+        await viewModel.DenyPermissionCommand.ExecuteAsync(request);
+
+        Assert.Empty(viewModel.PendingPermissionRequests);
+        Assert.False(viewModel.HasPendingPermissionRequests);
+        Assert.Equal(
+            AgentRunStatus.Stopped,
+            runtime.SessionService.GetLatestCheckpoint(sessionId)?.Status
+        );
+    }
+
     private sealed class AgentTestRuntime : IDisposable
     {
         private readonly string _rootPath;
@@ -10208,6 +11196,8 @@ public sealed class AgentRunCoordinatorTests
         private AgentTestRuntime(
             string rootPath,
             TestExtensionCatalog extensionCatalog,
+            AgentLocalStore store,
+            AgentActiveRunRegistry activeRunRegistry,
             AgentRunCoordinator runCoordinator,
             AgentMemoryCoordinator memoryCoordinator,
             AgentSessionService sessionService,
@@ -10220,6 +11210,8 @@ public sealed class AgentRunCoordinatorTests
         {
             _rootPath = rootPath;
             _extensionCatalog = extensionCatalog;
+            Store = store;
+            ActiveRunRegistry = activeRunRegistry;
             RunCoordinator = runCoordinator;
             MemoryCoordinator = memoryCoordinator;
             SessionService = sessionService;
@@ -10231,6 +11223,10 @@ public sealed class AgentRunCoordinatorTests
         }
 
         public AgentRunCoordinator RunCoordinator { get; }
+
+        public AgentLocalStore Store { get; }
+
+        public AgentActiveRunRegistry ActiveRunRegistry { get; }
 
         public AgentMemoryCoordinator MemoryCoordinator { get; }
 
@@ -10353,7 +11349,34 @@ public sealed class AgentRunCoordinatorTests
                 permissionService,
                 memoryCoordinator,
                 runEventLogger,
-                activeRunRegistry
+                activeRunRegistry,
+                defaultBehaviorLoop
+            );
+            var runPreparationService = new AgentRunPreparationService(
+                sessionService,
+                profileService,
+                workspaceService,
+                runAttachmentStore,
+                runEventLogger,
+                providerResolver,
+                sessionTitleService
+            );
+            var runStartService = new AgentRunStartService(
+                sessionService,
+                memoryCoordinator,
+                runAttachmentStore,
+                activeRunRegistry,
+                runEventLogger,
+                sessionTitleService
+            );
+            var runExecutionService = new AgentRunExecutionService(
+                sessionService,
+                workspaceService,
+                memoryCoordinator,
+                activeRunRegistry,
+                runEventLogger,
+                behaviorLoopHostFactory,
+                behaviorLoopResolver
             );
             var childRunSessionService = new AgentChildRunSessionService(
                 sessionService,
@@ -10383,16 +11406,10 @@ public sealed class AgentRunCoordinatorTests
             );
             var userMessageRunCoordinator = new AgentUserMessageRunCoordinator(
                 sessionService,
-                profileService,
-                workspaceService,
-                memoryCoordinator,
-                runAttachmentStore,
-                activeRunRegistry,
-                runEventLogger,
-                providerResolver,
-                behaviorLoopHostFactory,
-                behaviorLoopResolver,
-                sessionTitleService
+                runPreparationService,
+                runStartService,
+                runExecutionService,
+                activeRunRegistry
             );
             var runCoordinator = new AgentRunCoordinator(
                 userMessageRunCoordinator,
@@ -10404,6 +11421,8 @@ public sealed class AgentRunCoordinatorTests
             return new AgentTestRuntime(
                 rootPath,
                 extensionCatalog,
+                store,
+                activeRunRegistry,
                 runCoordinator,
                 memoryCoordinator,
                 sessionService,
@@ -10482,6 +11501,11 @@ public sealed class AgentRunCoordinatorTests
         private readonly AgentProviderReadinessStatus _readinessStatus;
         private readonly string _readinessMessage;
         private readonly string? _utilityModelId;
+        private readonly Func<
+            CancellationToken,
+            ValueTask<AgentProviderReadiness>
+        >? _readinessHandler;
+        private readonly Func<CancellationToken, ValueTask>? _beforeExecutionHandler;
 
         public ScriptedProvider(
             Func<AgentProviderRequest, int, AgentProviderStreamEvent> handler,
@@ -10490,7 +11514,9 @@ public sealed class AgentRunCoordinatorTests
             AgentProviderReadinessStatus readinessStatus = AgentProviderReadinessStatus.Ready,
             string readinessMessage = "Ready.",
             string? packageId = "test.package",
-            string? utilityModelId = null
+            string? utilityModelId = null,
+            Func<CancellationToken, ValueTask<AgentProviderReadiness>>? readinessHandler = null,
+            Func<CancellationToken, ValueTask>? beforeExecutionHandler = null
         )
             : this(
                 (request, requestIndex) => [handler(request, requestIndex)],
@@ -10499,7 +11525,9 @@ public sealed class AgentRunCoordinatorTests
                 readinessStatus,
                 readinessMessage,
                 packageId,
-                utilityModelId
+                utilityModelId,
+                readinessHandler,
+                beforeExecutionHandler
             ) { }
 
         public ScriptedProvider(
@@ -10509,7 +11537,9 @@ public sealed class AgentRunCoordinatorTests
             AgentProviderReadinessStatus readinessStatus = AgentProviderReadinessStatus.Ready,
             string readinessMessage = "Ready.",
             string? packageId = "test.package",
-            string? utilityModelId = null
+            string? utilityModelId = null,
+            Func<CancellationToken, ValueTask<AgentProviderReadiness>>? readinessHandler = null,
+            Func<CancellationToken, ValueTask>? beforeExecutionHandler = null
         )
         {
             _handler = handler;
@@ -10529,6 +11559,8 @@ public sealed class AgentRunCoordinatorTests
             _readinessStatus = readinessStatus;
             _readinessMessage = readinessMessage;
             _utilityModelId = utilityModelId;
+            _readinessHandler = readinessHandler;
+            _beforeExecutionHandler = beforeExecutionHandler;
             Descriptor = new AgentProviderDescriptor(
                 "test-provider",
                 "Test Provider",
@@ -10557,8 +11589,9 @@ public sealed class AgentRunCoordinatorTests
 
         public ValueTask<AgentProviderReadiness> GetReadinessAsync(
             CancellationToken cancellationToken = default
-        ) =>
-            ValueTask.FromResult(
+        ) => _readinessHandler is not null
+            ? _readinessHandler(cancellationToken)
+            : ValueTask.FromResult(
                 new AgentProviderReadiness(
                     Descriptor.ProviderId,
                     _readinessStatus,
@@ -10666,6 +11699,11 @@ public sealed class AgentRunCoordinatorTests
 
                     requestIndex = _provider.Requests.Count;
                 }
+                if (_provider._beforeExecutionHandler is not null)
+                {
+                    await _provider._beforeExecutionHandler(cancellationToken);
+                }
+
                 var responseId = Guid.NewGuid().ToString("N");
                 var messageId = responseId;
                 var modelId = options?.ModelId ?? _context.ModelId;
@@ -11114,6 +12152,45 @@ public sealed class AgentRunCoordinatorTests
                     Content: $"Tool output for {request.ArgumentsJson}"
                 )
             );
+        }
+    }
+
+    private sealed class WaitingChildTool(string toolId) : IAgentTool
+    {
+        private int _executionCount;
+
+        public int ExecutionCount => Volatile.Read(ref _executionCount);
+
+        public AgentToolDescriptor Descriptor { get; } = new(
+            toolId,
+            "Waiting Child Tool",
+            "Returns a durable child-waiting outcome.",
+            IsReadOnly: true,
+            ArgumentsJsonSchema: "{\"type\":\"object\"}")
+        {
+            ConcurrencyMode = AgentToolConcurrencyMode.ParallelSafe,
+        };
+
+        public ValueTask<AgentToolReadiness> GetReadinessAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentToolReadiness(
+                Descriptor.ToolId,
+                AgentToolReadinessStatus.Ready,
+                "Ready."));
+
+        public ValueTask<AgentToolResult> ExecuteAsync(
+            AgentToolExecutionContext context,
+            AgentToolRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _executionCount);
+            return ValueTask.FromResult(new AgentToolResult(
+                request.ToolId,
+                "Waiting for a child run.",
+                Content: "The child run is waiting.",
+                IsError: true,
+                ErrorCode: AgentToolResultErrorCodes.ChildWaitingForApproval,
+                BackendId: Guid.NewGuid().ToString()));
         }
     }
 
@@ -12392,6 +13469,30 @@ public sealed class AgentRunCoordinatorTests
             }
 
             return builder.ToString().Trim();
+        }
+    }
+
+    private sealed class CancelingUserTurnLifecycleObserver : IAgentLifecycleObserver
+    {
+        public string ObserverId => "test.canceling-user-turn";
+
+        public string DisplayName => "Canceling User Turn Observer";
+
+        public bool ReceivedCancelableToken { get; private set; }
+
+        public ValueTask<AgentLifecycleObserverResult?> HandleLifecycleEventAsync(
+            AgentLifecycleEvent lifecycleEvent,
+            CancellationToken cancellationToken = default)
+        {
+            if (lifecycleEvent.Kind != AgentLifecycleEventKind.UserTurnAdded)
+            {
+                return ValueTask.FromResult<AgentLifecycleObserverResult?>(null);
+            }
+
+            ReceivedCancelableToken = cancellationToken.CanBeCanceled;
+            throw new OperationCanceledException(
+                "Start lifecycle canceled by the test observer.",
+                cancellationToken);
         }
     }
 }

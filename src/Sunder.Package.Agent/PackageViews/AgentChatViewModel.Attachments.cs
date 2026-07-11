@@ -10,7 +10,8 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentChatViewModel
 {
-    public ObservableCollection<AgentPendingAttachmentViewModel> PendingAttachments { get; } = [];
+    public ObservableCollection<AgentPendingAttachmentViewModel> PendingAttachments
+        => _composer.Attachments;
 
     public bool HasPendingAttachments => PendingAttachments.Count > 0;
 

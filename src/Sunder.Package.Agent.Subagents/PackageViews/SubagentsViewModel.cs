@@ -1,11 +1,9 @@
 using System.Collections.ObjectModel;
-using Avalonia.Threading;
+using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Sunder.Package.Agent.Contracts;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Contracts.Services;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Abstractions;
@@ -15,49 +13,84 @@ namespace Sunder.Package.Agent.Subagents.PackageViews;
 public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 {
     private static readonly TimeSpan SuccessStatusDisplayDuration = TimeSpan.FromSeconds(3);
-
-    private readonly SubagentService _subagentService;
-    private readonly IPackageExtensionCatalog? _extensionCatalog;
+    private static readonly SubagentEditorDraftComparer DraftComparer = new();
+    private readonly SubagentService? _subagentService;
     private readonly IPackageSettingsNavigationService? _settingsNavigationService;
-    private readonly AgentProfileSelectableCapabilityChangeObserver? _capabilityChangeObserver;
-    private CancellationTokenSource? _successStatusClearCancellation;
+    private readonly SubagentEditorCapabilityCatalog? _capabilityCatalog;
+    private readonly IPresentationDispatcher _uiDispatcher;
+    private readonly TimedStatusController _statusClear;
+    private readonly Task _initialization;
+    private readonly Dictionary<string, EditableDocumentState<SubagentEditorDraft>> _drafts =
+        new(StringComparer.OrdinalIgnoreCase);
     private bool _suppressSelectionHandlers;
-    private bool _suppressChatProviderSelection;
     private bool _suppressSubagentChangeNotifications;
+    private bool _suppressDraftTracking;
+    private bool _isHydrating;
     private bool _disposed;
-    private string? _loadedCapabilitySubagentId;
+    private int _loadVersion;
+    private long _editRevision;
 
     public SubagentsViewModel(
         SubagentService subagentService,
         IPackageExtensionCatalog extensionCatalog,
         IPackageSettingsNavigationService? settingsNavigationService = null)
+        : this(
+            subagentService,
+            extensionCatalog,
+            settingsNavigationService,
+            PresentationDispatcher.Capture())
+    {
+    }
+
+    internal SubagentsViewModel(
+        SubagentService subagentService,
+        IPackageExtensionCatalog extensionCatalog,
+        IPackageSettingsNavigationService? settingsNavigationService,
+        IPresentationDispatcher uiDispatcher)
     {
         _subagentService = subagentService;
-        _extensionCatalog = extensionCatalog;
         _settingsNavigationService = settingsNavigationService;
-        _subagentService.SubagentsChanged += OnSubagentsChanged;
-        if (_extensionCatalog is not null)
-        {
-            _capabilityChangeObserver = new AgentProfileSelectableCapabilityChangeObserver(_extensionCatalog);
-            _capabilityChangeObserver.Changed += OnSelectableCapabilitiesChanged;
-        }
+        _capabilityCatalog = new SubagentEditorCapabilityCatalog(extensionCatalog);
+        _uiDispatcher = uiDispatcher;
+        _statusClear = new TimedStatusController(dispatcher: uiDispatcher);
+        ChatBinding = SubagentModelBindingEditor.Create(
+            ProviderModelCatalogAdapter.ForChatProviders(extensionCatalog),
+            uiDispatcher);
+        Subscribe();
+        _initialization = InitializeCoreAsync();
+    }
+
+    public SubagentsViewModel()
+    {
+        _uiDispatcher = PresentationDispatcher.Capture();
+        _statusClear = new TimedStatusController(dispatcher: _uiDispatcher);
+        ChatBinding = SubagentModelBindingEditor.Create(new ProviderModelCatalogAdapter(
+            () => [],
+            (_, _) => Task.FromResult(new ProviderModelCatalogResult([], string.Empty))),
+            _uiDispatcher);
+        Subscribe();
+        _initialization = InitializeCoreAsync();
     }
 
     public ObservableCollection<SubagentRecord> Subagents { get; } = [];
 
-    public ObservableCollection<SubagentProviderOption> ChatProviders { get; } = [];
+    internal ModelBindingEditorState ChatBinding { get; }
 
-    public ObservableCollection<SubagentModelOption> ChatModels { get; } = [];
+    internal CapabilitySelectionState Capabilities { get; } = new();
 
-    public ObservableCollection<SubagentReasoningOption> ReasoningOptions { get; } = [];
+    internal ObservableCollection<ProviderCatalogOption> ChatProviders => ChatBinding.Providers;
 
-    public ObservableCollection<SubagentSpeedOption> SpeedOptions { get; } = [];
+    internal ObservableCollection<ProviderModelCatalogOption> ChatModels => ChatBinding.Models;
 
-    public ObservableCollection<SubagentModeOption> ModeOptions { get; } = [];
+    internal ObservableCollection<ModelReasoningOption> ReasoningOptions => ChatBinding.ReasoningOptions;
 
-    public ObservableCollection<SubagentCapabilityOptionViewModel> CapabilityOptions { get; } = [];
+    internal ObservableCollection<ModelSpeedOption> SpeedOptions => ChatBinding.SpeedOptions;
 
-    public ObservableCollection<SubagentCapabilityGroupViewModel> CapabilityGroups { get; } = [];
+    internal ObservableCollection<ModelModeOption> ModeOptions => ChatBinding.ModeOptions;
+
+    internal ObservableCollection<CapabilityOptionState> CapabilityOptions => Capabilities.Options;
+
+    internal ObservableCollection<CapabilityGroupState> CapabilityGroups => Capabilities.Groups;
 
     public bool IsListActive => !IsEditorActive;
 
@@ -70,6 +103,18 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     public bool ShowListPane => ShowWideLayout || ShowCompactList;
 
     public bool ShowEditorPane => ShowWideLayout || ShowCompactEditor;
+
+    public bool IsDirty => SelectedSubagent is not null
+        && _drafts.TryGetValue(SelectedSubagent.SubagentId, out var draft)
+        && draft.IsDirty;
+
+    public bool IsHydrating => _isHydrating;
+
+    public bool IsBusy => IsHydrating || ChatBinding.IsLoading;
+
+    public bool IsEditorEnabled => HasSelectedSubagent && !IsHydrating;
+
+    public bool CanNavigateSubagents => !IsHydrating;
 
     [ObservableProperty]
     private SubagentRecord? _selectedSubagent;
@@ -90,30 +135,6 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     private string _instructions = string.Empty;
 
     [ObservableProperty]
-    private SubagentProviderOption? _selectedChatProvider;
-
-    [ObservableProperty]
-    private SubagentModelOption? _selectedChatModel;
-
-    [ObservableProperty]
-    private SubagentReasoningOption? _selectedReasoningOption;
-
-    [ObservableProperty]
-    private SubagentSpeedOption? _selectedSpeedOption;
-
-    [ObservableProperty]
-    private SubagentModeOption? _selectedModeOption;
-
-    [ObservableProperty]
-    private bool _hasChatProviderChoices;
-
-    [ObservableProperty]
-    private bool _hasChatProviderWarning;
-
-    [ObservableProperty]
-    private string _chatProviderWarningText = string.Empty;
-
-    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasStatusText))]
     private string _statusText = string.Empty;
 
@@ -122,6 +143,36 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     [NotifyPropertyChangedFor(nameof(IsStatusWarning))]
     [NotifyPropertyChangedFor(nameof(IsStatusError))]
     private SubagentStatusKind _statusKind = SubagentStatusKind.None;
+
+    internal ProviderCatalogOption? SelectedChatProvider
+    {
+        get => ChatBinding.SelectedProvider;
+        set => ChatBinding.SelectedProvider = value;
+    }
+
+    internal ProviderModelCatalogOption? SelectedChatModel
+    {
+        get => ChatBinding.SelectedModel;
+        set => ChatBinding.SelectedModel = value;
+    }
+
+    internal ModelReasoningOption? SelectedReasoningOption
+    {
+        get => ChatBinding.SelectedReasoningOption;
+        set => ChatBinding.SelectedReasoningOption = value;
+    }
+
+    internal ModelSpeedOption? SelectedSpeedOption
+    {
+        get => ChatBinding.SelectedSpeedOption;
+        set => ChatBinding.SelectedSpeedOption = value;
+    }
+
+    internal ModelModeOption? SelectedModeOption
+    {
+        get => ChatBinding.SelectedModeOption;
+        set => ChatBinding.SelectedModeOption = value;
+    }
 
     public bool HasSelectedSubagent => SelectedSubagent is not null;
 
@@ -133,90 +184,87 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     public bool IsStatusError => StatusKind == SubagentStatusKind.Error;
 
-    public bool CanSaveSelectedSubagent => SelectedSubagent is not null && !string.IsNullOrWhiteSpace(Description);
+    public bool CanSaveSelectedSubagent => SelectedSubagent is not null
+        && !string.IsNullOrWhiteSpace(Description)
+        && !IsBusy;
 
-    public bool IsSelectedSubagentIncomplete => SelectedSubagent is not null && string.IsNullOrWhiteSpace(Description);
+    public bool IsSelectedSubagentIncomplete => SelectedSubagent is not null
+        && string.IsNullOrWhiteSpace(Description);
 
     public string DescriptionValidationText => IsSelectedSubagentIncomplete
         ? "Description is required before this subagent can be saved, selected, or used for delegation."
         : string.Empty;
 
-    public bool HasSelectedChatProvider => !string.IsNullOrWhiteSpace(SelectedChatProvider?.ProviderId);
+    public bool HasSelectedChatProvider => ChatBinding.HasSelectedProvider;
 
-    public bool HasReasoningOptions => HasSelectedChatProvider && ReasoningOptions.Count > 0;
+    public bool HasReasoningOptions => ChatBinding.HasReasoningOptions;
 
-    public bool HasSpeedOptions => HasSelectedChatProvider && SpeedOptions.Count > 0;
+    public bool HasSpeedOptions => ChatBinding.HasSpeedOptions;
 
-    public bool HasModeOptions => HasSelectedChatProvider && ModeOptions.Count > 0;
+    public bool HasModeOptions => ChatBinding.HasModeOptions;
 
-    public bool HasNoChatProviderChoices => !HasChatProviderChoices;
+    public bool HasChatProviderChoices => ChatBinding.HasProviders;
 
-    public bool ShowChatProviderPicker => HasChatProviderChoices;
+    public bool HasNoChatProviderChoices => ChatBinding.HasNoProviders;
 
-    public bool ShowChatProviderWarning => HasChatProviderWarning;
+    public bool HasChatProviderWarning => ChatBinding.HasWarning;
 
-    public bool ShowChatModelSelection => HasSelectedChatProvider && !HasChatProviderWarning;
+    public string ChatProviderWarningText => ChatBinding.WarningText;
 
-    public bool ShowReasoningOptions => ShowChatModelSelection && HasReasoningOptions;
+    public bool ShowChatProviderPicker => ChatBinding.ShowProviderPicker;
 
-    public bool ShowSpeedOptions => ShowChatModelSelection && HasSpeedOptions;
+    public bool ShowChatProviderWarning => ChatBinding.ShowProviderWarning;
 
-    public bool ShowModeOptions => ShowChatModelSelection && HasModeOptions;
+    public bool ShowChatModelSelection => ChatBinding.ShowModelSelection;
 
-    public bool IsReasoningSelectionEnabled => SelectedModeOption?.DisablesReasoning != true;
+    public bool ShowReasoningOptions => ChatBinding.ShowReasoningOptions;
 
-    public bool CanOpenChatProviderSettings => ShowChatProviderWarning
-                                               && _settingsNavigationService is not null
-                                               && !string.IsNullOrWhiteSpace(SelectedChatProvider?.PackageId);
+    public bool ShowSpeedOptions => ChatBinding.ShowSpeedOptions;
 
-    public SubagentsViewModel() : this(null!, null!)
+    public bool ShowModeOptions => ChatBinding.ShowModeOptions;
+
+    public bool IsReasoningSelectionEnabled => ChatBinding.IsReasoningSelectionEnabled;
+
+    public bool CanOpenChatProviderSettings => ChatBinding.CanOpenProviderSettings
+        && _settingsNavigationService is not null;
+
+    partial void OnSelectedSubagentChanging(SubagentRecord? value)
     {
+        if (!IsHydrating)
+        {
+            UpdateCurrentDraft();
+        }
     }
 
-    partial void OnSelectedChatProviderChanged(SubagentProviderOption? value)
+    partial void OnSelectedSubagentChanged(SubagentRecord? value)
     {
-        OnPropertyChanged(nameof(HasSelectedChatProvider));
-        OnPropertyChanged(nameof(HasReasoningOptions));
-        OnPropertyChanged(nameof(HasSpeedOptions));
-        OnPropertyChanged(nameof(HasModeOptions));
-        NotifyChatProviderStateChanged();
-        if (_suppressChatProviderSelection)
+        OnPropertyChanged(nameof(HasSelectedSubagent));
+        OnPropertyChanged(nameof(IsEditorEnabled));
+        NotifyDescriptionStateChanged();
+        SaveSubagentCommand.NotifyCanExecuteChanged();
+        DeleteSubagentCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(IsDirty));
+        if (_suppressSelectionHandlers)
         {
             return;
         }
 
-        _ = LoadChatModelsAsync(value?.ProviderId, SelectedChatModel?.ModelId);
-    }
-
-    partial void OnSelectedChatModelChanged(SubagentModelOption? value)
-    {
-        OnPropertyChanged(nameof(ShowReasoningOptions));
-        OnPropertyChanged(nameof(ShowSpeedOptions));
-        OnPropertyChanged(nameof(ShowModeOptions));
-        if (_suppressChatProviderSelection)
+        _ = LoadSelectedSubagentAsync(value, ++_loadVersion);
+        if (IsCompactLayout && value is not null)
         {
-            return;
-        }
-
-        ApplyReasoningOptions(value?.Variants, selectedVariantId: null);
-        ApplySpeedOptions(value?.SpeedOptions, selectedSpeedOptionId: null);
-        ApplyModeOptions(value?.ModeOptions, selectedModeOptionId: null);
-    }
-
-    partial void OnSelectedModeOptionChanged(SubagentModeOption? value)
-    {
-        OnPropertyChanged(nameof(IsReasoningSelectionEnabled));
-        if (value?.DisablesReasoning == true && SelectedReasoningOption?.VariantId is not null)
-        {
-            SetSelectionSilently(() => SelectedReasoningOption = ReasoningOptions.FirstOrDefault());
+            IsEditorActive = true;
         }
     }
 
-    partial void OnHasChatProviderChoicesChanged(bool value)
-        => NotifyChatProviderStateChanged();
+    partial void OnDisplayNameChanged(string value) => OnEditorChanged();
 
-    partial void OnHasChatProviderWarningChanged(bool value)
-        => NotifyChatProviderStateChanged();
+    partial void OnDescriptionChanged(string value)
+    {
+        NotifyDescriptionStateChanged();
+        OnEditorChanged();
+    }
+
+    partial void OnInstructionsChanged(string value) => OnEditorChanged();
 
     partial void OnIsCompactLayoutChanged(bool value)
     {
@@ -229,53 +277,19 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
             SelectedSubagent = Subagents.FirstOrDefault();
         }
 
-        OnPropertyChanged(nameof(ShowWideLayout));
-        OnPropertyChanged(nameof(ShowCompactList));
-        OnPropertyChanged(nameof(ShowCompactEditor));
-        OnPropertyChanged(nameof(ShowListPane));
-        OnPropertyChanged(nameof(ShowEditorPane));
+        NotifyLayoutChanged();
     }
 
-    partial void OnIsEditorActiveChanged(bool value)
-    {
-        OnPropertyChanged(nameof(IsListActive));
-        OnPropertyChanged(nameof(ShowCompactList));
-        OnPropertyChanged(nameof(ShowCompactEditor));
-        OnPropertyChanged(nameof(ShowListPane));
-        OnPropertyChanged(nameof(ShowEditorPane));
-    }
+    partial void OnIsEditorActiveChanged(bool value) => NotifyLayoutChanged();
 
-    partial void OnSelectedSubagentChanged(SubagentRecord? value)
+    [RelayCommand(CanExecute = nameof(CanNavigateSubagents))]
+    private async Task CreateSubagentAsync()
     {
-        OnPropertyChanged(nameof(HasSelectedSubagent));
-        OnPropertyChanged(nameof(CanSaveSelectedSubagent));
-        OnPropertyChanged(nameof(IsSelectedSubagentIncomplete));
-        OnPropertyChanged(nameof(DescriptionValidationText));
-        SaveSubagentCommand.NotifyCanExecuteChanged();
-        DeleteSubagentCommand.NotifyCanExecuteChanged();
-        if (_suppressSelectionHandlers)
+        if (_subagentService is null)
         {
             return;
         }
 
-        _ = LoadSelectedSubagentAsync(value);
-        if (IsCompactLayout && value is not null)
-        {
-            IsEditorActive = true;
-        }
-    }
-
-    partial void OnDescriptionChanged(string value)
-    {
-        OnPropertyChanged(nameof(CanSaveSelectedSubagent));
-        OnPropertyChanged(nameof(IsSelectedSubagentIncomplete));
-        OnPropertyChanged(nameof(DescriptionValidationText));
-        SaveSubagentCommand.NotifyCanExecuteChanged();
-    }
-
-    [RelayCommand]
-    private async Task CreateSubagentAsync()
-    {
         SubagentRecord created;
         _suppressSubagentChangeNotifications = true;
         try
@@ -295,7 +309,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanSaveSubagent))]
     private async Task SaveSubagentAsync()
     {
-        if (SelectedSubagent is null)
+        if (_subagentService is null || SelectedSubagent is null || !CanSaveSubagent())
         {
             return;
         }
@@ -311,20 +325,18 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
                     DisplayName,
                     Description,
                     Instructions,
-                    SelectedChatProvider?.ProviderId,
-                    SelectedChatModel?.ModelId,
-                    CapabilityOptions
-                        .Where(option => option.IsEnabled)
-                        .Select(option => new AgentProfileSelectableCapabilityAssignmentRecord(option.Kind, option.CapabilityId, option.SourceId))
-                        .Distinct()
-                        .ToArray(),
-                    BuildChatModelSettingsJson());
+                    ChatBinding.SelectedProvider?.Id,
+                    ChatBinding.SelectedModel?.Id,
+                    Capabilities.Assignments,
+                    ChatBinding.SettingsJson);
             }
             finally
             {
                 _suppressSubagentChangeNotifications = false;
             }
 
+            _drafts.Remove(saved.SubagentId);
+            OnPropertyChanged(nameof(IsDirty));
             var shouldClearSelection = IsCompactLayout;
             await ReloadAsync(saved.SubagentId);
             if (shouldClearSelection)
@@ -348,23 +360,25 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanEditSubagent))]
     private async Task DeleteSubagentAsync()
     {
-        if (SelectedSubagent is null)
+        if (_subagentService is null || SelectedSubagent is null)
         {
             return;
         }
 
+        var subagentId = SelectedSubagent.SubagentId;
         var deletedName = SelectedSubagent.DisplayName;
         var shouldClearSelection = IsCompactLayout;
         _suppressSubagentChangeNotifications = true;
         try
         {
-            _subagentService.DeleteSubagent(SelectedSubagent.SubagentId);
+            _subagentService.DeleteSubagent(subagentId);
         }
         finally
         {
             _suppressSubagentChangeNotifications = false;
         }
 
+        _drafts.Remove(subagentId);
         await ReloadAsync(null);
         if (shouldClearSelection)
         {
@@ -379,13 +393,14 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         IsEditorActive = false;
     }
 
-    private bool CanEditSubagent() => SelectedSubagent is not null;
+    private bool CanEditSubagent() => SelectedSubagent is not null && !IsBusy;
 
     private bool CanSaveSubagent() => CanSaveSelectedSubagent;
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanNavigateSubagents))]
     private void BackToSubagentList()
     {
+        UpdateCurrentDraft();
         if (IsCompactLayout)
         {
             SelectedSubagent = null;
@@ -404,10 +419,8 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
         try
         {
-            await LoadChatProvidersAsync(
-                SelectedChatProvider?.ProviderId,
-                SelectedChatModel?.ModelId,
-                BuildChatModelSettingsJson());
+            await ChatBinding.RefreshAsync(ChatBinding.Selection);
+            UpdateCurrentDraft();
             ClearStatus();
         }
         catch (Exception ex)
@@ -417,23 +430,29 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private async Task OpenSelectedChatProviderSettingsAsync()
-        => await OpenProviderSettingsAsync(SelectedChatProvider?.PackageId);
+    private Task OpenSelectedChatProviderSettingsAsync()
+        => OpenProviderSettingsAsync(ChatBinding.SelectedProvider?.PackageId);
 
     [RelayCommand]
     private void OpenSubagentEditor(SubagentRecord? subagent)
     {
-        if (subagent is null)
+        if (subagent is not null)
         {
-            return;
+            ActivateSubagent(subagent);
         }
-
-        ActivateSubagent(subagent);
     }
 
     public void ActivateSubagent(SubagentRecord subagent)
     {
-        if (!string.Equals(SelectedSubagent?.SubagentId, subagent.SubagentId, StringComparison.OrdinalIgnoreCase))
+        if (!CanNavigateSubagents)
+        {
+            return;
+        }
+
+        if (!string.Equals(
+            SelectedSubagent?.SubagentId,
+            subagent.SubagentId,
+            StringComparison.OrdinalIgnoreCase))
         {
             SelectedSubagent = subagent;
         }
@@ -444,11 +463,14 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         }
     }
 
-    public async Task InitializeAsync()
-        => await ReloadAsync(null);
-
     private async Task ReloadAsync(string? selectedSubagentId)
     {
+        if (_subagentService is null)
+        {
+            ClearEditor();
+            return;
+        }
+
         var currentSubagentId = SelectedSubagent?.SubagentId;
         SetSelectionSilently(() =>
         {
@@ -458,25 +480,32 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
                 Subagents.Add(subagent);
             }
 
-            var selectedSubagent = Subagents.FirstOrDefault(agent => string.Equals(agent.SubagentId, selectedSubagentId, StringComparison.OrdinalIgnoreCase));
-            if (selectedSubagent is null && (!IsCompactLayout || selectedSubagentId is not null))
+            var selected = Subagents.FirstOrDefault(subagent => string.Equals(
+                subagent.SubagentId,
+                selectedSubagentId,
+                StringComparison.OrdinalIgnoreCase));
+            if (selected is null && (!IsCompactLayout || selectedSubagentId is not null))
             {
-                selectedSubagent = Subagents.FirstOrDefault(agent => string.Equals(agent.SubagentId, currentSubagentId, StringComparison.OrdinalIgnoreCase))
-                                   ?? Subagents.FirstOrDefault();
+                selected = Subagents.FirstOrDefault(subagent => string.Equals(
+                        subagent.SubagentId,
+                        currentSubagentId,
+                        StringComparison.OrdinalIgnoreCase))
+                    ?? Subagents.FirstOrDefault();
             }
 
-            SelectedSubagent = selectedSubagent;
+            SelectedSubagent = selected;
         });
+
         if (SelectedSubagent is null)
         {
             ClearEditor();
             return;
         }
 
-        await LoadSelectedSubagentAsync(SelectedSubagent);
+        await LoadSelectedSubagentAsync(SelectedSubagent, ++_loadVersion);
     }
 
-    private async Task LoadSelectedSubagentAsync(SubagentRecord? subagent)
+    private async Task LoadSelectedSubagentAsync(SubagentRecord? subagent, int version)
     {
         if (subagent is null)
         {
@@ -484,11 +513,94 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        DisplayName = subagent.DisplayName;
-        Description = subagent.Description ?? string.Empty;
-        Instructions = subagent.Instructions ?? string.Empty;
-        await LoadChatProvidersAsync(subagent.ChatProviderId, subagent.ChatModelId, subagent.ChatModelSettingsJson);
-        await RefreshSelectedSubagentCapabilitiesAsync(subagent);
+        BeginHydration(version);
+        var startEditRevision = _editRevision;
+        try
+        {
+            var hasDraft = _drafts.TryGetValue(subagent.SubagentId, out var document);
+            var preserveDirtyDraft = hasDraft && document!.IsDirty;
+            var draft = preserveDirtyDraft
+                ? document!.Value
+                : CreatePersistedDraft(subagent);
+            if (!preserveDirtyDraft)
+            {
+                document = new EditableDocumentState<SubagentEditorDraft>(draft, DraftComparer);
+                _drafts[subagent.SubagentId] = document;
+            }
+
+            var localToolsTask = _capabilityCatalog?.ListLocalToolsAsync()
+                ?? Task.FromResult<IReadOnlyList<AgentToolDescriptor>>([]);
+            var packageCapabilitiesTask = _capabilityCatalog?.ListPackageCapabilitiesAsync()
+                ?? Task.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
+
+            _suppressDraftTracking = true;
+            try
+            {
+                DisplayName = draft.DisplayName;
+                Description = draft.Description;
+                Instructions = draft.Instructions;
+            }
+            finally
+            {
+                _suppressDraftTracking = false;
+            }
+
+            await Task.WhenAll(
+                ChatBinding.RefreshAsync(draft.ChatBinding),
+                localToolsTask,
+                packageCapabilitiesTask).ConfigureAwait(false);
+            var localTools = await localToolsTask.ConfigureAwait(false);
+            var packageCapabilities = await packageCapabilitiesTask.ConfigureAwait(false);
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!IsCurrentLoad(version, subagent.SubagentId))
+                {
+                    return;
+                }
+
+                _suppressDraftTracking = true;
+                try
+                {
+                    ApplyCapabilityOptions(
+                        localTools,
+                        packageCapabilities,
+                        draft.CapabilityAssignments,
+                        preserveCurrent: false);
+                }
+                finally
+                {
+                    _suppressDraftTracking = false;
+                }
+
+                var current = CaptureDraft();
+                if (!preserveDirtyDraft && _editRevision == startEditRevision)
+                {
+                    _drafts[subagent.SubagentId] = new EditableDocumentState<SubagentEditorDraft>(
+                        current,
+                        DraftComparer);
+                }
+                else
+                {
+                    document!.Value = current;
+                }
+
+                OnPropertyChanged(nameof(IsDirty));
+            }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed && IsCurrentLoad(version, subagent.SubagentId))
+                {
+                    SetStatus(ex.Message, SubagentStatusKind.Error);
+                }
+            }).ConfigureAwait(false);
+        }
+        finally
+        {
+            await _uiDispatcher.InvokeAsync(() => EndHydration(version)).ConfigureAwait(false);
+        }
     }
 
     private async Task RefreshSelectedSubagentCapabilitiesAsync()
@@ -499,481 +611,192 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        await RefreshSelectedSubagentCapabilitiesAsync(subagent);
-    }
-
-    private async Task RefreshSelectedSubagentCapabilitiesAsync(SubagentRecord subagent)
-    {
-        var localToolsTask = ListInstalledLocalToolsAsync();
-        var packageCapabilitiesTask = ListSelectableProfileCapabilitiesAsync();
-        await Task.WhenAll(localToolsTask, packageCapabilitiesTask);
-
-        if (!string.Equals(SelectedSubagent?.SubagentId, subagent.SubagentId, StringComparison.OrdinalIgnoreCase))
+        var version = _loadVersion;
+        try
         {
-            return;
-        }
+            var localToolsTask = _capabilityCatalog?.ListLocalToolsAsync()
+                ?? Task.FromResult<IReadOnlyList<AgentToolDescriptor>>([]);
+            var packageCapabilitiesTask = _capabilityCatalog?.ListPackageCapabilitiesAsync()
+                ?? Task.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
+            await Task.WhenAll(localToolsTask, packageCapabilitiesTask).ConfigureAwait(false);
+            var localTools = await localToolsTask.ConfigureAwait(false);
+            var packageCapabilities = await packageCapabilitiesTask.ConfigureAwait(false);
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!IsCurrentLoad(version, subagent.SubagentId))
+                {
+                    return;
+                }
 
-        ApplyCapabilityOptions(subagent, await localToolsTask, await packageCapabilitiesTask);
+                _suppressDraftTracking = true;
+                try
+                {
+                    ApplyCapabilityOptions(
+                        localTools,
+                        packageCapabilities,
+                        Capabilities.Assignments,
+                        preserveCurrent: true);
+                }
+                finally
+                {
+                    _suppressDraftTracking = false;
+                }
+
+                UpdateCurrentDraft();
+            }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed && IsCurrentLoad(version, subagent.SubagentId))
+                {
+                    SetStatus(ex.Message, SubagentStatusKind.Error);
+                }
+            }).ConfigureAwait(false);
+        }
     }
 
     private void ApplyCapabilityOptions(
-        SubagentRecord subagent,
         IReadOnlyList<AgentToolDescriptor> localTools,
-        IReadOnlyList<AgentProfileSelectableCapabilityDescriptor> packageCapabilities)
+        IReadOnlyList<AgentProfileSelectableCapabilityDescriptor> packageCapabilities,
+        IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> assignments,
+        bool preserveCurrent)
     {
-        var assignments = GetEffectiveCapabilityAssignments(subagent);
-
-        var options = new List<SubagentCapabilityOptionViewModel>();
-        options.AddRange(localTools.Select(tool =>
-        {
-            var group = ResolveToolGroup(tool);
-            return new SubagentCapabilityOptionViewModel(
-                AgentProfileSelectableCapabilityKinds.Tool,
-                tool.ToolId,
-                tool.SourceId,
-                tool.DisplayName,
-                tool.Description,
-                IsEnabled(assignments, AgentProfileSelectableCapabilityKinds.Tool, tool.ToolId, tool.SourceId),
-                group.Key,
-                group.Title,
-                group.Description,
-                group.SortOrder);
-        }));
-        options.AddRange(packageCapabilities
-            .Where(capability => !string.Equals(capability.Kind, AgentProfileSelectableCapabilityKinds.Subagent, StringComparison.OrdinalIgnoreCase)
-                                 || !string.Equals(capability.SourceId, SubagentConstants.PackageId, StringComparison.OrdinalIgnoreCase))
-            .Select(capability =>
+        var definitions = localTools.Select(descriptor =>
             {
-                var group = ResolvePackageCapabilityGroup(capability);
-                return new SubagentCapabilityOptionViewModel(
+                var aliases = descriptor.Aliases?
+                    .Where(alias => !string.IsNullOrWhiteSpace(alias))
+                    .Select(alias => new AgentProfileSelectableCapabilityAssignmentRecord(
+                        AgentProfileSelectableCapabilityKinds.Tool,
+                        alias,
+                        descriptor.SourceId))
+                    .ToArray();
+                return new CapabilityOptionDefinition(
+                    "capability",
+                    AgentProfileSelectableCapabilityKinds.Tool,
+                    descriptor.ToolId,
+                    descriptor.SourceId,
+                    descriptor.DisplayName,
+                    descriptor.Description,
+                    string.Empty,
+                    CanSelect: true,
+                    CapabilityGrouping.ForTool(descriptor),
+                    aliases,
+                    AllowUnscopedAssignment: true);
+            })
+            .Concat(packageCapabilities
+                .Where(capability => !string.Equals(
+                        capability.Kind,
+                        AgentProfileSelectableCapabilityKinds.Subagent,
+                        StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(
+                        capability.SourceId,
+                        SubagentConstants.PackageId,
+                        StringComparison.OrdinalIgnoreCase))
+                .Select(capability => new CapabilityOptionDefinition(
+                    "capability",
                     capability.Kind,
                     capability.CapabilityId,
                     capability.SourceId,
                     capability.DisplayName,
                     capability.Description,
-                    IsEnabled(assignments, capability.Kind, capability.CapabilityId, capability.SourceId),
-                    group.Key,
-                    group.Title,
-                    group.Description,
-                    group.SortOrder);
-            }));
-
-        CapabilityOptions.Clear();
-        foreach (var option in options.OrderBy(option => option.DisplayName, StringComparer.OrdinalIgnoreCase))
-        {
-            CapabilityOptions.Add(option);
-        }
-
-        ReconcileCapabilityGroups();
-        _loadedCapabilitySubagentId = subagent.SubagentId;
-    }
-
-    private void ClearEditor()
-    {
-        DisplayName = string.Empty;
-        Description = string.Empty;
-        Instructions = string.Empty;
-        ChatProviders.Clear();
-        ChatModels.Clear();
-        ReasoningOptions.Clear();
-        SpeedOptions.Clear();
-        ModeOptions.Clear();
-        HasChatProviderChoices = false;
-        ClearChatProviderWarning();
-        _suppressChatProviderSelection = true;
-        try
-        {
-            SelectedChatProvider = null;
-            SelectedChatModel = null;
-            SelectedReasoningOption = null;
-            SelectedSpeedOption = null;
-            SelectedModeOption = null;
-        }
-        finally
-        {
-            _suppressChatProviderSelection = false;
-        }
-
-        OnPropertyChanged(nameof(HasSelectedChatProvider));
-        OnPropertyChanged(nameof(HasReasoningOptions));
-        OnPropertyChanged(nameof(ShowReasoningOptions));
-        OnPropertyChanged(nameof(HasSpeedOptions));
-        OnPropertyChanged(nameof(ShowSpeedOptions));
-        OnPropertyChanged(nameof(HasModeOptions));
-        OnPropertyChanged(nameof(ShowModeOptions));
-        CapabilityOptions.Clear();
-        CapabilityGroups.Clear();
-        _loadedCapabilitySubagentId = null;
-    }
-
-    private void ReconcileCapabilityGroups()
-    {
-        CapabilityGroups.Clear();
-        foreach (var group in CapabilityOptions
-                     .GroupBy(option => option.GroupKey, StringComparer.OrdinalIgnoreCase)
-                     .Select(group => new SubagentCapabilityGroupViewModel(
-                         group.First().GroupTitle,
-                         group.First().GroupDescription,
-                         group.First().GroupSortOrder,
-                         group.OrderBy(option => option.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray()))
-                     .OrderBy(group => group.SortOrder)
-                     .ThenBy(group => group.Title, StringComparer.OrdinalIgnoreCase))
-        {
-            CapabilityGroups.Add(group);
-        }
-    }
-
-    private async Task LoadChatProvidersAsync(string? selectedProviderId, string? selectedModelId, string? selectedSettingsJson)
-    {
-        ChatProviders.Clear();
-        IReadOnlyList<IAgentChatProvider> providers = _extensionCatalog is null
-            ? []
-            : _extensionCatalog.GetExtensions(PackageExtensionPoints.ChatProviders)
-                .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-        HasChatProviderChoices = providers.Count > 0;
-
-        if (!HasChatProviderChoices)
-        {
-            _suppressChatProviderSelection = true;
-            try
-            {
-                SelectedChatProvider = null;
-                SelectedChatModel = null;
-                SelectedReasoningOption = null;
-            }
-            finally
-            {
-                _suppressChatProviderSelection = false;
-            }
-
-            ChatModels.Clear();
-            ReasoningOptions.Clear();
-            ClearChatProviderWarning();
-            NotifyChatProviderStateChanged();
-            return;
-        }
-
-        ChatProviders.Add(new SubagentProviderOption(null, "Inherit parent chat model"));
-        if (_extensionCatalog is not null)
-        {
-            foreach (var provider in providers)
-            {
-                ChatProviders.Add(new SubagentProviderOption(
-                    provider.Descriptor.ProviderId,
-                    provider.Descriptor.DisplayName,
-                    provider.Descriptor.PackageId));
-            }
-        }
-
-        _suppressChatProviderSelection = true;
-        try
-        {
-            SelectedChatProvider = ChatProviders.FirstOrDefault(option => string.Equals(option.ProviderId, selectedProviderId, StringComparison.OrdinalIgnoreCase))
-                                   ?? ChatProviders.FirstOrDefault();
-        }
-        finally
-        {
-            _suppressChatProviderSelection = false;
-        }
-
-        await LoadChatModelsAsync(SelectedChatProvider?.ProviderId, selectedModelId);
-        var settings = AgentChatModelSettingsJson.Parse(selectedSettingsJson);
-        ApplyReasoningOptions(SelectedChatModel?.Variants, settings.ReasoningVariantId);
-        ApplySpeedOptions(SelectedChatModel?.SpeedOptions, settings.SpeedOptionId);
-        ApplyModeOptions(SelectedChatModel?.ModeOptions, settings.ModeOptionId);
-        NotifyChatProviderStateChanged();
-    }
-
-    private async Task LoadChatModelsAsync(string? providerId, string? selectedModelId)
-    {
-        ChatModels.Clear();
-        SelectedChatModel = null;
-        ApplyReasoningOptions(null, selectedVariantId: null);
-        ApplySpeedOptions(null, selectedSpeedOptionId: null);
-        ApplyModeOptions(null, selectedModeOptionId: null);
-        if (_extensionCatalog is null || string.IsNullOrWhiteSpace(providerId))
-        {
-            ClearChatProviderWarning();
-            return;
-        }
-
-        var provider = _extensionCatalog.GetExtensions(PackageExtensionPoints.ChatProviders)
-            .FirstOrDefault(provider => string.Equals(provider.Descriptor.ProviderId, providerId, StringComparison.OrdinalIgnoreCase));
-        if (provider is null)
-        {
-            ClearChatProviderWarning();
-            return;
-        }
-
-        try
-        {
-            var models = await provider.GetAvailableModelsAsync();
-            var readiness = await provider.GetReadinessAsync();
-            ApplyChatProviderReadiness(readiness);
-
-            foreach (var model in models.OrderNewestFirst())
-            {
-                ChatModels.Add(new SubagentModelOption(model.ModelId, model.DisplayName, model.Variants, model.SpeedOptions, model.ModeOptions));
-            }
-        }
-        catch (Exception ex)
-        {
-            SetChatProviderWarning($"Chat provider status could not be loaded: {ex.Message}");
-        }
-
-        SelectedChatModel = ChatModels.FirstOrDefault(option => string.Equals(option.ModelId, selectedModelId, StringComparison.OrdinalIgnoreCase))
-                             ?? ChatModels.FirstOrDefault();
-        ApplyReasoningOptions(SelectedChatModel?.Variants, selectedVariantId: null);
-        ApplySpeedOptions(SelectedChatModel?.SpeedOptions, selectedSpeedOptionId: null);
-        ApplyModeOptions(SelectedChatModel?.ModeOptions, selectedModeOptionId: null);
-        NotifyChatProviderStateChanged();
-    }
-
-    private void ApplyReasoningOptions(IReadOnlyList<AgentModelVariantDescriptor>? variants, string? selectedVariantId)
-    {
-        ReasoningOptions.Clear();
-        SelectedReasoningOption = null;
-
-        if (!HasSelectedChatProvider || variants is null || variants.Count == 0)
-        {
-            OnPropertyChanged(nameof(HasReasoningOptions));
-            OnPropertyChanged(nameof(ShowReasoningOptions));
-            return;
-        }
-
-        ReasoningOptions.Add(new SubagentReasoningOption(null, "Default", "Use the selected model's default reasoning behavior."));
-        foreach (var variant in variants.Where(variant => !string.IsNullOrWhiteSpace(variant.VariantId)))
-        {
-            ReasoningOptions.Add(new SubagentReasoningOption(variant.VariantId, variant.DisplayName, variant.Description));
-        }
-
-        SelectedReasoningOption = ReasoningOptions.FirstOrDefault(option =>
-                                      !string.IsNullOrWhiteSpace(selectedVariantId)
-                                      && string.Equals(option.VariantId, selectedVariantId, StringComparison.OrdinalIgnoreCase))
-                                  ?? ReasoningOptions.FirstOrDefault();
-        OnPropertyChanged(nameof(HasReasoningOptions));
-        OnPropertyChanged(nameof(ShowReasoningOptions));
-    }
-
-    private void ApplySpeedOptions(IReadOnlyList<AgentModelSpeedOptionDescriptor>? speedOptions, string? selectedSpeedOptionId)
-    {
-        SpeedOptions.Clear();
-        SelectedSpeedOption = null;
-        if (!HasSelectedChatProvider || speedOptions is null || speedOptions.Count == 0)
-        {
-            OnPropertyChanged(nameof(HasSpeedOptions));
-            OnPropertyChanged(nameof(ShowSpeedOptions));
-            return;
-        }
-
-        SpeedOptions.Add(new SubagentSpeedOption(null, "Default", "Use the provider's default speed."));
-        foreach (var option in speedOptions.Where(option => !string.IsNullOrWhiteSpace(option.SpeedOptionId)))
-        {
-            SpeedOptions.Add(new SubagentSpeedOption(option.SpeedOptionId, option.DisplayName, option.Description));
-        }
-
-        SelectedSpeedOption = SpeedOptions.FirstOrDefault(option =>
-                                  !string.IsNullOrWhiteSpace(selectedSpeedOptionId)
-                                  && string.Equals(option.SpeedOptionId, selectedSpeedOptionId, StringComparison.OrdinalIgnoreCase))
-                              ?? SpeedOptions.FirstOrDefault();
-        OnPropertyChanged(nameof(HasSpeedOptions));
-        OnPropertyChanged(nameof(ShowSpeedOptions));
-    }
-
-    private void ApplyModeOptions(IReadOnlyList<AgentModelModeOptionDescriptor>? modeOptions, string? selectedModeOptionId)
-    {
-        ModeOptions.Clear();
-        SelectedModeOption = null;
-        if (!HasSelectedChatProvider || modeOptions is null || modeOptions.Count == 0)
-        {
-            OnPropertyChanged(nameof(HasModeOptions));
-            OnPropertyChanged(nameof(ShowModeOptions));
-            OnPropertyChanged(nameof(IsReasoningSelectionEnabled));
-            return;
-        }
-
-        ModeOptions.Add(new SubagentModeOption(null, "Default", "Use the provider's default execution mode."));
-        foreach (var option in modeOptions.Where(option => !string.IsNullOrWhiteSpace(option.ModeOptionId)))
-        {
-            ModeOptions.Add(new SubagentModeOption(option.ModeOptionId, option.DisplayName, option.Description, option.DisablesReasoning));
-        }
-
-        SelectedModeOption = ModeOptions.FirstOrDefault(option =>
-                                 !string.IsNullOrWhiteSpace(selectedModeOptionId)
-                                 && string.Equals(option.ModeOptionId, selectedModeOptionId, StringComparison.OrdinalIgnoreCase))
-                             ?? ModeOptions.FirstOrDefault();
-        if (SelectedModeOption?.DisablesReasoning == true)
-        {
-            SelectedReasoningOption = ReasoningOptions.FirstOrDefault();
-        }
-
-        OnPropertyChanged(nameof(HasModeOptions));
-        OnPropertyChanged(nameof(ShowModeOptions));
-        OnPropertyChanged(nameof(IsReasoningSelectionEnabled));
-    }
-
-    private string? BuildChatModelSettingsJson()
-        => AgentChatModelSettingsJson.Serialize(new AgentChatModelSettings(
-            HasReasoningOptions ? SelectedReasoningOption?.VariantId : null,
-            HasSpeedOptions ? SelectedSpeedOption?.SpeedOptionId : null,
-            HasModeOptions ? SelectedModeOption?.ModeOptionId : null));
-
-    private async Task<IReadOnlyList<AgentToolDescriptor>> ListInstalledLocalToolsAsync()
-    {
-        if (_extensionCatalog is null)
-        {
-            return [];
-        }
-
-        var context = new AgentToolSourceContext(SessionId: null, Profile: null, Workspace: null, ExecutionBinding: null);
-        var descriptors = new List<AgentToolDescriptor>();
-        descriptors.AddRange(_extensionCatalog.GetExtensions(PackageExtensionPoints.Tools).Select(tool => tool.Descriptor));
-        foreach (var source in _extensionCatalog.GetExtensions(PackageExtensionPoints.ToolSources))
-        {
-            descriptors.AddRange(await source.ListToolsAsync(context));
-        }
-
-        return descriptors
-            .Where(descriptor => descriptor.SelectionScope == AgentToolSelectionScope.Tool)
-            .GroupBy(descriptor => string.Concat(descriptor.SourceId ?? string.Empty, "\n", descriptor.ToolId), StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First())
-            .OrderBy(descriptor => descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
+                    capability.StatusText ?? string.Empty,
+                    capability.IsSelectable,
+                    CapabilityGrouping.ForPackage(capability))))
             .ToArray();
+        if (preserveCurrent)
+        {
+            Capabilities.Reconcile(definitions);
+        }
+        else
+        {
+            Capabilities.Load(definitions, assignments);
+        }
     }
 
-    private async Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListSelectableProfileCapabilitiesAsync()
+    private SubagentEditorDraft CreatePersistedDraft(SubagentRecord subagent) => new(
+        subagent.DisplayName,
+        subagent.Description ?? string.Empty,
+        subagent.Instructions ?? string.Empty,
+        new ModelBindingSelection(
+            subagent.ChatProviderId,
+            subagent.ChatModelId,
+            subagent.ChatModelSettingsJson),
+        subagent.SelectableCapabilityAssignments ?? []);
+
+    private SubagentEditorDraft CaptureDraft() => new(
+        DisplayName,
+        Description,
+        Instructions,
+        ChatBinding.Selection,
+        Capabilities.Assignments);
+
+    private void UpdateCurrentDraft()
     {
-        if (_extensionCatalog is null)
+        if (_suppressDraftTracking || SelectedSubagent is null
+            || !_drafts.TryGetValue(SelectedSubagent.SubagentId, out var document))
         {
-            return [];
+            return;
         }
 
-        _capabilityChangeObserver?.RefreshProviderSubscriptions();
-        var capabilities = new List<AgentProfileSelectableCapabilityDescriptor>();
-        var request = new AgentProfileSelectableCapabilityRequest(Profile: null);
-        foreach (var provider in _extensionCatalog.GetExtensions(PackageExtensionPoints.ProfileSelectableCapabilityProviders))
+        var wasDirty = document.IsDirty;
+        document.Value = CaptureDraft();
+        if (wasDirty != document.IsDirty)
         {
-            capabilities.AddRange(await provider.ListCapabilitiesAsync(request));
+            OnPropertyChanged(nameof(IsDirty));
         }
-
-        return capabilities
-            .Where(capability => !string.IsNullOrWhiteSpace(capability.Kind)
-                                 && !string.IsNullOrWhiteSpace(capability.CapabilityId)
-                                 && !string.IsNullOrWhiteSpace(capability.DisplayName))
-            .GroupBy(capability => string.Concat(capability.Kind, "\n", capability.SourceId ?? string.Empty, "\n", capability.CapabilityId), StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First())
-            .OrderBy(capability => capability.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
     }
 
-    private IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> GetEffectiveCapabilityAssignments(SubagentRecord subagent)
+    private void OnEditorChanged()
     {
-        var assignments = new List<AgentProfileSelectableCapabilityAssignmentRecord>(subagent.SelectableCapabilityAssignments ?? []);
-        if (string.Equals(_loadedCapabilitySubagentId, subagent.SubagentId, StringComparison.OrdinalIgnoreCase))
+        if (_suppressDraftTracking)
         {
-            assignments.AddRange(CapabilityOptions
-                .Where(option => option.IsEnabled)
-                .Select(option => new AgentProfileSelectableCapabilityAssignmentRecord(option.Kind, option.CapabilityId, option.SourceId)));
+            return;
         }
 
-        return assignments.Distinct().ToArray();
+        _editRevision++;
+        UpdateCurrentDraft();
     }
 
-    private static bool IsEnabled(
-        IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> assignments,
-        string kind,
-        string capabilityId,
-        string? sourceId)
-        => assignments.Any(assignment => string.Equals(assignment.Kind, kind, StringComparison.OrdinalIgnoreCase)
-                                         && string.Equals(assignment.CapabilityId, capabilityId, StringComparison.OrdinalIgnoreCase)
-                                         && (string.IsNullOrWhiteSpace(sourceId)
-                                              || string.Equals(assignment.SourceId, sourceId, StringComparison.OrdinalIgnoreCase)));
-
-    private static SubagentCapabilityGroupInfo ResolveToolGroup(AgentToolDescriptor descriptor)
+    private void Subscribe()
     {
-        var title = FirstNonEmpty(
-            descriptor.SelectionGroupDisplayName,
-            descriptor.SourceDisplayName,
-            HumanizeIdentifier(descriptor.SelectionGroupId),
-            HumanizeIdentifier(descriptor.SourceId),
-            "Tools")!;
-        var key = FirstNonEmpty(
-            descriptor.SelectionGroupId,
-            descriptor.SourceId,
-            descriptor.SourceKind,
-            title)!;
-        return new SubagentCapabilityGroupInfo("tool:" + key, title, descriptor.SelectionGroupDescription, 10);
+        ChatBinding.PropertyChanged += OnModelBindingPropertyChanged;
+        ChatBinding.Changed += OnEditorSelectionChanged;
+        Capabilities.Changed += OnCapabilitiesChanged;
+        if (_subagentService is not null)
+        {
+            _subagentService.SubagentsChanged += OnSubagentsChanged;
+        }
+
+        if (_capabilityCatalog is not null)
+        {
+            _capabilityCatalog.Changed += OnSelectableCapabilitiesChanged;
+        }
     }
 
-    private static SubagentCapabilityGroupInfo ResolvePackageCapabilityGroup(AgentProfileSelectableCapabilityDescriptor capability)
+    private void OnModelBindingPropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
-        var kind = capability.Kind;
-        var sourceId = capability.SourceId;
-        if (string.Equals(kind, AgentProfileSelectableCapabilityKinds.Subagent, StringComparison.OrdinalIgnoreCase))
-        {
-            return new SubagentCapabilityGroupInfo("subagents", "Subagents", "Delegated specialists available to orchestrated profiles.", 40);
-        }
-
-        if (!string.IsNullOrWhiteSpace(capability.GroupDisplayName))
-        {
-            var key = FirstNonEmpty(capability.GroupId, capability.SourceId, capability.Kind, capability.GroupDisplayName)!;
-            return new SubagentCapabilityGroupInfo(
-                "package:" + key,
-                capability.GroupDisplayName.Trim(),
-                capability.GroupDescription,
-                capability.GroupSortOrder);
-        }
-
-        if (string.Equals(kind, "skill", StringComparison.OrdinalIgnoreCase))
-        {
-            return new SubagentCapabilityGroupInfo("skills", "Skills", "Reusable skill packages exposed to the agent.", 30);
-        }
-
-        if (string.Equals(kind, AgentProfileSelectableCapabilityKinds.ToolGroup, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(sourceId, "mcp", StringComparison.OrdinalIgnoreCase))
-        {
-            return new SubagentCapabilityGroupInfo("mcp", "MCP Servers", "Configured Model Context Protocol servers.", 20);
-        }
-
-        if (string.Equals(kind, AgentProfileSelectableCapabilityKinds.ToolGroup, StringComparison.OrdinalIgnoreCase))
-        {
-            return new SubagentCapabilityGroupInfo("tool-groups:" + (sourceId ?? string.Empty), "Tool Groups", "Package-provided groups of related tools.", 25);
-        }
-
-        if (string.Equals(kind, AgentProfileSelectableCapabilityKinds.Tool, StringComparison.OrdinalIgnoreCase))
-        {
-            return new SubagentCapabilityGroupInfo("tools:" + (sourceId ?? string.Empty), "Tools", "Package-provided individual tools.", 10);
-        }
-
-        return new SubagentCapabilityGroupInfo("other:" + kind, "Other", "Additional package capabilities.", 90);
+        // The composed state owns the dependency graph; refresh the thin compatibility surface.
+        OnPropertyChanged(string.Empty);
+        SaveSubagentCommand.NotifyCanExecuteChanged();
+        DeleteSubagentCommand.NotifyCanExecuteChanged();
     }
 
-    private static string? FirstNonEmpty(params string?[] values)
-        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();
+    private void OnEditorSelectionChanged() => OnEditorChanged();
 
-    private static string? HumanizeIdentifier(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return null;
-        }
-
-        return string.Join(" ", value.Split(['-', '_', '.'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(part => string.IsNullOrEmpty(part) ? part : char.ToUpperInvariant(part[0]) + part[1..]));
-    }
+    private void OnCapabilitiesChanged() => OnEditorChanged();
 
     private void OnSelectableCapabilitiesChanged()
-        => QueueCapabilitiesRefresh();
+        => RunOnUiThread(() => _ = RefreshSelectedSubagentCapabilitiesAsync());
 
-    private void OnSubagentsChanged()
-        => RunOnUiThread(() =>
+    private void OnSubagentsChanged() => RunOnUiThread(() =>
+    {
+        if (!_suppressSubagentChangeNotifications)
         {
-            if (!_suppressSubagentChangeNotifications)
-            {
-                _ = ReloadSafelyAsync(SelectedSubagent?.SubagentId);
-            }
-        });
+            _ = ReloadSafelyAsync(SelectedSubagent?.SubagentId);
+        }
+    });
 
     private async Task ReloadSafelyAsync(string? selectedSubagentId)
     {
@@ -993,106 +816,121 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void QueueCapabilitiesRefresh()
-        => RunOnUiThread(() => _ = RefreshSelectedSubagentCapabilitiesSafelyAsync());
-
-    private async Task RefreshSelectedSubagentCapabilitiesSafelyAsync()
+    private void ClearEditor()
     {
+        _suppressDraftTracking = true;
         try
         {
-            await RefreshSelectedSubagentCapabilitiesAsync();
+            DisplayName = string.Empty;
+            Description = string.Empty;
+            Instructions = string.Empty;
+            ChatBinding.Clear();
+            Capabilities.Clear();
         }
-        catch (Exception ex)
+        finally
         {
-            if (SelectedSubagent is not null)
-            {
-                SetStatus(ex.Message, SubagentStatusKind.Error);
-            }
+            _suppressDraftTracking = false;
         }
+
+        OnPropertyChanged(nameof(IsDirty));
     }
 
-    private void RunOnUiThread(Action action)
+    private void NotifyDescriptionStateChanged()
     {
-        if (Avalonia.Application.Current is null || Dispatcher.UIThread.CheckAccess())
+        OnPropertyChanged(nameof(CanSaveSelectedSubagent));
+        OnPropertyChanged(nameof(IsSelectedSubagentIncomplete));
+        OnPropertyChanged(nameof(DescriptionValidationText));
+        SaveSubagentCommand.NotifyCanExecuteChanged();
+    }
+
+    private void NotifyLayoutChanged()
+    {
+        OnPropertyChanged(nameof(IsListActive));
+        OnPropertyChanged(nameof(ShowWideLayout));
+        OnPropertyChanged(nameof(ShowCompactList));
+        OnPropertyChanged(nameof(ShowCompactEditor));
+        OnPropertyChanged(nameof(ShowListPane));
+        OnPropertyChanged(nameof(ShowEditorPane));
+    }
+
+    private bool IsCurrentLoad(int version, string subagentId)
+        => !_disposed
+            && version == _loadVersion
+            && string.Equals(
+                SelectedSubagent?.SubagentId,
+                subagentId,
+                StringComparison.OrdinalIgnoreCase);
+
+    private void BeginHydration(int version)
+    {
+        if (_disposed || version != _loadVersion)
         {
-            action();
             return;
         }
 
-        Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
+        _isHydrating = true;
+        NotifyHydrationStateChanged();
     }
 
-    public void Dispose()
+    private void EndHydration(int version)
+    {
+        if (_disposed || version != _loadVersion || !_isHydrating)
+        {
+            return;
+        }
+
+        _isHydrating = false;
+        NotifyHydrationStateChanged();
+    }
+
+    private void NotifyHydrationStateChanged()
+    {
+        OnPropertyChanged(nameof(IsHydrating));
+        OnPropertyChanged(nameof(IsBusy));
+        OnPropertyChanged(nameof(IsEditorEnabled));
+        OnPropertyChanged(nameof(CanNavigateSubagents));
+        NotifyDescriptionStateChanged();
+        DeleteSubagentCommand.NotifyCanExecuteChanged();
+        CreateSubagentCommand.NotifyCanExecuteChanged();
+        BackToSubagentListCommand.NotifyCanExecuteChanged();
+    }
+
+    private void SetSelectionSilently(Action action)
+    {
+        _suppressSelectionHandlers = true;
+        try
+        {
+            action();
+        }
+        finally
+        {
+            _suppressSelectionHandlers = false;
+        }
+    }
+
+    private void ClearStatus() => SetStatus(string.Empty, SubagentStatusKind.None);
+
+    private void SetStatus(string message, SubagentStatusKind kind, bool autoClear = false)
     {
         if (_disposed)
         {
             return;
         }
 
-        _disposed = true;
-        CancelSuccessStatusClear();
-        _subagentService.SubagentsChanged -= OnSubagentsChanged;
-        if (_capabilityChangeObserver is not null)
-        {
-            _capabilityChangeObserver.Changed -= OnSelectableCapabilitiesChanged;
-            _capabilityChangeObserver.Dispose();
-        }
-    }
-
-    private void ClearStatus()
-        => SetStatus(string.Empty, SubagentStatusKind.None);
-
-    private void SetStatus(string message, SubagentStatusKind kind, bool autoClear = false)
-    {
-        CancelSuccessStatusClear();
+        _statusClear.Cancel();
         StatusKind = string.IsNullOrWhiteSpace(message) ? SubagentStatusKind.None : kind;
         StatusText = message;
         if (autoClear && StatusKind == SubagentStatusKind.Success)
         {
-            ScheduleSuccessStatusClear(message);
-        }
-    }
-
-    private void ScheduleSuccessStatusClear(string message)
-    {
-        var cancellation = new CancellationTokenSource();
-        _successStatusClearCancellation = cancellation;
-        _ = ClearSuccessStatusAfterDelayAsync(message, cancellation);
-    }
-
-    private async Task ClearSuccessStatusAfterDelayAsync(string message, CancellationTokenSource cancellation)
-    {
-        try
-        {
-            await Task.Delay(SuccessStatusDisplayDuration, cancellation.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            return;
-        }
-
-        RunOnUiThread(() =>
-        {
-            if (_successStatusClearCancellation == cancellation
-                && StatusKind == SubagentStatusKind.Success
-                && string.Equals(StatusText, message, StringComparison.Ordinal))
+            _ = _statusClear.ScheduleAsync(SuccessStatusDisplayDuration, () =>
             {
-                ClearStatus();
-            }
-        });
-    }
-
-    private void CancelSuccessStatusClear()
-    {
-        var cancellation = _successStatusClearCancellation;
-        if (cancellation is null)
-        {
-            return;
+                if (StatusKind == SubagentStatusKind.Success
+                    && string.Equals(StatusText, message, StringComparison.Ordinal))
+                {
+                    ClearStatus();
+                }
+            });
         }
-
-        _successStatusClearCancellation = null;
-        cancellation.Cancel();
-        cancellation.Dispose();
     }
 
     private async Task OpenProviderSettingsAsync(string? packageId)
@@ -1116,132 +954,15 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void ApplyChatProviderReadiness(AgentProviderReadiness? readiness)
+    private void RunOnUiThread(Action action)
     {
-        if (!HasChatProviderChoices || !HasSelectedChatProvider || readiness is null || readiness.Status == AgentProviderReadinessStatus.Ready)
+        _ = _uiDispatcher.InvokeAsync(() =>
         {
-            ClearChatProviderWarning();
-            return;
-        }
-
-        SetChatProviderWarning(readiness.Message);
+            if (!_disposed)
+            {
+                action();
+            }
+        });
     }
 
-    private void SetChatProviderWarning(string message)
-    {
-        ChatProviderWarningText = message;
-        HasChatProviderWarning = true;
-        NotifyChatProviderStateChanged();
-    }
-
-    private void ClearChatProviderWarning()
-    {
-        ChatProviderWarningText = string.Empty;
-        HasChatProviderWarning = false;
-        NotifyChatProviderStateChanged();
-    }
-
-    private void NotifyChatProviderStateChanged()
-    {
-        OnPropertyChanged(nameof(HasNoChatProviderChoices));
-        OnPropertyChanged(nameof(ShowChatProviderPicker));
-        OnPropertyChanged(nameof(ShowChatProviderWarning));
-        OnPropertyChanged(nameof(ShowChatModelSelection));
-        OnPropertyChanged(nameof(ShowReasoningOptions));
-        OnPropertyChanged(nameof(ShowSpeedOptions));
-        OnPropertyChanged(nameof(ShowModeOptions));
-        OnPropertyChanged(nameof(IsReasoningSelectionEnabled));
-        OnPropertyChanged(nameof(CanOpenChatProviderSettings));
-    }
-
-    private void SetSelectionSilently(Action action)
-    {
-        _suppressSelectionHandlers = true;
-        try
-        {
-            action();
-        }
-        finally
-        {
-            _suppressSelectionHandlers = false;
-        }
-    }
-
-}
-
-public enum SubagentStatusKind
-{
-    None = 0,
-    Success,
-    Warning,
-    Error,
-}
-
-public sealed record SubagentCapabilityGroupViewModel(
-    string Title,
-    string? Description,
-    int SortOrder,
-    IReadOnlyList<SubagentCapabilityOptionViewModel> Options)
-{
-    public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
-}
-
-internal sealed record SubagentCapabilityGroupInfo(string Key, string Title, string? Description, int SortOrder);
-
-public sealed partial class SubagentCapabilityOptionViewModel(
-    string kind,
-    string capabilityId,
-    string? sourceId,
-    string displayName,
-    string? description,
-    bool isEnabled,
-    string? groupKey = null,
-    string? groupTitle = null,
-    string? groupDescription = null,
-    int groupSortOrder = 0) : ObservableObject
-{
-    public string Kind { get; } = kind;
-
-    public string CapabilityId { get; } = capabilityId;
-
-    public string? SourceId { get; } = sourceId;
-
-    public string DisplayName { get; } = displayName;
-
-    public string? Description { get; } = description;
-
-    public string GroupKey { get; } = string.IsNullOrWhiteSpace(groupKey) ? kind : groupKey.Trim();
-
-    public string GroupTitle { get; } = string.IsNullOrWhiteSpace(groupTitle) ? kind : groupTitle.Trim();
-
-    public string? GroupDescription { get; } = string.IsNullOrWhiteSpace(groupDescription) ? null : groupDescription.Trim();
-
-    public int GroupSortOrder { get; } = groupSortOrder;
-
-    [ObservableProperty]
-    private bool _isEnabled = isEnabled;
-}
-
-public sealed record SubagentProviderOption(string? ProviderId, string Label, string? PackageId = null);
-
-public sealed record SubagentModelOption(
-    string ModelId,
-    string Label,
-    IReadOnlyList<AgentModelVariantDescriptor>? Variants = null,
-    IReadOnlyList<AgentModelSpeedOptionDescriptor>? SpeedOptions = null,
-    IReadOnlyList<AgentModelModeOptionDescriptor>? ModeOptions = null);
-
-public sealed record SubagentReasoningOption(string? VariantId, string Label, string? Description = null)
-{
-    public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
-}
-
-public sealed record SubagentSpeedOption(string? SpeedOptionId, string Label, string? Description = null)
-{
-    public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
-}
-
-public sealed record SubagentModeOption(string? ModeOptionId, string Label, string? Description = null, bool DisablesReasoning = false)
-{
-    public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
 }

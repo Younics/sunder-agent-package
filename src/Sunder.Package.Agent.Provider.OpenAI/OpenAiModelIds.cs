@@ -1,3 +1,5 @@
+using Sunder.Package.Agent.Provider.Shared;
+
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
 internal static class OpenAiModelIds
@@ -9,10 +11,7 @@ internal static class OpenAiModelIds
             return modelId;
         }
 
-        const string openAiPrefix = "openai/";
-        var normalized = modelId.StartsWith(openAiPrefix, StringComparison.OrdinalIgnoreCase)
-            ? modelId[openAiPrefix.Length..]
-            : modelId;
+        var normalized = ProviderModelId.RemovePrefix(modelId, "openai");
 
         const string fastSuffix = "-fast";
         return normalized.EndsWith(fastSuffix, StringComparison.OrdinalIgnoreCase)

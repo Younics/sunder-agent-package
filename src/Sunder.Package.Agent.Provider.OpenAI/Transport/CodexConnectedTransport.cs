@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Net;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -13,10 +12,10 @@ namespace Sunder.Package.Agent.Provider.OpenAI.Transport;
 
 public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConnectedAuthStrategy, HttpClient httpClient)
 {
-    private readonly CodexConnectedAuthStrategy _codexConnectedAuthStrategy = codexConnectedAuthStrategy;
-    private readonly HttpClient _httpClient = httpClient;
     private static readonly string UserAgent =
         $"Sunder/{typeof(CodexConnectedTransport).Assembly.GetName().Version} ({Environment.OSVersion.Platform}; {Environment.OSVersion.VersionString}; {System.Runtime.InteropServices.RuntimeInformation.OSArchitecture})";
+    private readonly CodexConnectedAuthStrategy _codexConnectedAuthStrategy = codexConnectedAuthStrategy;
+    private readonly HttpClient _httpClient = httpClient;
 
     public string TransportId { get; } = "codex-connected";
 
@@ -31,28 +30,32 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var toolAware = options?.ToolMode != AIChatToolMode.None && options?.Tools is { Count: > 0 };
-        using var initialAttempt = await SendAsync(session, context, messages, options, toolAware, continuationStore, disableContinuation: false, cancellationToken);
-        var initialResponse = initialAttempt.Response;
-        if (initialResponse.IsSuccessStatusCode)
-        {
-            await foreach (var update in ParseAndRecordContinuationAsync(initialResponse, context, options, initialAttempt.Request, continuationStore, responseId, messageId, toolAware, cancellationToken))
-            {
-                yield return update;
-            }
+        var continuation = new CodexContinuationManager(continuationStore, options?.ConversationId);
+        var attemptPolicy = new CodexAttemptPolicy(session);
 
-            yield break;
-        }
-
-        var initialResponseContent = await initialResponse.Content.ReadAsStringAsync(cancellationToken);
-        if (IsContinuationFailure(initialAttempt.Request, initialResponse, initialResponseContent))
+        while (true)
         {
-            continuationStore.Clear(options?.ConversationId);
-            await LogAsync(context, AgentLogLevel.Debug, "openai.codex.continuation.fallback", "Codex response continuation was rejected; retrying with full prompt.", cancellationToken: cancellationToken);
-            using var fallbackAttempt = await SendAsync(session, context, messages, options, toolAware, continuationStore, disableContinuation: true, cancellationToken);
-            var fallbackResponse = fallbackAttempt.Response;
-            if (fallbackResponse.IsSuccessStatusCode)
+            using var attempt = await SendAsync(
+                attemptPolicy.Session,
+                context,
+                messages,
+                options,
+                toolAware,
+                continuation.State,
+                attemptPolicy.DisableContinuation,
+                cancellationToken);
+            if (attempt.Response.IsSuccessStatusCode)
             {
-                await foreach (var update in ParseAndRecordContinuationAsync(fallbackResponse, context, options, fallbackAttempt.Request, continuationStore, responseId, messageId, toolAware, cancellationToken))
+                await foreach (var update in ParseAndRecordContinuationAsync(
+                                   attempt.Response,
+                                   context,
+                                   options,
+                                   attempt.Request,
+                                   continuation,
+                                   responseId,
+                                   messageId,
+                                   toolAware,
+                                   cancellationToken))
                 {
                     yield return update;
                 }
@@ -60,127 +63,55 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
                 yield break;
             }
 
-            var fallbackResponseContent = await fallbackResponse.Content.ReadAsStringAsync(cancellationToken);
-            if (IsAuthenticationFailure(fallbackResponse.StatusCode, fallbackResponseContent))
+            var responseContent = await attempt.Response.Content.ReadAsStringAsync(cancellationToken);
+            switch (attemptPolicy.Decide(attempt.Request, attempt.Response.StatusCode, responseContent))
             {
-                var refreshedSession = await _codexConnectedAuthStrategy.TryRefreshSessionAsync(session, cancellationToken);
-                if (refreshedSession is not null)
-                {
-                    using var refreshedFallbackAttempt = await SendAsync(refreshedSession, context, messages, options, toolAware, continuationStore, disableContinuation: true, cancellationToken);
-                    var refreshedFallbackResponse = refreshedFallbackAttempt.Response;
-                    if (refreshedFallbackResponse.IsSuccessStatusCode)
-                    {
-                        await foreach (var update in ParseAndRecordContinuationAsync(refreshedFallbackResponse, context, options, refreshedFallbackAttempt.Request, continuationStore, responseId, messageId, toolAware, cancellationToken))
-                        {
-                            yield return update;
-                        }
+                case CodexAttemptAction.RetryWithoutContinuation:
+                    continuation.Reject();
+                    await LogAsync(
+                        context,
+                        AgentLogLevel.Debug,
+                        "openai.codex.continuation.fallback",
+                        "Codex response continuation was rejected; retrying with full prompt.",
+                        cancellationToken: cancellationToken);
+                    continue;
 
-                        yield break;
+                case CodexAttemptAction.RefreshAuthentication:
+                    var refreshStopwatch = Stopwatch.StartNew();
+                    await LogAsync(
+                        context,
+                        AgentLogLevel.Information,
+                        "openai.codex.auth_refresh.start",
+                        "Refreshing Codex auth session.",
+                        cancellationToken: cancellationToken);
+                    var refreshedSession = await _codexConnectedAuthStrategy.TryRefreshSessionAsync(
+                        attemptPolicy.Session,
+                        cancellationToken);
+                    await LogAsync(
+                        context,
+                        AgentLogLevel.Information,
+                        "openai.codex.auth_refresh.completed",
+                        refreshedSession is null ? "not refreshed" : "refreshed",
+                        refreshStopwatch.ElapsedMilliseconds,
+                        cancellationToken: cancellationToken);
+                    if (refreshedSession is null)
+                    {
+                        throw CreateAuthRequiredException();
                     }
 
-                    fallbackResponseContent = await refreshedFallbackResponse.Content.ReadAsStringAsync(cancellationToken);
+                    attemptPolicy.ApplyRefreshedSession(refreshedSession);
+                    continue;
+
+                case CodexAttemptAction.AuthenticationRequired:
+                    throw CreateAuthRequiredException();
+
+                default:
                     throw CreateHttpException(
-                        toolAware ? "Codex-connected tool request failed after auth refresh" : "Codex-connected request failed after auth refresh",
-                        refreshedFallbackResponse,
-                        fallbackResponseContent);
-                }
-
-                throw new AgentChatProviderException(
-                    "codex-auth-required",
-                    "### Codex authorization required\n\nYour saved Codex session could not be refreshed silently. Open **Settings -> Packages -> Sunder Agent Provider OpenAI**, click **Authorize**, and then retry.",
-                    "codex-auth-required");
+                        attemptPolicy.BuildFailureTitle(toolAware),
+                        attempt.Response,
+                        responseContent);
             }
-
-            throw CreateHttpException(
-                toolAware ? "Codex-connected tool request failed after continuation fallback" : "Codex-connected request failed after continuation fallback",
-                fallbackResponse,
-                fallbackResponseContent);
         }
-
-        if (IsAuthenticationFailure(initialResponse.StatusCode, initialResponseContent))
-        {
-            var refreshStopwatch = Stopwatch.StartNew();
-            await LogAsync(context, AgentLogLevel.Information, "openai.codex.auth_refresh.start", "Refreshing Codex auth session.", cancellationToken: cancellationToken);
-            var refreshedSession = await _codexConnectedAuthStrategy.TryRefreshSessionAsync(session, cancellationToken);
-            await LogAsync(
-                context,
-                AgentLogLevel.Information,
-                "openai.codex.auth_refresh.completed",
-                refreshedSession is null ? "not refreshed" : "refreshed",
-                refreshStopwatch.ElapsedMilliseconds,
-                cancellationToken: cancellationToken);
-            if (refreshedSession is not null)
-            {
-                using var retryAttempt = await SendAsync(refreshedSession, context, messages, options, toolAware, continuationStore, disableContinuation: false, cancellationToken);
-                var retryResponse = retryAttempt.Response;
-                if (retryResponse.IsSuccessStatusCode)
-                {
-                    await foreach (var update in ParseAndRecordContinuationAsync(retryResponse, context, options, retryAttempt.Request, continuationStore, responseId, messageId, toolAware, cancellationToken))
-                    {
-                        yield return update;
-                    }
-
-                    yield break;
-                }
-
-                var retryResponseContent = await retryResponse.Content.ReadAsStringAsync(cancellationToken);
-                if (IsContinuationFailure(retryAttempt.Request, retryResponse, retryResponseContent))
-                {
-                    continuationStore.Clear(options?.ConversationId);
-                    await LogAsync(context, AgentLogLevel.Debug, "openai.codex.continuation.fallback", "Codex response continuation was rejected after auth refresh; retrying with full prompt.", cancellationToken: cancellationToken);
-                    using var fallbackAttempt = await SendAsync(refreshedSession, context, messages, options, toolAware, continuationStore, disableContinuation: true, cancellationToken);
-                    var fallbackResponse = fallbackAttempt.Response;
-                    if (fallbackResponse.IsSuccessStatusCode)
-                    {
-                        await foreach (var update in ParseAndRecordContinuationAsync(fallbackResponse, context, options, fallbackAttempt.Request, continuationStore, responseId, messageId, toolAware, cancellationToken))
-                        {
-                            yield return update;
-                        }
-
-                        yield break;
-                    }
-
-                    retryResponseContent = await fallbackResponse.Content.ReadAsStringAsync(cancellationToken);
-                    throw CreateHttpException(
-                        toolAware
-                            ? "Codex-connected tool request failed after continuation fallback"
-                            : "Codex-connected request failed after continuation fallback",
-                        fallbackResponse,
-                        retryResponseContent);
-                }
-
-                throw CreateHttpException(
-                    toolAware
-                        ? "Codex-connected tool request failed after silent refresh"
-                        : "Codex-connected request failed after silent refresh",
-                    retryResponse,
-                    retryResponseContent);
-            }
-
-            throw new AgentChatProviderException(
-                "codex-auth-required",
-                "### Codex authorization required\n\nYour saved Codex session could not be refreshed silently. Open **Settings -> Packages -> Sunder Agent Provider OpenAI**, click **Authorize**, and then retry.",
-                "codex-auth-required");
-        }
-
-        throw CreateHttpException(
-            toolAware ? "Codex-connected tool request failed" : "Codex-connected request failed",
-            initialResponse,
-            initialResponseContent);
-    }
-
-    private static bool IsAuthenticationFailure(HttpStatusCode statusCode, string responseContent)
-    {
-        if (statusCode == HttpStatusCode.Unauthorized)
-        {
-            return true;
-        }
-
-        return statusCode == HttpStatusCode.Forbidden
-            && (responseContent.Contains("token", StringComparison.OrdinalIgnoreCase)
-                || responseContent.Contains("auth", StringComparison.OrdinalIgnoreCase)
-                || responseContent.Contains("expired", StringComparison.OrdinalIgnoreCase)
-                || responseContent.Contains("unauthorized", StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<RequestAttempt> SendAsync(
@@ -189,18 +120,17 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
         IReadOnlyList<AIChatMessage> messages,
         ChatOptions? options,
         bool toolAware,
-        CodexResponseContinuationStore continuationStore,
+        CodexResponseContinuationState? continuationState,
         bool disableContinuation,
         CancellationToken cancellationToken)
     {
         var prepareStopwatch = Stopwatch.StartNew();
-        var modelId = options?.ModelId ?? context.ModelId;
         var request = CodexResponsesRequestBuilder.Build(
             context,
             messages,
             options,
             toolAware,
-            continuationStore.Get(options?.ConversationId),
+            continuationState,
             disableContinuation);
         await LogAsync(
             context,
@@ -218,6 +148,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
                 ["request.uses_developer_instruction_input"] = request.UsesDeveloperInstructionInput,
                 ["request.has_top_level_instructions"] = request.HasTopLevelInstructions,
                 ["request.service_tier"] = request.ServiceTier,
+                ["request.max_output_tokens"] = request.MaxOutputTokens,
                 ["request.has_prompt_cache_key"] = request.HasPromptCacheKey,
                 ["request.has_include_options"] = request.HasIncludeOptions,
                 ["request.has_reasoning_options"] = request.HasReasoningOptions,
@@ -250,7 +181,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
             AgentLogLevel.Debug,
             toolAware ? "openai.codex.tool_http.send.start" : "openai.codex.http.send.start",
             "POST codex/responses",
-            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+            attributes: new Dictionary<string, object?>
             {
                 ["network.address_family"] = CodexHttpClientFactory.NetworkAddressFamily,
             },
@@ -278,7 +209,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
         AgentChatClientContext context,
         ChatOptions? options,
         CodexResponsesRequest request,
-        CodexResponseContinuationStore continuationStore,
+        CodexContinuationManager continuation,
         string responseId,
         string messageId,
         bool toolAware,
@@ -302,33 +233,22 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
                 textBuilder.Append(update.Text);
             }
 
-            foreach (var functionCall in update.Contents.OfType<FunctionCallContent>())
-            {
-                functionCalls.Add(functionCall);
-            }
-
+            functionCalls.AddRange(update.Contents.OfType<FunctionCallContent>());
             yield return update;
         }
 
-        if (backendResponseId is null || string.IsNullOrWhiteSpace(options?.ConversationId))
-        {
-            yield break;
-        }
-
-        var outputFingerprints = CodexResponsesRequestBuilder.BuildAssistantOutputFingerprints(
+        continuation.RecordCompleted(
+            request,
+            backendResponseId,
             textBuilder.Length == 0 ? null : textBuilder.ToString(),
             functionCalls);
-        continuationStore.Save(new CodexResponseContinuationState(
-            options.ConversationId,
-            request.ShapeFingerprint,
-            backendResponseId,
-            request.ConversationItemFingerprints.Concat(outputFingerprints).ToArray()));
     }
 
-    private static bool IsContinuationFailure(CodexResponsesRequest request, HttpResponseMessage response, string responseContent)
-        => request.HasPreviousResponseId
-           && response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound or HttpStatusCode.Conflict
-           && responseContent.Contains("previous_response", StringComparison.OrdinalIgnoreCase);
+    private static AgentChatProviderException CreateAuthRequiredException()
+        => new(
+            "codex-auth-required",
+            "### Codex authorization required\n\nYour saved Codex session could not be refreshed silently. Open **Settings -> Packages -> Sunder Agent Provider OpenAI**, click **Authorize**, and then retry.",
+            "codex-auth-required");
 
     private static ValueTask LogAsync(
         AgentChatClientContext context,
@@ -341,7 +261,10 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
         CancellationToken cancellationToken = default)
         => context.LogProviderEventAsync(level, eventName, message, elapsedMilliseconds, attributes, exception, cancellationToken);
 
-    private static AgentChatProviderException CreateHttpException(string title, HttpResponseMessage response, string responseContent)
+    private static AgentChatProviderException CreateHttpException(
+        string title,
+        HttpResponseMessage response,
+        string responseContent)
         => new(
             "codex-http-error",
             $"### {title}\n\nStatus: {(int)response.StatusCode} {response.ReasonPhrase}\n\n```json\n{responseContent}\n```",
@@ -351,12 +274,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
     private sealed class RequestAttempt(HttpResponseMessage response, CodexResponsesRequest request) : IDisposable
     {
         public HttpResponseMessage Response { get; } = response;
-
         public CodexResponsesRequest Request { get; } = request;
-
-        public void Dispose()
-        {
-            Response.Dispose();
-        }
+        public void Dispose() => Response.Dispose();
     }
 }

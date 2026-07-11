@@ -1,0 +1,31 @@
+#nullable enable
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.BinaryFile = "file-binary" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.FileNotFound = "file-not-found" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.InvalidRange = "file-range-invalid" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.NotAFile = "file-not-regular" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.OutsideConfiguredScope = "file-outside-scope" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.PathCanonicalizationFailed = "file-path-unresolvable" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.RangeOutsideFile = "file-range-out-of-bounds" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.ReadFailed = "file-read-failed" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.TimedOut = "file-read-timeout" -> string!
+static Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.Failure(string! path, string! errorCode, string! errorMessage) -> Sunder.Package.Agent.Contracts.Models.AgentFileReadResult!
+Sunder.Package.Agent.Contracts.Contracts.IAgentInnerBehaviorLoopRuntime
+Sunder.Package.Agent.Contracts.Contracts.IAgentInnerBehaviorLoopRuntime.RunDefaultLoopAsync(Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopResult!>
+Sunder.Package.Agent.Contracts.Contracts.IAgentRangedFileExecutionTarget
+Sunder.Package.Agent.Contracts.Models.AgentFileDeleteRequest.ExpectedContentHash.get -> string?
+Sunder.Package.Agent.Contracts.Models.AgentFileDeleteRequest.ExpectedContentHash.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.EndLine.get -> int?
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.EndLine.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.ErrorCode.get -> string?
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.ErrorCode.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.ErrorMessage.get -> string?
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.ErrorMessage.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.IsError.get -> bool
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.IsError.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.StartLine.get -> int?
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.StartLine.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.TotalLines.get -> int?
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.TotalLines.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentFileWriteRequest.ExpectedContentHash.get -> string?
+Sunder.Package.Agent.Contracts.Models.AgentFileWriteRequest.ExpectedContentHash.init -> void

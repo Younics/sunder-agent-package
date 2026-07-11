@@ -8,82 +8,129 @@ public sealed class WebFetchService
 {
     private const int DefaultTimeoutSeconds = 30;
     private const int MaxTimeoutSeconds = 120;
+    private const int MaxRedirects = 5;
     private const int MaxResponseBytes = 5 * 1024 * 1024;
     private const int MaxContentLength = 20000;
 
+    private readonly WebUrlNetworkPolicy _networkPolicy;
+    private readonly IWebFetchHttpClientFactory _httpClientFactory;
+
+    public WebFetchService()
+        : this(
+            new WebUrlNetworkPolicy(new SystemWebHostResolver()),
+            new PinnedWebFetchHttpClientFactory())
+    {
+    }
+
+    internal WebFetchService(WebUrlNetworkPolicy networkPolicy, IWebFetchHttpClientFactory httpClientFactory)
+    {
+        _networkPolicy = networkPolicy;
+        _httpClientFactory = httpClientFactory;
+    }
+
     public async Task<WebFetchResult> FetchAsync(string url, string format, int? timeoutSeconds, CancellationToken cancellationToken)
     {
-        using var httpClient = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds ?? DefaultTimeoutSeconds, 1, MaxTimeoutSeconds))
-        };
+        var originalUri = new Uri(url, UriKind.Absolute);
+        var currentUri = originalUri;
+        var redirectCount = 0;
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds ?? DefaultTimeoutSeconds, 1, MaxTimeoutSeconds)));
+        var requestCancellationToken = timeoutSource.Token;
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.TryAddWithoutValidation("User-Agent", "Sunder/1.0");
-
-        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
-
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var memoryStream = new MemoryStream();
-        var buffer = new byte[8192];
         while (true)
         {
-            var read = await stream.ReadAsync(buffer, cancellationToken);
-            if (read == 0)
+            var destination = await _networkPolicy.ValidateAndResolveAsync(currentUri, requestCancellationToken).ConfigureAwait(false);
+            using var httpClient = _httpClientFactory.CreateClient(destination);
+            using var request = new HttpRequestMessage(HttpMethod.Get, currentUri);
+            request.Headers.TryAddWithoutValidation("User-Agent", "Sunder/1.0");
+
+            using var response = await httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                requestCancellationToken).ConfigureAwait(false);
+
+            if (IsRedirect(response.StatusCode) && response.Headers.Location is { } location)
             {
-                break;
+                if (redirectCount >= MaxRedirects)
+                {
+                    throw new WebNetworkPolicyException($"The web fetch exceeded the maximum of {MaxRedirects} redirects.");
+                }
+
+                currentUri = location.IsAbsoluteUri ? location : new Uri(currentUri, location);
+                redirectCount++;
+                continue;
             }
 
-            if (memoryStream.Length + read > MaxResponseBytes)
+            response.EnsureSuccessStatusCode();
+
+            await using var stream = await response.Content.ReadAsStreamAsync(requestCancellationToken).ConfigureAwait(false);
+            using var memoryStream = new MemoryStream();
+            var buffer = new byte[8192];
+            while (true)
             {
-                memoryStream.Write(buffer, 0, MaxResponseBytes - (int)memoryStream.Length);
-                break;
+                var read = await stream.ReadAsync(buffer, requestCancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                if (memoryStream.Length + read > MaxResponseBytes)
+                {
+                    memoryStream.Write(buffer, 0, MaxResponseBytes - (int)memoryStream.Length);
+                    break;
+                }
+
+                memoryStream.Write(buffer, 0, read);
             }
 
-            memoryStream.Write(buffer, 0, read);
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+            var rawContent = System.Text.Encoding.UTF8.GetString(memoryStream.ToArray());
+            var title = ExtractTitle(rawContent);
+            var renderedContent = format.ToLowerInvariant() switch
+            {
+                "html" => rawContent,
+                "markdown" when contentType.Contains("html", StringComparison.OrdinalIgnoreCase) => ToMarkdown(rawContent),
+                "markdown" => $"```text\n{rawContent}\n```",
+                _ when contentType.Contains("html", StringComparison.OrdinalIgnoreCase) => ExtractPlainText(rawContent),
+                _ => rawContent,
+            };
+
+            var wasTruncated = renderedContent.Length > MaxContentLength || memoryStream.Length >= MaxResponseBytes;
+            if (renderedContent.Length > MaxContentLength)
+            {
+                renderedContent = renderedContent[..MaxContentLength];
+            }
+
+            var finalUrl = currentUri.ToString();
+            var payload = JsonSerializer.Serialize(new
+            {
+                url,
+                finalUrl,
+                title,
+                contentType,
+                format,
+                wasTruncated,
+                content = renderedContent,
+            });
+
+            return new WebFetchResult(
+                Summary: string.IsNullOrWhiteSpace(title) ? $"Fetched {finalUrl}" : $"Fetched '{title}'",
+                Content: renderedContent,
+                StructuredPayloadJson: payload,
+                Title: title,
+                FinalUrl: finalUrl,
+                ContentType: contentType,
+                WasTruncated: wasTruncated);
         }
-
-        var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
-        var rawContent = System.Text.Encoding.UTF8.GetString(memoryStream.ToArray());
-        var title = ExtractTitle(rawContent);
-        var renderedContent = format.ToLowerInvariant() switch
-        {
-            "html" => rawContent,
-            "markdown" when contentType.Contains("html", StringComparison.OrdinalIgnoreCase) => ToMarkdown(rawContent),
-            "markdown" => $"```text\n{rawContent}\n```",
-            _ when contentType.Contains("html", StringComparison.OrdinalIgnoreCase) => ExtractPlainText(rawContent),
-            _ => rawContent,
-        };
-
-        var wasTruncated = renderedContent.Length > MaxContentLength || memoryStream.Length >= MaxResponseBytes;
-        if (renderedContent.Length > MaxContentLength)
-        {
-            renderedContent = renderedContent[..MaxContentLength];
-        }
-
-        var payload = JsonSerializer.Serialize(new
-        {
-            url,
-            finalUrl = response.RequestMessage?.RequestUri?.ToString() ?? url,
-            title,
-            contentType,
-            format,
-            wasTruncated,
-            content = renderedContent,
-        });
-
-        return new WebFetchResult(
-            Summary: string.IsNullOrWhiteSpace(title)
-                ? $"Fetched {response.RequestMessage?.RequestUri ?? response.RequestMessage?.RequestUri}"
-                : $"Fetched '{title}'",
-            Content: renderedContent,
-            StructuredPayloadJson: payload,
-            Title: title,
-            FinalUrl: response.RequestMessage?.RequestUri?.ToString() ?? url,
-            ContentType: contentType,
-            WasTruncated: wasTruncated);
     }
+
+    private static bool IsRedirect(HttpStatusCode statusCode)
+        => statusCode is HttpStatusCode.MultipleChoices
+            or HttpStatusCode.MovedPermanently
+            or HttpStatusCode.Found
+            or HttpStatusCode.SeeOther
+            or HttpStatusCode.TemporaryRedirect
+            or HttpStatusCode.PermanentRedirect;
 
     private static string? ExtractTitle(string html)
     {

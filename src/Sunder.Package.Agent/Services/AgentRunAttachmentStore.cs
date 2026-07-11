@@ -22,11 +22,40 @@ public sealed class AgentRunAttachmentStore(AgentAttachmentService attachmentSer
         }
 
         var storedAttachments = new List<AgentStoredAttachment>(attachments.Count);
+        try
+        {
+            foreach (var attachment in attachments)
+            {
+                storedAttachments.Add(await _attachmentService
+                    .StoreAttachmentAsync(sessionId, attachment, cancellationToken)
+                    .ConfigureAwait(false));
+            }
+
+            return storedAttachments;
+        }
+        catch
+        {
+            Cleanup(storedAttachments);
+            throw;
+        }
+    }
+
+    internal IReadOnlyList<Exception> Cleanup(
+        IReadOnlyList<AgentStoredAttachment> attachments)
+    {
+        var failures = new List<Exception>();
         foreach (var attachment in attachments)
         {
-            storedAttachments.Add(await _attachmentService.StoreAttachmentAsync(sessionId, attachment, cancellationToken).ConfigureAwait(false));
+            try
+            {
+                _attachmentService.DeleteStoredAttachment(attachment.Metadata);
+            }
+            catch (Exception ex)
+            {
+                failures.Add(ex);
+            }
         }
 
-        return storedAttachments;
+        return failures;
     }
 }

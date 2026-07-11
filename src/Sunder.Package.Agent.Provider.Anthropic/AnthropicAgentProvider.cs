@@ -1,22 +1,39 @@
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Provider.Anthropic;
 
-public sealed class AnthropicAgentProvider(IPackageContext packageContext) : IAgentChatProvider, IAgentUtilityModelProvider
+public sealed class AnthropicAgentProvider : IAgentChatProvider, IAgentUtilityModelProvider
 {
-    public AgentProviderDescriptor Descriptor { get; } = new(
-        "anthropic",
-        "Anthropic",
-        [AgentAuthMode.ApiKey],
-        SupportsStreaming: true,
-        SupportsInterruptibleRuns: true
-    )
+    private readonly IPackageContext _packageContext;
+    private readonly ProviderCredentialAccessor _credentials;
+
+    public AnthropicAgentProvider(IPackageContext packageContext)
+        : this(
+            packageContext,
+            new ProviderCredentialAccessor(packageContext.Secrets, AnthropicProviderConfiguration.ApiKeySecretKey))
     {
-        PackageId = packageContext.PackageId
-    };
+    }
+
+    internal AnthropicAgentProvider(IPackageContext packageContext, ProviderCredentialAccessor credentials)
+    {
+        _packageContext = packageContext;
+        _credentials = credentials;
+        Descriptor = new AgentProviderDescriptor(
+            "anthropic",
+            "Anthropic",
+            [AgentAuthMode.ApiKey],
+            SupportsStreaming: true,
+            SupportsInterruptibleRuns: true)
+        {
+            PackageId = packageContext.PackageId,
+        };
+    }
+
+    public AgentProviderDescriptor Descriptor { get; }
 
     public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
     {
@@ -27,16 +44,16 @@ public sealed class AnthropicAgentProvider(IPackageContext packageContext) : IAg
     public ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var configuredModelId = packageContext.Configuration.GetValue(AnthropicProviderConfiguration.UtilityModelKey);
-        return ValueTask.FromResult<string?>(IsKnownModel(configuredModelId)
-            ? configuredModelId!.Trim()
-            : AnthropicProviderConfiguration.DefaultUtilityModelId);
+        return ValueTask.FromResult<string?>(UtilityModelSettingsState.ResolveModelId(
+            _packageContext.Configuration.GetValue(AnthropicProviderConfiguration.UtilityModelKey),
+            AnthropicProviderConfiguration.DefaultUtilityModelId,
+            AnthropicModelCatalog.UtilityModelOptions.Select(option => option.Value)));
     }
 
     public ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(string.IsNullOrWhiteSpace(GetApiKey())
+        return ValueTask.FromResult(!_credentials.HasCredential
             ? new AgentProviderReadiness(
                 Descriptor.ProviderId,
                 AgentProviderReadinessStatus.NeedsConfiguration,
@@ -62,12 +79,6 @@ public sealed class AnthropicAgentProvider(IPackageContext packageContext) : IAg
     public ValueTask<IChatClient> CreateChatClientAsync(AgentChatClientContext context, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult<IChatClient>(new AnthropicChatClient(context, GetApiKey));
+        return ValueTask.FromResult<IChatClient>(new AnthropicChatClient(context, _credentials));
     }
-
-    private string? GetApiKey() => packageContext.Secrets.GetSecret("auth.apiKey");
-
-    private static bool IsKnownModel(string? modelId) =>
-        !string.IsNullOrWhiteSpace(modelId)
-        && AnthropicModelCatalog.Models.Any(model => string.Equals(model.ModelId, modelId.Trim(), StringComparison.OrdinalIgnoreCase));
 }

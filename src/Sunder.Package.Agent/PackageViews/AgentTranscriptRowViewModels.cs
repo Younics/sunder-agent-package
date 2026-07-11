@@ -10,7 +10,7 @@ using Sunder.Package.Agent.Shared.PackageViews;
 namespace Sunder.Package.Agent.PackageViews;
 
 public abstract class AgentTranscriptRowViewModel(Guid rowId, DateTimeOffset createdAtUtc, object anchorKey)
-    : ObservableObject, ITranscriptRowAnchor
+    : ObservableObject
 {
     public Guid RowId { get; } = rowId;
 

@@ -155,7 +155,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
 
     public bool ShowMarkdownDetails => HasMarkdownDetails && (ToolDiff?.ShowMarkdownDetails ?? true);
 
-    public ToolDiffViewModel? ToolDiff
+    internal ToolDiffViewModel? ToolDiff
     {
         get => _toolDiff;
         private set
@@ -172,7 +172,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
 
     public bool HasToolDiff => ToolDiff?.HasFiles == true;
 
-    public IReadOnlyList<ToolDiffFileViewModel> ToolDiffFiles => ToolDiff?.Files ?? [];
+    internal IReadOnlyList<ToolDiffFileViewModel> ToolDiffFiles => ToolDiff?.Files ?? [];
 
     public string ToolDiffSectionTitle => ToolDiff?.SectionTitle ?? string.Empty;
 

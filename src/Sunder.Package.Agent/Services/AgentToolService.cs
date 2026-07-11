@@ -3,6 +3,7 @@ using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
@@ -33,8 +34,9 @@ public sealed class AgentToolService(
         foreach (var source in GetSources())
         {
             var descriptors = await source.ListToolsAsync(context, cancellationToken);
-            foreach (var descriptor in descriptors.OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase))
+            foreach (var listedDescriptor in descriptors.OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase))
             {
+                var descriptor = WithSourceIdentity(source, listedDescriptor);
                 var readiness = await source.GetReadinessAsync(descriptor.ToolId, context, cancellationToken)
                     ?? new AgentToolReadiness(descriptor.ToolId, AgentToolReadinessStatus.Ready, "Ready.");
 
@@ -62,6 +64,7 @@ public sealed class AgentToolService(
         {
             var descriptors = await source.ListToolsAsync(context, cancellationToken);
             catalog.AddRange(descriptors
+                .Select(descriptor => WithSourceIdentity(source, descriptor))
                 .Where(descriptor => descriptor.SelectionScope == AgentToolSelectionScope.Tool)
                 .Select(descriptor => new AgentToolCatalogEntry(
                 descriptor,
@@ -112,14 +115,15 @@ public sealed class AgentToolService(
             var runtimeTools = await ListRuntimeToolsAsync(source, context, cancellationToken);
             foreach (var runtimeTool in runtimeTools.OrderBy(item => item.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase))
             {
-                var readiness = await source.GetReadinessAsync(runtimeTool.Descriptor.ToolId, context, cancellationToken)
-                    ?? new AgentToolReadiness(runtimeTool.Descriptor.ToolId, AgentToolReadinessStatus.Ready, "Ready.");
-                if (readiness.Status != AgentToolReadinessStatus.Ready || !IsAllowedForProfile(effectiveProfile, runtimeTool.Descriptor))
+                var descriptor = WithSourceIdentity(source, runtimeTool.Descriptor);
+                var readiness = await source.GetReadinessAsync(descriptor.ToolId, context, cancellationToken)
+                    ?? new AgentToolReadiness(descriptor.ToolId, AgentToolReadinessStatus.Ready, "Ready.");
+                if (readiness.Status != AgentToolReadinessStatus.Ready || !IsAllowedForProfile(effectiveProfile, descriptor))
                 {
                     continue;
                 }
 
-                tools.Add(runtimeTool);
+                tools.Add(runtimeTool with { Descriptor = descriptor });
             }
         }
 
@@ -130,7 +134,7 @@ public sealed class AgentToolService(
             .ToArray();
     }
 
-    public async Task<AgentToolResult> ExecuteAsync(
+    internal async Task<AgentToolResult> ExecuteAsync(
         string toolId,
         string argumentsJson,
         Guid? sessionId = null,
@@ -141,24 +145,25 @@ public sealed class AgentToolService(
         long? runRevision = null,
         Guid? userTurnId = null,
         string? toolCallId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        AgentToolDescriptor? advertisedDescriptor = null)
     {
         var effectiveProfileId = string.IsNullOrWhiteSpace(profileId) ? null : profileId;
         var context = new AgentToolExecutionContext(sessionId, effectiveProfileId, workspace, ResolveExecutionBinding(workspace), allowOutsideConfiguredScope, runId, runRevision, userTurnId, toolCallId);
         try
         {
-            var source = await ResolveSourceAsync(toolId, context, cancellationToken);
-            if (source is null)
+            var resolvedTool = await ResolveAdvertisedToolAsync(toolId, context, advertisedDescriptor, cancellationToken);
+            if (resolvedTool is null)
             {
                 return new AgentToolResult(
                     toolId,
-                    $"Tool '{toolId}' is not installed.",
-                    Content: $"### Tool unavailable\n\nTool '{toolId}' is not installed.",
+                    $"Tool '{toolId}' was not in the ready, assigned tool catalog for this run.",
+                    Content: $"### Tool denied\n\nTool '{toolId}' was not advertised as ready and assigned for this run.",
                     IsError: true,
-                    ErrorCode: "tool-not-found");
+                    ErrorCode: AgentToolSecurityErrorCodes.NotAdvertised);
             }
 
-            return await source.ExecuteAsync(
+            return await resolvedTool.Source.ExecuteAsync(
                 context,
                 new AgentToolRequest(toolId, argumentsJson),
                 cancellationToken);
@@ -197,14 +202,121 @@ public sealed class AgentToolService(
         long? runRevision = null,
         Guid? userTurnId = null,
         string? toolCallId = null,
+        CancellationToken cancellationToken = default,
+        AgentToolDescriptor? advertisedDescriptor = null)
+    {
+        var resolution = await ResolvePermissionRequirementAsync(
+            toolId,
+            argumentsJson,
+            sessionId,
+            profileId,
+            workspace,
+            runId,
+            runRevision,
+            userTurnId,
+            toolCallId,
+            advertisedDescriptor,
+            cancellationToken);
+        if (resolution is null)
+        {
+            return CreateDeniedPermissionRequest(
+                toolId,
+                $"Tool '{toolId}' was not in the ready, assigned tool catalog for this run.");
+        }
+
+        return string.IsNullOrWhiteSpace(resolution.DeniedReason)
+            ? resolution.PermissionRequest
+            : CreateDeniedPermissionRequest(toolId, resolution.DeniedReason);
+    }
+
+    internal async Task<AgentToolPermissionResolution?> ResolvePermissionRequirementAsync(
+        string toolId,
+        string argumentsJson,
+        Guid? sessionId,
+        string? profileId,
+        AgentWorkspaceRecord? workspace,
+        Guid? runId,
+        long? runRevision,
+        Guid? userTurnId,
+        string? toolCallId,
+        AgentToolDescriptor? advertisedDescriptor,
         CancellationToken cancellationToken = default)
     {
         var effectiveProfileId = string.IsNullOrWhiteSpace(profileId) ? null : profileId;
-        var context = new AgentToolExecutionContext(sessionId, effectiveProfileId, workspace, ResolveExecutionBinding(workspace), RunId: runId, RunRevision: runRevision, UserTurnId: userTurnId, ToolCallId: toolCallId);
-        var source = await ResolveSourceAsync(toolId, context, cancellationToken);
-        return source is IAgentPermissionAwareToolSource permissionAwareSource
-            ? await permissionAwareSource.BuildPermissionRequestAsync(context, new AgentToolRequest(toolId, argumentsJson), cancellationToken)
+        var executionBinding = ResolveExecutionBinding(workspace);
+        var context = new AgentToolExecutionContext(
+            sessionId,
+            effectiveProfileId,
+            workspace,
+            executionBinding,
+            RunId: runId,
+            RunRevision: runRevision,
+            UserTurnId: userTurnId,
+            ToolCallId: toolCallId);
+        var resolvedTool = await ResolveAdvertisedToolAsync(toolId, context, advertisedDescriptor, cancellationToken);
+        if (resolvedTool is null)
+        {
+            return null;
+        }
+
+        var permissionRequest = resolvedTool.Source is IAgentPermissionAwareToolSource permissionAwareSource
+            ? await permissionAwareSource.BuildPermissionRequestAsync(
+                context,
+                new AgentToolRequest(toolId, argumentsJson),
+                cancellationToken)
             : null;
+
+        string? deniedReason = null;
+        if (permissionRequest is null && !resolvedTool.Descriptor.IsReadOnly)
+        {
+            if (sessionId is null
+                || runId is null
+                || runRevision is null
+                || string.IsNullOrWhiteSpace(toolCallId)
+                || workspace is null
+                || string.IsNullOrWhiteSpace(resolvedTool.Descriptor.SourceId))
+            {
+                deniedReason = $"Mutating tool '{toolId}' has no permission policy and the execution context is insufficient for a durable approval.";
+            }
+            else
+            {
+                permissionRequest = new AgentPermissionRequest(
+                    AgentPermissionService.GenericMutationActionId,
+                    AgentPermissionService.GenericMutationBoundaryId,
+                    $"Allow mutating tool '{resolvedTool.Descriptor.DisplayName}' to run?",
+                    ToolId: resolvedTool.Descriptor.ToolId,
+                    WorkspaceId: workspace.WorkspaceId,
+                    BindingId: executionBinding?.BindingId,
+                    ResourceDisplayName: resolvedTool.Descriptor.DisplayName,
+                    ResourceReference: $"{resolvedTool.Descriptor.SourceKind}:{resolvedTool.Descriptor.SourceId}:{resolvedTool.Descriptor.ToolId}",
+                    IsMutation: true);
+            }
+        }
+
+        if (permissionRequest is not null)
+        {
+            permissionRequest = permissionRequest with
+            {
+                ToolId = string.IsNullOrWhiteSpace(permissionRequest.ToolId)
+                    ? resolvedTool.Descriptor.ToolId
+                    : permissionRequest.ToolId,
+                WorkspaceId = string.IsNullOrWhiteSpace(permissionRequest.WorkspaceId)
+                    ? workspace?.WorkspaceId
+                    : permissionRequest.WorkspaceId,
+                BindingId = string.IsNullOrWhiteSpace(permissionRequest.BindingId)
+                    ? executionBinding?.BindingId
+                    : permissionRequest.BindingId,
+                IsMutation = permissionRequest.IsMutation || !resolvedTool.Descriptor.IsReadOnly,
+            };
+        }
+
+        return new AgentToolPermissionResolution(
+            resolvedTool.Descriptor,
+            resolvedTool.Source,
+            permissionRequest,
+            executionBinding,
+            _executionTargetService.ResolveTarget(executionBinding)?.Descriptor,
+            deniedReason);
     }
 
     private IReadOnlyList<IAgentToolSource> GetSources()
@@ -253,9 +365,10 @@ public sealed class AgentToolService(
         return document.RootElement.Clone();
     }
 
-    private async Task<IAgentToolSource?> ResolveSourceAsync(
+    private async Task<ResolvedTool?> ResolveAdvertisedToolAsync(
         string toolId,
         AgentToolExecutionContext context,
+        AgentToolDescriptor? advertisedDescriptor,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(toolId))
@@ -263,24 +376,68 @@ public sealed class AgentToolService(
             return null;
         }
 
-        var profile = string.IsNullOrWhiteSpace(context.ProfileId)
-            ? null
-            : _extensionCatalog.GetExtensions(PackageExtensionPoints.RuntimeCatalogs)
-                .FirstOrDefault()
-                ?.GetProfile(context.ProfileId);
+        var profile = ResolveProfile(context.ProfileId);
+        if (!string.IsNullOrWhiteSpace(context.ProfileId) && profile is null)
+        {
+            return null;
+        }
+
         var sourceContext = new AgentToolSourceContext(context.SessionId, profile, context.Workspace, context.ExecutionBinding);
 
         foreach (var source in GetSources())
         {
-            var readiness = await source.GetReadinessAsync(toolId, sourceContext, cancellationToken);
-            if (readiness is not null)
+            var descriptors = await source.ListToolsAsync(sourceContext, cancellationToken);
+            var descriptor = descriptors
+                .Select(item => WithSourceIdentity(source, item))
+                .FirstOrDefault(item => string.Equals(item.ToolId, toolId, StringComparison.OrdinalIgnoreCase));
+            if (descriptor is null
+                || (advertisedDescriptor is not null && !IsSameAdvertisedTool(advertisedDescriptor, descriptor))
+                || !IsAllowedForProfile(profile, descriptor))
             {
-                return source;
+                continue;
             }
+
+            var readiness = await source.GetReadinessAsync(descriptor.ToolId, sourceContext, cancellationToken);
+            if (readiness is not null && readiness.Status != AgentToolReadinessStatus.Ready)
+            {
+                continue;
+            }
+
+            return new ResolvedTool(source, descriptor);
         }
 
         return null;
     }
+
+    private AgentProfileRecord? ResolveProfile(string? profileId)
+        => string.IsNullOrWhiteSpace(profileId)
+            ? null
+            : _extensionCatalog.GetExtensions(PackageExtensionPoints.RuntimeCatalogs)
+                .FirstOrDefault()
+                ?.GetProfile(profileId);
+
+    private static AgentToolDescriptor WithSourceIdentity(IAgentToolSource source, AgentToolDescriptor descriptor)
+        => descriptor with
+        {
+            SourceKind = string.IsNullOrWhiteSpace(descriptor.SourceKind) ? source.SourceKind : descriptor.SourceKind,
+            SourceId = string.IsNullOrWhiteSpace(descriptor.SourceId) ? source.SourceId : descriptor.SourceId,
+            SourceDisplayName = string.IsNullOrWhiteSpace(descriptor.SourceDisplayName) ? source.DisplayName : descriptor.SourceDisplayName,
+        };
+
+    private static bool IsSameAdvertisedTool(
+        AgentToolDescriptor advertisedDescriptor,
+        AgentToolDescriptor currentDescriptor)
+        => string.Equals(advertisedDescriptor.ToolId, currentDescriptor.ToolId, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(advertisedDescriptor.SourceKind, currentDescriptor.SourceKind, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(advertisedDescriptor.SourceId, currentDescriptor.SourceId, StringComparison.OrdinalIgnoreCase)
+           && advertisedDescriptor.IsReadOnly == currentDescriptor.IsReadOnly;
+
+    private static AgentPermissionRequest CreateDeniedPermissionRequest(string toolId, string summary)
+        => new(
+            string.Empty,
+            AgentPermissionBoundaryIds.Unknown,
+            summary,
+            ToolId: toolId);
 
     private static bool IsAllowedForProfile(AgentProfileRecord? profile, AgentToolDescriptor descriptor)
     {
@@ -340,8 +497,10 @@ public sealed class AgentToolService(
             ? null
             : _workspaceService.ListBindings(workspace.WorkspaceId)
                 .FirstOrDefault(binding => binding.IsEnabled
-                                           && string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase)
-                                           && _executionTargetService.ResolveTarget(binding) is not null);
+                                            && string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase)
+                                            && _executionTargetService.ResolveTarget(binding) is not null);
+
+    private sealed record ResolvedTool(IAgentToolSource Source, AgentToolDescriptor Descriptor);
 }
 
 public sealed record AgentToolCatalogEntry(

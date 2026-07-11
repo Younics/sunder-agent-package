@@ -1,32 +1,54 @@
 using System.Threading.Channels;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Memory.Semantic.Services;
 
-public sealed class SemanticMemoryIndexingBackgroundService(
-    MemoryLocalStore store,
-    IPackageExtensionCatalog extensionCatalog,
-    MemorySemanticSettingsService settingsService,
-    SemanticMemoryRetrievalBackend retrievalBackend,
-    SemanticMemoryMetricsService metricsService) : IPackageBackgroundService, IDisposable
+public sealed class SemanticMemoryIndexingBackgroundService : IPackageBackgroundService, IDisposable, IAsyncDisposable
 {
-    private readonly MemoryLocalStore _store = store;
-    private readonly IPackageExtensionCatalog _extensionCatalog = extensionCatalog;
-    private readonly MemorySemanticSettingsService _settingsService = settingsService;
-    private readonly SemanticMemoryRetrievalBackend _retrievalBackend = retrievalBackend;
-    private readonly SemanticMemoryMetricsService _metricsService = metricsService;
-    private readonly Channel<SemanticMemoryIndexWorkItem> _requests = Channel.CreateUnbounded<SemanticMemoryIndexWorkItem>();
+    private const int DefaultQueueCapacity = 256;
 
+    private readonly MemoryLocalStore _store;
+    private readonly SemanticModelRuntimeResolver _modelRuntimeResolver;
+    private readonly MemorySemanticSettingsService _settingsService;
+    private readonly SemanticMemoryRetrievalBackend _retrievalBackend;
+    private readonly SemanticMemoryMetricsService _metricsService;
+    private readonly int _queueCapacity;
+    private readonly object _queueSync = new();
+    private readonly object _statusSync = new();
+    private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
+    private readonly Dictionary<string, SemanticMemoryWorkSlot> _scheduled = new(StringComparer.Ordinal);
+
+    private Channel<string> _requests;
     private CancellationTokenSource? _stoppingCts;
     private Task? _processingTask;
     private Task? _monitoringTask;
+    private IAgentRuntimeCatalog? _subscribedRuntimeCatalog;
     private string _lastSettingsFingerprint = string.Empty;
-    private IAgentRuntimeCatalog? _runtimeCatalog;
-    private readonly object _statusSync = new();
     private SemanticMemoryIndexWorkerStatus _status = SemanticMemoryIndexWorkerStatus.Stopped();
+    private bool _disposed;
+
+    public SemanticMemoryIndexingBackgroundService(
+        MemoryLocalStore store,
+        SemanticModelRuntimeResolver modelRuntimeResolver,
+        MemorySemanticSettingsService settingsService,
+        SemanticMemoryRetrievalBackend retrievalBackend,
+        SemanticMemoryMetricsService metricsService,
+        int queueCapacity = DefaultQueueCapacity)
+    {
+        if (queueCapacity <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(queueCapacity));
+        }
+
+        _store = store;
+        _modelRuntimeResolver = modelRuntimeResolver;
+        _settingsService = settingsService;
+        _retrievalBackend = retrievalBackend;
+        _metricsService = metricsService;
+        _queueCapacity = queueCapacity;
+        _requests = CreateQueue(queueCapacity);
+    }
 
     public event Action? StatusChanged;
 
@@ -39,170 +61,252 @@ public sealed class SemanticMemoryIndexingBackgroundService(
     }
 
     public bool QueueMemoryIndex(Guid memoryId, string profileId)
-    {
-        if (string.IsNullOrWhiteSpace(profileId))
-        {
-            return false;
-        }
-
-        if (!_requests.Writer.TryWrite(new MemoryIndexWorkItem(memoryId, profileId)))
-        {
-            return false;
-        }
-
-        UpdateStatus(status => status with { PendingItemCount = status.PendingItemCount + 1 });
-        return true;
-    }
+        => memoryId != Guid.Empty
+           && !string.IsNullOrWhiteSpace(profileId)
+           && Queue(new MemoryIndexWorkItem(memoryId, profileId));
 
     public bool QueueSessionReindex(Guid sessionId, string profileId)
+        => sessionId != Guid.Empty
+           && !string.IsNullOrWhiteSpace(profileId)
+           && Queue(new SessionReindexWorkItem(sessionId, profileId));
+
+    public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        if (sessionId == Guid.Empty || string.IsNullOrWhiteSpace(profileId))
+        await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            return false;
-        }
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_processingTask is not null || _monitoringTask is not null)
+            {
+                return;
+            }
 
-        if (!_requests.Writer.TryWrite(new SessionReindexWorkItem(sessionId, profileId)))
+            _stoppingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            _subscribedRuntimeCatalog = _modelRuntimeResolver.RuntimeCatalog;
+            if (_subscribedRuntimeCatalog is not null)
+            {
+                _subscribedRuntimeCatalog.ProfileChanged += OnProfileChanged;
+            }
+
+            _lastSettingsFingerprint = BuildSettingsFingerprint();
+            UpdateStatus(status => status with { IsRunning = true, LastFailureAtUtc = null, LastFailureMessage = null });
+            _processingTask = ProcessQueueAsync(_stoppingCts.Token);
+            _monitoringTask = MonitorAsync(_stoppingCts.Token);
+            QueueAllEligibleSessions();
+        }
+        finally
         {
-            return false;
+            _lifecycleGate.Release();
         }
-
-        UpdateStatus(status => status with { PendingItemCount = status.PendingItemCount + 1 });
-        return true;
-    }
-
-    public Task StartAsync(CancellationToken cancellationToken = default)
-    {
-        if (_processingTask is not null || _monitoringTask is not null)
-        {
-            return Task.CompletedTask;
-        }
-
-        _stoppingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _runtimeCatalog = GetRuntimeCatalog();
-        if (_runtimeCatalog is not null)
-        {
-            _runtimeCatalog.ProfileChanged += OnProfileChanged;
-        }
-
-        UpdateStatus(_ => SemanticMemoryIndexWorkerStatus.Running());
-        _lastSettingsFingerprint = BuildSettingsFingerprint();
-        QueueAllEligibleSessions();
-        _processingTask = ProcessQueueAsync(_stoppingCts.Token);
-        _monitoringTask = MonitorAsync(_stoppingCts.Token);
-        return Task.CompletedTask;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
-        if (_processingTask is null && _monitoringTask is null)
-        {
-            return;
-        }
-
-        if (_runtimeCatalog is not null)
-        {
-            _runtimeCatalog.ProfileChanged -= OnProfileChanged;
-            _runtimeCatalog = null;
-        }
-
-        _requests.Writer.TryComplete();
-        _stoppingCts?.Cancel();
-
-        var tasks = new[] { _processingTask, _monitoringTask }
-            .Where(task => task is not null)
-            .Cast<Task>()
-            .ToArray();
-        _processingTask = null;
-        _monitoringTask = null;
-
+        await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await Task.WhenAll(tasks).WaitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            if (!cancellationToken.IsCancellationRequested)
+            if (_processingTask is null && _monitoringTask is null)
             {
-                throw;
+                return;
             }
+
+            UnsubscribeRuntimeCatalog();
+            lock (_queueSync)
+            {
+                _requests.Writer.TryComplete();
+            }
+
+            _stoppingCts?.Cancel();
+            var tasks = new[] { _processingTask, _monitoringTask }.Where(task => task is not null).Cast<Task>();
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+            _stoppingCts?.Dispose();
+            _stoppingCts = null;
+            _processingTask = null;
+            _monitoringTask = null;
+            ResetQueue();
+            UpdateStatus(status => status with { IsRunning = false, PendingItemCount = 0 });
         }
         finally
         {
-            UpdateStatus(_ => SemanticMemoryIndexWorkerStatus.Stopped());
+            _lifecycleGate.Release();
         }
     }
 
     public void Dispose()
     {
-        if (_runtimeCatalog is not null)
+        DisposeAsync().AsTask().GetAwaiter().GetResult();
+        GC.SuppressFinalize(this);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
         {
-            _runtimeCatalog.ProfileChanged -= OnProfileChanged;
-            _runtimeCatalog = null;
+            return;
         }
 
-        _stoppingCts?.Cancel();
-        _stoppingCts?.Dispose();
-        UpdateStatus(_ => SemanticMemoryIndexWorkerStatus.Stopped());
+        await StopAsync(CancellationToken.None).ConfigureAwait(false);
+        _disposed = true;
+        UnsubscribeRuntimeCatalog();
+        lock (_queueSync)
+        {
+            _requests.Writer.TryComplete();
+            _scheduled.Clear();
+        }
+
+        _lifecycleGate.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    private bool Queue(SemanticMemoryIndexWorkItem item)
+    {
+        var added = false;
+        lock (_queueSync)
+        {
+            if (_disposed || _requests.Reader.Completion.IsCompleted)
+            {
+                return false;
+            }
+
+            if (_scheduled.TryGetValue(item.WorkKey, out var existing))
+            {
+                existing.Item = item;
+                existing.RerunRequested |= existing.IsProcessing;
+                return true;
+            }
+
+            var queued = _requests.Writer.TryWrite(item.WorkKey);
+            _scheduled[item.WorkKey] = new SemanticMemoryWorkSlot(item) { IsQueued = queued };
+            lock (_statusSync)
+            {
+                _status = _status with { PendingItemCount = _status.PendingItemCount + 1 };
+            }
+            added = true;
+        }
+
+        if (added)
+        {
+            StatusChanged?.Invoke();
+        }
+
+        return true;
     }
 
     private async Task ProcessQueueAsync(CancellationToken cancellationToken)
     {
         try
         {
-            while (await _requests.Reader.WaitToReadAsync(cancellationToken))
+            while (await _requests.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                while (_requests.Reader.TryRead(out var request))
+                while (_requests.Reader.TryRead(out var key))
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    try
-                    {
-                        switch (request)
-                        {
-                            case MemoryIndexWorkItem memoryRequest:
-                                var memory = _store.GetMemory(memoryRequest.MemoryId);
-                                if (memory is not null && !string.Equals(memory.State, MemoryLocalStore.ActiveState, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    break;
-                                }
-
-                                if (memory is not null)
-                                {
-                                    await _retrievalBackend.IndexMemoryAsync(memory, memoryRequest.ProfileId, cancellationToken);
-                                }
-                                break;
-
-                            case SessionReindexWorkItem sessionRequest:
-                                var memories = _store.ListMemories(sessionRequest.SessionId, includeInactive: false);
-                                await _retrievalBackend.ReindexSessionAsync(sessionRequest.SessionId, sessionRequest.ProfileId, memories, cancellationToken);
-                                break;
-                        }
-
-                        UpdateStatus(status => status with
-                        {
-                            PendingItemCount = Math.Max(0, status.PendingItemCount - 1),
-                            ProcessedItemCount = status.ProcessedItemCount + 1,
-                            LastSuccessfulRunAtUtc = DateTimeOffset.UtcNow,
-                            LastFailureAtUtc = null,
-                            LastFailureMessage = null,
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        _metricsService.RecordWorkerFailure();
-                        UpdateStatus(status => status with
-                        {
-                            PendingItemCount = Math.Max(0, status.PendingItemCount - 1),
-                            ProcessedItemCount = status.ProcessedItemCount + 1,
-                            LastFailureAtUtc = DateTimeOffset.UtcNow,
-                            LastFailureMessage = ex.Message,
-                        });
-                    }
+                    await ProcessScheduledAsync(key, cancellationToken).ConfigureAwait(false);
                 }
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Package shutdown stops the queue.
+            // Package shutdown cancels in-flight indexing and leaves active generations intact.
+        }
+    }
+
+    private async Task ProcessScheduledAsync(string key, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            SemanticMemoryIndexWorkItem item;
+            lock (_queueSync)
+            {
+                if (!_scheduled.TryGetValue(key, out var slot))
+                {
+                    return;
+                }
+
+                slot.IsProcessing = true;
+                slot.IsQueued = false;
+                slot.RerunRequested = false;
+                item = slot.Item;
+            }
+
+            var canceled = false;
+            try
+            {
+                await ProcessAsync(item, cancellationToken).ConfigureAwait(false);
+                UpdateStatus(status => status with
+                {
+                    ProcessedItemCount = status.ProcessedItemCount + 1,
+                    LastSuccessfulRunAtUtc = DateTimeOffset.UtcNow,
+                    LastFailureAtUtc = null,
+                    LastFailureMessage = null,
+                });
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                canceled = true;
+            }
+            catch (Exception ex)
+            {
+                _metricsService.RecordWorkerFailure();
+                UpdateStatus(status => status with
+                {
+                    ProcessedItemCount = status.ProcessedItemCount + 1,
+                    LastFailureAtUtc = DateTimeOffset.UtcNow,
+                    LastFailureMessage = ex.Message,
+                });
+            }
+
+            var rerun = false;
+            lock (_queueSync)
+            {
+                if (_scheduled.TryGetValue(key, out var slot))
+                {
+                    rerun = !canceled && slot.RerunRequested;
+                    if (rerun)
+                    {
+                        slot.IsProcessing = false;
+                    }
+                    else
+                    {
+                        _scheduled.Remove(key);
+                    }
+
+                    QueuePendingSlotsNoLock();
+                }
+            }
+
+            if (!rerun)
+            {
+                UpdateStatus(status => status with { PendingItemCount = Math.Max(0, status.PendingItemCount - 1) });
+                if (canceled)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                return;
+            }
+        }
+    }
+
+    private async Task ProcessAsync(SemanticMemoryIndexWorkItem item, CancellationToken cancellationToken)
+    {
+        switch (item)
+        {
+            case MemoryIndexWorkItem memoryRequest:
+                var memory = _store.GetMemory(memoryRequest.MemoryId);
+                if (memory is not null && string.Equals(memory.State, MemoryLocalStore.ActiveState, StringComparison.OrdinalIgnoreCase))
+                {
+                    await _retrievalBackend.IndexMemoryAsync(memory, memoryRequest.ProfileId, cancellationToken).ConfigureAwait(false);
+                }
+                break;
+
+            case SessionReindexWorkItem sessionRequest:
+                var memories = _store.ListMemories(sessionRequest.SessionId, includeInactive: false);
+                await _retrievalBackend.ReindexSessionAsync(
+                    sessionRequest.SessionId,
+                    sessionRequest.ProfileId,
+                    memories,
+                    cancellationToken).ConfigureAwait(false);
+                break;
         }
     }
 
@@ -211,7 +315,7 @@ public sealed class SemanticMemoryIndexingBackgroundService(
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         try
         {
-            while (await timer.WaitForNextTickAsync(cancellationToken))
+            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
             {
                 var currentFingerprint = BuildSettingsFingerprint();
                 if (!string.Equals(currentFingerprint, _lastSettingsFingerprint, StringComparison.Ordinal))
@@ -221,15 +325,15 @@ public sealed class SemanticMemoryIndexingBackgroundService(
                 }
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Package shutdown stops the monitor.
+            // Package shutdown stops settings monitoring.
         }
     }
 
     private void OnProfileChanged(string profileId)
     {
-        foreach (var session in GetRuntimeCatalog()?.ListSessionsForProfile(profileId) ?? [])
+        foreach (var session in _modelRuntimeResolver.RuntimeCatalog?.ListSessionsForProfile(profileId) ?? [])
         {
             QueueSessionReindex(session.SessionId, profileId);
         }
@@ -237,17 +341,13 @@ public sealed class SemanticMemoryIndexingBackgroundService(
 
     private void QueueAllEligibleSessions()
     {
-        foreach (var session in GetRuntimeCatalog()?.ListSessions() ?? [])
+        foreach (var session in _modelRuntimeResolver.RuntimeCatalog?.ListSessions() ?? [])
         {
-            var profile = GetRuntimeCatalog()?.GetSessionProfile(session.SessionId);
-            var binding = GetRuntimeCatalog()?.GetSessionModelBinding(session.SessionId, AgentModelCapabilityKinds.Embedding)
-                          ?? (profile is null ? null : ResolveLegacyEmbeddingBinding(profile.ProfileId));
-            if (binding is null || string.IsNullOrWhiteSpace(binding.ProviderId) || string.IsNullOrWhiteSpace(binding.ModelId))
+            var binding = _modelRuntimeResolver.ResolveSessionBinding(session.SessionId);
+            if (binding is not null && !string.IsNullOrWhiteSpace(binding.ProviderId) && !string.IsNullOrWhiteSpace(binding.ModelId))
             {
-                continue;
+                QueueSessionReindex(session.SessionId, binding.ProfileId);
             }
-
-            QueueSessionReindex(session.SessionId, binding.ProfileId);
         }
     }
 
@@ -258,23 +358,40 @@ public sealed class SemanticMemoryIndexingBackgroundService(
             _settingsService.GetMaxCanonicalTextChars(),
             _settingsService.GetReindexMode());
 
-    private IAgentRuntimeCatalog? GetRuntimeCatalog()
-        => _extensionCatalog.GetExtensions(PackageExtensionPoints.RuntimeCatalogs).FirstOrDefault();
-
-    private AgentProfileModelBindingRecord? ResolveLegacyEmbeddingBinding(string profileId)
+    private void ResetQueue()
     {
-        var profile = GetRuntimeCatalog()?.GetProfile(profileId);
-        return profile is null
-               || string.IsNullOrWhiteSpace(profile.EmbeddingProviderId)
-               || string.IsNullOrWhiteSpace(profile.EmbeddingModelId)
-            ? null
-            : new AgentProfileModelBindingRecord(
-                profile.ProfileId,
-                AgentModelCapabilityKinds.Embedding,
-                profile.EmbeddingProviderId,
-                profile.EmbeddingModelId,
-                SettingsJson: null,
-                profile.UpdatedAtUtc);
+        lock (_queueSync)
+        {
+            _scheduled.Clear();
+            _requests = CreateQueue(_queueCapacity);
+        }
+    }
+
+    private void QueuePendingSlotsNoLock()
+    {
+        foreach (var (key, slot) in _scheduled)
+        {
+            if (slot.IsProcessing || slot.IsQueued)
+            {
+                continue;
+            }
+
+            if (!_requests.Writer.TryWrite(key))
+            {
+                return;
+            }
+
+            slot.IsQueued = true;
+        }
+    }
+
+    private void UnsubscribeRuntimeCatalog()
+    {
+        if (_subscribedRuntimeCatalog is not null)
+        {
+            _subscribedRuntimeCatalog.ProfileChanged -= OnProfileChanged;
+            _subscribedRuntimeCatalog = null;
+        }
     }
 
     private void UpdateStatus(Func<SemanticMemoryIndexWorkerStatus, SemanticMemoryIndexWorkerStatus> update)
@@ -286,13 +403,39 @@ public sealed class SemanticMemoryIndexingBackgroundService(
 
         StatusChanged?.Invoke();
     }
+
+    private static Channel<string> CreateQueue(int capacity)
+        => Channel.CreateBounded<string>(new BoundedChannelOptions(capacity)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = true,
+            SingleWriter = false,
+        });
+
 }
 
-public abstract record SemanticMemoryIndexWorkItem;
+internal sealed class SemanticMemoryWorkSlot(SemanticMemoryIndexWorkItem item)
+{
+    public SemanticMemoryIndexWorkItem Item { get; set; } = item;
+    public bool IsProcessing { get; set; }
+    public bool IsQueued { get; set; }
+    public bool RerunRequested { get; set; }
+}
 
-public sealed record MemoryIndexWorkItem(Guid MemoryId, string ProfileId) : SemanticMemoryIndexWorkItem;
+public abstract record SemanticMemoryIndexWorkItem
+{
+    public abstract string WorkKey { get; }
+}
 
-public sealed record SessionReindexWorkItem(Guid SessionId, string ProfileId) : SemanticMemoryIndexWorkItem;
+public sealed record MemoryIndexWorkItem(Guid MemoryId, string ProfileId) : SemanticMemoryIndexWorkItem
+{
+    public override string WorkKey => $"memory:{MemoryId:N}";
+}
+
+public sealed record SessionReindexWorkItem(Guid SessionId, string ProfileId) : SemanticMemoryIndexWorkItem
+{
+    public override string WorkKey => $"session:{SessionId:N}";
+}
 
 public sealed record SemanticMemoryIndexWorkerStatus(
     bool IsRunning,
@@ -302,9 +445,6 @@ public sealed record SemanticMemoryIndexWorkerStatus(
     DateTimeOffset? LastFailureAtUtc,
     string? LastFailureMessage)
 {
-    public static SemanticMemoryIndexWorkerStatus Running()
-        => new(true, PendingItemCount: 0, ProcessedItemCount: 0, LastSuccessfulRunAtUtc: null, LastFailureAtUtc: null, LastFailureMessage: null);
-
     public static SemanticMemoryIndexWorkerStatus Stopped()
-        => new(false, PendingItemCount: 0, ProcessedItemCount: 0, LastSuccessfulRunAtUtc: null, LastFailureAtUtc: null, LastFailureMessage: null);
+        => new(false, 0, 0, null, null, null);
 }

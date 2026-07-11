@@ -1,0 +1,26 @@
+<Project>
+  <ItemGroup Condition="('$(SunderPackageProject)' == 'true' or '$(SunderSdkReference)' == 'true') and '$(SunderUseSourceSdk)' == 'true'">
+    <ProjectReference Include="$(SunderSdkProject)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="('$(SunderPackageProject)' == 'true' or '$(SunderSdkReference)' == 'true') and '$(SunderUseSourceSdk)' == 'false'">
+    <PackageReference Include="Sunder.Sdk" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(SunderPackageProject)' == 'true' and '$(SunderUseSourceSdk)' == 'false'">
+    <PackageReference Include="Sunder.Package.Build" PrivateAssets="all" />
+  </ItemGroup>
+
+  <Target Name="ValidateSunderSdkMode"
+          BeforeTargets="_GenerateRestoreProjectPathWalk;CollectPackageReferences;PrepareForBuild">
+    <Error Condition="'$(SunderUseSourceSdk)' != 'true' and '$(SunderUseSourceSdk)' != 'false'"
+           Text="SunderUseSourceSdk must be 'true' or 'false', but was '$(SunderUseSourceSdk)'." />
+    <Error Condition="'$(SunderUseSourceSdk)' == 'true' and ('$(SunderPackageProject)' == 'true' or '$(SunderSdkReference)' == 'true') and !Exists('$(SunderSdkProject)')"
+           Text="SunderUseSourceSdk is true, but the Sunder SDK project was not found at '$(SunderSdkProject)'." />
+    <Error Condition="'$(SunderUseSourceSdk)' == 'true' and '$(SunderPackageProject)' == 'true' and !Exists('$(SunderPackageBuildTargets)')"
+           Text="SunderUseSourceSdk is true, but the Sunder package build targets were not found at '$(SunderPackageBuildTargets)'." />
+  </Target>
+
+  <Import Project="$(SunderPackageBuildTargets)"
+          Condition="'$(SunderPackageProject)' == 'true' and '$(SunderUseSourceSdk)' == 'true' and Exists('$(SunderPackageBuildTargets)')" />
+</Project>

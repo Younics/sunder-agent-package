@@ -98,13 +98,20 @@ internal sealed class SubagentStackContributor(
         CancellationToken cancellationToken = default)
     {
         var selectedActionIds = request.SelectedActionIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var imported = new List<StackImportedItem>();
         var warnings = new List<string>();
         var errors = new List<string>();
+        var selectedPayloads = new List<SubagentStackPayload>();
         foreach (var fragment in request.Fragments)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!TryReadPayload(fragment, warnings, out var payload) || payload is null)
             {
+                var actionPrefix = $"subagent:{fragment.FragmentId}:";
+                if (selectedActionIds.Any(actionId => actionId.StartsWith(actionPrefix, StringComparison.OrdinalIgnoreCase)))
+                {
+                    errors.Add($"Selected subagent fragment '{fragment.FragmentId}' is invalid. No subagents were imported.");
+                }
+
                 continue;
             }
 
@@ -114,18 +121,36 @@ internal sealed class SubagentStackContributor(
                 continue;
             }
 
-            try
-            {
-                var saved = subagentService.ImportSubagent(payload.ToSubagent());
-                imported.Add(new StackImportedItem(saved.SubagentId, saved.DisplayName, "subagent"));
-            }
-            catch (Exception ex)
-            {
-                errors.Add($"Failed to import subagent '{payload.DisplayName}': {ex.Message}");
-            }
+            selectedPayloads.Add(payload);
         }
 
-        return ValueTask.FromResult(new StackImportResult(errors.Count == 0, imported, new Dictionary<string, string>(), warnings, errors));
+        if (errors.Count > 0)
+        {
+            return ValueTask.FromResult(new StackImportResult(false, [], new Dictionary<string, string>(), warnings, errors));
+        }
+
+        var duplicateId = selectedPayloads
+            .GroupBy(payload => payload.SubagentId, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(group => group.Count() > 1)?.Key;
+        if (duplicateId is not null)
+        {
+            errors.Add($"The selected stack fragments contain duplicate subagent id '{duplicateId}'. No subagents were imported.");
+            return ValueTask.FromResult(new StackImportResult(false, [], new Dictionary<string, string>(), warnings, errors));
+        }
+
+        try
+        {
+            var saved = subagentService.ImportSubagents(selectedPayloads.Select(payload => payload.ToSubagent()).ToArray());
+            var imported = saved
+                .Select(subagent => new StackImportedItem(subagent.SubagentId, subagent.DisplayName, "subagent"))
+                .ToArray();
+            return ValueTask.FromResult(new StackImportResult(true, imported, new Dictionary<string, string>(), warnings, []));
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"Subagent import failed before the atomic store update completed: {ex.Message}");
+            return ValueTask.FromResult(new StackImportResult(false, [], new Dictionary<string, string>(), warnings, errors));
+        }
     }
 
     public ValueTask OnStackImportAppliedAsync(
@@ -256,6 +281,18 @@ internal sealed class SubagentStackContributor(
     private static bool TryReadPayload(StackFragmentImport fragment, ICollection<string> warnings, out SubagentStackPayload? payload)
     {
         payload = null;
+        if (!string.Equals(fragment.SchemaId, SchemaId, StringComparison.OrdinalIgnoreCase))
+        {
+            warnings.Add($"Stack fragment '{fragment.FragmentId}' uses unsupported schema '{fragment.SchemaId}'.");
+            return false;
+        }
+
+        if (fragment.SchemaVersion != 1)
+        {
+            warnings.Add($"Stack fragment '{fragment.FragmentId}' uses unsupported subagent schema version {fragment.SchemaVersion}.");
+            return false;
+        }
+
         try
         {
             payload = JsonSerializer.Deserialize<SubagentStackPayload>(fragment.JsonPayload, JsonOptions);

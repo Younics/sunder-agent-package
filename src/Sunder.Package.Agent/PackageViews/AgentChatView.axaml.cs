@@ -17,10 +17,9 @@ using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-public partial class AgentChatView : UserControl
+public partial class AgentChatView : UserControl, IDisposable
 {
     private const double WideHeaderMinimumWidth = 520;
-    private const int SessionRenameFocusRetryLimit = 12;
     private const double WorkspacePathChipTextFontSize = 11;
     private const double WorkspacePathChipSpacing = 6;
     private const double WorkspacePathOverflowSpacing = 8;
@@ -40,43 +39,45 @@ public partial class AgentChatView : UserControl
     };
 
     private AgentChatViewModel? _viewModel;
-    private TranscriptScrollCoordinator? _transcriptScrollCoordinator;
-    private bool _transcriptChangedBeforeScrollReady;
-    private bool _initialTranscriptPlacementPending = true;
-    private bool _initialTranscriptPlacementQueued;
-    private bool _initialTranscriptVisibilityRetryQueued;
-    private int _initialTranscriptPlacementVersion;
-    private Guid? _pendingSessionRenameFocusId;
+    private readonly TranscriptViewBehavior _transcriptBehavior;
+    private readonly InlineRenameFocusCoordinator<AgentSessionListItemViewModel> _renameFocus;
     private IPackageNotificationService _notificationService = NullPackageNotificationService.Instance;
+    private bool _disposed;
 
     public AgentChatView()
     {
         InitializeComponent();
-        HideTranscriptUntilInitialPlacement();
         ConfigureComposerDropTarget(ExpandedComposerDropTarget);
         ConfigureComposerDropTarget(ExpandedComposerTextBox);
         ConfigureComposerDropTarget(CollapsedComposerDropTarget);
         ConfigureComposerDropTarget(CollapsedComposerTextBox);
         ConfigureComposerKeyHandler(ExpandedComposerTextBox);
         ConfigureComposerKeyHandler(CollapsedComposerTextBox);
-        Loaded += (_, _) =>
-        {
-            ApplyHeaderLayout();
-            if (EnsureTranscriptScrollCoordinator())
-            {
-                HandleTranscriptReadyAfterScrollReady();
-                return;
-            }
-
-            Dispatcher.UIThread.Post(() =>
-            {
-                if (EnsureTranscriptScrollCoordinator())
-                {
-                    HandleTranscriptReadyAfterScrollReady();
-                }
-            }, DispatcherPriority.Loaded);
-        };
-        SizeChanged += (_, _) => ApplyHeaderLayout();
+        _renameFocus = new InlineRenameFocusCoordinator<AgentSessionListItemViewModel>(
+            this,
+            session => session.SessionId,
+            session => session.IsRenameActive,
+            () => HeaderWideLayout.IsVisible ? WideSessionComboBox : NarrowSessionComboBox,
+            "session-rename-input");
+        _transcriptBehavior = new TranscriptViewBehavior(
+            this,
+            TranscriptScrollViewer,
+            TranscriptItemsControl,
+            JumpToLatestTranscriptButton,
+            () => ViewModel?.CanLoadOlderTranscriptRows == true,
+            anchor => ViewModel?.LoadOlderTranscriptRowsAsync(anchor) ?? Task.FromResult(false),
+            () => ViewModel?.CanLoadNewerTranscriptRows == true,
+            anchor => ViewModel?.LoadNewerTranscriptRowsAsync(anchor) ?? Task.FromResult(false),
+            () => ViewModel?.HasNewerTranscriptRows == true,
+            () => ViewModel?.IsTranscriptLoading == true,
+            () => ViewModel?.Messages.Count > 0,
+            () => ViewModel is { ShowSetupInstructions: false },
+            () => ViewModel?.DetachTranscriptFromLatest(),
+            () => ViewModel?.ResumeTranscriptFollowingLatestIfCaughtUp(),
+            isVisible => ViewModel?.SetTranscriptJumpToLatestVisible(isVisible),
+            anchor => ViewModel?.SetTranscriptViewportAnchor(anchor));
+        Loaded += OnLoaded;
+        SizeChanged += OnSizeChanged;
     }
 
     public AgentChatView(
@@ -112,11 +113,42 @@ public partial class AgentChatView : UserControl
         DataContext = _viewModel;
     }
 
+    private AgentChatViewModel? ViewModel => _viewModel ?? DataContext as AgentChatViewModel;
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        Loaded -= OnLoaded;
+        SizeChanged -= OnSizeChanged;
+        _transcriptBehavior.Dispose();
+        _renameFocus.Dispose();
+        if (_viewModel is not null)
+        {
+            _viewModel.TranscriptChanging -= OnTranscriptChanging;
+            _viewModel.TranscriptChanged -= OnTranscriptChanged;
+            _viewModel.PropertyChanging -= OnViewModelPropertyChanging;
+            _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _viewModel.Dispose();
+        }
+
+        DataContext = null;
+        _viewModel = null;
+    }
+
+    private void OnLoaded(object? sender, RoutedEventArgs e) => ApplyHeaderLayout();
+
+    private void OnSizeChanged(object? sender, SizeChangedEventArgs e) => ApplyHeaderLayout();
+
     private void OnViewModelPropertyChanging(object? sender, PropertyChangingEventArgs e)
     {
         if (string.Equals(e.PropertyName, nameof(AgentChatViewModel.DisplayedSession), StringComparison.Ordinal))
         {
-            MarkInitialTranscriptPlacementPending();
+            _transcriptBehavior.MarkInitialPlacementPending();
         }
     }
 
@@ -158,24 +190,23 @@ public partial class AgentChatView : UserControl
 
     private void JumpToLatestTranscript_OnClick(object? sender, RoutedEventArgs e)
     {
-        if (_viewModel is null)
+        var viewModel = ViewModel;
+        if (viewModel is null)
         {
             return;
         }
 
-        if (!_viewModel.HasNewerTranscriptRows)
+        if (!viewModel.HasNewerTranscriptRows)
         {
-            _transcriptScrollCoordinator?.QueueScrollToBottom();
+            _transcriptBehavior.ScrollToBottom();
             return;
         }
 
-        if (!_viewModel.JumpToLatestTranscriptCommand.CanExecute(null))
+        if (viewModel.JumpToLatestTranscriptCommand.CanExecute(null))
         {
-            return;
+            _transcriptBehavior.JumpToLatest(
+                () => viewModel.JumpToLatestTranscriptCommand.Execute(null));
         }
-
-        _transcriptScrollCoordinator?.ForceScrollToBottomOnNextTranscriptChanged();
-        _viewModel.JumpToLatestTranscriptCommand.Execute(null);
     }
 
     private ValueTask PublishClipboardNotificationAsync(string title, string message, PackageNotificationSeverity severity)
@@ -232,7 +263,6 @@ public partial class AgentChatView : UserControl
         renameItem.Click += (_, _) =>
         {
             shouldFocusRename = true;
-            _pendingSessionRenameFocusId = session.SessionId;
             viewModel.BeginRenameSessionCommand.Execute(session);
         };
 
@@ -247,8 +277,7 @@ public partial class AgentChatView : UserControl
                 return;
             }
 
-            _pendingSessionRenameFocusId = session.SessionId;
-            QueueFocusInlineSessionRenameTextBox(session, reopenDropdown: true);
+            _renameFocus.Request(session, reopenDropDown: true);
         };
         flyout.Items.Add(renameItem);
         flyout.Items.Add(deleteItem);
@@ -302,148 +331,7 @@ public partial class AgentChatView : UserControl
     }
 
     private void QueueFocusInlineSessionRenameTextBoxIfPending(TextBox? textBox)
-    {
-        if (
-            textBox?.DataContext is not AgentSessionListItemViewModel session
-            || !session.IsRenameActive
-            || _pendingSessionRenameFocusId != session.SessionId
-            || !textBox.IsEffectivelyVisible
-        )
-        {
-            return;
-        }
-
-        QueueFocusInlineSessionRenameTextBox(textBox, session);
-    }
-
-    private void QueueFocusInlineSessionRenameTextBox(
-        AgentSessionListItemViewModel session,
-        bool reopenDropdown,
-        int attempt = 0
-    )
-    {
-        Dispatcher.UIThread.Post(() =>
-        {
-            if (_pendingSessionRenameFocusId != session.SessionId || !session.IsRenameActive)
-            {
-                return;
-            }
-
-            if (reopenDropdown)
-            {
-                OpenVisibleSessionDropDown();
-            }
-
-            var textBox = FindInlineSessionRenameTextBox(session);
-            if (textBox is not null)
-            {
-                QueueFocusInlineSessionRenameTextBox(textBox, session, attempt);
-                return;
-            }
-
-            if (attempt < SessionRenameFocusRetryLimit)
-            {
-                QueueFocusInlineSessionRenameTextBox(session, reopenDropdown: false, attempt + 1);
-            }
-        }, DispatcherPriority.Background);
-    }
-
-    private void OpenVisibleSessionDropDown()
-    {
-        var comboBox = HeaderWideLayout.IsVisible ? WideSessionComboBox : NarrowSessionComboBox;
-        comboBox.IsDropDownOpen = true;
-    }
-
-    private void QueueFocusInlineSessionRenameTextBox(
-        TextBox textBox,
-        AgentSessionListItemViewModel session,
-        int attempt = 0
-    )
-    {
-        Dispatcher.UIThread.Post(
-            () => FocusInlineSessionRenameTextBox(textBox, session, attempt),
-            DispatcherPriority.ContextIdle
-        );
-    }
-
-    private void FocusInlineSessionRenameTextBox(
-        TextBox textBox,
-        AgentSessionListItemViewModel session,
-        int attempt
-    )
-    {
-        if (_pendingSessionRenameFocusId != session.SessionId || !session.IsRenameActive)
-        {
-            return;
-        }
-
-        if (textBox.IsEffectivelyVisible)
-        {
-            TopLevel.GetTopLevel(textBox)?.FocusManager?.Focus(
-                textBox,
-                NavigationMethod.Unspecified,
-                KeyModifiers.None
-            );
-            textBox.Focus();
-            var caretIndex = textBox.Text?.Length ?? 0;
-            textBox.CaretIndex = caretIndex;
-            textBox.SelectionStart = caretIndex;
-            textBox.SelectionEnd = caretIndex;
-        }
-
-        Dispatcher.UIThread.Post(
-            () => VerifyInlineSessionRenameTextBoxFocus(textBox, session, attempt),
-            DispatcherPriority.ContextIdle
-        );
-    }
-
-    private void VerifyInlineSessionRenameTextBoxFocus(
-        TextBox textBox,
-        AgentSessionListItemViewModel session,
-        int attempt
-    )
-    {
-        if (_pendingSessionRenameFocusId != session.SessionId || !session.IsRenameActive)
-        {
-            return;
-        }
-
-        if (textBox.IsKeyboardFocusWithin)
-        {
-            _pendingSessionRenameFocusId = null;
-            return;
-        }
-
-        if (attempt < SessionRenameFocusRetryLimit)
-        {
-            QueueFocusInlineSessionRenameTextBox(textBox, session, attempt + 1);
-        }
-    }
-
-    private TextBox? FindInlineSessionRenameTextBox(AgentSessionListItemViewModel session)
-    {
-        if (TopLevel.GetTopLevel(this) is { } topLevel)
-        {
-            var textBox = FindInlineSessionRenameTextBox(topLevel, session);
-            if (textBox is not null)
-            {
-                return textBox;
-            }
-        }
-
-        return FindInlineSessionRenameTextBox(this, session);
-    }
-
-    private static TextBox? FindInlineSessionRenameTextBox(
-        Visual root,
-        AgentSessionListItemViewModel session
-    )
-        => root.GetVisualDescendants()
-            .OfType<TextBox>()
-            .FirstOrDefault(textBox =>
-                ReferenceEquals(textBox.DataContext, session)
-                && textBox.Classes.Contains("session-rename-input")
-            );
+        => _renameFocus.TryFocusAttached(textBox);
 
     private void ConfigureComposerDropTarget(Control control)
     {
@@ -659,161 +547,12 @@ public partial class AgentChatView : UserControl
             .ToArray()
             ?? [];
 
-    private void OnTranscriptChanged()
-    {
-        if (!EnsureTranscriptScrollCoordinator())
-        {
-            _transcriptChangedBeforeScrollReady = true;
-            return;
-        }
-
-        if (TryHandleInitialTranscriptPlacement())
-        {
-            return;
-        }
-
-        _transcriptScrollCoordinator?.OnTranscriptChanged();
-    }
+    private void OnTranscriptChanged() => _transcriptBehavior.OnTranscriptChanged();
 
     private void OnTranscriptChanging()
-    {
-        var viewModel = _viewModel ?? DataContext as AgentChatViewModel;
-        if (_initialTranscriptPlacementPending || viewModel?.IsTranscriptLoading == true)
-        {
-            return;
-        }
-
-        if (viewModel?.IsLoadingOlderTranscriptRows == true || viewModel?.IsLoadingNewerTranscriptRows == true)
-        {
-            _transcriptScrollCoordinator?.DiscardPendingTranscriptMutation();
-            return;
-        }
-
-        if (!EnsureTranscriptScrollCoordinator())
-        {
-            return;
-        }
-
-        _transcriptScrollCoordinator?.BeginTranscriptMutation();
-    }
-
-    private bool EnsureTranscriptScrollCoordinator()
-    {
-        if (_transcriptScrollCoordinator is not null)
-        {
-            return true;
-        }
-
-        _transcriptScrollCoordinator = new TranscriptScrollCoordinator(
-            TranscriptScrollViewer,
-            TranscriptItemsControl,
-            () => _viewModel?.CanLoadOlderTranscriptRows == true,
-            anchorKey => _viewModel?.LoadOlderTranscriptRowsAsync(anchorKey) ?? Task.FromResult(false),
-            () => _viewModel?.CanLoadNewerTranscriptRows == true,
-            anchorKey => _viewModel?.LoadNewerTranscriptRowsAsync(anchorKey) ?? Task.FromResult(false),
-            () => _viewModel?.HasNewerTranscriptRows == true,
-            isVisible => JumpToLatestTranscriptButton.IsVisible = isVisible,
-            () => _viewModel?.DetachTranscriptFromLatest(),
-            () => _viewModel?.ResumeTranscriptFollowingLatestIfCaughtUp());
-        return true;
-    }
-
-    private void HandleTranscriptReadyAfterScrollReady()
-    {
-        if (TryHandleInitialTranscriptPlacement())
-        {
-            return;
-        }
-
-        if (_transcriptChangedBeforeScrollReady)
-        {
-            _transcriptChangedBeforeScrollReady = false;
-            _transcriptScrollCoordinator?.OnTranscriptChanged();
-        }
-    }
-
-    private bool TryHandleInitialTranscriptPlacement()
-    {
-        var viewModel = _viewModel ?? DataContext as AgentChatViewModel;
-        if (viewModel?.IsTranscriptLoading == true)
-        {
-            MarkInitialTranscriptPlacementPending();
-            return true;
-        }
-
-        if (!_initialTranscriptPlacementPending)
-        {
-            return false;
-        }
-
-        _transcriptChangedBeforeScrollReady = false;
-        if (viewModel is null || viewModel.ShowSetupInstructions || viewModel.Messages.Count == 0)
-        {
-            CompleteInitialTranscriptPlacement(_initialTranscriptPlacementVersion);
-            return true;
-        }
-
-        if (!TranscriptScrollViewer.IsVisible)
-        {
-            QueueInitialTranscriptVisibilityRetry();
-            return true;
-        }
-
-        if (_initialTranscriptPlacementQueued)
-        {
-            return true;
-        }
-
-        _initialTranscriptPlacementQueued = true;
-        var placementVersion = _initialTranscriptPlacementVersion;
-        HideTranscriptUntilInitialPlacement();
-        _transcriptScrollCoordinator?.QueueScrollToBottomAfterLayoutSettles(() => CompleteInitialTranscriptPlacement(placementVersion));
-        return true;
-    }
-
-    private void MarkInitialTranscriptPlacementPending()
-    {
-        if (!_initialTranscriptPlacementPending || _initialTranscriptPlacementQueued)
-        {
-            _initialTranscriptPlacementVersion++;
-        }
-
-        _initialTranscriptPlacementPending = true;
-        _initialTranscriptPlacementQueued = false;
-        _initialTranscriptVisibilityRetryQueued = false;
-        HideTranscriptUntilInitialPlacement();
-    }
-
-    private void QueueInitialTranscriptVisibilityRetry()
-    {
-        if (_initialTranscriptVisibilityRetryQueued)
-        {
-            return;
-        }
-
-        _initialTranscriptVisibilityRetryQueued = true;
-        Dispatcher.UIThread.Post(() =>
-        {
-            _initialTranscriptVisibilityRetryQueued = false;
-            HandleTranscriptReadyAfterScrollReady();
-        }, DispatcherPriority.Loaded);
-    }
-
-    private void HideTranscriptUntilInitialPlacement()
-        => TranscriptScrollViewer.Opacity = 0;
-
-    private void CompleteInitialTranscriptPlacement(int placementVersion)
-    {
-        if (placementVersion != _initialTranscriptPlacementVersion)
-        {
-            return;
-        }
-
-        _initialTranscriptPlacementPending = false;
-        _initialTranscriptPlacementQueued = false;
-        _initialTranscriptVisibilityRetryQueued = false;
-        TranscriptScrollViewer.Opacity = 1;
-    }
+        => _transcriptBehavior.OnTranscriptChanging(
+            ViewModel?.IsLoadingOlderTranscriptRows == true
+            || ViewModel?.IsLoadingNewerTranscriptRows == true);
 
     private void ToolStepHeader_OnClick(object? sender, RoutedEventArgs e)
     {
@@ -822,13 +561,11 @@ public partial class AgentChatView : UserControl
             return;
         }
 
-        if (EnsureTranscriptScrollCoordinator())
+        _transcriptBehavior.MutateViewport(() =>
         {
-            _transcriptScrollCoordinator?.BeginViewportMutation();
-        }
-
-        toolRow.ToggleExpandedCommand.Execute(null);
-        _transcriptScrollCoordinator?.OnViewportContentChanged();
+            toolRow.ToggleExpandedCommand.Execute(null);
+            ViewModel?.SetTranscriptRowExpanded(toolRow, toolRow.IsExpanded);
+        });
     }
 
     private void ApplyHeaderLayout()

@@ -13,6 +13,36 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class BuilderViewModelTests
 {
     [Fact]
+    public async Task InitializeAsync_ConcurrentCallsShareOneLoad()
+    {
+        var store = new BlockingBuilderProjectStore();
+        var viewModel = CreateViewModel(store: store);
+
+        var first = viewModel.InitializeAsync();
+        var second = viewModel.InitializeAsync();
+        await store.LoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Same(first, second);
+        Assert.Equal(1, store.LoadCount);
+
+        store.ReleaseLoad.TrySetResult();
+        await Task.WhenAll(first, second);
+    }
+
+    [Fact]
+    public async Task InitializeAsync_LoadFailureIsObservedAndPresented()
+    {
+        var store = new FailingBuilderProjectStore();
+        var viewModel = CreateViewModel(store: store);
+
+        await viewModel.InitializeAsync();
+
+        Assert.Contains("initialization failed", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Injected builder load failure", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Contains("Injected builder load failure", viewModel.RuntimeLogText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task DeleteSelectedProjectAsync_WhenCompactLayout_ClearsSelectionAndReturnsToList()
     {
         var viewModel = CreateViewModel();
@@ -214,15 +244,25 @@ public sealed class BuilderViewModelTests
 
     private static BuilderViewModel CreateViewModel(
         TestBackgroundProcessQueue? queue = null,
-        IAgentWorkspaceExecutionResolver? resolver = null)
+        IAgentWorkspaceExecutionResolver? resolver = null,
+        IBuilderProjectStore? store = null)
     {
         var packageContext = new TestPackageContext();
+        store ??= new BuilderProjectStore(packageContext);
+        var pathService = new BuilderPathService();
+        var executionService = new BuilderWorkspaceExecutionService(new TestExtensionCatalog(resolver));
+        var backgroundProcesses = queue ?? new TestBackgroundProcessQueue();
         return new BuilderViewModel(
-            new BuilderSetupService(),
-            new BuilderWorkspaceExecutionService(new TestExtensionCatalog(resolver)),
-            new BuilderProjectStore(packageContext),
-            NullPackageSessionService.Instance,
-            queue ?? new TestBackgroundProcessQueue());
+            new BuilderProjectApplicationService(
+                new BuilderSetupService(),
+                executionService,
+                store,
+                pathService,
+                NullPackageSessionService.Instance),
+            new BuilderOperationQueue(backgroundProcesses),
+            new BuilderProjectPersistence(store),
+            pathService,
+            new ImmediateBuilderUiDispatcher());
     }
 
     private static void AddWorkspace(BuilderViewModel viewModel, string workspaceId)
@@ -512,5 +552,48 @@ public sealed class BuilderViewModelTests
         public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null) => [];
 
         public bool Cancel(Guid processId) => false;
+    }
+
+    private sealed class BlockingBuilderProjectStore : IBuilderProjectStore
+    {
+        public int LoadCount { get; private set; }
+        public TaskCompletionSource LoadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseLoad { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<IReadOnlyList<BuilderProjectRecord>> LoadAsync(CancellationToken cancellationToken = default)
+        {
+            LoadCount++;
+            LoadStarted.TrySetResult();
+            await ReleaseLoad.Task.WaitAsync(cancellationToken);
+            return [];
+        }
+
+        public Task SaveAsync(IReadOnlyList<BuilderProjectRecord> projects, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+    }
+
+    private sealed class FailingBuilderProjectStore : IBuilderProjectStore
+    {
+        public Task<IReadOnlyList<BuilderProjectRecord>> LoadAsync(CancellationToken cancellationToken = default)
+            => Task.FromException<IReadOnlyList<BuilderProjectRecord>>(
+                new InvalidOperationException("Injected builder load failure."));
+
+        public Task SaveAsync(IReadOnlyList<BuilderProjectRecord> projects, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+    }
+
+    private sealed class ImmediateBuilderUiDispatcher : IBuilderUiDispatcher
+    {
+        public bool CheckAccess() => true;
+
+        public void Post(Action action) => action();
+
+        public Task InvokeAsync(Action action)
+        {
+            action();
+            return Task.CompletedTask;
+        }
+
+        public Task<T> InvokeAsync<T>(Func<T> action) => Task.FromResult(action());
     }
 }

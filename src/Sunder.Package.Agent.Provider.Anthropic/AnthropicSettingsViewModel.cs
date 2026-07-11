@@ -1,110 +1,54 @@
-using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Provider.Anthropic;
 
-public sealed partial class AnthropicSettingsViewModel : ObservableObject
+public sealed partial class AnthropicSettingsViewModel : ObservableObject, IDisposable
 {
-    private readonly IPackageContext _packageContext;
+    internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
+        [AnthropicProviderConfiguration.ApiKeySecretKey, AnthropicProviderConfiguration.UtilityModelKey];
 
     public AnthropicSettingsViewModel(IPackageContext packageContext)
+        : this(
+            packageContext,
+            new ProviderCredentialAccessor(packageContext.Secrets, AnthropicProviderConfiguration.ApiKeySecretKey))
     {
-        _packageContext = packageContext;
-        LoadSettings();
     }
 
-    public ObservableCollection<AnthropicUtilityModelOption> UtilityModels { get; } =
-        [.. AnthropicModelCatalog.UtilityModelOptions.Select(option => new AnthropicUtilityModelOption(option.Value, option.Label))];
+    internal AnthropicSettingsViewModel(
+        IPackageContext packageContext,
+        ProviderCredentialAccessor credentials)
+    {
+        ApiKeySettings = new ApiKeySettingsState(
+            credentials,
+            "A stored API key is used for Claude chat. Blank input retains the current key.",
+            "sk-ant-...",
+            static hasCredential => hasCredential
+                ? new ApiKeyStatus("Stored", "Anthropic API-key chat is ready.")
+                : new ApiKeyStatus("Not stored", "Add an API key to enable Claude chat.", IsWarning: true));
+        UtilityModelSettings = new UtilityModelSettingsState(
+            packageContext,
+            AnthropicProviderConfiguration.UtilityModelKey,
+            AnthropicProviderConfiguration.DefaultUtilityModelId,
+            AnthropicModelCatalog.UtilityModelOptions.Select(option => (option.Value, option.Label)));
+    }
 
-    public bool HasStoredApiKey => !string.IsNullOrWhiteSpace(_packageContext.Secrets.GetSecret("auth.apiKey"));
+    internal ApiKeySettingsState ApiKeySettings { get; }
 
-    public bool CanSaveSettings => !IsBusy;
-
-    public bool IsApiKeyStatusWarning => !IsApiKeyStored;
-
-    [ObservableProperty]
-    private string? _apiKeyValue;
-
-    [ObservableProperty]
-    private AnthropicUtilityModelOption? _selectedUtilityModel;
-
-    [ObservableProperty]
-    private bool _isBusy;
-
-    [ObservableProperty]
-    private string _apiKeyStatusLabel = string.Empty;
-
-    [ObservableProperty]
-    private string _apiKeyStatusDetail = string.Empty;
-
-    [ObservableProperty]
-    private bool _isApiKeyStored;
-
-    partial void OnIsBusyChanged(bool value) => OnPropertyChanged(nameof(CanSaveSettings));
-
-    partial void OnIsApiKeyStoredChanged(bool value) => OnPropertyChanged(nameof(IsApiKeyStatusWarning));
+    internal UtilityModelSettingsState UtilityModelSettings { get; }
 
     [RelayCommand]
     private async Task SaveSettingsAsync()
     {
-        IsBusy = true;
-        try
-        {
-            await SaveStateAsync();
-            OnPropertyChanged(nameof(HasStoredApiKey));
-            RefreshStatus();
-        }
-        finally
-        {
-            IsBusy = false;
-        }
+        await ApiKeySettings.SaveCredentialAsync();
+        await UtilityModelSettings.SaveUtilityModelAsync();
     }
 
-    private void LoadSettings()
+    public void Dispose()
     {
-        ApiKeyValue = null;
-        SelectedUtilityModel = ResolveUtilityModelOption(
-            _packageContext.Storage.State.GetValue(AnthropicProviderConfiguration.UtilityModelKey)
-            ?? _packageContext.Configuration.GetValue(AnthropicProviderConfiguration.UtilityModelKey)
-            ?? AnthropicProviderConfiguration.DefaultUtilityModelId
-        );
-        RefreshStatus();
+        ApiKeySettings.Dispose();
+        UtilityModelSettings.Dispose();
     }
-
-    private async Task SaveStateAsync()
-    {
-        if (!string.IsNullOrWhiteSpace(ApiKeyValue))
-        {
-            _packageContext.Secrets.SetSecret("auth.apiKey", ApiKeyValue.Trim());
-            ApiKeyValue = null;
-        }
-
-        await _packageContext.Storage.State.SetValueAsync(
-            AnthropicProviderConfiguration.UtilityModelKey,
-            SelectedUtilityModel?.ModelId ?? AnthropicProviderConfiguration.DefaultUtilityModelId
-        );
-    }
-
-    private void RefreshStatus()
-    {
-        IsApiKeyStored = HasStoredApiKey;
-        if (IsApiKeyStored)
-        {
-            ApiKeyStatusLabel = "Stored";
-            ApiKeyStatusDetail = "Anthropic API-key chat is ready.";
-        }
-        else
-        {
-            ApiKeyStatusLabel = "Not stored";
-            ApiKeyStatusDetail = "Add an API key to enable Claude chat.";
-        }
-    }
-
-    private AnthropicUtilityModelOption ResolveUtilityModelOption(string? modelId) =>
-        UtilityModels.FirstOrDefault(option => string.Equals(option.ModelId, modelId, StringComparison.OrdinalIgnoreCase))
-        ?? UtilityModels.First(option => option.ModelId == AnthropicProviderConfiguration.DefaultUtilityModelId);
 }
-
-public sealed record AnthropicUtilityModelOption(string ModelId, string DisplayName);

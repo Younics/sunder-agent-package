@@ -166,6 +166,7 @@
                           MinHeight="0"
                           VerticalScrollBarVisibility="Auto">
               <ListBox Classes="mcp-list"
+                       IsEnabled="{Binding CanNavigateServers}"
                        ItemsSource="{Binding Servers}"
                        SelectedItem="{Binding SelectedServer, Mode=TwoWay}">
                 <ListBox.ItemTemplate>
@@ -217,6 +218,7 @@
                     <TextBlock Classes="mcp-field-label"
                                Text="Machine name" />
                     <TextBox Text="{Binding Name, Mode=TwoWay}"
+                             IsEnabled="{Binding IsDocumentReady}"
                              PlaceholderText="context7" />
                     <TextBlock Classes="mcp-field-help"
                                Text="Use a stable machine-readable name for profile assignments and runtime connection state." />
@@ -245,9 +247,10 @@
                       <Button Content="Import Common Configs"
                               Margin="0,0,10,10"
                               Command="{Binding ImportCommonConfigurationsCommand}" />
-                      <Button Content="Import Config File"
-                              Margin="0,0,10,10"
-                              Click="OnImportConfigFileClick" />
+                       <Button Content="Import Config File"
+                               Margin="0,0,10,10"
+                               IsEnabled="{Binding CanStartOperation}"
+                               Click="OnImportConfigFileClick" />
                     </WrapPanel>
                   </StackPanel>
                 </Border>
@@ -261,7 +264,7 @@
                         MinHeight="240"
                         ClipToBounds="True">
                   <ae:TextEditor x:Name="ConfigEditor"
-                                 IsReadOnly="False"
+                                 IsReadOnly="{Binding IsEditorReadOnly}"
                                  ShowLineNumbers="True"
                                  HorizontalScrollBarVisibility="Auto"
                                  VerticalScrollBarVisibility="Auto"

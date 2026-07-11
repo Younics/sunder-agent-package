@@ -104,6 +104,60 @@ public sealed class CodexResponsesRequestBuilderTests
         Assert.False(reasoning.TryGetProperty("mode", out _));
     }
 
+    [Fact]
+    public void Build_VersionedChatLatestRequest_DoesNotAddReasoningOptions()
+    {
+        var request = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", "openai/gpt-5.3-chat-latest"),
+            [
+                new ChatMessage(ChatRole.System, "System guidance."),
+                new ChatMessage(ChatRole.User, "Say hi.")
+            ],
+            new ChatOptions
+            {
+                Reasoning = new ReasoningOptions { Effort = ReasoningEffort.High },
+            },
+            toolAware: false);
+
+        using var document = JsonDocument.Parse(request.Body);
+        var root = document.RootElement;
+
+        Assert.False(root.TryGetProperty("reasoning", out _));
+        Assert.False(root.TryGetProperty("include", out _));
+        Assert.False(request.HasReasoningOptions);
+        Assert.False(request.HasIncludeOptions);
+        Assert.Equal("system", root.GetProperty("input")[0].GetProperty("role").GetString());
+    }
+
+    [Fact]
+    public void Build_OSeriesRequest_UsesCatalogReasoningCapabilityMetadata()
+    {
+        var request = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", "openai/o3"),
+            [new ChatMessage(ChatRole.User, "Solve it.")],
+            new ChatOptions { Reasoning = new ReasoningOptions { Effort = ReasoningEffort.High } },
+            toolAware: false);
+
+        using var document = JsonDocument.Parse(request.Body);
+        Assert.Equal("high", document.RootElement.GetProperty("reasoning").GetProperty("effort").GetString());
+        Assert.Equal("reasoning.encrypted_content", document.RootElement.GetProperty("include")[0].GetString());
+    }
+
+    [Fact]
+    public void Build_MaxOutputTokens_MapsToResponsesRequest()
+    {
+        var request = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", "openai/gpt-5.5"),
+            [new ChatMessage(ChatRole.User, "Say hi.")],
+            new ChatOptions { MaxOutputTokens = 321 },
+            toolAware: false);
+
+        using var document = JsonDocument.Parse(request.Body);
+
+        Assert.Equal(321, document.RootElement.GetProperty("max_output_tokens").GetInt32());
+        Assert.Equal(321, request.MaxOutputTokens);
+    }
+
     [Theory]
     [InlineData(ReasoningEffort.None, "none")]
     [InlineData(ReasoningEffort.High, "high")]
@@ -227,6 +281,41 @@ public sealed class CodexResponsesRequestBuilderTests
 
         Assert.True(document.RootElement.GetProperty("parallel_tool_calls").GetBoolean());
         Assert.True(request.ParallelToolCalls);
+    }
+
+    [Theory]
+    [InlineData("none")]
+    [InlineData("auto")]
+    [InlineData("required")]
+    [InlineData("specific")]
+    public void Build_MapsAllToolModes(string modeName)
+    {
+        using var schemaDocument = JsonDocument.Parse("""{"type":"object"}""");
+        var tool = AIFunctionFactory.CreateDeclaration("read", "Read", schemaDocument.RootElement);
+        ChatToolMode mode = modeName switch
+        {
+            "none" => ChatToolMode.None,
+            "auto" => ChatToolMode.Auto,
+            "required" => ChatToolMode.RequireAny,
+            _ => ChatToolMode.RequireSpecific("read"),
+        };
+        var request = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", "openai/gpt-5.5"),
+            [new ChatMessage(ChatRole.User, "Read.")],
+            new ChatOptions { ToolMode = mode, Tools = [tool] },
+            toolAware: mode != ChatToolMode.None);
+
+        using var document = JsonDocument.Parse(request.Body);
+        var choice = document.RootElement.GetProperty("tool_choice");
+        if (modeName == "specific")
+        {
+            Assert.Equal("function", choice.GetProperty("type").GetString());
+            Assert.Equal("read", choice.GetProperty("name").GetString());
+        }
+        else
+        {
+            Assert.Equal(modeName, choice.GetString());
+        }
     }
 
     [Fact]

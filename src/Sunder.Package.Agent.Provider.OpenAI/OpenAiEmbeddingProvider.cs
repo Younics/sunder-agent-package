@@ -72,25 +72,18 @@ public sealed class OpenAiEmbeddingProvider(
             return results;
         }
 
-        var client = new EmbeddingClient(NormalizeModelId(modelId), apiKey);
+        var client = new EmbeddingClient(ProviderModelId.RemovePrefix(modelId, "openai"), apiKey);
         var response = await client.GenerateEmbeddingsAsync(
             validTexts.Select(item => item.Text).ToArray(),
             options: null,
             cancellationToken);
         var embeddings = response.Value
-            .OrderBy(embedding => embedding.Index)
-            .Select(embedding => new AgentEmbeddingGenerationResult(modelId, embedding.ToFloats().ToArray()))
+            .Select(embedding => new ProviderIndexedEmbedding(
+                embedding.Index,
+                new AgentEmbeddingGenerationResult(modelId, embedding.ToFloats().ToArray())))
             .ToArray();
 
-        ProviderEmbeddingBatch.ApplyOrderedResults(results, validTexts, embeddings);
+        ProviderEmbeddingBatch.ApplyIndexedResults(results, validTexts, embeddings);
         return results;
-    }
-
-    private static string NormalizeModelId(string modelId)
-    {
-        const string prefix = "openai/";
-        return modelId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-            ? modelId[prefix.Length..]
-            : modelId;
     }
 }

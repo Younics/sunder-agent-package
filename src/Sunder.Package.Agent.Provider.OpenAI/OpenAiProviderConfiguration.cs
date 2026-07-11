@@ -4,6 +4,7 @@ namespace Sunder.Package.Agent.Provider.OpenAI;
 
 public static class OpenAiProviderConfiguration
 {
+    public const string ApiKeySecretKey = "auth.apiKey";
     public const string UtilityModelKey = "utility.modelId";
     public const string DefaultUtilityModelId = "openai/gpt-5.4-mini";
 
@@ -20,20 +21,20 @@ public static class OpenAiProviderConfiguration
                 "Choose between direct API-key usage and ChatGPT Plus/Pro OAuth.",
                 [
                     new PackageConfigurationField(
-                        "auth.mode",
+                        OpenAiAuthMode.ConfigurationKey,
                         "Auth mode",
                         PackageConfigurationFieldKind.Select,
                         Description: "The OpenAI provider supports direct API key usage and browser-based ChatGPT Plus/Pro OAuth.",
                         IsRequired: true,
-                        DefaultValue: "codex-connected",
+                        DefaultValue: OpenAiAuthMode.CodexConnected,
                         Options:
                         [
-                            new PackageConfigurationOption("api-key", "API key"),
-                            new PackageConfigurationOption("codex-connected", "ChatGPT Plus/Pro"),
+                            new PackageConfigurationOption(OpenAiAuthMode.ApiKey, "API key"),
+                            new PackageConfigurationOption(OpenAiAuthMode.CodexConnected, "ChatGPT Plus/Pro"),
                         ]
                     ),
                     new PackageConfigurationField(
-                        "auth.apiKey",
+                        ApiKeySecretKey,
                         "API key",
                         PackageConfigurationFieldKind.Secret,
                         Description: "Used when auth mode is set to API key.",

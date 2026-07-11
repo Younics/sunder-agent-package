@@ -7,9 +7,15 @@ public sealed class PackageModule : ISunderPackageModule
 {
     public void ConfigureServices(IServiceCollection services, IPackageContext context)
     {
+        services.AddSingleton<IBuilderUiDispatcher, AvaloniaBuilderUiDispatcher>();
+        services.AddSingleton<BuilderPathService>();
         services.AddSingleton<BuilderSetupService>();
         services.AddSingleton<BuilderWorkspaceExecutionService>();
         services.AddSingleton<BuilderProjectStore>();
+        services.AddSingleton<IBuilderProjectStore>(services => services.GetRequiredService<BuilderProjectStore>());
+        services.AddSingleton<BuilderProjectApplicationService>();
+        services.AddSingleton<BuilderProjectPersistence>();
+        services.AddSingleton<BuilderOperationQueue>();
         services.AddSingleton<BuilderViewModel>();
         services.AddTransient<BuilderView>();
     }

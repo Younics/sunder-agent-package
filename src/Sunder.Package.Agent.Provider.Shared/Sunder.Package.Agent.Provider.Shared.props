@@ -1,0 +1,8 @@
+<Project>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)*.cs"
+             Link="Provider.Shared/%(Filename)%(Extension)" />
+    <AvaloniaResource Include="$(MSBuildThisFileDirectory)ProviderSettingsStyles.axaml"
+                      Link="Provider.Shared/ProviderSettingsStyles.axaml" />
+  </ItemGroup>
+</Project>

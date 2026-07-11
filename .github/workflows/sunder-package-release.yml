@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  DOTNET_VERSION: "10.0.x"
+  DOTNET_VERSION: "10.0.100"
   MSBUILDDISABLENODEREUSE: "1"
 
 jobs:
@@ -182,19 +182,15 @@ jobs:
 
       - name: Restore packages
         shell: bash
-        run: dotnet restore Sunder.AgentPackage.slnx --force-evaluate
+        run: dotnet restore Sunder.AgentPackage.slnx --force-evaluate -p:SunderUseSourceSdk=false
 
       - name: Build solution
         shell: bash
-        run: dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 -p:Version=${{ needs.prepare.outputs.version }} -p:InformationalVersion=${{ needs.prepare.outputs.version }} -p:ContinuousIntegrationBuild=true
+        run: dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 -p:SunderUseSourceSdk=false -p:Version=${{ needs.prepare.outputs.version }} -p:InformationalVersion=${{ needs.prepare.outputs.version }} -p:ContinuousIntegrationBuild=true
 
-      - name: Test architecture
+      - name: Test solution
         shell: bash
-        run: dotnet test tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj -c Release --no-build
-
-      - name: Test OpenAI provider
-        shell: bash
-        run: dotnet test tests/Sunder.Package.Agent.Provider.OpenAI.Tests/Sunder.Package.Agent.Provider.OpenAI.Tests.csproj -c Release --no-build
+        run: dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore -p:SunderUseSourceSdk=false
 
       - name: Shutdown build servers
         shell: bash
@@ -217,6 +213,7 @@ jobs:
             -p:Version="$VERSION" \
             -p:InformationalVersion="$VERSION" \
             -p:ContinuousIntegrationBuild=true \
+            -p:SunderUseSourceSdk=false \
             -p:SunderPackageOutputPath="$release_dir/${{ needs.prepare.outputs.package_id }}.$VERSION.sunderpkg"
 
           shopt -s nullglob

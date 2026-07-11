@@ -5,7 +5,7 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.Execution.Local;
 
 public sealed class LocalExecutionTarget
-    : IAgentProcessExecutionTarget, IAgentWorkspaceBindingContributor, IAgentExecutionScopeProvider, IAgentExecutionResourceResolver, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment
+    : IAgentProcessExecutionTarget, IAgentRangedFileExecutionTarget, IAgentWorkspaceBindingContributor, IAgentExecutionScopeProvider, IAgentExecutionResourceResolver, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment
 {
     private readonly LocalExecutionWorkspaceConfigService _configService;
     private readonly LocalShellExecutor _shellExecutor;
@@ -142,7 +142,7 @@ public sealed class LocalExecutionTarget
         var pathEntry = Path.GetFullPath(LocalExecutionWorkspaceConfigService.ExpandPath(executionPath.Trim()));
         var pathEntries = (config.PathEntries ?? [])
             .Append(pathEntry)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Distinct(LocalExecutionWorkspaceConfigService.PathStringComparer)
             .ToArray();
         _configService.SaveConfig(context.Binding.BindingId, config with { PathEntries = pathEntries });
         return ValueTask.CompletedTask;
@@ -166,14 +166,13 @@ public sealed class LocalExecutionTarget
         return await LocalFileSystemExecutor.WriteFileAsync(config, request, context.AllowOutsideConfiguredScope, cancellationToken);
     }
 
-    public ValueTask<AgentFileMutationResult> DeleteFileAsync(
+    public async ValueTask<AgentFileMutationResult> DeleteFileAsync(
         AgentExecutionTargetContext context,
         AgentFileDeleteRequest request,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         var config = BuildRuntimeConfig(context);
-        return LocalFileSystemExecutor.DeleteFileAsync(config, request, context.AllowOutsideConfiguredScope);
+        return await LocalFileSystemExecutor.DeleteFileAsync(config, request, context.AllowOutsideConfiguredScope, cancellationToken);
     }
 
     internal string ResolvePath(LocalExecutionRuntimeConfig config, string path, bool allowOutsideConfiguredScope)
@@ -203,7 +202,7 @@ public sealed class LocalExecutionTarget
             .Where(path => !string.IsNullOrWhiteSpace(path.HostPath))
             .OrderBy(path => path.SortOrder)
             .Select(path => Path.GetFullPath(LocalExecutionWorkspaceConfigService.ExpandPath(path.HostPath.Trim())))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Distinct(LocalExecutionWorkspaceConfigService.PathStringComparer)
             .ToArray();
         var defaultPath = context.Workspace.Paths
             .OrderBy(path => path.SortOrder)

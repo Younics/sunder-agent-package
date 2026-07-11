@@ -1,0 +1,35 @@
+<Project>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)Presentation\*.cs"
+             Link="Presentation\%(Filename)%(Extension)" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\SunderComboBox.cs"
+             Link="PackageViews\SunderComboBox.cs" />
+    <AvaloniaResource Include="$(MSBuildThisFileDirectory)Presentation\PresentationStyles.axaml"
+                      Link="Presentation\PresentationStyles.axaml" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(SunderAgentSharedTranscript)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\AgentRunActivityState.cs"
+             Link="PackageViews\AgentRunActivityState.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\InlineRenameFocusCoordinator.cs"
+             Link="PackageViews\InlineRenameFocusCoordinator.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptRowProjector.cs"
+             Link="PackageViews\TranscriptRowProjector.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptScrollCoordinator.cs"
+             Link="PackageViews\TranscriptScrollCoordinator.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptTimelineState.cs"
+             Link="PackageViews\TranscriptTimelineState.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptToolPresentationService.cs"
+             Link="PackageViews\TranscriptToolPresentationService.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptViewBehavior.cs"
+             Link="PackageViews\TranscriptViewBehavior.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptRowWindow.cs"
+             Link="PackageViews\TranscriptRowWindow.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptRowPresenter.cs"
+             Link="PackageViews\TranscriptRowPresenter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\ToolDiffViewModels.cs"
+             Link="PackageViews\ToolDiffViewModels.cs" />
+    <AvaloniaResource Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptStyles.axaml"
+                      Link="PackageViews\TranscriptStyles.axaml" />
+  </ItemGroup>
+</Project>

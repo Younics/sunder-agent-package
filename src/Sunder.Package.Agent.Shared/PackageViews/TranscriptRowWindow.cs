@@ -2,7 +2,7 @@ using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
-public readonly record struct TranscriptRowAnchorKey(string Value)
+internal readonly record struct TranscriptRowAnchorKey(string Value)
 {
     public static TranscriptRowAnchorKey Text(Guid turnId) => new($"text:{turnId:N}");
 
@@ -16,19 +16,14 @@ public readonly record struct TranscriptRowAnchorKey(string Value)
     public override string ToString() => Value;
 }
 
-public interface ITranscriptRowAnchor
-{
-    object AnchorKey { get; }
-}
-
 internal static class TranscriptRowWindow
 {
     public static TRow[] SelectRetainedRows<TRow>(
         IReadOnlyList<TRow> visibleRows,
         int retainedRowLimit,
         AgentTranscriptTrimDirection trimDirection,
-        object? protectedAnchorKey)
-        where TRow : ITranscriptRowAnchor
+        object? protectedAnchorKey,
+        Func<TRow, object?> anchorKeySelector)
     {
         if (retainedRowLimit <= 0)
         {
@@ -43,7 +38,7 @@ internal static class TranscriptRowWindow
         var defaultStart = trimDirection == AgentTranscriptTrimDirection.Oldest
             ? visibleRows.Count - retainedRowLimit
             : 0;
-        var protectedIndex = IndexOfAnchor(visibleRows, protectedAnchorKey);
+        var protectedIndex = IndexOfAnchor(visibleRows, protectedAnchorKey, anchorKeySelector);
         if (protectedIndex >= defaultStart && protectedIndex < defaultStart + retainedRowLimit)
         {
             return visibleRows.Skip(defaultStart).Take(retainedRowLimit).ToArray();
@@ -62,8 +57,10 @@ internal static class TranscriptRowWindow
         return visibleRows.Skip(defaultStart).Take(retainedRowLimit).ToArray();
     }
 
-    private static int IndexOfAnchor<TRow>(IReadOnlyList<TRow> rows, object? protectedAnchorKey)
-        where TRow : ITranscriptRowAnchor
+    private static int IndexOfAnchor<TRow>(
+        IReadOnlyList<TRow> rows,
+        object? protectedAnchorKey,
+        Func<TRow, object?> anchorKeySelector)
     {
         if (protectedAnchorKey is null)
         {
@@ -72,7 +69,7 @@ internal static class TranscriptRowWindow
 
         for (var index = 0; index < rows.Count; index++)
         {
-            if (Equals(rows[index].AnchorKey, protectedAnchorKey))
+            if (Equals(anchorKeySelector(rows[index]), protectedAnchorKey))
             {
                 return index;
             }

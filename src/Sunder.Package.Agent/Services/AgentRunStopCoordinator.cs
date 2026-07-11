@@ -7,13 +7,16 @@ public sealed class AgentRunStopCoordinator(
     AgentPermissionService permissionService,
     AgentMemoryCoordinator memoryCoordinator,
     AgentActiveRunRegistry activeRunRegistry,
-    AgentProfileService profileService)
+    AgentProfileService profileService,
+    AgentSessionTransitionGate? transitionGate = null)
 {
     private readonly AgentSessionService _sessionService = sessionService;
     private readonly AgentPermissionService _permissionService = permissionService;
     private readonly AgentMemoryCoordinator _memoryCoordinator = memoryCoordinator;
     private readonly AgentActiveRunRegistry _activeRunRegistry = activeRunRegistry;
     private readonly AgentProfileService _profileService = profileService;
+    private readonly AgentSessionTransitionGate _transitionGate =
+        transitionGate ?? AgentSessionTransitionGate.Shared;
 
     public async Task<AgentRunCheckpointRecord?> StopAsync(Guid sessionId)
     {
@@ -23,25 +26,26 @@ public sealed class AgentRunStopCoordinator(
             return _sessionService.GetLatestCheckpoint(sessionId);
         }
 
-        var sessionIds = sessions.Select(session => session.SessionId).ToHashSet();
-        var activeRuns = _activeRunRegistry.RemoveMany(sessionIds);
-
-        foreach (var activeRun in activeRuns.Values)
-        {
-            activeRun.CancellationTokenSource.Cancel();
-            activeRun.CancellationTokenSource.Dispose();
-        }
-
-        var stoppedSessionIds = new HashSet<Guid>();
         AgentRunCheckpointRecord? requestedCheckpoint = null;
         foreach (var session in sessions)
         {
-            activeRuns.TryGetValue(session.SessionId, out var activeRun);
-            var latest = _sessionService.GetLatestCheckpoint(session.SessionId);
-            var checkpoint = TrySaveStoppedCheckpoint(session, latest, activeRun, session.SessionId == sessionId);
+            AgentActiveRunHandle? activeRun;
+            AgentRunCheckpointRecord? latest;
+            AgentRunCheckpointRecord? checkpoint;
+            using (await _transitionGate.EnterAsync(session.SessionId).ConfigureAwait(false))
+            {
+                activeRun = _activeRunRegistry.Remove(session.SessionId);
+                latest = _sessionService.GetLatestCheckpoint(session.SessionId);
+                checkpoint = TrySaveStoppedCheckpoint(
+                    session,
+                    latest,
+                    activeRun,
+                    session.SessionId == sessionId);
+                activeRun?.CancellationTokenSource.Cancel();
+            }
+
             if (checkpoint is not null)
             {
-                stoppedSessionIds.Add(session.SessionId);
                 if (activeRun is not null)
                 {
                     await PublishRunStoppedAsync(session, activeRun, checkpoint).ConfigureAwait(false);
@@ -54,7 +58,6 @@ public sealed class AgentRunStopCoordinator(
             }
         }
 
-        ClearPendingRequests(stoppedSessionIds);
         return requestedCheckpoint ?? _sessionService.GetLatestCheckpoint(sessionId);
     }
 
@@ -98,12 +101,16 @@ public sealed class AgentRunStopCoordinator(
         AgentActiveRunHandle? activeRun,
         bool isRequestedSession)
     {
-        if (latest is not null && latest.Status is not (AgentRunStatus.Running or AgentRunStatus.WaitingForApproval))
+        var durableRun = _sessionService.GetLatestRun(session.SessionId);
+        if (durableRun?.FinishedAtUtc is not null
+            || durableRun is null
+               && latest is not null
+               && latest.Status is not (AgentRunStatus.Running or AgentRunStatus.WaitingForApproval))
         {
             return null;
         }
 
-        var runRevision = latest?.RunRevision ?? activeRun?.RunRevision;
+        var runRevision = durableRun?.Key.RunRevision ?? latest?.RunRevision ?? activeRun?.RunRevision;
         if (runRevision is null)
         {
             return null;
@@ -112,7 +119,30 @@ public sealed class AgentRunStopCoordinator(
         var summary = isRequestedSession
             ? "Run stopped by the user before provider execution completed."
             : "Subsession stopped because the parent session was stopped.";
-        return _sessionService.SaveCheckpoint(session.SessionId, runRevision.Value, AgentRunStatus.Stopped, summary);
+        if (durableRun is not null)
+        {
+            var lease = activeRun?.DurableLease is { } activeLease
+                        && activeLease.Key == durableRun.Key
+                ? activeLease
+                : new Sunder.Package.Agent.Models.AgentDurableRunLease(durableRun);
+            return _sessionService.TryStopRun(lease, summary)?.Checkpoint
+                   ?? _sessionService.GetLatestCheckpoint(session.SessionId);
+        }
+
+        var checkpoint = _sessionService.SaveCheckpoint(
+            session.SessionId,
+            runRevision.Value,
+            AgentRunStatus.Stopped,
+            summary);
+        foreach (var request in _permissionService.ListPendingRequests(session.SessionId))
+        {
+            _permissionService.ExpireActiveRequest(
+                session.SessionId,
+                request.RequestId,
+                "Permission request expired because the run was stopped.");
+        }
+
+        return checkpoint;
     }
 
     private async Task PublishRunStoppedAsync(
@@ -137,17 +167,6 @@ public sealed class AgentRunStopCoordinator(
             activeRun.UserMessage,
             checkpoint: stoppedCheckpoint,
             cancellationToken: CancellationToken.None).ConfigureAwait(false);
-    }
-
-    private void ClearPendingRequests(IReadOnlySet<Guid> sessionIds)
-    {
-        foreach (var id in sessionIds)
-        {
-            foreach (var pendingRequest in _permissionService.ListPendingRequests(id))
-            {
-                _permissionService.DeletePendingRequest(id, pendingRequest.RequestId);
-            }
-        }
     }
 
     private AgentProfileRecord? ResolveProfile(string? profileId)

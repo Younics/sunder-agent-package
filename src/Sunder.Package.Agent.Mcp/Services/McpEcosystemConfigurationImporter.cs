@@ -1,8 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
@@ -14,13 +12,6 @@ public sealed class McpEcosystemConfigurationImporter(McpServerCatalogService se
     {
         AllowTrailingCommas = true,
         CommentHandling = JsonCommentHandling.Skip,
-    };
-
-    private static readonly JsonSerializerOptions SerializerOptions = new()
-    {
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        WriteIndented = true,
     };
 
     public async Task<McpConfigurationImportResult> ImportCommonConfigurationsAsync(CancellationToken cancellationToken = default)
@@ -59,14 +50,24 @@ public sealed class McpEcosystemConfigurationImporter(McpServerCatalogService se
         var result = new MutableImportResult();
 
         using var document = JsonDocument.Parse(await File.ReadAllTextAsync(filePath, cancellationToken).ConfigureAwait(false), DocumentOptions);
-        var discoveredServers = EnumerateServerObjects(document.RootElement, filePath, result, Path.GetFileNameWithoutExtension(filePath)).ToArray();
+        var parsedFile = McpConfigurationFileParser.Parse(document.RootElement, filePath, Path.GetFileNameWithoutExtension(filePath));
+        result.Add(parsedFile);
+        var discoveredServers = parsedFile.Servers;
         var sourceNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var importedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var discovered in discoveredServers)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 var normalizedName = serverCatalog.NormalizeServerName(discovered.Name);
+                if (!importedNames.Add(normalizedName))
+                {
+                    result.Skipped++;
+                    result.Warnings.Add($"Skipped MCP server '{discovered.Name}' from {Path.GetFileName(filePath)} because normalized name '{normalizedName}' is duplicated in the file.");
+                    continue;
+                }
+
                 var sourceName = string.IsNullOrWhiteSpace(discovered.Name) ? normalizedName : discovered.Name.Trim();
                 sourceNames.Add(sourceName);
                 existingByName.TryGetValue(normalizedName, out var existing);
@@ -106,7 +107,7 @@ public sealed class McpEcosystemConfigurationImporter(McpServerCatalogService se
                 existingByName[normalizedName] = server;
                 result.Imported++;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 result.Skipped++;
                 result.Warnings.Add($"Skipped MCP server '{discovered.Name}' from {Path.GetFileName(filePath)}: {ex.Message}");
@@ -145,236 +146,6 @@ public sealed class McpEcosystemConfigurationImporter(McpServerCatalogService se
         }
     }
 
-    private static IEnumerable<DiscoveredMcpServer> EnumerateServerObjects(JsonElement root, string sourcePath, MutableImportResult result, string? defaultName = null)
-    {
-        if (root.ValueKind != JsonValueKind.Object)
-        {
-            yield break;
-        }
-
-        var yieldedWrappedServers = false;
-        if (root.TryGetProperty("mcp", out var opencodeMcp) && opencodeMcp.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var server in EnumerateNamedServerMap(opencodeMcp, sourcePath, result))
-            {
-                yieldedWrappedServers = true;
-                yield return server;
-            }
-        }
-
-        if (root.TryGetProperty("mcpServers", out var mcpServers) && mcpServers.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var server in EnumerateNamedServerMap(mcpServers, sourcePath, result))
-            {
-                yieldedWrappedServers = true;
-                yield return server;
-            }
-        }
-
-        if (root.TryGetProperty("servers", out var servers) && servers.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var server in EnumerateNamedServerMap(servers, sourcePath, result))
-            {
-                yieldedWrappedServers = true;
-                yield return server;
-            }
-        }
-
-        if (!yieldedWrappedServers && LooksLikeBareServerObject(root) && !string.IsNullOrWhiteSpace(defaultName))
-        {
-            if (TryBuildSunderServerJson(defaultName, root, out var json, out var error))
-            {
-                yield return new DiscoveredMcpServer(defaultName, json);
-            }
-            else
-            {
-                result.Skipped++;
-                result.Warnings.Add($"Skipped MCP server '{defaultName}' from {Path.GetFileName(sourcePath)}: {error}");
-            }
-        }
-    }
-
-    private static IEnumerable<DiscoveredMcpServer> EnumerateNamedServerMap(JsonElement map, string sourcePath, MutableImportResult result)
-    {
-        foreach (var property in map.EnumerateObject())
-        {
-            if (property.Value.ValueKind != JsonValueKind.Object)
-            {
-                result.Skipped++;
-                result.Warnings.Add($"Skipped MCP server '{property.Name}' from {Path.GetFileName(sourcePath)} because its value is not an object.");
-                continue;
-            }
-
-            if (TryBuildSunderServerJson(property.Name, property.Value, out var json, out var error))
-            {
-                yield return new DiscoveredMcpServer(property.Name, json);
-                continue;
-            }
-
-            result.Skipped++;
-            result.Warnings.Add($"Skipped MCP server '{property.Name}' from {Path.GetFileName(sourcePath)}: {error}");
-        }
-    }
-
-    private static bool TryBuildSunderServerJson(string name, JsonElement source, out string json, out string? error)
-    {
-        json = string.Empty;
-        error = null;
-
-        var type = ReadString(source, "type")?.Trim().ToLowerInvariant();
-        var enabled = ReadBool(source, "enabled") ?? !(ReadBool(source, "disabled") ?? false);
-        if (type is "local" or "stdio" || source.TryGetProperty("command", out _))
-        {
-            var commandParts = ReadCommandParts(source);
-            if (commandParts.Length == 0)
-            {
-                error = "local server is missing a command.";
-                return false;
-            }
-
-            var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["type"] = "local",
-                ["enabled"] = enabled,
-                ["command"] = commandParts,
-                ["displayName"] = ReadString(source, "displayName") ?? ReadString(source, "name") ?? name,
-            };
-            AddIfNotNull(payload, "env", ReadStringMap(source, "env") ?? ReadStringMap(source, "environment"));
-            AddIfNotNull(payload, "workingDirectory", ReadString(source, "workingDirectory") ?? ReadString(source, "cwd"));
-            AddIfNotNull(payload, "description", ReadString(source, "description"));
-            json = Serialize(payload);
-            return true;
-        }
-
-        if (type is "remote" or "sse" or "http" or "streamable-http" || source.TryGetProperty("url", out _))
-        {
-            var url = ReadString(source, "url");
-            if (string.IsNullOrWhiteSpace(url))
-            {
-                error = "remote server is missing a url.";
-                return false;
-            }
-
-            var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["type"] = "remote",
-                ["enabled"] = enabled,
-                ["url"] = url.Trim(),
-                ["displayName"] = ReadString(source, "displayName") ?? ReadString(source, "name") ?? name,
-            };
-            AddIfNotNull(payload, "headers", ReadStringMap(source, "headers"));
-            AddIfNotNull(payload, "oauth", ReadOAuth(source));
-            AddIfNotNull(payload, "description", ReadString(source, "description"));
-            json = Serialize(payload);
-            return true;
-        }
-
-        error = "server is neither local nor remote.";
-        return false;
-    }
-
-    private static string[] ReadCommandParts(JsonElement source)
-    {
-        if (!source.TryGetProperty("command", out var command))
-        {
-            return [];
-        }
-
-        var parts = new List<string>();
-        if (command.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in command.EnumerateArray())
-            {
-                if (item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
-                {
-                    parts.Add(item.GetString()!.Trim());
-                }
-            }
-        }
-        else if (command.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(command.GetString()))
-        {
-            parts.Add(command.GetString()!.Trim());
-        }
-
-        if (source.TryGetProperty("args", out var args) && args.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in args.EnumerateArray())
-            {
-                if (item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
-                {
-                    parts.Add(item.GetString()!.Trim());
-                }
-            }
-        }
-
-        return [.. parts];
-    }
-
-    private static Dictionary<string, string>? ReadStringMap(JsonElement source, string propertyName)
-    {
-        if (!source.TryGetProperty(propertyName, out var value) || value.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var property in value.EnumerateObject())
-        {
-            if (property.Value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(property.Value.GetString()))
-            {
-                result[property.Name] = property.Value.GetString()!.Trim();
-            }
-        }
-
-        return result.Count == 0 ? null : result;
-    }
-
-    private static object? ReadOAuth(JsonElement source)
-    {
-        if (!source.TryGetProperty("oauth", out var oauth))
-        {
-            return null;
-        }
-
-        return oauth.ValueKind switch
-        {
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.Object => JsonSerializer.Deserialize<Dictionary<string, object?>>(oauth.GetRawText(), SerializerOptions),
-            _ => null,
-        };
-    }
-
-    private static string? ReadString(JsonElement source, string propertyName)
-        => source.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
-
-    private static void AddIfNotNull(IDictionary<string, object?> target, string key, object? value)
-    {
-        if (value is not null)
-        {
-            target[key] = value;
-        }
-    }
-
-    private static bool? ReadBool(JsonElement source, string propertyName)
-        => source.TryGetProperty(propertyName, out var value)
-            ? value.ValueKind switch
-            {
-                JsonValueKind.True => true,
-                JsonValueKind.False => false,
-                _ => null,
-            }
-            : null;
-
-    private static string Serialize(object value) => JsonSerializer.Serialize(value, SerializerOptions);
-
-    private static bool LooksLikeBareServerObject(JsonElement root)
-        => root.TryGetProperty("type", out _)
-           || root.TryGetProperty("command", out _)
-           || root.TryGetProperty("url", out _);
-
     private static string ComputeImportHash(string normalizedName, string json)
     {
         var bytes = Encoding.UTF8.GetBytes(normalizedName + "\n" + json);
@@ -408,8 +179,6 @@ public sealed class McpEcosystemConfigurationImporter(McpServerCatalogService se
         yield return Path.Combine(home, "AppData", "Roaming", "Claude", "claude_desktop_config.json");
     }
 
-    private sealed record DiscoveredMcpServer(string Name, string Json);
-
     private sealed record McpConfigurationImportOptions(
         string? SourceKind,
         string? SourceUri,
@@ -433,6 +202,12 @@ public sealed class McpEcosystemConfigurationImporter(McpServerCatalogService se
         public void Add(McpConfigurationImportResult result)
         {
             Imported += result.ImportedCount;
+            Skipped += result.SkippedCount;
+            Warnings.AddRange(result.Warnings);
+        }
+
+        public void Add(McpConfigurationFileParseResult result)
+        {
             Skipped += result.SkippedCount;
             Warnings.AddRange(result.Warnings);
         }

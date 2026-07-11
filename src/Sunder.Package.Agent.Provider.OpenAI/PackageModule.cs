@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
+using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Configuration;
 
@@ -12,12 +13,19 @@ public sealed class PackageModule : ISunderPackageModule
 {
     public void ConfigureServices(IServiceCollection services, IPackageContext context)
     {
-        services.AddSingleton<ApiKeyAuthStrategy>();
+        services.AddSingleton(new ProviderCredentialAccessor(
+            context.Secrets,
+            OpenAiProviderConfiguration.ApiKeySecretKey));
+        services.AddSingleton(serviceProvider => new ApiKeyAuthStrategy(
+            serviceProvider.GetRequiredService<ProviderCredentialAccessor>()));
         services.AddSingleton<CodexConnectedAuthStrategy>();
         services.AddSingleton(_ => CodexHttpClientFactory.CreateBackendClient());
         services.AddSingleton<CodexResponseContinuationStore>();
         services.AddSingleton<CodexConnectedTransport>();
-        services.AddTransient<OpenAiSettingsViewModel>();
+        services.AddTransient(serviceProvider => new OpenAiSettingsViewModel(
+            context,
+            serviceProvider.GetRequiredService<CodexConnectedAuthStrategy>(),
+            serviceProvider.GetRequiredService<ProviderCredentialAccessor>()));
         services.AddSingleton<OpenAiPackageAuthHandler>();
         services.AddSingleton<IPackageAuthHandler>(serviceProvider => serviceProvider.GetRequiredService<OpenAiPackageAuthHandler>());
         services.AddSingleton<IPackageCallbackHandler>(serviceProvider => serviceProvider.GetRequiredService<OpenAiPackageAuthHandler>());

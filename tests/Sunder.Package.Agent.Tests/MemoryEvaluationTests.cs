@@ -341,8 +341,9 @@ public sealed class MemoryEvaluationTests
             }
 
             var metrics = new SemanticMemoryMetricsService();
-            RetrievalBackend = new SemanticMemoryRetrievalBackend(Store, new ProfileConfiguredEmbeddingProviderResolver(_extensionCatalog), Settings);
-            _indexingBackgroundService = new SemanticMemoryIndexingBackgroundService(Store, _extensionCatalog, Settings, RetrievalBackend, metrics);
+            var resolver = new SemanticModelRuntimeResolver(_extensionCatalog, Settings);
+            RetrievalBackend = new SemanticMemoryRetrievalBackend(Store, resolver, Settings);
+            _indexingBackgroundService = new SemanticMemoryIndexingBackgroundService(Store, resolver, Settings, RetrievalBackend, metrics);
             _feature = new MemorySemanticFeature(
                 Store,
                 new SemanticMemoryRecallService(Store, RetrievalBackend, metrics),

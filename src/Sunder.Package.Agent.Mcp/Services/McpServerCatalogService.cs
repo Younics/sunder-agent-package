@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Mcp.Services;
@@ -7,49 +8,78 @@ namespace Sunder.Package.Agent.Mcp.Services;
 public sealed class McpServerCatalogService(IPackageContext packageContext)
 {
     private const string ServerKeyPrefix = "mcp.servers.";
-
     private readonly IPackageContext _packageContext = packageContext;
+    private readonly ILogger<McpServerCatalogService> _logger = packageContext.LoggerFactory.CreateLogger<McpServerCatalogService>();
+    private readonly SemaphoreSlim _mutationGate = new(1, 1);
+    private IReadOnlyList<McpCatalogDiagnostic> _lastDiagnostics = [];
 
     public event Action? ServersChanged;
 
-    public void NotifyServersImported()
-        => ServersChanged?.Invoke();
+    public IReadOnlyList<McpCatalogDiagnostic> LastDiagnostics => Volatile.Read(ref _lastDiagnostics);
+
+    public void NotifyServersImported() => ServersChanged?.Invoke();
 
     public async Task<IReadOnlyList<ConfiguredMcpServerRecord>> ListServersAsync(CancellationToken cancellationToken = default)
     {
-        var keys = await _packageContext.Storage.State.ListKeysAsync(ServerKeyPrefix, cancellationToken);
+        var diagnostics = new List<McpCatalogDiagnostic>();
         var servers = new List<ConfiguredMcpServerRecord>();
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var keys = await _packageContext.Storage.State.ListKeysAsync(ServerKeyPrefix, cancellationToken).ConfigureAwait(false);
         foreach (var key in keys.OrderBy(key => key, StringComparer.OrdinalIgnoreCase))
         {
-            var payload = await _packageContext.Storage.State.GetValueAsync(key, cancellationToken);
-            if (string.IsNullOrWhiteSpace(payload))
+            cancellationToken.ThrowIfCancellationRequested();
+            try
             {
-                continue;
-            }
+                var payload = await _packageContext.Storage.State.GetValueAsync(key, cancellationToken).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(payload))
+                {
+                    diagnostics.Add(new McpCatalogDiagnostic(key, "Stored MCP server metadata is empty."));
+                    continue;
+                }
 
-            var server = DeserializeServer(payload);
-            if (server is not null)
-            {
+                if (!McpServerRecordSerializer.TryDeserialize(payload, _packageContext.Secrets, NormalizeServerName, out var server, out var error)
+                    || server is null)
+                {
+                    diagnostics.Add(new McpCatalogDiagnostic(key, error ?? "Stored MCP server metadata is invalid."));
+                    continue;
+                }
+
+                if (!string.Equals(key, BuildServerKey(server.ServerId), StringComparison.OrdinalIgnoreCase))
+                {
+                    diagnostics.Add(new McpCatalogDiagnostic(key, $"Stored ServerId '{server.ServerId}' does not match its storage key."));
+                    continue;
+                }
+
+                if (!names.Add(server.Name))
+                {
+                    diagnostics.Add(new McpCatalogDiagnostic(key, $"Normalized MCP server name '{server.Name}' is duplicated."));
+                    continue;
+                }
+
                 servers.Add(server);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                diagnostics.Add(new McpCatalogDiagnostic(key, $"Stored MCP server metadata could not be read: {ex.Message}"));
             }
         }
 
-        return servers
-            .OrderBy(server => server.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        Volatile.Write(ref _lastDiagnostics, diagnostics.ToArray());
+        return servers.OrderBy(server => server.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     public async Task<ConfiguredMcpServerRecord?> GetServerAsync(string serverId, CancellationToken cancellationToken = default)
     {
-        var payload = await _packageContext.Storage.State.GetValueAsync(BuildServerKey(serverId), cancellationToken);
-        return string.IsNullOrWhiteSpace(payload)
-            ? null
-            : DeserializeServer(payload);
+        var payload = await _packageContext.Storage.State.GetValueAsync(BuildServerKey(serverId), cancellationToken).ConfigureAwait(false);
+        return !string.IsNullOrWhiteSpace(payload)
+               && McpServerRecordSerializer.TryDeserialize(payload, _packageContext.Secrets, NormalizeServerName, out var server, out _)
+            ? server
+            : null;
     }
 
     public async Task<string?> ExportServerJsonAsync(string serverId, CancellationToken cancellationToken = default)
     {
-        var server = await GetServerAsync(serverId, cancellationToken);
+        var server = await GetServerAsync(serverId, cancellationToken).ConfigureAwait(false);
         return server is null ? null : McpConfigurationDocument.BuildEditorText(server, GetHeaders(server), GetEnvironmentVariables(server));
     }
 
@@ -59,104 +89,69 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         IReadOnlyDictionary<string, string> environmentVariables,
         CancellationToken cancellationToken = default)
     {
-        var existing = await GetServerAsync(server.ServerId, cancellationToken);
-
-        await _packageContext.Storage.State.SetValueAsync(
-            BuildServerKey(server.ServerId),
-            JsonSerializer.Serialize(server),
-            cancellationToken);
-
-        foreach (var headerName in existing?.HeaderNames.Except(server.HeaderNames, StringComparer.OrdinalIgnoreCase) ?? [])
+        ArgumentException.ThrowIfNullOrWhiteSpace(server.ServerId);
+        await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            _packageContext.Secrets.DeleteSecret(BuildHeaderSecretKey(server.ServerId, headerName));
-        }
+            var normalizedName = NormalizeServerName(server.Name);
+            var allServers = await ListServersAsync(cancellationToken).ConfigureAwait(false);
+            if (allServers.Any(item => !string.Equals(item.ServerId, server.ServerId, StringComparison.OrdinalIgnoreCase)
+                                       && string.Equals(item.Name, normalizedName, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException($"An MCP server named '{normalizedName}' already exists.");
+            }
 
-        foreach (var variableName in existing?.EnvironmentVariableNames.Except(server.EnvironmentVariableNames, StringComparer.OrdinalIgnoreCase) ?? [])
+            var existing = await GetServerAsync(server.ServerId, cancellationToken).ConfigureAwait(false);
+            var persisted = server with
+            {
+                Name = normalizedName,
+                PersistenceVersion = Math.Max(existing?.PersistenceVersion ?? 0, 0) + 1,
+                HeaderNames = [.. server.HeaderNames.Where(name => !string.IsNullOrWhiteSpace(name)).Select(name => name.Trim()).Distinct(StringComparer.OrdinalIgnoreCase)],
+                EnvironmentVariableNames = [.. server.EnvironmentVariableNames.Where(name => !string.IsNullOrWhiteSpace(name)).Select(name => name.Trim()).Distinct(StringComparer.OrdinalIgnoreCase)],
+            };
+            var stagedSecretKeys = StageVersionedSecrets(persisted, headers, environmentVariables);
+            try
+            {
+                await _packageContext.Storage.State.SetValueAsync(
+                    BuildServerKey(persisted.ServerId),
+                    JsonSerializer.Serialize(persisted),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception commitError)
+            {
+                throw CompensateStagedSecrets(stagedSecretKeys, commitError);
+            }
+
+            CleanupSupersededSecrets(existing, persisted);
+            ServersChanged?.Invoke();
+        }
+        finally
         {
-            _packageContext.Secrets.DeleteSecret(BuildEnvironmentSecretKey(server.ServerId, variableName));
+            _mutationGate.Release();
         }
-
-        foreach (var headerName in server.HeaderNames)
-        {
-            SetOptionalSecret(BuildHeaderSecretKey(server.ServerId, headerName), headers.TryGetValue(headerName, out var value) ? value : null);
-        }
-
-        foreach (var variableName in server.EnvironmentVariableNames)
-        {
-            SetOptionalSecret(BuildEnvironmentSecretKey(server.ServerId, variableName), environmentVariables.TryGetValue(variableName, out var value) ? value : null);
-        }
-
-        // Clear legacy special-case secrets once the normalized config has been saved.
-        _packageContext.Secrets.DeleteSecret(BuildApiKeySecretKey(server.ServerId));
-        _packageContext.Secrets.DeleteSecret(BuildAuthorizationSecretKey(server.ServerId));
-        if (existing?.OAuthEnabled == true && !server.OAuthEnabled)
-        {
-            DeleteOAuthSecrets(server.ServerId);
-        }
-
-        ServersChanged?.Invoke();
     }
 
     public async Task DeleteServerAsync(string serverId, CancellationToken cancellationToken = default)
     {
-        var existing = await GetServerAsync(serverId, cancellationToken);
-        await _packageContext.Storage.State.DeleteValueAsync(BuildServerKey(serverId), cancellationToken);
-
-        foreach (var headerName in existing?.HeaderNames ?? [])
+        await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            _packageContext.Secrets.DeleteSecret(BuildHeaderSecretKey(serverId, headerName));
+            var existing = await GetServerAsync(serverId, cancellationToken).ConfigureAwait(false);
+            await _packageContext.Storage.State.DeleteValueAsync(BuildServerKey(serverId), cancellationToken).ConfigureAwait(false);
+            CleanupDeletedServerSecrets(existing, serverId);
+            ServersChanged?.Invoke();
         }
-
-        foreach (var variableName in existing?.EnvironmentVariableNames ?? [])
+        finally
         {
-            _packageContext.Secrets.DeleteSecret(BuildEnvironmentSecretKey(serverId, variableName));
+            _mutationGate.Release();
         }
-
-        _packageContext.Secrets.DeleteSecret(BuildApiKeySecretKey(serverId));
-        _packageContext.Secrets.DeleteSecret(BuildAuthorizationSecretKey(serverId));
-        DeleteOAuthSecrets(serverId);
-        ServersChanged?.Invoke();
     }
 
     public IReadOnlyDictionary<string, string> GetHeaders(ConfiguredMcpServerRecord server)
-    {
-        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var headerName in server.HeaderNames)
-        {
-            var value = _packageContext.Secrets.GetSecret(BuildHeaderSecretKey(server.ServerId, headerName));
-            if (string.IsNullOrWhiteSpace(value) && string.Equals(headerName, "Authorization", StringComparison.OrdinalIgnoreCase))
-            {
-                value = _packageContext.Secrets.GetSecret(BuildAuthorizationSecretKey(server.ServerId));
-            }
-
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                value = _packageContext.Secrets.GetSecret(BuildApiKeySecretKey(server.ServerId));
-            }
-
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                headers[headerName] = value.Trim();
-            }
-        }
-
-        return headers;
-    }
+        => ReadSecrets(server, server.HeaderNames, BuildHeaderSecretKey, readLegacyHeaderFallbacks: true);
 
     public IReadOnlyDictionary<string, string> GetEnvironmentVariables(ConfiguredMcpServerRecord server)
-    {
-        var environmentVariables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var variableName in server.EnvironmentVariableNames)
-        {
-            var value = _packageContext.Secrets.GetSecret(BuildEnvironmentSecretKey(server.ServerId, variableName));
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                environmentVariables[variableName] = value.Trim();
-            }
-        }
-
-        return environmentVariables;
-    }
+        => ReadSecrets(server, server.EnvironmentVariableNames, BuildEnvironmentSecretKey, readLegacyHeaderFallbacks: false);
 
     public string NormalizeServerName(string? value)
     {
@@ -171,220 +166,166 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         return string.IsNullOrWhiteSpace(normalized) ? "mcp_server" : normalized;
     }
 
-    private ConfiguredMcpServerRecord? DeserializeServer(string payload)
+    private IReadOnlyList<string> StageVersionedSecrets(
+        ConfiguredMcpServerRecord server,
+        IReadOnlyDictionary<string, string> headers,
+        IReadOnlyDictionary<string, string> environmentVariables)
     {
-        using var document = JsonDocument.Parse(payload);
-        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        var staged = new List<string>();
+        try
         {
-            return null;
+            StageValues(server, server.HeaderNames, headers, BuildHeaderSecretKey, staged);
+            StageValues(server, server.EnvironmentVariableNames, environmentVariables, BuildEnvironmentSecretKey, staged);
+            return staged;
         }
-
-        var root = document.RootElement;
-        var serverId = ReadString(root, "ServerId") ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(serverId))
+        catch (Exception ex)
         {
-            return null;
+            throw CompensateStagedSecrets(staged, ex);
         }
-
-        var name = NormalizeServerName(ReadString(root, "Name"));
-        var displayName = ReadString(root, "DisplayName");
-        var description = ReadString(root, "Description");
-        var transportType = ReadTransportType(root);
-        var commandParts = ReadStringArray(root, "CommandParts");
-        if (commandParts.Length == 0)
-        {
-            commandParts = ReadLegacyCommandParts(root);
-        }
-
-        var headerNames = ReadStringArray(root, "HeaderNames");
-        if (headerNames.Length == 0)
-        {
-            headerNames = ReadLegacyHeaderNames(serverId, root);
-        }
-
-        return new ConfiguredMcpServerRecord
-        {
-            ServerId = serverId,
-            Name = name,
-            DisplayName = string.IsNullOrWhiteSpace(displayName) ? name : displayName.Trim(),
-            Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
-            IsEnabled = ReadBool(root, "IsEnabled") ?? true,
-            TransportType = transportType,
-            CommandParts = commandParts,
-            WorkingDirectory = ReadString(root, "WorkingDirectory"),
-            EndpointUrl = ReadString(root, "EndpointUrl"),
-            TimeoutMilliseconds = ReadInt(root, "TimeoutMilliseconds"),
-            DiscoveryTimeoutMilliseconds = ReadInt(root, "DiscoveryTimeoutMilliseconds") ?? ReadInt(root, "TimeoutMilliseconds"),
-            ToolTimeoutMilliseconds = ReadInt(root, "ToolTimeoutMilliseconds") ?? ReadInt(root, "TimeoutMilliseconds"),
-            HeaderNames = headerNames,
-            EnvironmentVariableNames = ReadStringArray(root, "EnvironmentVariableNames"),
-            OAuthEnabled = ReadBool(root, "OAuthEnabled") ?? false,
-            OAuthScopes = ReadStringArray(root, "OAuthScopes"),
-            OAuthClientId = ReadString(root, "OAuthClientId"),
-            SourceKind = ReadString(root, "SourceKind"),
-            SourceUri = ReadString(root, "SourceUri"),
-            SourceName = ReadString(root, "SourceName"),
-            LastImportedHash = ReadString(root, "LastImportedHash"),
-            IsExternallyManaged = ReadBool(root, "IsExternallyManaged") ?? false,
-            CreatedAtUtc = ReadDateTimeOffset(root, "CreatedAtUtc") ?? DateTimeOffset.UtcNow,
-            UpdatedAtUtc = ReadDateTimeOffset(root, "UpdatedAtUtc") ?? DateTimeOffset.UtcNow,
-        };
     }
 
-    private string[] ReadLegacyHeaderNames(string serverId, JsonElement root)
+    private void StageValues(
+        ConfiguredMcpServerRecord server,
+        IEnumerable<string> names,
+        IReadOnlyDictionary<string, string> values,
+        Func<string, int, string, string> buildKey,
+        ICollection<string> staged)
     {
-        var headerNames = new List<string>();
-        var apiKeyHeaderName = ReadString(root, "ApiKeyHeaderName");
-        if (!string.IsNullOrWhiteSpace(apiKeyHeaderName)
-            && !string.IsNullOrWhiteSpace(_packageContext.Secrets.GetSecret(BuildApiKeySecretKey(serverId))))
+        foreach (var name in names.Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            headerNames.Add(apiKeyHeaderName.Trim());
-        }
-
-        if (!string.IsNullOrWhiteSpace(_packageContext.Secrets.GetSecret(BuildAuthorizationSecretKey(serverId))))
-        {
-            headerNames.Add("Authorization");
-        }
-
-        return [.. headerNames.Distinct(StringComparer.OrdinalIgnoreCase)];
-    }
-
-    private static string[] ReadLegacyCommandParts(JsonElement root)
-    {
-        var command = ReadString(root, "Command");
-        if (string.IsNullOrWhiteSpace(command))
-        {
-            return [];
-        }
-
-        return [command.Trim(), .. SplitArguments(ReadString(root, "Arguments"))];
-    }
-
-    private void SetOptionalSecret(string key, string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            _packageContext.Secrets.DeleteSecret(key);
-            return;
-        }
-
-        _packageContext.Secrets.SetSecret(key, value.Trim());
-    }
-
-    private void DeleteOAuthSecrets(string serverId)
-    {
-        _packageContext.Secrets.DeleteSecret(McpOAuthSecretKeys.TokenCache(serverId));
-        _packageContext.Secrets.DeleteSecret(McpOAuthSecretKeys.ClientRegistration(serverId));
-        _packageContext.Secrets.DeleteSecret(McpOAuthSecretKeys.ClientSecret(serverId));
-    }
-
-    private static string? ReadString(JsonElement root, string propertyName)
-        => root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
-
-    private static bool? ReadBool(JsonElement root, string propertyName)
-        => root.TryGetProperty(propertyName, out var value)
-            ? value.ValueKind switch
+            if (!values.TryGetValue(name, out var value) || string.IsNullOrWhiteSpace(value))
             {
-                JsonValueKind.True => true,
-                JsonValueKind.False => false,
-                _ => null,
-            }
-            : null;
-
-    private static int? ReadInt(JsonElement root, string propertyName)
-        => root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var parsed)
-            ? parsed
-            : null;
-
-    private static DateTimeOffset? ReadDateTimeOffset(JsonElement root, string propertyName)
-        => root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String && value.TryGetDateTimeOffset(out var parsed)
-            ? parsed
-            : null;
-
-    private static ConfiguredMcpTransportType ReadTransportType(JsonElement root)
-    {
-        if (!root.TryGetProperty("TransportType", out var value))
-        {
-            return ConfiguredMcpTransportType.Stdio;
-        }
-
-        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var enumValue) && Enum.IsDefined(typeof(ConfiguredMcpTransportType), enumValue))
-        {
-            return (ConfiguredMcpTransportType)enumValue;
-        }
-
-        if (value.ValueKind == JsonValueKind.String && Enum.TryParse<ConfiguredMcpTransportType>(value.GetString(), ignoreCase: true, out var parsedValue))
-        {
-            return parsedValue;
-        }
-
-        return ConfiguredMcpTransportType.Stdio;
-    }
-
-    private static string[] ReadStringArray(JsonElement root, string propertyName)
-    {
-        if (!root.TryGetProperty(propertyName, out var value) || value.ValueKind != JsonValueKind.Array)
-        {
-            return [];
-        }
-
-        return value.EnumerateArray()
-            .Where(item => item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
-            .Select(item => item.GetString()!.Trim())
-            .ToArray();
-    }
-
-    private static string[] SplitArguments(string? args)
-    {
-        if (string.IsNullOrWhiteSpace(args))
-        {
-            return [];
-        }
-
-        var tokens = new List<string>();
-        var current = new StringBuilder();
-        var inQuotes = false;
-        foreach (var ch in args)
-        {
-            if (ch == '"')
-            {
-                inQuotes = !inQuotes;
-                continue;
-            }
-
-            if (ch == ' ' && !inQuotes)
-            {
-                if (current.Length > 0)
+                if (server.IsEnabled)
                 {
-                    tokens.Add(current.ToString());
-                    current.Clear();
+                    throw new InvalidOperationException($"Enabled MCP server '{server.DisplayName}' is missing a value for '{name}'.");
                 }
 
                 continue;
             }
 
-            current.Append(ch);
+            var key = buildKey(server.ServerId, server.PersistenceVersion, name);
+            staged.Add(key);
+            _packageContext.Secrets.SetSecret(key, value.Trim());
         }
+    }
 
-        if (current.Length > 0)
+    private Exception CompensateStagedSecrets(IEnumerable<string> keys, Exception original)
+    {
+        var errors = new List<Exception> { original };
+        foreach (var key in keys)
         {
-            tokens.Add(current.ToString());
+            try
+            {
+                _packageContext.Secrets.DeleteSecret(key);
+            }
+            catch (Exception ex)
+            {
+                errors.Add(ex);
+            }
         }
 
-        return [.. tokens];
+        return errors.Count == 1 ? original : new AggregateException("MCP server save failed and staged secret cleanup was incomplete.", errors);
+    }
+
+    private IReadOnlyDictionary<string, string> ReadSecrets(
+        ConfiguredMcpServerRecord server,
+        IEnumerable<string> names,
+        Func<string, int, string, string> buildKey,
+        bool readLegacyHeaderFallbacks)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in names)
+        {
+            var value = _packageContext.Secrets.GetSecret(buildKey(server.ServerId, server.PersistenceVersion, name));
+            if (server.PersistenceVersion == 0 && readLegacyHeaderFallbacks && string.IsNullOrWhiteSpace(value))
+            {
+                value = string.Equals(name, "Authorization", StringComparison.OrdinalIgnoreCase)
+                    ? _packageContext.Secrets.GetSecret(BuildAuthorizationSecretKey(server.ServerId))
+                    : null;
+                value ??= _packageContext.Secrets.GetSecret(BuildApiKeySecretKey(server.ServerId));
+            }
+
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                values[name] = value.Trim();
+            }
+        }
+
+        return values;
+    }
+
+    private void CleanupSupersededSecrets(ConfiguredMcpServerRecord? existing, ConfiguredMcpServerRecord persisted)
+    {
+        if (existing is not null)
+        {
+            DeleteVersionedSecrets(existing);
+        }
+
+        TryDeleteSecret(BuildApiKeySecretKey(persisted.ServerId));
+        TryDeleteSecret(BuildAuthorizationSecretKey(persisted.ServerId));
+        if (existing?.OAuthEnabled == true && !persisted.OAuthEnabled)
+        {
+            DeleteOAuthSecrets(persisted.ServerId);
+        }
+    }
+
+    private void CleanupDeletedServerSecrets(ConfiguredMcpServerRecord? existing, string serverId)
+    {
+        if (existing is not null)
+        {
+            DeleteVersionedSecrets(existing);
+        }
+
+        TryDeleteSecret(BuildApiKeySecretKey(serverId));
+        TryDeleteSecret(BuildAuthorizationSecretKey(serverId));
+        DeleteOAuthSecrets(serverId);
+    }
+
+    private void DeleteVersionedSecrets(ConfiguredMcpServerRecord server)
+    {
+        foreach (var name in server.HeaderNames)
+        {
+            TryDeleteSecret(BuildHeaderSecretKey(server.ServerId, server.PersistenceVersion, name));
+        }
+
+        foreach (var name in server.EnvironmentVariableNames)
+        {
+            TryDeleteSecret(BuildEnvironmentSecretKey(server.ServerId, server.PersistenceVersion, name));
+        }
+    }
+
+    private void DeleteOAuthSecrets(string serverId)
+    {
+        TryDeleteSecret(McpOAuthSecretKeys.TokenCache(serverId));
+        TryDeleteSecret(McpOAuthSecretKeys.ClientRegistration(serverId));
+        TryDeleteSecret(McpOAuthSecretKeys.ClientSecret(serverId));
+    }
+
+    private void TryDeleteSecret(string key)
+    {
+        try
+        {
+            _packageContext.Secrets.DeleteSecret(key);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to clean up superseded MCP secret '{SecretKey}'.", key);
+        }
     }
 
     private static string BuildServerKey(string serverId) => ServerKeyPrefix + serverId;
 
-    private static string BuildApiKeySecretKey(string serverId) => $"mcp.servers.{serverId}.apiKey";
+    internal static string BuildApiKeySecretKey(string serverId) => $"mcp.servers.{serverId}.apiKey";
 
-    private static string BuildAuthorizationSecretKey(string serverId) => $"mcp.servers.{serverId}.authorization";
+    internal static string BuildAuthorizationSecretKey(string serverId) => $"mcp.servers.{serverId}.authorization";
 
-    private static string BuildHeaderSecretKey(string serverId, string headerName)
-        => $"mcp.servers.{serverId}.headers.{Uri.EscapeDataString(headerName)}";
+    private static string BuildHeaderSecretKey(string serverId, int version, string name)
+        => version <= 0
+            ? $"mcp.servers.{serverId}.headers.{Uri.EscapeDataString(name)}"
+            : $"mcp.servers.{serverId}.v{version}.headers.{Uri.EscapeDataString(name)}";
 
-    private static string BuildEnvironmentSecretKey(string serverId, string variableName)
-        => $"mcp.servers.{serverId}.environment.{Uri.EscapeDataString(variableName)}";
+    private static string BuildEnvironmentSecretKey(string serverId, int version, string name)
+        => version <= 0
+            ? $"mcp.servers.{serverId}.environment.{Uri.EscapeDataString(name)}"
+            : $"mcp.servers.{serverId}.v{version}.environment.{Uri.EscapeDataString(name)}";
 }

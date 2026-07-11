@@ -2,6 +2,7 @@ using System.Text;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Tools.Shell;
@@ -44,7 +45,9 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
         var command = parsed ? args.Command : null;
         return new AgentToolPresentation(
             HeaderText: request.ResultSummary ?? CompactCommand(command),
-            DetailMarkdown: parsed ? BuildShellDetailMarkdown(args) : BuildRawArgumentsMarkdown(request.ArgumentsJson, error),
+            DetailMarkdown: parsed
+                ? BuildShellDetailMarkdown(args)
+                : AgentToolPresentationMarkdown.BuildRawRequestMarkdown(request.ArgumentsJson, error),
             OutputText: request.TextContent);
     }
 
@@ -176,7 +179,12 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
            || (Descriptor.Aliases?.Any(alias => string.Equals(alias, toolId, StringComparison.OrdinalIgnoreCase)) ?? false);
 
     private static AgentToolResult Error(string toolId, string message, string code)
-        => new(toolId, message, Content: $"### Shell tool failed\n\n{message}", IsError: true, ErrorCode: code);
+        => new(
+            toolId,
+            message,
+            Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Shell tool failed", message),
+            IsError: true,
+            ErrorCode: code);
 
     private static string? CompactCommand(string? command)
     {
@@ -216,10 +224,7 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
     private static string BuildShellDetailMarkdown(ShellArgs args)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("**Command**");
-        builder.AppendLine("```sh");
-        builder.AppendLine(args.Command.Trim());
-        builder.AppendLine("```");
+        builder.AppendLine(AgentToolPresentationMarkdown.BuildFencedMarkdown("Command", "sh", args.Command));
         if (!string.IsNullOrWhiteSpace(args.WorkingDirectory) || args.TimeoutSeconds is not null)
         {
             builder.AppendLine();
@@ -235,32 +240,6 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
             }
         }
 
-        return builder.ToString().Trim();
-    }
-
-    private static string BuildRawArgumentsMarkdown(string argumentsJson, string? error)
-    {
-        var builder = new StringBuilder();
-        builder.AppendLine("**Arguments**");
-        if (!string.IsNullOrWhiteSpace(error))
-        {
-            builder.AppendLine(error.Trim());
-            builder.AppendLine();
-        }
-
-        builder.AppendLine("```json");
-        builder.AppendLine(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson.Trim());
-        builder.AppendLine("```");
-        return builder.ToString().Trim();
-    }
-
-    private static string BuildFencedMarkdown(string title, string language, string content)
-    {
-        var builder = new StringBuilder();
-        builder.Append("**").Append(title).AppendLine("**");
-        builder.Append("```").AppendLine(language);
-        builder.AppendLine(content.Trim());
-        builder.AppendLine("```");
         return builder.ToString().Trim();
     }
 

@@ -2,41 +2,52 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Platform.Storage;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Skills.PackageViews;
 
-public partial class SkillSettingsView : UserControl
+public partial class SkillSettingsView : UserControl, IDisposable
 {
-    private const double WideSkillMinimumWidth = 820;
+    private readonly AdaptiveMasterDetail _adaptiveLayout;
+    private SkillSettingsViewModel? _viewModel;
+    private bool _disposed;
 
     public SkillSettingsView()
     {
         InitializeComponent();
-        Loaded += (_, _) => ApplyResponsiveLayout();
-        SizeChanged += (_, _) => ApplyResponsiveLayout();
+        _adaptiveLayout = new AdaptiveMasterDetail(
+            this,
+            SkillAdaptiveLayout,
+            SkillListPane,
+            SkillDetailPane,
+            isCompact =>
+            {
+                if (DataContext is SkillSettingsViewModel viewModel)
+                {
+                    viewModel.IsCompactLayout = isCompact;
+                }
+            });
     }
 
     public SkillSettingsView(SkillSettingsViewModel viewModel)
         : this()
     {
+        _viewModel = viewModel;
         DataContext = viewModel;
     }
 
-    private void ApplyResponsiveLayout()
+    public void Dispose()
     {
-        var useCompactLayout = Bounds.Width > 0 && Bounds.Width < WideSkillMinimumWidth;
-        if (DataContext is SkillSettingsViewModel viewModel)
+        if (_disposed)
         {
-            viewModel.IsCompactLayout = useCompactLayout;
+            return;
         }
 
-        SkillAdaptiveLayout.ColumnSpacing = useCompactLayout ? 0 : 4;
-        SkillListPane.BorderThickness = useCompactLayout ? new Thickness(0) : new Thickness(0, 0, 1, 0);
-
-        Grid.SetColumn(SkillListPane, 0);
-        Grid.SetColumn(SkillDetailPane, useCompactLayout ? 0 : 1);
-        Grid.SetColumnSpan(SkillListPane, useCompactLayout ? 2 : 1);
-        Grid.SetColumnSpan(SkillDetailPane, useCompactLayout ? 2 : 1);
+        _disposed = true;
+        _adaptiveLayout.Dispose();
+        _viewModel?.Dispose();
+        DataContext = null;
+        _viewModel = null;
     }
 
     private void OnSkillItemTapped(object? sender, TappedEventArgs e)

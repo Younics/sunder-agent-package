@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
+using static Sunder.Package.Agent.Mcp.Services.McpServerStackPayloadCodec;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
@@ -325,7 +326,14 @@ internal sealed class McpServerStackContributor(
         return details;
     }
 
-    private static McpServerStackPayload? BuildPayload(
+}
+
+internal static class McpServerStackPayloadCodec
+{
+    private const string SecretPlaceholder = "Value not exported";
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+
+    internal static McpServerStackPayload? BuildPayload(
         ConfiguredMcpServerRecord server,
         StackExportRequest request,
         ICollection<string> warnings,
@@ -401,7 +409,7 @@ internal sealed class McpServerStackContributor(
         };
     }
 
-    private static IReadOnlyList<StackRequiredInputDescriptor> BuildRequiredInputs(McpServerStackPayload payload)
+    internal static IReadOnlyList<StackRequiredInputDescriptor> BuildRequiredInputs(McpServerStackPayload payload)
         => payload.Headers
             .Where(header => header.RequiresInput)
             .Select(header => new StackRequiredInputDescriptor(
@@ -416,7 +424,7 @@ internal sealed class McpServerStackContributor(
                 Description: "Environment values are stored as local secrets and are not included in Stack exports.")))
             .ToArray();
 
-    private static int ApplySecretInputs(
+    internal static int ApplySecretInputs(
         IReadOnlyList<McpStackSecretReference> references,
         IReadOnlyDictionary<string, string> inputValues,
         IDictionary<string, string> target)
@@ -449,7 +457,7 @@ internal sealed class McpServerStackContributor(
         return missing;
     }
 
-    private static bool TryReadPayload(StackFragmentImport fragment, ICollection<string> warnings, out McpServerStackPayload? payload)
+    internal static bool TryReadPayload(StackFragmentImport fragment, ICollection<string> warnings, out McpServerStackPayload? payload)
     {
         payload = null;
         try
@@ -489,10 +497,10 @@ internal sealed class McpServerStackContributor(
         }
     }
 
-    private static string BuildActionId(string fragmentId, string serverId)
+    internal static string BuildActionId(string fragmentId, string serverId)
         => $"mcp-server:{fragmentId}:{serverId}";
 
-    private static string SanitizeIdentifier(string value)
+    internal static string SanitizeIdentifier(string value)
     {
         var builder = new System.Text.StringBuilder(value.Length);
         var pendingSeparator = false;
@@ -516,7 +524,7 @@ internal sealed class McpServerStackContributor(
         return string.IsNullOrWhiteSpace(sanitized) ? "item" : sanitized;
     }
 
-    private sealed record McpServerStackPayload(
+    internal sealed record McpServerStackPayload(
         string ServerId,
         string Name,
         string DisplayName,
@@ -623,7 +631,7 @@ internal sealed class McpServerStackContributor(
         return references;
     }
 
-    private static bool IsLikelySecretName(string name)
+    internal static bool IsLikelySecretName(string name)
         => name.Contains("key", StringComparison.OrdinalIgnoreCase)
            || name.Contains("token", StringComparison.OrdinalIgnoreCase)
            || name.Contains("secret", StringComparison.OrdinalIgnoreCase)
@@ -633,7 +641,7 @@ internal sealed class McpServerStackContributor(
     private static string[] SplitCommand(string command)
         => command.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-    private static class DetailIds
+    internal static class DetailIds
     {
         public const string Description = "description";
         public const string Transport = "transport";
@@ -647,5 +655,5 @@ internal sealed class McpServerStackContributor(
         public static string Environment(string name) => "environment." + SanitizeIdentifier(name);
     }
 
-    private sealed record McpStackSecretReference(string Name, string InputId, string? Value = null, bool RequiresInput = true);
+    internal sealed record McpStackSecretReference(string Name, string InputId, string? Value = null, bool RequiresInput = true);
 }

@@ -3,7 +3,7 @@ using Avalonia.Input;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
-public sealed class SunderComboBox : ComboBox
+internal sealed class SunderComboBox : ComboBox
 {
     protected override Type StyleKeyOverride => typeof(ComboBox);
 

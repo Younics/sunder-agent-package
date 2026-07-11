@@ -4,6 +4,8 @@ namespace Sunder.Package.Agent.Execution.Docker;
 
 public partial class DockerExecutionSettingsView : UserControl, IDisposable
 {
+    private DockerExecutionSettingsViewModel? _viewModel;
+
     public DockerExecutionSettingsView()
     {
         InitializeComponent();
@@ -12,14 +14,14 @@ public partial class DockerExecutionSettingsView : UserControl, IDisposable
     public DockerExecutionSettingsView(DockerExecutionSettingsViewModel viewModel)
         : this()
     {
+        _viewModel = viewModel;
         DataContext = viewModel;
     }
 
     public void Dispose()
     {
-        if (DataContext is IDisposable disposable)
-        {
-            disposable.Dispose();
-        }
+        DataContext = null;
+        _viewModel?.Dispose();
+        _viewModel = null;
     }
 }

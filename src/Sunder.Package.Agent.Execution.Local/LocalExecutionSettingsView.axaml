@@ -73,6 +73,20 @@
                      TextWrapping="Wrap" />
         </StackPanel>
       </Border>
+
+      <Border Padding="14">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Execution"
+                     FontWeight="SemiBold" />
+          <TextBlock Text="Default timeout in seconds for local shell commands when a request does not specify one."
+                     TextWrapping="Wrap" />
+          <TextBox Text="{Binding TimeoutSeconds, Mode=TwoWay}"
+                   PlaceholderText="300" />
+          <Button Content="Save Execution Settings"
+                  HorizontalAlignment="Left"
+                  Command="{Binding SaveExecutionSettingsCommand}" />
+        </StackPanel>
+      </Border>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

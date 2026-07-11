@@ -4,8 +4,8 @@ using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
+using Sunder.Package.Agent.Provider.Shared;
 using AIChatMessage = Microsoft.Extensions.AI.ChatMessage;
-using AIChatRole = Microsoft.Extensions.AI.ChatRole;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
@@ -28,19 +28,11 @@ internal sealed class OpenAiCodexChatClient(
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var responseMessage = new AIChatMessage(AIChatRole.Assistant, []);
-        await foreach (var update in GetStreamingResponseAsync(messages, options, cancellationToken))
-        {
-            foreach (var content in update.Contents)
-            {
-                responseMessage.Contents.Add(content);
-            }
-        }
-
-        return new ChatResponse(responseMessage)
-        {
-            ModelId = options?.ModelId ?? _context.ModelId,
-        };
+        var modelId = options?.ModelId ?? _context.ModelId;
+        return await ProviderChatResponseAggregator.AggregateAsync(
+            GetStreamingResponseAsync(messages, options, cancellationToken),
+            modelId,
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
@@ -103,6 +95,16 @@ internal sealed class OpenAiCodexChatClient(
                 }
 
                 current = enumerator.Current;
+            }
+            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                var timeout = new AgentChatProviderException(
+                    "The OpenAI Codex request timed out.",
+                    "### OpenAI Codex request timed out\n\nThe provider canceled the request before the caller requested cancellation.",
+                    "codex-timeout",
+                    ex);
+                await LogAsync(AgentLogLevel.Error, "provider.stream.failed", timeout.Message, streamStopwatch.ElapsedMilliseconds, exception: timeout, cancellationToken: CancellationToken.None);
+                throw timeout;
             }
             catch (OperationCanceledException)
             {

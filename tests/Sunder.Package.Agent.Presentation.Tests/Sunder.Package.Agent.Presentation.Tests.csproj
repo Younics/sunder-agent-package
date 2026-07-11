@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Headless.XUnit" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent\Sunder.Package.Agent.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Builder\Sunder.Package.Agent.Builder.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Docker\Sunder.Package.Agent.Execution.Docker.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Local\Sunder.Package.Agent.Execution.Local.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Mcp\Sunder.Package.Agent.Mcp.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\Sunder.Package.Agent.Memory.Semantic.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Anthropic\Sunder.Package.Agent.Provider.Anthropic.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Gemini\Sunder.Package.Agent.Provider.Gemini.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.LMStudio\Sunder.Package.Agent.Provider.LMStudio.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.OpenAI\Sunder.Package.Agent.Provider.OpenAI.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Sunder.Package.Agent.Skills.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestInfrastructure.cs"
+             Link="TestSupport\RegressionTestInfrastructure.cs" />
+  </ItemGroup>
+
+  <Import Project="..\..\src\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
+</Project>

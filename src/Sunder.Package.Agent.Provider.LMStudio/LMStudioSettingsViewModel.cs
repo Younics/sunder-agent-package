@@ -1,32 +1,57 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Provider.LMStudio;
 
-public sealed partial class LMStudioSettingsViewModel : ObservableObject
+public sealed partial class LMStudioSettingsViewModel : ObservableObject, IDisposable
 {
     private readonly IPackageContext _packageContext;
 
+    internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
+    [
+        LMStudioProviderConfiguration.BaseUrlKey,
+        LMStudioProviderConfiguration.ApiKeyKey,
+        LMStudioProviderConfiguration.UtilityModelKey,
+    ];
+
     public LMStudioSettingsViewModel(IPackageContext packageContext)
+        : this(
+            packageContext,
+            new ProviderCredentialAccessor(packageContext.Secrets, LMStudioProviderConfiguration.ApiKeyKey))
     {
-        _packageContext = packageContext;
-        LoadSettings();
     }
 
-    public bool HasStoredApiKey => !string.IsNullOrWhiteSpace(_packageContext.Secrets.GetSecret("connection.apiKey"));
+    internal LMStudioSettingsViewModel(
+        IPackageContext packageContext,
+        ProviderCredentialAccessor credentials)
+    {
+        _packageContext = packageContext;
+        ApiKeySettings = new ApiKeySettingsState(
+            credentials,
+            "The bearer key is optional. Blank input retains a stored key; use Clear Stored Key to remove it.",
+            "lm-studio-key",
+            static hasCredential => hasCredential
+                ? new ApiKeyStatus("Stored", "A bearer key is stored and will be sent to LM Studio.")
+                : new ApiKeyStatus("Optional", "No bearer key will be sent to the configured local endpoint."));
+        BaseUrl = packageContext.Storage.State.GetValue(LMStudioProviderConfiguration.BaseUrlKey)
+            ?? packageContext.Configuration.GetValue(LMStudioProviderConfiguration.BaseUrlKey)
+            ?? LMStudioProviderConfiguration.DefaultBaseUrl;
+        UtilityModelId = packageContext.Storage.State.GetValue(LMStudioProviderConfiguration.UtilityModelKey)
+            ?? packageContext.Configuration.GetValue(LMStudioProviderConfiguration.UtilityModelKey)
+            ?? string.Empty;
+        RefreshConnectionStatus();
+    }
+
+    internal ApiKeySettingsState ApiKeySettings { get; }
 
     public bool CanSaveSettings => !IsBusy;
 
-    public bool IsConnectionStatusWarning => !IsConnectionConfigured;
-
-    public bool IsApiKeyStatusWarning => !IsApiKeyStored;
+    public bool IsConnectionStatusWarning => !IsConnectionConfigured && !IsConnectionStatusError;
 
     [ObservableProperty]
     private string _baseUrl = LMStudioProviderConfiguration.DefaultBaseUrl;
-
-    [ObservableProperty]
-    private string? _apiKeyValue;
 
     [ObservableProperty]
     private string _utilityModelId = string.Empty;
@@ -44,29 +69,67 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject
     private bool _isConnectionConfigured;
 
     [ObservableProperty]
-    private string _apiKeyStatusLabel = string.Empty;
-
-    [ObservableProperty]
-    private string _apiKeyStatusDetail = string.Empty;
-
-    [ObservableProperty]
-    private bool _isApiKeyStored;
+    private bool _isConnectionStatusError;
 
     partial void OnIsBusyChanged(bool value) => OnPropertyChanged(nameof(CanSaveSettings));
 
     partial void OnIsConnectionConfiguredChanged(bool value) => OnPropertyChanged(nameof(IsConnectionStatusWarning));
 
-    partial void OnIsApiKeyStoredChanged(bool value) => OnPropertyChanged(nameof(IsApiKeyStatusWarning));
+    partial void OnIsConnectionStatusErrorChanged(bool value) => OnPropertyChanged(nameof(IsConnectionStatusWarning));
+
+    partial void OnBaseUrlChanged(string value) => RefreshConnectionStatus();
 
     [RelayCommand]
     private async Task SaveSettingsAsync()
     {
+        if (!await SaveConnectionCoreAsync())
+        {
+            return;
+        }
+
+        await ApiKeySettings.SaveCredentialAsync();
+        await SaveUtilityModelCoreAsync();
+    }
+
+    [RelayCommand]
+    private async Task SaveConnectionAsync() => await SaveConnectionCoreAsync();
+
+    [RelayCommand]
+    private async Task SaveUtilityModelAsync() => await SaveUtilityModelCoreAsync();
+
+    public void Dispose() => ApiKeySettings.Dispose();
+
+    private async Task<bool> SaveConnectionCoreAsync()
+    {
+        if (IsBusy)
+        {
+            return false;
+        }
+
         IsBusy = true;
         try
         {
-            await SaveStateAsync();
-            OnPropertyChanged(nameof(HasStoredApiKey));
-            RefreshStatus();
+            if (!LMStudioConnectionOptions.TryNormalizeBaseUrl(
+                    BaseUrl,
+                    out _,
+                    out var normalizedBaseUrl,
+                    out var validationError))
+            {
+                SetInvalidConnectionStatus(validationError);
+                return false;
+            }
+
+            await _packageContext.Storage.State.SetValueAsync(
+                LMStudioProviderConfiguration.BaseUrlKey,
+                normalizedBaseUrl);
+            BaseUrl = normalizedBaseUrl;
+            RefreshConnectionStatus();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SetConnectionErrorStatus($"Connection settings could not be saved: {ex.Message}");
+            return false;
         }
         finally
         {
@@ -74,71 +137,69 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject
         }
     }
 
-    private void LoadSettings()
+    private async Task SaveUtilityModelCoreAsync()
     {
-        BaseUrl = _packageContext.Storage.State.GetValue("connection.baseUrl")
-            ?? _packageContext.Configuration.GetValue("connection.baseUrl")
-            ?? LMStudioProviderConfiguration.DefaultBaseUrl;
-        ApiKeyValue = null;
-        UtilityModelId = _packageContext.Storage.State.GetValue(LMStudioProviderConfiguration.UtilityModelKey)
-            ?? _packageContext.Configuration.GetValue(LMStudioProviderConfiguration.UtilityModelKey)
-            ?? string.Empty;
-        RefreshStatus();
-    }
-
-    private async Task SaveStateAsync()
-    {
-        var baseUrl = NormalizeBaseUrl(BaseUrl);
-        await _packageContext.Storage.State.SetValueAsync("connection.baseUrl", baseUrl);
-        BaseUrl = baseUrl;
-
-        if (!string.IsNullOrWhiteSpace(ApiKeyValue))
+        if (IsBusy)
         {
-            _packageContext.Secrets.SetSecret("connection.apiKey", ApiKeyValue.Trim());
-            ApiKeyValue = null;
+            return;
         }
 
-        var utilityModelId = UtilityModelId.Trim();
-        if (string.IsNullOrWhiteSpace(utilityModelId))
+        IsBusy = true;
+        try
         {
-            await _packageContext.Storage.State.DeleteValueAsync(LMStudioProviderConfiguration.UtilityModelKey);
-            UtilityModelId = string.Empty;
-        }
-        else
-        {
+            var utilityModelId = UtilityModelId.Trim();
+            if (string.IsNullOrWhiteSpace(utilityModelId))
+            {
+                await _packageContext.Storage.State.DeleteValueAsync(LMStudioProviderConfiguration.UtilityModelKey);
+                UtilityModelId = string.Empty;
+                return;
+            }
+
+            var normalizedModelId = utilityModelId.StartsWith("lmstudio/", StringComparison.OrdinalIgnoreCase)
+                ? utilityModelId
+                : $"lmstudio/{utilityModelId}";
             await _packageContext.Storage.State.SetValueAsync(
                 LMStudioProviderConfiguration.UtilityModelKey,
-                utilityModelId.StartsWith("lmstudio/", StringComparison.OrdinalIgnoreCase)
-                    ? utilityModelId
-                    : $"lmstudio/{utilityModelId}"
-            );
-            UtilityModelId = utilityModelId;
+                normalizedModelId);
+            UtilityModelId = normalizedModelId;
+        }
+        finally
+        {
+            IsBusy = false;
         }
     }
 
-    private void RefreshStatus()
+    private void RefreshConnectionStatus()
     {
-        IsConnectionConfigured = !string.IsNullOrWhiteSpace(BaseUrl);
-        ConnectionStatusLabel = IsConnectionConfigured ? "Configured" : "Missing";
-        ConnectionStatusDetail = IsConnectionConfigured
-            ? "LM Studio will be contacted at the configured OpenAI-compatible endpoint."
-            : "Set a base URL before using LM Studio models.";
+        if (!LMStudioConnectionOptions.TryNormalizeBaseUrl(
+                BaseUrl,
+                out _,
+                out _,
+                out var validationError))
+        {
+            SetInvalidConnectionStatus(validationError);
+            return;
+        }
 
-        IsApiKeyStored = HasStoredApiKey;
-        if (IsApiKeyStored)
-        {
-            ApiKeyStatusLabel = "Stored";
-            ApiKeyStatusDetail = "A connection API key is stored and will be sent to LM Studio.";
-        }
-        else
-        {
-            ApiKeyStatusLabel = "Optional";
-            ApiKeyStatusDetail = "Leave the API key blank unless your LM Studio endpoint requires one.";
-        }
+        IsConnectionConfigured = true;
+        IsConnectionStatusError = false;
+        ConnectionStatusLabel = "Configured";
+        ConnectionStatusDetail = "LM Studio will be contacted at the configured OpenAI-compatible endpoint.";
     }
 
-    private static string NormalizeBaseUrl(string? value) =>
-        string.IsNullOrWhiteSpace(value)
-            ? LMStudioProviderConfiguration.DefaultBaseUrl
-            : value.Trim().TrimEnd('/');
+    private void SetInvalidConnectionStatus(string validationError)
+    {
+        IsConnectionConfigured = false;
+        IsConnectionStatusError = false;
+        ConnectionStatusLabel = "Invalid";
+        ConnectionStatusDetail = validationError;
+    }
+
+    private void SetConnectionErrorStatus(string detail)
+    {
+        IsConnectionConfigured = false;
+        IsConnectionStatusError = true;
+        ConnectionStatusLabel = "Save failed";
+        ConnectionStatusDetail = detail;
+    }
 }

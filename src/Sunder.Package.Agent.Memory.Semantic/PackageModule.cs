@@ -13,14 +13,14 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddSingleton(new MemoryLocalStore(context));
         services.AddSingleton(new MemorySemanticSettingsService(context));
         services.AddSingleton<SemanticMemoryMetricsService>();
-        services.AddSingleton<SemanticEmbeddingContextResolver>();
-        services.AddSingleton<ProfileConfiguredEmbeddingProviderResolver>();
+        services.AddSingleton<SemanticModelRuntimeResolver>();
         services.AddSingleton<SemanticMemoryRetrievalBackend>();
         services.AddSingleton<SemanticMemoryIndexingBackgroundService>();
         services.AddSingleton<SemanticMemoryRecallService>();
         services.AddSingleton<SemanticMemoryPromotionService>();
         services.AddSingleton<MemoryInspectorService>();
         services.AddSingleton<MemorySemanticFeature>();
+        services.AddTransient<MemoryInspectorViewModel>();
     }
 
     public void RegisterContributions(IPackageContributionRegistry registry, IServiceProvider services)

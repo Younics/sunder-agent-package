@@ -9,7 +9,8 @@ public sealed class AgentBehaviorLoopHostFactory(
     AgentPermissionService permissionService,
     AgentMemoryCoordinator memoryCoordinator,
     AgentRunEventLogger runEventLogger,
-    AgentActiveRunRegistry activeRunRegistry)
+    AgentActiveRunRegistry activeRunRegistry,
+    DefaultAgentBehaviorLoop defaultBehaviorLoop)
 {
     private readonly AgentSessionService _sessionService = sessionService;
     private readonly AgentToolService _toolService = toolService;
@@ -17,6 +18,7 @@ public sealed class AgentBehaviorLoopHostFactory(
     private readonly AgentMemoryCoordinator _memoryCoordinator = memoryCoordinator;
     private readonly AgentRunEventLogger _runEventLogger = runEventLogger;
     private readonly AgentActiveRunRegistry _activeRunRegistry = activeRunRegistry;
+    private readonly DefaultAgentBehaviorLoop _defaultBehaviorLoop = defaultBehaviorLoop;
 
     internal AgentBehaviorLoopHost Create(
         IAgentChatProvider provider,
@@ -28,7 +30,12 @@ public sealed class AgentBehaviorLoopHostFactory(
         DateTimeOffset runStartedAtUtc,
         string userMessage,
         Guid userTurnId)
-        => new(
+    {
+        var runLease = _activeRunRegistry
+                           .GetCurrent(session.SessionId, runId, runRevision)?.DurableLease
+                       ?? _sessionService.GetRunLease(runId)
+                       ?? throw new InvalidOperationException($"Durable run '{runId}' was not found.");
+        return new(
             _sessionService,
             _toolService,
             _permissionService,
@@ -43,5 +50,8 @@ public sealed class AgentBehaviorLoopHostFactory(
             runStartedAtUtc,
             userMessage,
             userTurnId,
-            () => _activeRunRegistry.IsCurrent(session.SessionId, runRevision));
+            runLease,
+            _defaultBehaviorLoop,
+            () => _activeRunRegistry.IsCurrent(session.SessionId, runId, runRevision));
+    }
 }

@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Tools.Web.Services;
 
 namespace Sunder.Package.Agent.Tools.Web;
@@ -57,8 +58,8 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
         return new AgentToolPresentation(
             HeaderText: request.ResultSummary ?? (parsed ? args.Url : null),
             DetailMarkdown: !parsed
-                ? WebToolPresentation.BuildRawRequestMarkdown(request.ArgumentsJson, error)
-                : WebToolPresentation.BuildRequestMarkdown(
+                ? AgentToolPresentationMarkdown.BuildRawRequestMarkdown(request.ArgumentsJson, error)
+                : AgentToolPresentationMarkdown.BuildRequestMarkdown(
                     ("URL", args.Url),
                     ("Format", string.IsNullOrWhiteSpace(args.Format) ? "markdown" : args.Format),
                     ("Timeout", args.TimeoutSeconds is null ? null : $"{args.TimeoutSeconds.Value}s")),
@@ -81,7 +82,7 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
             return new AgentToolResult(
                 Descriptor.ToolId,
                 error!,
-                Content: $"### Web fetch failed\n\n{error}",
+                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web fetch failed", error!),
                 IsError: true,
                 ErrorCode: "web-fetch-args");
         }
@@ -91,7 +92,7 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
             return new AgentToolResult(
                 Descriptor.ToolId,
                 "The url parameter is required.",
-                Content: "### Web fetch failed\n\nThe `url` parameter is required.",
+                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web fetch failed", "The `url` parameter is required."),
                 IsError: true,
                 ErrorCode: "web-fetch-url-required");
         }
@@ -102,7 +103,7 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
             return new AgentToolResult(
                 Descriptor.ToolId,
                 "Format must be text, markdown, or html.",
-                Content: "### Web fetch failed\n\n`format` must be one of `text`, `markdown`, or `html`.",
+                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web fetch failed", "`format` must be one of `text`, `markdown`, or `html`."),
                 IsError: true,
                 ErrorCode: "web-fetch-format-invalid");
         }
@@ -113,7 +114,7 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
             return new AgentToolResult(
                 Descriptor.ToolId,
                 "URL must start with http:// or https://.",
-                Content: "### Web fetch failed\n\n`url` must be an absolute HTTP or HTTPS URL.",
+                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web fetch failed", "`url` must be an absolute HTTP or HTTPS URL."),
                 IsError: true,
                 ErrorCode: "web-fetch-url-invalid");
         }
@@ -135,7 +136,9 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
             return new AgentToolResult(
                 Descriptor.ToolId,
                 ex.Message,
-                Content: $"### Web fetch failed\n\nThe web fetch timed out or was canceled before the resource could be reached.\n\n{ex.Message}",
+                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown(
+                    "Web fetch failed",
+                    $"The web fetch timed out or was canceled before the resource could be reached.\n\n{ex.Message}"),
                 IsError: true,
                 ErrorCode: "web-fetch-http");
         }
@@ -148,7 +151,7 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
             return new AgentToolResult(
                 Descriptor.ToolId,
                 ex.Message,
-                Content: $"### Web fetch failed\n\n{ex.Message}",
+                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web fetch failed", ex.Message),
                 IsError: true,
                 ErrorCode: "web-fetch-http");
         }

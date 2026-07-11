@@ -9,9 +9,9 @@ public partial class LocalExecutionSettingsView : UserControl
         InitializeComponent();
     }
 
-    public LocalExecutionSettingsView(LocalShellCatalogService shellCatalogService)
+    public LocalExecutionSettingsView(LocalExecutionSettingsViewModel viewModel)
         : this()
     {
-        DataContext = new LocalExecutionSettingsViewModel(shellCatalogService);
+        DataContext = viewModel;
     }
 }

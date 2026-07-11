@@ -7,30 +7,25 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.Memory.Semantic;
 
 public sealed class MemoryInspectorService(
-    IPackageExtensionCatalog extensionCatalog,
     MemoryLocalStore store,
     SemanticMemoryRetrievalBackend retrievalBackend,
-    MemorySemanticSettingsService settingsService,
     SemanticMemoryIndexingBackgroundService indexingBackgroundService,
-    SemanticEmbeddingContextResolver semanticEmbeddingContextResolver,
+    SemanticModelRuntimeResolver modelRuntimeResolver,
     SemanticMemoryMetricsService metricsService
 )
 {
-    private readonly IPackageExtensionCatalog _extensionCatalog = extensionCatalog;
     private readonly MemoryLocalStore _store = store;
     private readonly SemanticMemoryRetrievalBackend _retrievalBackend = retrievalBackend;
-    private readonly MemorySemanticSettingsService _settingsService = settingsService;
     private readonly SemanticMemoryIndexingBackgroundService _indexingBackgroundService =
         indexingBackgroundService;
-    private readonly SemanticEmbeddingContextResolver _semanticEmbeddingContextResolver =
-        semanticEmbeddingContextResolver;
+    private readonly SemanticModelRuntimeResolver _modelRuntimeResolver = modelRuntimeResolver;
     private readonly SemanticMemoryMetricsService _metricsService = metricsService;
 
     public event Action<Guid>? SessionChanged
     {
         add
         {
-            var catalog = GetRuntimeCatalog();
+            var catalog = _modelRuntimeResolver.RuntimeCatalog;
             if (catalog is not null)
             {
                 catalog.SessionChanged += value;
@@ -38,7 +33,7 @@ public sealed class MemoryInspectorService(
         }
         remove
         {
-            var catalog = GetRuntimeCatalog();
+            var catalog = _modelRuntimeResolver.RuntimeCatalog;
             if (catalog is not null)
             {
                 catalog.SessionChanged -= value;
@@ -53,13 +48,13 @@ public sealed class MemoryInspectorService(
     }
 
     public IReadOnlyList<AgentSessionRecord> ListSessions() =>
-        GetRuntimeCatalog()?.ListSessions() ?? [];
+        _modelRuntimeResolver.RuntimeCatalog?.ListSessions() ?? [];
 
     public AgentSessionContextCheckpointRecord? GetSessionContextCheckpoint(Guid sessionId) =>
-        GetRuntimeCatalog()?.GetLatestSessionContextCheckpoint(sessionId);
+        _modelRuntimeResolver.RuntimeCatalog?.GetLatestSessionContextCheckpoint(sessionId);
 
     public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) =>
-        GetRuntimeCatalog()?.GetWorkingSummary(sessionId);
+        _modelRuntimeResolver.RuntimeCatalog?.GetWorkingSummary(sessionId);
 
     public IReadOnlyList<StoredMemoryRecord> ListMemories(
         Guid sessionId,
@@ -168,7 +163,7 @@ public sealed class MemoryInspectorService(
         CancellationToken cancellationToken = default
     )
     {
-        var context = await _semanticEmbeddingContextResolver
+        var context = await _modelRuntimeResolver
             .ResolveForSessionAsync(sessionId, profileId, cancellationToken)
             .ConfigureAwait(false);
         if (!context.IsReady || context.ProviderId is null || context.ModelId is null)
@@ -203,15 +198,15 @@ public sealed class MemoryInspectorService(
         CancellationToken cancellationToken = default
     )
     {
-        var session = GetRuntimeCatalog()?.GetSession(sessionId);
+        var session = _modelRuntimeResolver.RuntimeCatalog?.GetSession(sessionId);
         if (session is null)
         {
             return new SemanticMemoryReindexResult("Session not found.", IndexedMemoryCount: 0);
         }
 
         var profile = string.IsNullOrWhiteSpace(profileId)
-            ? GetRuntimeCatalog()?.GetSessionProfile(sessionId)
-            : GetRuntimeCatalog()?.GetProfile(profileId);
+            ? _modelRuntimeResolver.RuntimeCatalog?.GetSessionProfile(sessionId)
+            : _modelRuntimeResolver.RuntimeCatalog?.GetProfile(profileId);
         if (profile is null)
         {
             return new SemanticMemoryReindexResult("Agent not found.", IndexedMemoryCount: 0);
@@ -262,8 +257,6 @@ public sealed class MemoryInspectorService(
 
     public SemanticMemoryMetricsSnapshot GetMetricsSnapshot() => _metricsService.GetSnapshot();
 
-    private IAgentRuntimeCatalog? GetRuntimeCatalog() =>
-        _extensionCatalog.GetExtensions(PackageExtensionPoints.RuntimeCatalogs).FirstOrDefault();
 }
 
 public sealed record SemanticMemoryStatusRecord(string StatusText, bool CanReindex);

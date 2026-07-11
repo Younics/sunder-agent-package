@@ -11,7 +11,12 @@ public sealed class PackageModule : ISunderPackageModule
     public void ConfigureServices(IServiceCollection services, IPackageContext context)
     {
         services.AddSingleton<WebToolsSettingsService>();
-        services.AddSingleton<WebFetchService>();
+        services.AddSingleton<IWebHostResolver, SystemWebHostResolver>();
+        services.AddSingleton<WebUrlNetworkPolicy>();
+        services.AddSingleton<IWebFetchHttpClientFactory, PinnedWebFetchHttpClientFactory>();
+        services.AddSingleton(provider => new WebFetchService(
+            provider.GetRequiredService<WebUrlNetworkPolicy>(),
+            provider.GetRequiredService<IWebFetchHttpClientFactory>()));
         services.AddSingleton<ExaWebSearchBackend>();
         services.AddSingleton<WebFetchTool>();
         services.AddSingleton<WebSearchTool>();

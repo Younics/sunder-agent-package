@@ -14,6 +14,9 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
     private const string TimeoutKey = "docker.timeoutSeconds.default";
     private const string DefaultTimeoutSeconds = "300";
 
+    internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
+        [TimeoutKey, DockerCli.ExecutablePathConfigurationKey];
+
     private readonly DockerImageCatalogService _imageCatalogService;
     private readonly IPackageContext _packageContext;
     private readonly IBackgroundProcessQueue _backgroundProcessQueue;

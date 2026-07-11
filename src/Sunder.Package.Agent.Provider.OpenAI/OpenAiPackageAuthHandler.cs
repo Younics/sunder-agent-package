@@ -73,6 +73,10 @@ public sealed class OpenAiPackageAuthHandler(
                 CanAuthorize: true,
                 CanDisconnect: true);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             return new PackageAuthStatus(
@@ -84,15 +88,15 @@ public sealed class OpenAiPackageAuthHandler(
         }
     }
 
-    public Task<PackageAuthStatus> DisconnectAsync(CancellationToken cancellationToken = default)
+    public async Task<PackageAuthStatus> DisconnectAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        _codexConnectedAuthStrategy.ClearSession();
-        return Task.FromResult(new PackageAuthStatus(
+        await _codexConnectedAuthStrategy.ClearSessionAsync(cancellationToken);
+        return new PackageAuthStatus(
             "sunder.package.agent.provider.openai",
             PackageAuthStatusKind.NotConnected,
             "ChatGPT Plus/Pro OAuth session removed.",
             CanAuthorize: true,
-            CanDisconnect: false));
+            CanDisconnect: false);
     }
 }

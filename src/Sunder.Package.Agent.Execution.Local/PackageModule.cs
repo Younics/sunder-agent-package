@@ -12,6 +12,7 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddSingleton<LocalExecutionWorkspaceConfigService>();
         services.AddSingleton<LocalExecutionTarget>();
         services.AddSingleton<LocalExecutionWorkspaceEditorContributor>();
+        services.AddTransient<LocalExecutionSettingsViewModel>();
     }
 
     public void RegisterContributions(IPackageContributionRegistry registry, IServiceProvider services)
