@@ -16,18 +16,18 @@ public sealed class LocalExecutionWorkspaceEditorContributor(
     public bool CanEdit(AgentWorkspaceEditorContext context)
         => string.Equals(context.TargetId, TargetId, StringComparison.OrdinalIgnoreCase);
 
-    public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
+    public async ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
         AgentWorkspaceEditorContext context,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var config = configService.GetConfig(context.ConfigurationId);
-        var shells = shellCatalogService.ListShells()
+        var config = await configService.GetConfigAsync(context.ConfigurationId, cancellationToken);
+        var shells = (await shellCatalogService.ListShellsAsync(cancellationToken))
             .Select(shell => new AgentEditorOption(shell.ShellId, shell.DisplayName, $"{shell.ExecutablePath} · {shell.SyntaxKind}"))
             .ToArray();
         var selectedShellId = string.IsNullOrWhiteSpace(config.SelectedShellId)
-            ? shellCatalogService.GetDefaultShell().ShellId
+            ? (await shellCatalogService.GetDefaultShellAsync(cancellationToken)).ShellId
             : config.SelectedShellId;
 
         IReadOnlyList<AgentEditorSection> sections =
@@ -46,10 +46,10 @@ public sealed class LocalExecutionWorkspaceEditorContributor(
                 ]),
         ];
 
-        return ValueTask.FromResult(sections);
+        return sections;
     }
 
-    public ValueTask<AgentEditorSaveResult> SaveSectionAsync(
+    public async ValueTask<AgentEditorSaveResult> SaveSectionAsync(
         AgentWorkspaceEditorContext context,
         AgentEditorSaveRequest request,
         CancellationToken cancellationToken = default)
@@ -58,14 +58,14 @@ public sealed class LocalExecutionWorkspaceEditorContributor(
 
         if (!string.Equals(request.SectionId, SectionId, StringComparison.OrdinalIgnoreCase))
         {
-            return ValueTask.FromResult(AgentEditorSaveResult.Failed("Unknown local execution settings section."));
+            return AgentEditorSaveResult.Failed("Unknown local execution settings section.");
         }
 
         var selectedShellId = request.Fields.TryGetValue(ShellFieldId, out var shellValue)
             ? shellValue.Value
             : null;
-        var config = configService.GetConfig(context.ConfigurationId);
-        configService.SaveConfig(context.ConfigurationId, config with { SelectedShellId = selectedShellId });
-        return ValueTask.FromResult(AgentEditorSaveResult.Ok("Local execution settings saved."));
+        var config = await configService.GetConfigAsync(context.ConfigurationId, cancellationToken);
+        await configService.SaveConfigAsync(context.ConfigurationId, config with { SelectedShellId = selectedShellId }, cancellationToken);
+        return AgentEditorSaveResult.Ok("Local execution settings saved.");
     }
 }

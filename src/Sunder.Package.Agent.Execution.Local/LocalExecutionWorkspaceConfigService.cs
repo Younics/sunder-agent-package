@@ -11,9 +11,11 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
 
     public string ContributorId => "sunder.package.agent.execution.local.workspace-path-migration";
 
-    public LocalExecutionWorkspaceConfig GetConfig(string bindingId)
+    public async Task<LocalExecutionWorkspaceConfig> GetConfigAsync(
+        string bindingId,
+        CancellationToken cancellationToken = default)
     {
-        var json = packageContext.Storage.State.GetValue(BuildKey(bindingId));
+        var json = await packageContext.Storage.State.GetValueAsync(BuildKey(bindingId), cancellationToken);
         if (string.IsNullOrWhiteSpace(json))
         {
             return new LocalExecutionWorkspaceConfig(null, []);
@@ -30,10 +32,16 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
         }
     }
 
-    public void SaveConfig(string bindingId, LocalExecutionWorkspaceConfig config)
+    public Task SaveConfigAsync(
+        string bindingId,
+        LocalExecutionWorkspaceConfig config,
+        CancellationToken cancellationToken = default)
     {
         var normalized = Normalize(config);
-        packageContext.Storage.State.SetValueAsync(BuildKey(bindingId), JsonSerializer.Serialize(normalized, JsonOptions)).GetAwaiter().GetResult();
+        return packageContext.Storage.State.SetValueAsync(
+            BuildKey(bindingId),
+            JsonSerializer.Serialize(normalized, JsonOptions),
+            cancellationToken);
     }
 
     private static LocalExecutionWorkspaceConfig Normalize(LocalExecutionWorkspaceConfig config)
@@ -52,9 +60,11 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
     public bool CanMigrate(AgentWorkspacePathMigrationContext context)
         => string.Equals(context.Binding.ContributionId, "local", StringComparison.OrdinalIgnoreCase);
 
-    public IReadOnlyList<AgentWorkspacePathMigrationItem> GetLegacyWorkspacePaths(AgentWorkspacePathMigrationContext context)
+    public async Task<IReadOnlyList<AgentWorkspacePathMigrationItem>> GetLegacyWorkspacePathsAsync(
+        AgentWorkspacePathMigrationContext context,
+        CancellationToken cancellationToken = default)
     {
-        var json = packageContext.Storage.State.GetValue(BuildKey(context.Binding.BindingId));
+        var json = await packageContext.Storage.State.GetValueAsync(BuildKey(context.Binding.BindingId), cancellationToken);
         if (string.IsNullOrWhiteSpace(json))
         {
             return [];
@@ -101,8 +111,13 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
         }
     }
 
-    public void CompleteWorkspacePathMigration(AgentWorkspacePathMigrationContext context)
-        => SaveConfig(context.Binding.BindingId, GetConfig(context.Binding.BindingId));
+    public async Task CompleteWorkspacePathMigrationAsync(
+        AgentWorkspacePathMigrationContext context,
+        CancellationToken cancellationToken = default)
+        => await SaveConfigAsync(
+            context.Binding.BindingId,
+            await GetConfigAsync(context.Binding.BindingId, cancellationToken),
+            cancellationToken);
 
     internal static string ExpandPath(string path)
     {

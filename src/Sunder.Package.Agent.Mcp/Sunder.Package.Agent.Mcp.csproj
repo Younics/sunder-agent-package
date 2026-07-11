@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <SunderPackageProject>true</SunderPackageProject>
+    <SunderSdkStacksReference>true</SunderSdkStacksReference>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>

@@ -45,14 +45,14 @@ internal sealed class LocalProcessExecutor(IPackageContext packageContext)
         LocalCommandRunner.ApplyPathEnvironment(startInfo, pathEntries);
         return await LocalCommandRunner.ExecuteAsync(
             startInfo,
-            request.TimeoutSeconds ?? ResolveDefaultTimeoutSeconds(),
+            request.TimeoutSeconds ?? await ResolveDefaultTimeoutSecondsAsync(cancellationToken),
             workingDirectory,
             executableResolution,
             cancellationToken);
     }
 
-    private int ResolveDefaultTimeoutSeconds()
-        => int.TryParse(packageContext.Configuration.GetValue("shell.timeoutSeconds.default"), out var parsed) && parsed > 0
+    private async Task<int> ResolveDefaultTimeoutSecondsAsync(CancellationToken cancellationToken)
+        => int.TryParse(await packageContext.Configuration.GetValueAsync("shell.timeoutSeconds.default", cancellationToken), out var parsed) && parsed > 0
             ? parsed
             : DefaultTimeoutSeconds;
 }

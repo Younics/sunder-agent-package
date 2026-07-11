@@ -3,13 +3,14 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Avalonia;
 using Sunder.Sdk.Stacks;
 
 namespace Sunder.Package.Agent.Mcp;
 
-public sealed class PackageModule : ISunderPackageModule
+public sealed class PackageModule : ISunderRuntimePackageModule
 {
-    public void ConfigureServices(IServiceCollection services, IPackageContext context)
+    public void ConfigureRuntimeServices(IServiceCollection services, IPackageContext context)
     {
         services.AddSingleton<McpServerCatalogService>();
         services.AddSingleton<McpOAuthService>();
@@ -29,13 +30,30 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddTransient<AgentMcpSettingsViewModel>();
     }
 
-    public void RegisterContributions(IPackageContributionRegistry registry, IServiceProvider services)
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
+        => ConfigureRuntimeServices(services, context);
+
+    public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
         services.GetRequiredService<McpConfigurationCoordinator>().Start();
         registry.RegisterConfigurationSchema(McpPackageConfiguration.Schema);
-        registry.RegisterSettingsView<AgentMcpSettingsView>();
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, services.GetRequiredService<McpToolSource>());
         registry.RegisterExtension(PackageExtensionPoints.ProfileSelectableCapabilityProviders, services.GetRequiredService<McpToolSource>());
         registry.RegisterExtension(SunderStackExtensionPoints.StackContributors, services.GetRequiredService<McpServerStackContributor>());
     }
+
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
+    {
+        registry.RegisterSettingsView<AgentMcpSettingsView>();
+        registry.RegisterExtension(PackageExtensionPoints.ToolSources, services.GetRequiredService<McpToolSource>());
+        registry.RegisterExtension(PackageExtensionPoints.ProfileSelectableCapabilityProviders, services.GetRequiredService<McpToolSource>());
+    }
+}
+
+public sealed class AppPackageModule : ISunderAppPackageModule
+{
+    private readonly PackageModule _module = new();
+
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
 }

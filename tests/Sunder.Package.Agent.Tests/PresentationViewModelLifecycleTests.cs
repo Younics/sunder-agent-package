@@ -13,18 +13,18 @@ public sealed class PresentationViewModelLifecycleTests
     public void SubscribingViewModels_AreInjectedAsTransientDataContexts()
     {
         using var scope = RegressionTestPackageScope.Create();
-        AssertTransientViewModel<Sunder.Package.Agent.Memory.Semantic.PackageModule, MemoryInspectorViewModel, MemoryInspectorView>(scope);
-        AssertTransientViewModel<Sunder.Package.Agent.Mcp.PackageModule, AgentMcpSettingsViewModel, AgentMcpSettingsView>(scope);
-        AssertTransientViewModel<Sunder.Package.Agent.Skills.PackageModule, SkillSettingsViewModel, SkillSettingsView>(scope);
-        AssertTransientViewModel<Sunder.Package.Agent.Subagents.PackageModule, SubagentsViewModel, SubagentsView>(scope);
-        AssertTransientViewModel<Sunder.Package.Agent.Subagents.PackageModule, SubsessionsViewModel, SubsessionsView>(scope);
+        AssertTransientViewModel<Sunder.Package.Agent.Memory.Semantic.AppPackageModule, MemoryInspectorViewModel, MemoryInspectorView>(scope);
+        AssertTransientViewModel<Sunder.Package.Agent.Mcp.AppPackageModule, AgentMcpSettingsViewModel, AgentMcpSettingsView>(scope);
+        AssertTransientViewModel<Sunder.Package.Agent.Skills.AppPackageModule, SkillSettingsViewModel, SkillSettingsView>(scope);
+        AssertTransientViewModel<Sunder.Package.Agent.Subagents.AppPackageModule, SubagentsViewModel, SubagentsView>(scope);
+        AssertTransientViewModel<Sunder.Package.Agent.Subagents.AppPackageModule, SubsessionsViewModel, SubsessionsView>(scope);
     }
 
     private static void AssertTransientViewModel<TModule, TViewModel, TView>(RegressionTestPackageScope scope)
-        where TModule : Sunder.Sdk.Abstractions.ISunderPackageModule, new()
+        where TModule : Sunder.Sdk.Abstractions.ISunderAppPackageModule, new()
     {
         var services = new ServiceCollection();
-        new TModule().ConfigureServices(services, scope.Context);
+        new TModule().ConfigureAppServices(services, scope.Context);
 
         var descriptor = Assert.Single(services, candidate => candidate.ServiceType == typeof(TViewModel));
         Assert.Equal(ServiceLifetime.Transient, descriptor.Lifetime);

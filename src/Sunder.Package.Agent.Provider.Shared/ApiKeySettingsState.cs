@@ -28,7 +28,10 @@ internal sealed partial class ApiKeySettingsState : ObservableObject, IDisposabl
         _resolveStatus = resolveStatus;
         _statusTimer = new TimedStatusController(timeProvider);
         _operation.PropertyChanged += OnOperationPropertyChanged;
-        RefreshCredentialStatus();
+        var status = _resolveStatus(false);
+        CredentialStatusLabel = status.Label;
+        CredentialStatusDetail = status.Detail;
+        IsCredentialStatusWarning = status.IsWarning;
     }
 
     public string Description { get; }
@@ -75,11 +78,11 @@ internal sealed partial class ApiKeySettingsState : ObservableObject, IDisposabl
     }
 
     [RelayCommand]
-    internal Task SaveCredentialAsync()
+    internal async Task SaveCredentialAsync()
     {
         if (_operation.IsBusy)
         {
-            return Task.CompletedTask;
+            return;
         }
 
         _statusTimer.Cancel();
@@ -87,10 +90,10 @@ internal sealed partial class ApiKeySettingsState : ObservableObject, IDisposabl
         try
         {
             operation.CancellationToken.ThrowIfCancellationRequested();
-            var changed = _credentials.SetCredentialIfProvided(EnteredCredential);
+            var changed = await _credentials.SetCredentialIfProvidedAsync(EnteredCredential, operation.CancellationToken);
             EnteredCredential = null;
             IsClearConfirmationRequested = false;
-            RefreshCredentialStatus();
+            await RefreshCredentialStatusAsync(operation.CancellationToken);
             CompleteWithTransientSuccess(
                 operation,
                 changed ? "API key saved." : "Settings saved. The existing API key was retained.");
@@ -104,7 +107,6 @@ internal sealed partial class ApiKeySettingsState : ObservableObject, IDisposabl
             _operation.TryComplete(operation, $"API key could not be saved: {ex.Message}", OperationSeverity.Error);
         }
 
-        return Task.CompletedTask;
     }
 
     [RelayCommand]
@@ -117,11 +119,11 @@ internal sealed partial class ApiKeySettingsState : ObservableObject, IDisposabl
     }
 
     [RelayCommand]
-    internal Task ClearCredentialAsync()
+    internal async Task ClearCredentialAsync()
     {
         if (!CanConfirmClearCredential)
         {
-            return Task.CompletedTask;
+            return;
         }
 
         _statusTimer.Cancel();
@@ -129,10 +131,10 @@ internal sealed partial class ApiKeySettingsState : ObservableObject, IDisposabl
         try
         {
             operation.CancellationToken.ThrowIfCancellationRequested();
-            _credentials.DeleteCredential();
+            await _credentials.DeleteCredentialAsync(operation.CancellationToken);
             EnteredCredential = null;
             IsClearConfirmationRequested = false;
-            RefreshCredentialStatus();
+            await RefreshCredentialStatusAsync(operation.CancellationToken);
             CompleteWithTransientSuccess(operation, "Stored API key cleared.");
         }
         catch (OperationCanceledException) when (operation.CancellationToken.IsCancellationRequested)
@@ -144,15 +146,14 @@ internal sealed partial class ApiKeySettingsState : ObservableObject, IDisposabl
             _operation.TryComplete(operation, $"API key could not be cleared: {ex.Message}", OperationSeverity.Error);
         }
 
-        return Task.CompletedTask;
     }
 
     [RelayCommand]
     private void CancelClearCredential() => IsClearConfirmationRequested = false;
 
-    internal void RefreshCredentialStatus()
+    internal async Task RefreshCredentialStatusAsync(CancellationToken cancellationToken = default)
     {
-        HasStoredCredential = _credentials.HasCredential;
+        HasStoredCredential = await _credentials.HasCredentialAsync(cancellationToken);
         var status = _resolveStatus(HasStoredCredential);
         CredentialStatusLabel = status.Label;
         CredentialStatusDetail = status.Detail;

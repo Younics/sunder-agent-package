@@ -48,7 +48,7 @@ public sealed class SemanticModelRuntimeResolver(
         string? profileId = null,
         CancellationToken cancellationToken = default)
     {
-        if (!_settingsService.IsSemanticRetrievalEnabled())
+        if (!await _settingsService.IsSemanticRetrievalEnabledAsync(cancellationToken))
         {
             return SemanticEmbeddingContext.Disabled("Semantic retrieval is disabled in package settings.");
         }

@@ -18,7 +18,11 @@ public class DockerCliRunner(IPackageContext packageContext)
         ProcessStartInfo startInfo;
         try
         {
-            startInfo = DockerCli.CreateStartInfo(packageContext, args, redirectStandardInput: standardInput is not null);
+            startInfo = await DockerCli.CreateStartInfoAsync(
+                packageContext,
+                args,
+                redirectStandardInput: standardInput is not null,
+                cancellationToken);
         }
         catch (Exception ex)
         {

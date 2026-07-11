@@ -14,17 +14,17 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
 
     public event Action? ImagesChanged;
 
-    public IReadOnlyList<DockerImageDefinition> ListImages()
+    public async Task<IReadOnlyList<DockerImageDefinition>> ListImagesAsync(CancellationToken cancellationToken = default)
     {
-        var state = LoadState();
-        SaveImages(state.Images);
+        var state = await LoadStateAsync(cancellationToken);
+        await SaveImagesAsync(state.Images, cancellationToken);
         return state.Images;
     }
 
-    public string? GetDefaultImageReference()
-        => ListImages().FirstOrDefault()?.ImageReference;
+    public async Task<string?> GetDefaultImageReferenceAsync(CancellationToken cancellationToken = default)
+        => (await ListImagesAsync(cancellationToken)).FirstOrDefault()?.ImageReference;
 
-    public bool ContainsImage(string? imageReference)
+    public async Task<bool> ContainsImageAsync(string? imageReference, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(imageReference))
         {
@@ -32,13 +32,13 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
         }
 
         var normalized = NormalizeImageReference(imageReference);
-        return ListImages().Any(image => string.Equals(image.ImageReference, normalized, StringComparison.OrdinalIgnoreCase));
+        return (await ListImagesAsync(cancellationToken)).Any(image => string.Equals(image.ImageReference, normalized, StringComparison.OrdinalIgnoreCase));
     }
 
-    public DockerImageDefinition AddImage(string imageReference)
+    public async Task<DockerImageDefinition> AddImageAsync(string imageReference, CancellationToken cancellationToken = default)
     {
         var normalized = NormalizeImageReference(imageReference);
-        var images = ListImages().ToList();
+        var images = (await ListImagesAsync(cancellationToken)).ToList();
         var existing = images.FirstOrDefault(image => string.Equals(image.ImageReference, normalized, StringComparison.OrdinalIgnoreCase));
         if (existing is not null)
         {
@@ -47,17 +47,17 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
 
         var image = new DockerImageDefinition(normalized, DockerImageStatus.NotPulled, null, "Image has not been pulled yet.");
         images.Add(image);
-        SaveImages(images);
+        await SaveImagesAsync(images, cancellationToken);
         ImagesChanged?.Invoke();
         return image;
     }
 
-    public void DeleteImage(string imageReference)
+    public async Task DeleteImageAsync(string imageReference, CancellationToken cancellationToken = default)
     {
         var normalized = NormalizeImageReference(imageReference);
-        SaveImages(ListImages()
+        await SaveImagesAsync((await ListImagesAsync(cancellationToken))
             .Where(image => !string.Equals(image.ImageReference, normalized, StringComparison.OrdinalIgnoreCase))
-            .ToArray());
+            .ToArray(), cancellationToken);
         ImagesChanged?.Invoke();
     }
 
@@ -71,7 +71,7 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
         }
 
         var normalized = NormalizeImageReference(imageReference);
-        var image = ListImages().FirstOrDefault(candidate => string.Equals(candidate.ImageReference, normalized, StringComparison.OrdinalIgnoreCase));
+        var image = (await ListImagesAsync(cancellationToken)).FirstOrDefault(candidate => string.Equals(candidate.ImageReference, normalized, StringComparison.OrdinalIgnoreCase));
         if (image is null)
         {
             return new DockerImageReadiness(false, $"Docker image '{normalized}' is not configured. Add it in Docker Execution settings before using this workspace.", null);
@@ -81,7 +81,7 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
         if (inspect.ExitCode == 0)
         {
             var ready = image with { Status = DockerImageStatus.Ready, LastMessage = "Image is ready." };
-            UpdateImage(ready);
+            await UpdateImageAsync(ready, cancellationToken);
             return new DockerImageReadiness(true, $"Docker image '{normalized}' is ready.", ready);
         }
 
@@ -95,19 +95,19 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
         string imageReference,
         CancellationToken cancellationToken = default)
     {
-        var image = AddImage(imageReference);
+        var image = await AddImageAsync(imageReference, cancellationToken);
         var inspect = await RunDockerAsync(["image", "inspect", image.ImageReference], ImageCheckTimeoutSeconds, cancellationToken, progress: null).ConfigureAwait(false);
         var updated = inspect.ExitCode == 0
             ? image with { Status = DockerImageStatus.Ready, LastMessage = "Image is ready." }
             : image with { Status = DockerImageStatus.NotPulled, LastMessage = AppendOutput("Image is not available locally.", inspect.Output) };
-        UpdateImage(updated);
+        await UpdateImageAsync(updated, cancellationToken);
         return updated;
     }
 
     public async Task<IReadOnlyList<DockerImageDefinition>> RefreshImagesAsync(CancellationToken cancellationToken = default)
     {
         var refreshed = new List<DockerImageDefinition>();
-        foreach (var image in ListImages())
+        foreach (var image in await ListImagesAsync(cancellationToken))
         {
             refreshed.Add(await RefreshImageAsync(image.ImageReference, cancellationToken).ConfigureAwait(false));
         }
@@ -120,14 +120,14 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
         IProgress<string>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var image = AddImage(imageReference);
-        UpdateImage(image with { Status = DockerImageStatus.Pulling, LastMessage = "Pulling image..." });
+        var image = await AddImageAsync(imageReference, cancellationToken);
+        await UpdateImageAsync(image with { Status = DockerImageStatus.Pulling, LastMessage = "Pulling image..." }, cancellationToken);
 
         var pull = await RunDockerAsync(["pull", image.ImageReference], ImagePullTimeoutSeconds, cancellationToken, progress).ConfigureAwait(false);
         if (pull.ExitCode != 0)
         {
             var failed = image with { Status = DockerImageStatus.Failed, LastMessage = AppendOutput("Docker image pull failed.", pull.Output) };
-            UpdateImage(failed);
+            await UpdateImageAsync(failed, cancellationToken);
             return new DockerImagePullResult(false, failed.LastMessage ?? "Docker image pull failed.", failed);
         }
 
@@ -140,16 +140,18 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
                 LastPulledAtUtc = DateTimeOffset.UtcNow,
                 LastMessage = "Image is ready."
             };
-            UpdateImage(ready);
+            await UpdateImageAsync(ready, cancellationToken);
             return new DockerImagePullResult(true, $"Docker image '{image.ImageReference}' is ready.", ready);
         }
 
         var unavailable = image with { Status = DockerImageStatus.Failed, LastMessage = AppendOutput("Docker image was pulled but could not be inspected.", inspect.Output) };
-        UpdateImage(unavailable);
+        await UpdateImageAsync(unavailable, cancellationToken);
         return new DockerImagePullResult(false, unavailable.LastMessage ?? "Docker image could not be inspected.", unavailable);
     }
 
-    public void SaveImages(IEnumerable<DockerImageDefinition> images)
+    public async Task SaveImagesAsync(
+        IEnumerable<DockerImageDefinition> images,
+        CancellationToken cancellationToken = default)
     {
         var normalized = images
             .Where(image => !string.IsNullOrWhiteSpace(image.ImageReference))
@@ -163,8 +165,11 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
             .OrderBy(image => image.ImageReference, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        packageContext.Storage.State.SetValueAsync(ImagesKey, JsonSerializer.Serialize(new DockerImageCatalogState(1, normalized), JsonOptions)).GetAwaiter().GetResult();
-        packageContext.Storage.State.SetValueAsync(InitializedKey, bool.TrueString).GetAwaiter().GetResult();
+        await packageContext.Storage.State.SetValueAsync(
+            ImagesKey,
+            JsonSerializer.Serialize(new DockerImageCatalogState(1, normalized), JsonOptions),
+            cancellationToken);
+        await packageContext.Storage.State.SetValueAsync(InitializedKey, bool.TrueString, cancellationToken);
     }
 
     public void NotifyImagesImported()
@@ -186,10 +191,12 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
         return normalized;
     }
 
-    private DockerImageCatalogState LoadState()
+    private async Task<DockerImageCatalogState> LoadStateAsync(CancellationToken cancellationToken)
     {
-        var initialized = bool.TryParse(packageContext.Storage.State.GetValue(InitializedKey), out var parsedInitialized) && parsedInitialized;
-        var json = packageContext.Storage.State.GetValue(ImagesKey);
+        var initialized = bool.TryParse(
+            await packageContext.Storage.State.GetValueAsync(InitializedKey, cancellationToken),
+            out var parsedInitialized) && parsedInitialized;
+        var json = await packageContext.Storage.State.GetValueAsync(ImagesKey, cancellationToken);
         if (string.IsNullOrWhiteSpace(json))
         {
             return initialized
@@ -235,9 +242,9 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
         }
     }
 
-    private void UpdateImage(DockerImageDefinition image)
+    private async Task UpdateImageAsync(DockerImageDefinition image, CancellationToken cancellationToken)
     {
-        var images = ListImages().ToList();
+        var images = (await ListImagesAsync(cancellationToken)).ToList();
         var index = images.FindIndex(candidate => string.Equals(candidate.ImageReference, image.ImageReference, StringComparison.OrdinalIgnoreCase));
         if (index >= 0)
         {
@@ -248,7 +255,7 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
             images.Add(image);
         }
 
-        SaveImages(images);
+        await SaveImagesAsync(images, cancellationToken);
     }
 
     private async Task<DockerCliRunResult> RunDockerAsync(

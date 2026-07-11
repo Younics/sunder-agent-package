@@ -18,7 +18,7 @@ public sealed class McpOAuthCoordinator(
     {
         cancellationToken.ThrowIfCancellationRequested();
         var service = oauthService ?? throw new InvalidOperationException("MCP OAuth is unavailable.");
-        service.ClearAuthorization(server.ServerId);
+        await service.ClearAuthorizationAsync(server.ServerId, cancellationToken);
         await connections.DisconnectServerAsync(server.ServerId).ConfigureAwait(false);
     }
 }

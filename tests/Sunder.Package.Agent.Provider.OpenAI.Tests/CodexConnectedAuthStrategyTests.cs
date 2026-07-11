@@ -22,7 +22,7 @@ public sealed class CodexConnectedAuthStrategyTests
         Assert.NotNull(refreshed);
         Assert.Equal("new-access", refreshed.AccessToken);
         Assert.Equal(existing.RefreshToken, refreshed.RefreshToken);
-        Assert.Equal(existing.RefreshToken, strategy.GetCachedSession()!.RefreshToken);
+        Assert.Equal(existing.RefreshToken, (await strategy.GetCachedSessionAsync())!.RefreshToken);
     }
 
     [Fact]
@@ -107,7 +107,7 @@ public sealed class CodexConnectedAuthStrategyTests
         var refreshed = await strategy.TryRefreshSessionAsync(existing);
 
         Assert.Null(refreshed);
-        Assert.Null(strategy.GetCachedSession());
+        Assert.Null(await strategy.GetCachedSessionAsync());
     }
 
     [Fact]
@@ -124,7 +124,7 @@ public sealed class CodexConnectedAuthStrategyTests
         var refreshed = await strategy.TryRefreshSessionAsync(existing);
 
         Assert.Null(refreshed);
-        Assert.Equal(existing, strategy.GetCachedSession());
+        Assert.Equal(existing, await strategy.GetCachedSessionAsync());
     }
 
     [Theory]
@@ -160,7 +160,7 @@ public sealed class CodexConnectedAuthStrategyTests
         await disconnect;
 
         Assert.Null(await refresh);
-        Assert.Null(strategy.GetCachedSession());
+        Assert.Null(await strategy.GetCachedSessionAsync());
     }
 
     [Fact]
@@ -202,7 +202,7 @@ public sealed class CodexConnectedAuthStrategyTests
             new Dictionary<string, string?> { ["code"] = "authorization-code" }));
 
         Assert.Equal(0, requestCount);
-        Assert.Null(strategy.GetCachedSession());
+        Assert.Null(await strategy.GetCachedSessionAsync());
     }
 
     private static CodexConnectedAuthStrategy CreateStrategy(

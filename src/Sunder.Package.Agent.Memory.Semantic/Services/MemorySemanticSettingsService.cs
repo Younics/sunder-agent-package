@@ -8,18 +8,24 @@ public sealed class MemorySemanticSettingsService(IPackageContext packageContext
     private const int DefaultMaxCanonicalTextChars = 1200;
 
     private readonly IPackageContext _packageContext = packageContext;
+    internal int CachedMaxCanonicalTextChars { get; private set; } = DefaultMaxCanonicalTextChars;
 
-    public bool IsSemanticRetrievalEnabled()
-        => !bool.TryParse(_packageContext.Configuration.GetValue("semantic.enabled"), out var enabled) || enabled;
+    public async Task<bool> IsSemanticRetrievalEnabledAsync(CancellationToken cancellationToken = default)
+        => !bool.TryParse(await _packageContext.Configuration.GetValueAsync("semantic.enabled", cancellationToken), out var enabled) || enabled;
 
-    public int GetEmbeddingBatchSize()
-        => ParsePositiveInt(_packageContext.Configuration.GetValue("semantic.batchSize"), DefaultEmbeddingBatchSize);
+    public async Task<int> GetEmbeddingBatchSizeAsync(CancellationToken cancellationToken = default)
+        => ParsePositiveInt(await _packageContext.Configuration.GetValueAsync("semantic.batchSize", cancellationToken), DefaultEmbeddingBatchSize);
 
-    public int GetMaxCanonicalTextChars()
-        => ParsePositiveInt(_packageContext.Configuration.GetValue("semantic.maxCanonicalTextChars"), DefaultMaxCanonicalTextChars);
+    public async Task<int> GetMaxCanonicalTextCharsAsync(CancellationToken cancellationToken = default)
+    {
+        CachedMaxCanonicalTextChars = ParsePositiveInt(
+            await _packageContext.Configuration.GetValueAsync("semantic.maxCanonicalTextChars", cancellationToken),
+            DefaultMaxCanonicalTextChars);
+        return CachedMaxCanonicalTextChars;
+    }
 
-    public SemanticReindexMode GetReindexMode()
-        => string.Equals(_packageContext.Configuration.GetValue("semantic.reindex.mode"), "never", StringComparison.OrdinalIgnoreCase)
+    public async Task<SemanticReindexMode> GetReindexModeAsync(CancellationToken cancellationToken = default)
+        => string.Equals(await _packageContext.Configuration.GetValueAsync("semantic.reindex.mode", cancellationToken), "never", StringComparison.OrdinalIgnoreCase)
             ? SemanticReindexMode.Never
             : SemanticReindexMode.Lazy;
 

@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestInfrastructure.cs" Link="RegressionTestInfrastructure.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\TestPackageStorageFakes.cs" Link="TestPackageStorageFakes.cs" />
   </ItemGroup>
 
   <ItemGroup>

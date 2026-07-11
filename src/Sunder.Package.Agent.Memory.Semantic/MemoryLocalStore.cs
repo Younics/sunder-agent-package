@@ -17,8 +17,8 @@ public sealed class MemoryLocalStore
     public MemoryLocalStore(IPackageContext packageContext)
     {
         MemoryDatabase.Initialize(packageContext.InstallPath);
-        DatabasePath = Path.Combine(packageContext.Storage.DataRootPath, "agent-memory.db");
-        Directory.CreateDirectory(packageContext.Storage.DataRootPath);
+        DatabasePath = packageContext.Storage.LocalWorkspace.GetLocalPath("memory/agent-memory.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
         new MemorySchemaMigrator(DatabasePath).Migrate();
         _evidence = new EvidenceRepository(DatabasePath);
         _embeddings = new EmbeddingRepository(DatabasePath);

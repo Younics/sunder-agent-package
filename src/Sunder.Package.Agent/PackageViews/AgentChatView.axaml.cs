@@ -140,7 +140,14 @@ public partial class AgentChatView : UserControl, IDisposable
         _viewModel = null;
     }
 
-    private void OnLoaded(object? sender, RoutedEventArgs e) => ApplyHeaderLayout();
+    private async void OnLoaded(object? sender, RoutedEventArgs e)
+    {
+        ApplyHeaderLayout();
+        if (ViewModel is { } viewModel)
+        {
+            await viewModel.InitializeAsync();
+        }
+    }
 
     private void OnSizeChanged(object? sender, SizeChangedEventArgs e) => ApplyHeaderLayout();
 

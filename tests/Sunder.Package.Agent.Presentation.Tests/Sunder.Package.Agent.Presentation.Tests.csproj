@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
@@ -34,6 +35,8 @@
   <ItemGroup>
     <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestInfrastructure.cs"
              Link="TestSupport\RegressionTestInfrastructure.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\TestPackageStorageFakes.cs"
+             Link="TestSupport\TestPackageStorageFakes.cs" />
   </ItemGroup>
 
   <Import Project="..\..\src\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />

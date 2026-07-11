@@ -14,7 +14,7 @@ public sealed class OpenAiPackageAuthHandler(
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var mode = _packageContext.Configuration.GetValue("auth.mode") ?? "codex-connected";
+        var mode = await _packageContext.Configuration.GetValueAsync("auth.mode", cancellationToken) ?? "codex-connected";
         if (!string.Equals(mode, _codexConnectedAuthStrategy.ModeId, StringComparison.OrdinalIgnoreCase))
         {
             return new PackageAuthStatus(
@@ -41,24 +41,24 @@ public sealed class OpenAiPackageAuthHandler(
                 CanDisconnect: true);
     }
 
-    public Task<PackageAuthSessionStartResult?> StartAuthorizationAsync(PackageAuthSessionStartContext context, CancellationToken cancellationToken = default)
+    public async Task<PackageAuthSessionStartResult?> StartAuthorizationAsync(PackageAuthSessionStartContext context, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var mode = _packageContext.Configuration.GetValue("auth.mode") ?? "codex-connected";
+        var mode = await _packageContext.Configuration.GetValueAsync("auth.mode", cancellationToken) ?? "codex-connected";
         if (!string.Equals(mode, _codexConnectedAuthStrategy.ModeId, StringComparison.OrdinalIgnoreCase))
         {
-            return Task.FromResult<PackageAuthSessionStartResult?>(null);
+            return null;
         }
 
         var launchUrl = _codexConnectedAuthStrategy.CreateAuthorizationUrl(context.AuthSessionId, context.CallbackUri);
-        return Task.FromResult<PackageAuthSessionStartResult?>(new PackageAuthSessionStartResult(
+        return new PackageAuthSessionStartResult(
             "sunder.package.agent.provider.openai",
             context.AuthSessionId,
             PackageAuthFlowKind.Browser,
             launchUrl,
             "Browser authorization started. Finish sign-in in the opened browser window."
-        ));
+        );
     }
 
     public async Task<PackageAuthStatus> CompleteAuthorizationAsync(PackageAuthSessionCompletionContext context, CancellationToken cancellationToken = default)

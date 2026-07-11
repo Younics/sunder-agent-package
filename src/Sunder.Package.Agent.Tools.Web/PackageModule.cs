@@ -6,9 +6,9 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Tools.Web;
 
-public sealed class PackageModule : ISunderPackageModule
+public sealed class PackageModule : ISunderRuntimePackageModule
 {
-    public void ConfigureServices(IServiceCollection services, IPackageContext context)
+    public void ConfigureRuntimeServices(IServiceCollection services, IPackageContext context)
     {
         services.AddSingleton<WebToolsSettingsService>();
         services.AddSingleton<IWebHostResolver, SystemWebHostResolver>();
@@ -22,10 +22,27 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddSingleton<WebSearchTool>();
     }
 
-    public void RegisterContributions(IPackageContributionRegistry registry, IServiceProvider services)
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
+        => ConfigureRuntimeServices(services, context);
+
+    public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterConfigurationSchema(WebToolsConfiguration.Schema);
         registry.RegisterExtension(PackageExtensionPoints.Tools, services.GetRequiredService<WebFetchTool>());
         registry.RegisterExtension(PackageExtensionPoints.Tools, services.GetRequiredService<WebSearchTool>());
     }
+
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
+    {
+        registry.RegisterExtension(PackageExtensionPoints.Tools, services.GetRequiredService<WebFetchTool>());
+        registry.RegisterExtension(PackageExtensionPoints.Tools, services.GetRequiredService<WebSearchTool>());
+    }
+}
+
+public sealed class AppPackageModule : ISunderAppPackageModule
+{
+    private readonly PackageModule _module = new();
+
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
 }

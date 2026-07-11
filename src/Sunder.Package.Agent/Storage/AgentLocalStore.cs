@@ -14,8 +14,8 @@ public sealed partial class AgentLocalStore
         EnsureSqliteNativeLibraryLoaded(packageContext.InstallPath);
         SQLitePCL.Batteries_V2.Init();
 
-        DatabasePath = Path.Combine(packageContext.Storage.DataRootPath, "agent.db");
-        Directory.CreateDirectory(packageContext.Storage.DataRootPath);
+        DatabasePath = packageContext.Storage.LocalWorkspace.GetLocalPath("agent/agent.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
         EnsureSchema();
         EnsureTurnItemPresentationMigration();
         EnsureTraceTelemetryRemoved();

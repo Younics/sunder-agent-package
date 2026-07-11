@@ -12,7 +12,7 @@ public sealed class AgentMcpSettingsViewConstructionTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var services = new ServiceCollection();
-        new Sunder.Package.Agent.Mcp.PackageModule().ConfigureServices(services, scope.Context);
+        new Sunder.Package.Agent.Mcp.AppPackageModule().ConfigureAppServices(services, scope.Context);
         var constructor = Assert.Single(
             typeof(AgentMcpSettingsView).GetConstructors(),
             candidate => candidate.GetParameters().Length > 0);

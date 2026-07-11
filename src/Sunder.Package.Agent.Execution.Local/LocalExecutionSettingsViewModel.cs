@@ -22,10 +22,15 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject
             new ShellSyntaxOption(AgentShellSyntaxKinds.PosixSh, "POSIX sh"),
             new ShellSyntaxOption(AgentShellSyntaxKinds.Custom, "Custom"),
         ];
-        TimeoutSeconds = _packageContext.Storage.State.GetValue(LocalExecutionConfiguration.TimeoutKey)
-                         ?? _packageContext.Configuration.GetValue(LocalExecutionConfiguration.TimeoutKey)
-                         ?? LocalExecutionConfiguration.DefaultTimeoutSeconds;
-        Reload();
+        TimeoutSeconds = LocalExecutionConfiguration.DefaultTimeoutSeconds;
+    }
+
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        TimeoutSeconds = await _packageContext.Storage.State.GetValueAsync(LocalExecutionConfiguration.TimeoutKey, cancellationToken)
+            ?? await _packageContext.Configuration.GetValueAsync(LocalExecutionConfiguration.TimeoutKey, cancellationToken)
+            ?? LocalExecutionConfiguration.DefaultTimeoutSeconds;
+        await ReloadAsync(cancellationToken);
     }
 
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
@@ -59,7 +64,7 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject
     }
 
     [RelayCommand(CanExecute = nameof(CanDeleteSelectedShell))]
-    private void DeleteSelectedShell()
+    private async Task DeleteSelectedShellAsync()
     {
         if (SelectedShell is not { IsDetected: false } shell)
         {
@@ -68,11 +73,11 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject
 
         Shells.Remove(shell);
         SelectedShell = Shells.FirstOrDefault(candidate => !candidate.IsDetected) ?? Shells.FirstOrDefault();
-        SaveShells();
+        await SaveShellsAsync();
     }
 
     [RelayCommand]
-    private void SaveShells()
+    private async Task SaveShellsAsync()
     {
         var shells = new List<LocalShellDefinition>();
         foreach (var shell in Shells.Where(shell => !shell.IsDetected))
@@ -97,8 +102,8 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject
                 IsDetected: false));
         }
 
-        _shellCatalogService.SaveCustomShells(shells);
-        Reload();
+        await _shellCatalogService.SaveCustomShellsAsync(shells);
+        await ReloadAsync();
         StatusText = "Shell settings saved.";
     }
 
@@ -124,11 +129,11 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject
     partial void OnSelectedShellChanged(LocalShellRowViewModel? value)
         => DeleteSelectedShellCommand.NotifyCanExecuteChanged();
 
-    private void Reload()
+    private async Task ReloadAsync(CancellationToken cancellationToken = default)
     {
         Shells.Clear();
 
-        foreach (var shell in _shellCatalogService.ListShells())
+        foreach (var shell in await _shellCatalogService.ListShellsAsync(cancellationToken))
         {
             Shells.Add(CreateRow(shell));
         }

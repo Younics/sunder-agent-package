@@ -18,14 +18,13 @@ public sealed class SkillStore
     public SkillStore(IPackageContext packageContext)
     {
         _packageContext = packageContext;
-        Directory.CreateDirectory(packageContext.Storage.DataRootPath);
         Directory.CreateDirectory(SkillsRootPath);
-        _indexPath = Path.GetFullPath(Path.Combine(packageContext.Storage.DataRootPath, "skills.json"));
+        _indexPath = packageContext.Storage.LocalWorkspace.GetLocalPath("skills/skills.json");
         _lockPath = _indexPath + ".lock";
         _syncRoot = SharedLocks.GetOrAdd(_indexPath, static _ => new object());
     }
 
-    public string SkillsRootPath => _packageContext.Storage.Files.GetPath(SkillConstants.SkillsRelativeRoot);
+    public string SkillsRootPath => _packageContext.Storage.LocalWorkspace.GetLocalPath(SkillConstants.SkillsRelativeRoot);
 
     public event Action? SkillsChanged;
 
@@ -50,7 +49,7 @@ public sealed class SkillStore
     }
 
     public string GetSkillRootPath(InstalledSkillRecord skill)
-        => _packageContext.Storage.Files.GetPath(skill.RelativeRootPath);
+        => _packageContext.Storage.LocalWorkspace.GetLocalPath(skill.RelativeRootPath);
 
     public string GetSkillMarkdownPath(InstalledSkillRecord skill)
         => Path.Combine(GetSkillRootPath(skill), "SKILL.md");

@@ -16,10 +16,10 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        _selectionState?.SaveSelectedWorkspaceId(value?.WorkspaceId);
+        _ = _selectionState?.SaveSelectedWorkspaceIdAsync(value?.WorkspaceId);
         _globalStatusText = string.Empty;
         RefreshWorkspacePathChips();
-        ReloadSessions(_selectionState?.GetSelectedSessionId(value?.WorkspaceId));
+        _ = ReloadStoredSessionsAsync(value?.WorkspaceId);
         CreateSessionCommand.NotifyCanExecuteChanged();
         RefreshSetupState();
         ScheduleSelectedWorkspaceWarmup();
@@ -55,13 +55,21 @@ public sealed partial class AgentChatViewModel
             SelectedWorkspace?.WorkspaceId,
             StringComparison.OrdinalIgnoreCase
         );
-        _selectionState?.SaveSelectedWorkspaceId(SelectedWorkspace?.WorkspaceId);
+        _ = _selectionState?.SaveSelectedWorkspaceIdAsync(SelectedWorkspace?.WorkspaceId);
         RefreshWorkspacePathChips();
         NotifyWorkspaceStateChanged();
-        ReloadSessions(_selectionState?.GetSelectedSessionId(SelectedWorkspace?.WorkspaceId));
+        _ = ReloadStoredSessionsAsync(SelectedWorkspace?.WorkspaceId);
         CreateSessionCommand.NotifyCanExecuteChanged();
         RefreshSetupState();
         return selectedWorkspaceChanged;
+    }
+
+    private async Task ReloadStoredSessionsAsync(string? workspaceId)
+    {
+        var sessionId = _selectionState is null
+            ? null
+            : await _selectionState.GetSelectedSessionIdAsync(workspaceId);
+        RunOnUiThread(() => ReloadSessions(sessionId));
     }
 
     private void ReconcileWorkspaces(IReadOnlyList<AgentWorkspaceRecord> workspaces)

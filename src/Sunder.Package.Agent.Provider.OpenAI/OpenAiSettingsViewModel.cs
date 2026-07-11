@@ -35,9 +35,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
     {
         _packageContext = packageContext;
         _codexConnectedAuthStrategy = codexConnectedAuthStrategy;
-        _selectedAuthMode = ResolveAuthModeOption(
-            packageContext.Storage.State.GetValue(OpenAiAuthMode.ConfigurationKey)
-            ?? packageContext.Configuration.GetValue(OpenAiAuthMode.ConfigurationKey));
+        _selectedAuthMode = ResolveAuthModeOption(OpenAiAuthMode.CodexConnected);
         ApiKeySettings = new ApiKeySettingsState(
             credentials,
             "A stored API key enables embeddings and is used for API-key chat. Blank input retains the current key.",
@@ -49,7 +47,16 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
             OpenAiProviderConfiguration.DefaultUtilityModelId,
             OpenAiProviderConfiguration.UtilityModelOptions.Select(option => (option.Value, option.Label)),
             NormalizeLegacyUtilityModelId);
-        _ = RefreshStatusAsync();
+    }
+
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        var configuredMode = await _packageContext.Storage.State.GetValueAsync(OpenAiAuthMode.ConfigurationKey, cancellationToken)
+            ?? await _packageContext.Configuration.GetValueAsync(OpenAiAuthMode.ConfigurationKey, cancellationToken);
+        SelectedAuthMode = ResolveAuthModeOption(configuredMode);
+        await ApiKeySettings.RefreshCredentialStatusAsync(cancellationToken);
+        await UtilityModelSettings.InitializeAsync(cancellationToken);
+        await RefreshStatusAsync(cancellationToken);
     }
 
     public ObservableCollection<OpenAiAuthModeOption> AuthModes { get; } =
@@ -112,7 +119,6 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
 
     partial void OnSelectedAuthModeChanged(OpenAiAuthModeOption? value)
     {
-        ApiKeySettings.RefreshCredentialStatus();
         _ = RefreshStatusAsync();
     }
 
@@ -249,7 +255,8 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
     private async Task RefreshStatusAsync(CancellationToken cancellationToken = default)
     {
         var statusGeneration = Interlocked.Increment(ref _statusGeneration);
-        var authMode = SelectedAuthMode?.ModeId ?? OpenAiAuthMode.GetSelected(_packageContext.Configuration);
+        var authMode = SelectedAuthMode?.ModeId
+            ?? await OpenAiAuthMode.GetSelectedAsync(_packageContext.Configuration, cancellationToken);
         OpenAiCodexSession? activeSession = null;
         Exception? refreshError = null;
         try
@@ -270,7 +277,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
             return;
         }
 
-        var cachedSession = _codexConnectedAuthStrategy.GetCachedSession();
+        var cachedSession = await _codexConnectedAuthStrategy.GetCachedSessionAsync(cancellationToken);
         CanDisconnect = cachedSession is not null;
         IsCodexConnected = activeSession is not null;
         IsCodexStatusError = refreshError is not null || (cachedSession is not null && activeSession is null);
@@ -297,7 +304,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
             CodexStatusDetail = "Authorize with ChatGPT Plus/Pro to use Codex-connected chat mode.";
         }
 
-        ApiKeySettings.RefreshCredentialStatus();
+        await ApiKeySettings.RefreshCredentialStatusAsync(cancellationToken);
     }
 
     public void Dispose()
@@ -322,7 +329,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
 
     private ApiKeyStatus ResolveApiKeyStatus(bool hasCredential)
     {
-        var authMode = SelectedAuthMode?.ModeId ?? OpenAiAuthMode.GetSelected(_packageContext.Configuration);
+        var authMode = SelectedAuthMode?.ModeId ?? OpenAiAuthMode.CodexConnected;
         if (hasCredential && authMode == OpenAiAuthMode.ApiKey)
         {
             return new ApiKeyStatus("Stored, active", "API-key chat mode and embeddings are ready.");

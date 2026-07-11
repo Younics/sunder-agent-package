@@ -30,7 +30,7 @@ public sealed class LMStudioConnectionTests
         Assert.Equal("Invalid", viewModel.ConnectionStatusLabel);
         Assert.Equal(
             LMStudioProviderConfiguration.DefaultBaseUrl,
-            context.Storage.State.GetValue(LMStudioProviderConfiguration.BaseUrlKey));
+            await context.Storage.State.GetValueAsync(LMStudioProviderConfiguration.BaseUrlKey));
 
         await context.Storage.State.SetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, invalidUrl);
         using var provider = new LMStudioAgentProvider(context);
@@ -59,7 +59,7 @@ public sealed class LMStudioConnectionTests
 
         Assert.True((await catalog.GetCatalogAsync()).IsSuccess);
         await context.Storage.State.SetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, "https://second.test/api/v1/");
-        context.Secrets.SetSecret(LMStudioProviderConfiguration.ApiKeyKey, "second-key");
+        await context.Secrets.SetSecretAsync(LMStudioProviderConfiguration.ApiKeyKey, "second-key");
         Assert.True((await catalog.GetCatalogAsync()).IsSuccess);
 
         Assert.Equal(2, handler.Requests.Count);
@@ -117,13 +117,14 @@ public sealed class LMStudioConnectionTests
             context,
             credentials,
             new LMStudioTestHttpHandler((_, _, _) => LMStudioTestHttpHandler.Json("{\"data\":[]}")));
+        await settings.InitializeAsync();
 
-        Assert.Equal("local-key", connection.GetRequiredOptions().ApiKey);
+        Assert.Equal("local-key", (await connection.GetRequiredOptionsAsync()).ApiKey);
         settings.ApiKeySettings.RequestClearCredentialCommand.Execute(null);
         await settings.ApiKeySettings.ClearCredentialCommand.ExecuteAsync(null);
 
-        Assert.Null(context.Secrets.GetSecret(LMStudioProviderConfiguration.ApiKeyKey));
-        Assert.Null(connection.GetRequiredOptions().ApiKey);
+        Assert.Null(await context.Secrets.GetSecretAsync(LMStudioProviderConfiguration.ApiKeyKey));
+        Assert.Null((await connection.GetRequiredOptionsAsync()).ApiKey);
     }
 
     [Fact]

@@ -27,19 +27,22 @@ public sealed class McpServerConnectionService(
 
         return await connections.GetToolsAsync(
             server,
-            catalog.GetHeaders(server),
-            catalog.GetEnvironmentVariables(server),
+            await catalog.GetHeadersAsync(server, cancellationToken),
+            await catalog.GetEnvironmentVariablesAsync(server, cancellationToken),
             McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server),
             cancellationToken).ConfigureAwait(false);
     }
 
     internal Task DisconnectAsync(string serverId) => connections.DisconnectServerAsync(serverId);
 
-    internal McpConnectionPresentation GetPresentation(ConfiguredMcpServerRecord server)
+    internal async Task<McpConnectionPresentation> GetPresentationAsync(
+        ConfiguredMcpServerRecord server,
+        CancellationToken cancellationToken = default)
     {
         var status = connections.GetStatus(server);
         var oauth = server.OAuthEnabled
-            ? oauthService?.HasCachedAuthorization(server.ServerId) == true ? "Cached" : "Required"
+            ? oauthService is not null && await oauthService.HasCachedAuthorizationAsync(server.ServerId, cancellationToken)
+                ? "Cached" : "Required"
             : null;
         var detail = new List<string>
         {

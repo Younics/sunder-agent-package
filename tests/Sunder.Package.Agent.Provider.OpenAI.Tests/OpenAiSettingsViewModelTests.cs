@@ -20,7 +20,7 @@ public sealed class OpenAiSettingsViewModelTests
         viewModel.SelectedAuthMode = viewModel.AuthModes.Single(mode => mode.ModeId == OpenAiAuthMode.ApiKey);
         await viewModel.SaveCommand.ExecuteAsync(null);
 
-        Assert.Equal(OpenAiAuthMode.ApiKey, context.Storage.State.GetValue(OpenAiAuthMode.ConfigurationKey));
+        Assert.Equal(OpenAiAuthMode.ApiKey, await context.Storage.State.GetValueAsync(OpenAiAuthMode.ConfigurationKey));
     }
 
     [Fact]

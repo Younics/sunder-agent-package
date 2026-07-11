@@ -8,9 +8,11 @@ internal sealed class LocalShellExecutor(IPackageContext packageContext, LocalSh
 {
     private const int DefaultTimeoutSeconds = 300;
 
-    public AgentExecutionShellDescriptor GetShell(LocalExecutionWorkspaceConfig config)
+    public async Task<AgentExecutionShellDescriptor> GetShellAsync(
+        LocalExecutionWorkspaceConfig config,
+        CancellationToken cancellationToken = default)
     {
-        var shell = shellCatalogService.ResolveShell(config.SelectedShellId);
+        var shell = await shellCatalogService.ResolveShellAsync(config.SelectedShellId, cancellationToken);
         return new AgentExecutionShellDescriptor(
             shell.ShellId,
             shell.DisplayName,
@@ -30,14 +32,14 @@ internal sealed class LocalShellExecutor(IPackageContext packageContext, LocalSh
             return new AgentShellCommandResult(1, "Command cannot be empty.");
         }
 
-        var shell = shellCatalogService.ResolveShell(config.SelectedShellId);
+        var shell = await shellCatalogService.ResolveShellAsync(config.SelectedShellId, cancellationToken);
         var workingDirectory = LocalPathResolver.ResolveWorkingDirectory(config, request.WorkingDirectory, context.AllowOutsideConfiguredScope);
         var pathEntries = LocalProcessEnvironment.BuildEffectivePathEntries(config.PathEntries);
         var startInfo = BuildShellStartInfo(shell, request.Command, workingDirectory);
         LocalCommandRunner.ApplyPathEnvironment(startInfo, pathEntries);
         return await LocalCommandRunner.ExecuteAsync(
             startInfo,
-            request.TimeoutSeconds ?? ResolveDefaultTimeoutSeconds(),
+            request.TimeoutSeconds ?? await ResolveDefaultTimeoutSecondsAsync(cancellationToken),
             workingDirectory,
             executableResolution: null,
             cancellationToken);
@@ -96,8 +98,8 @@ internal sealed class LocalShellExecutor(IPackageContext packageContext, LocalSh
             _ => $"Run commands with custom shell {shell.DisplayName}. Follow its configured syntax kind.",
         };
 
-    private int ResolveDefaultTimeoutSeconds()
-        => int.TryParse(packageContext.Configuration.GetValue("shell.timeoutSeconds.default"), out var parsed) && parsed > 0
+    private async Task<int> ResolveDefaultTimeoutSecondsAsync(CancellationToken cancellationToken)
+        => int.TryParse(await packageContext.Configuration.GetValueAsync("shell.timeoutSeconds.default", cancellationToken), out var parsed) && parsed > 0
             ? parsed
             : DefaultTimeoutSeconds;
 }

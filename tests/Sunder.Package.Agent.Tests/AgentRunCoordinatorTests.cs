@@ -2527,7 +2527,8 @@ public sealed class AgentRunCoordinatorTests
             run.Key.RunId,
             run.Key.RunRevision);
         unwindingHandle.CancellationTokenSource.Dispose();
-        await WaitUntilAsync(() => provider.Requests.Count == 1);
+        await WaitUntilAsync(() => provider.Requests.Count == 1
+            && runtime.Store.GetRun(run.Key.RunId)?.Status == AgentDurableRunStatus.Completed);
 
         Assert.Single(provider.Requests);
         Assert.Equal(AgentDurableRunStatus.Completed, runtime.Store.GetRun(run.Key.RunId)?.Status);
@@ -4285,7 +4286,7 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public void AgentChatViewModel_ShowsSetupState_WhenNoProfileExists()
+    public async Task AgentChatViewModel_ShowsSetupState_WhenNoProfileExists()
     {
         using var runtime = AgentTestRuntime.Create(
             new ScriptedProvider((_, _) => Complete("done"))
@@ -4297,6 +4298,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         Assert.Empty(viewModel.Profiles);
         Assert.Null(viewModel.SelectedWorkspace);
@@ -4342,6 +4344,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.RunCoordinator,
             attachmentService: runtime.AttachmentService
         );
+        await viewModel.InitializeAsync();
         var row = viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>()
             .Single(message => message.RowId == userTurn.TurnId);
         Assert.False(viewModel.IsComposerExpanded);
@@ -4396,6 +4399,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.RunCoordinator,
             attachmentService: runtime.AttachmentService
         );
+        await viewModel.InitializeAsync();
         var row = viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>()
             .Single(message => message.RowId == rollbackTurn.TurnId);
         await viewModel.StartRollbackFromMessageCommand.ExecuteAsync(row);
@@ -4429,6 +4433,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         Assert.Equal(runtime.CurrentWorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
         Assert.Equal(runtime.CurrentProfileId, viewModel.SelectedProfile?.ProfileId);
@@ -4455,6 +4460,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
         var secondWorkspace = runtime.WorkspaceService.CreateWorkspace("Second Workspace");
         var secondSession = runtime.SessionService.CreateSession("Second Workspace Session", workspaceId: secondWorkspace.WorkspaceId);
 
@@ -4502,8 +4508,8 @@ public sealed class AgentRunCoordinatorTests
         try
         {
             var selectionState = new AgentChatSelectionStateService(new TestPackageContext(stateRoot));
-            selectionState.SaveSelectedWorkspaceId(secondWorkspace.WorkspaceId);
-            selectionState.SaveSelectedSessionId(firstSessionId);
+            await selectionState.SaveSelectedWorkspaceIdAsync(secondWorkspace.WorkspaceId);
+            await selectionState.SaveSelectedSessionIdAsync(firstSessionId);
 
             using var viewModel = new AgentChatViewModel(
                 runtime.ProfileService,
@@ -4513,6 +4519,7 @@ public sealed class AgentRunCoordinatorTests
                 runtime.RunCoordinator,
                 selectionState
             );
+            await viewModel.InitializeAsync();
 
             Assert.Equal(secondWorkspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
             Assert.Equal(secondSession.SessionId, viewModel.SelectedSession?.SessionId);
@@ -4553,8 +4560,8 @@ public sealed class AgentRunCoordinatorTests
         try
         {
             var selectionState = new AgentChatSelectionStateService(new TestPackageContext(stateRoot));
-            selectionState.SaveSelectedWorkspaceId(secondWorkspace.WorkspaceId);
-            selectionState.SaveSelectedSessionId(secondWorkspace.WorkspaceId, firstSessionId);
+            await selectionState.SaveSelectedWorkspaceIdAsync(secondWorkspace.WorkspaceId);
+            await selectionState.SaveSelectedSessionIdAsync(secondWorkspace.WorkspaceId, firstSessionId);
 
             using var viewModel = new AgentChatViewModel(
                 runtime.ProfileService,
@@ -4564,6 +4571,7 @@ public sealed class AgentRunCoordinatorTests
                 runtime.RunCoordinator,
                 selectionState
             );
+            await viewModel.InitializeAsync();
 
             Assert.Equal(secondWorkspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
             Assert.Equal(secondSession.SessionId, viewModel.SelectedSession?.SessionId);
@@ -4600,6 +4608,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
         viewModel.SelectedSession = viewModel.Sessions.Single(session =>
             session.SessionId == deletedSessionId
         );
@@ -4628,6 +4637,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         viewModel.BeginRenameSessionCommand.Execute(viewModel.SelectedSession);
         viewModel.SelectedSession!.RenameTitle = "Renamed Session";
@@ -4660,6 +4670,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
         var deletedSession = viewModel.Sessions.Single(session =>
             session.SessionId == deletedSessionId
         );
@@ -4724,6 +4735,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
         viewModel.SelectedWorkspace = viewModel.Workspaces.Single(item => item.WorkspaceId == workspace.WorkspaceId);
         viewModel.SelectedProfile = viewModel.Profiles.Single(item => item.ProfileId == profile.ProfileId);
 
@@ -4755,6 +4767,7 @@ public sealed class AgentRunCoordinatorTests
             selectionState
         ))
         {
+            await viewModel.InitializeAsync();
             viewModel.SelectedWorkspace = viewModel.Workspaces.Single(item => item.WorkspaceId == selectedWorkspace.WorkspaceId);
             viewModel.SelectedProfile = viewModel.Profiles.Single(item => item.ProfileId == profile.ProfileId);
 
@@ -4770,9 +4783,9 @@ public sealed class AgentRunCoordinatorTests
         var reopenedSession = reopenedSessionService.GetSession(sessionId);
         Assert.NotNull(reopenedSession);
         Assert.Equal(selectedWorkspace.WorkspaceId, reopenedSession!.WorkspaceId);
-        Assert.Equal(selectedWorkspace.WorkspaceId, selectionState.GetSelectedWorkspaceId());
-        Assert.Equal(sessionId, selectionState.GetSelectedSessionId(selectedWorkspace.WorkspaceId));
-        Assert.NotEqual(sessionId, selectionState.GetSelectedSessionId(AgentWorkspaceService.UnassignedSessionsWorkspaceId));
+        Assert.Equal(selectedWorkspace.WorkspaceId, await selectionState.GetSelectedWorkspaceIdAsync());
+        Assert.Equal(sessionId, await selectionState.GetSelectedSessionIdAsync(selectedWorkspace.WorkspaceId));
+        Assert.NotEqual(sessionId, await selectionState.GetSelectedSessionIdAsync(AgentWorkspaceService.UnassignedSessionsWorkspaceId));
         Assert.Contains(
             reopenedSessionService.ListSessionsForWorkspace(selectedWorkspace.WorkspaceId),
             session => session.SessionId == sessionId
@@ -6677,6 +6690,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         Assert.Contains(viewModel.Sessions, session => session.SessionId == parentSessionId);
         Assert.DoesNotContain(
@@ -6719,6 +6733,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.RunCoordinator,
             shellViewService: shellViewService
         );
+        await viewModel.InitializeAsync();
 
         await viewModel.OpenChildSessionCommand.ExecuteAsync(
             new AgentChildSessionLinkViewModel(
@@ -6771,9 +6786,9 @@ public sealed class AgentRunCoordinatorTests
         {
             var selectionContext = new TestPackageContext(selectionRootPath);
             var selectionState = new AgentChatSelectionStateService(selectionContext);
-            selectionState.SaveSelectedWorkspaceId(runtime.CurrentWorkspaceId);
-            selectionState.SaveSelectedSessionId(childSession.SessionId);
-            selectionState.SaveSelectedProfileId(runtime.CurrentProfileId);
+            await selectionState.SaveSelectedWorkspaceIdAsync(runtime.CurrentWorkspaceId);
+            await selectionState.SaveSelectedSessionIdAsync(childSession.SessionId);
+            await selectionState.SaveSelectedProfileIdAsync(runtime.CurrentProfileId);
 
             using var viewModel = new AgentChatViewModel(
                 runtime.ProfileService,
@@ -6783,6 +6798,7 @@ public sealed class AgentRunCoordinatorTests
                 runtime.RunCoordinator,
                 selectionState
             );
+            await viewModel.InitializeAsync();
 
             Assert.Equal(parentSessionId, viewModel.SelectedSession?.SessionId);
             Assert.Contains(viewModel.Sessions, session => session.SessionId == parentSessionId);
@@ -6994,6 +7010,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         var row = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
         Assert.True(row.HasChildSessionLink);
@@ -7045,6 +7062,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
         var row = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
         var link = Assert.Single(row.ChildSessionLinks);
 
@@ -7131,6 +7149,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         var row = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
         Assert.True(row.HasChildSessionLinks);
@@ -7612,9 +7631,9 @@ public sealed class AgentRunCoordinatorTests
         {
             var selectionContext = new TestPackageContext(selectionRootPath);
             var selectionState = new AgentChatSelectionStateService(selectionContext);
-            selectionState.SaveSelectedWorkspaceId(secondWorkspace.WorkspaceId);
-            selectionState.SaveSelectedSessionId(secondSession.SessionId);
-            selectionState.SaveSelectedProfileId(secondProfile.ProfileId);
+            await selectionState.SaveSelectedWorkspaceIdAsync(secondWorkspace.WorkspaceId);
+            await selectionState.SaveSelectedSessionIdAsync(secondSession.SessionId);
+            await selectionState.SaveSelectedProfileIdAsync(secondProfile.ProfileId);
 
             using var viewModel = new AgentChatViewModel(
                 runtime.ProfileService,
@@ -7624,6 +7643,7 @@ public sealed class AgentRunCoordinatorTests
                 runtime.RunCoordinator,
                 selectionState
             );
+            await viewModel.InitializeAsync();
 
             Assert.Equal(secondWorkspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
             Assert.Equal(secondSession.SessionId, viewModel.SelectedSession?.SessionId);
@@ -7667,6 +7687,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         viewModel.SelectedSession = viewModel.Sessions.Single(session =>
             session.SessionId == sessionA
@@ -7710,6 +7731,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         var sessionAItem = viewModel.Sessions.Single(session => session.SessionId == sessionA);
         var sessionBItem = viewModel.Sessions.Single(session => session.SessionId == sessionB);
@@ -7801,6 +7823,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         viewModel.SelectedSession = viewModel.Sessions.Single(session =>
             session.SessionId == sessionA
@@ -7871,6 +7894,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
         var sessionAItem = viewModel.Sessions.Single(session => session.SessionId == sessionA);
         viewModel.SelectedSession = sessionAItem;
         viewModel.DraftMessage = "keep selected draft";
@@ -7934,6 +7958,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         Assert.Equal(60, viewModel.Messages.Count);
         Assert.True(viewModel.HasOlderTranscriptRows);
@@ -7988,6 +8013,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         Assert.Equal(60, viewModel.Messages.Count);
         Assert.Equal(
@@ -8054,6 +8080,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
         var protectedRow = viewModel.Messages
             .OfType<AgentTextTranscriptRowViewModel>()
             .Single(row => row.Content == "message-240");
@@ -8094,6 +8121,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         Assert.Equal(60, viewModel.Messages.Count);
         Assert.Equal("message-340", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content);
@@ -8147,6 +8175,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         for (var index = 0; index < 10 && viewModel.CanLoadOlderTranscriptRows; index++)
         {
@@ -8180,6 +8209,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         for (var index = 0; index < 240; index++)
         {
@@ -8230,6 +8260,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         for (var index = 0; index < 140; index++)
         {
@@ -8281,6 +8312,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
         for (var index = 0; index < 7 && viewModel.CanLoadOlderTranscriptRows; index++)
         {
             await viewModel.LoadOlderTranscriptRowsAsync();
@@ -8311,6 +8343,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
         var initialRow = Assert.Single(viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>());
 
         viewModel.DetachTranscriptFromLatest();
@@ -8377,6 +8410,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         viewModel.DetachTranscriptFromLatest();
         runtime.SessionService.AppendTextTurn(
@@ -8428,6 +8462,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         var turn = runtime.SessionService.AppendTextTurn(
             sessionId,
@@ -8561,6 +8596,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         runtime.SessionService.AppendTextTurn(
             sessionId,
@@ -8595,6 +8631,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
         Assert.NotNull(viewModel.SelectedSession);
         var selectedSession = viewModel.SelectedSession;
         var transcriptRow = Assert.Single(viewModel.Messages);
@@ -8661,6 +8698,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
         var toolRow = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
         toolRow.IsExpanded = true;
 
@@ -8709,6 +8747,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
         var toolRow = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
         toolRow.IsExpanded = true;
 
@@ -8743,6 +8782,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         runtime.SessionService.SaveCheckpoint(
             sessionId,
@@ -8782,6 +8822,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         runtime.SessionService.SaveCheckpoint(
             sessionId,
@@ -8817,6 +8858,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         runtime.SessionService.SaveCheckpoint(
             sessionId,
@@ -8856,6 +8898,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         runtime.SessionService.SaveCheckpoint(
             sessionId,
@@ -8902,6 +8945,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.RunCoordinator,
             activityQuietDelay: TimeSpan.Zero
         );
+        await viewModel.InitializeAsync();
 
         Assert.IsType<AgentActivityTranscriptRowViewModel>(Assert.Single(viewModel.Messages));
 
@@ -9001,6 +9045,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.RunCoordinator,
             activityQuietDelay: TimeSpan.Zero
         );
+        await viewModel.InitializeAsync();
 
         runtime.SessionService.AppendToolCallTurn(
             sessionId,
@@ -9043,6 +9088,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
 
         var runRevision = runtime.SessionService.GetNextRunRevision(sessionId);
         runtime.SessionService.SaveCheckpoint(
@@ -11116,6 +11162,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await main.InitializeAsync();
         using var subsessions = new SubsessionsViewModel(runtime.ExtensionCatalog);
         await subsessions.OnNavigatedToAsync(
             new PackageViewNavigationContext(
@@ -11176,6 +11223,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        await viewModel.InitializeAsync();
         var request = Assert.Single(viewModel.PendingPermissionRequests);
 
         await viewModel.DenyPermissionCommand.ExecuteAsync(request);
@@ -13231,7 +13279,7 @@ public sealed class AgentRunCoordinatorTests
 
         public string PackageId => "test.package.agent";
 
-        public Version Version => new(1, 0, 0);
+        public string Version => "1.0.0";
 
         public string InstallPath => rootPath;
 
@@ -13251,44 +13299,28 @@ public sealed class AgentRunCoordinatorTests
     {
         public TestPackageStorageContext(string rootPath)
         {
-            DataRootPath = Path.Combine(rootPath, "data");
-            CacheRootPath = Path.Combine(rootPath, "cache");
-            LogsRootPath = Path.Combine(rootPath, "logs");
-            Directory.CreateDirectory(DataRootPath);
-            Directory.CreateDirectory(CacheRootPath);
-            Directory.CreateDirectory(LogsRootPath);
-            Files = new NullPackageFileStore(DataRootPath);
+            Directory.CreateDirectory(rootPath);
+            Files = new NullPackageFileStore(rootPath);
             State = new NullPackageKeyValueStore();
+            LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
         }
-
-        public string DataRootPath { get; }
-
-        public string CacheRootPath { get; }
-
-        public string LogsRootPath { get; }
 
         public IPackageFileStore Files { get; }
 
         public IPackageKeyValueStore State { get; }
+        public IPackageLocalWorkspaceLease LocalWorkspace { get; }
     }
 
-    private sealed class NullPackageFileStore(string rootPath) : IPackageFileStore
-    {
-        public string RootPath { get; } = rootPath;
-
-        public string GetPath(string relativePath) => Path.Combine(RootPath, relativePath);
-    }
+    private sealed class NullPackageFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
 
     private sealed class NullPackageKeyValueStore : IPackageKeyValueStore
     {
         private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
 
-        public string? GetValue(string key) => _values.GetValueOrDefault(key);
-
         public Task<string?> GetValueAsync(
             string key,
             CancellationToken cancellationToken = default
-        ) => Task.FromResult(GetValue(key));
+        ) => Task.FromResult(_values.GetValueOrDefault(key));
 
         public Task SetValueAsync(
             string key,
@@ -13330,8 +13362,8 @@ public sealed class AgentRunCoordinatorTests
         private readonly IReadOnlyDictionary<string, string> _values =
             values ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        public string? GetValue(string key) =>
-            _values.TryGetValue(key, out var value) ? value : null;
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) =>
+            Task.FromResult(_values.TryGetValue(key, out var value) ? value : null);
     }
 
     private sealed class InMemoryPackageSecrets(IReadOnlyDictionary<string, string>? values)
@@ -13342,17 +13374,19 @@ public sealed class AgentRunCoordinatorTests
             StringComparer.OrdinalIgnoreCase
         );
 
-        public string? GetSecret(string key) =>
-            _values.TryGetValue(key, out var value) ? value : null;
+        public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default) =>
+            Task.FromResult(_values.TryGetValue(key, out var value) ? value : null);
 
-        public void SetSecret(string key, string value)
+        public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default)
         {
             _values[key] = value;
+            return Task.CompletedTask;
         }
 
-        public void DeleteSecret(string key)
+        public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default)
         {
             _values.Remove(key);
+            return Task.CompletedTask;
         }
     }
 

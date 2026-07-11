@@ -35,12 +35,18 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject, IDispo
             static hasCredential => hasCredential
                 ? new ApiKeyStatus("Stored", "A bearer key is stored and will be sent to LM Studio.")
                 : new ApiKeyStatus("Optional", "No bearer key will be sent to the configured local endpoint."));
-        BaseUrl = packageContext.Storage.State.GetValue(LMStudioProviderConfiguration.BaseUrlKey)
-            ?? packageContext.Configuration.GetValue(LMStudioProviderConfiguration.BaseUrlKey)
+        RefreshConnectionStatus();
+    }
+
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        BaseUrl = await _packageContext.Storage.State.GetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, cancellationToken)
+            ?? await _packageContext.Configuration.GetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, cancellationToken)
             ?? LMStudioProviderConfiguration.DefaultBaseUrl;
-        UtilityModelId = packageContext.Storage.State.GetValue(LMStudioProviderConfiguration.UtilityModelKey)
-            ?? packageContext.Configuration.GetValue(LMStudioProviderConfiguration.UtilityModelKey)
+        UtilityModelId = await _packageContext.Storage.State.GetValueAsync(LMStudioProviderConfiguration.UtilityModelKey, cancellationToken)
+            ?? await _packageContext.Configuration.GetValueAsync(LMStudioProviderConfiguration.UtilityModelKey, cancellationToken)
             ?? string.Empty;
+        await ApiKeySettings.RefreshCredentialStatusAsync(cancellationToken);
         RefreshConnectionStatus();
     }
 

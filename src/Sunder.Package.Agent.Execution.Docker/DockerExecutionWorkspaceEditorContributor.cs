@@ -25,7 +25,7 @@ public sealed class DockerExecutionWorkspaceEditorContributor(
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var config = configService.GetConfig(context.ConfigurationId);
+        var config = await configService.GetConfigAsync(context.ConfigurationId, cancellationToken);
         var images = await imageCatalogService.RefreshImagesAsync(cancellationToken);
         var imageOptions = images
             .Where(image => image.Status == DockerImageStatus.Ready)
@@ -118,12 +118,12 @@ public sealed class DockerExecutionWorkspaceEditorContributor(
             : null;
         try
         {
-            var config = configService.GetConfig(context.ConfigurationId);
-            configService.SaveConfig(context.ConfigurationId, config with
+            var config = await configService.GetConfigAsync(context.ConfigurationId, cancellationToken);
+            await configService.SaveConfigAsync(context.ConfigurationId, config with
             {
                 ImageReference = image,
                 ShellPath = shellPath,
-            });
+            }, cancellationToken);
             return AgentEditorSaveResult.Ok("Docker execution settings saved.");
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)

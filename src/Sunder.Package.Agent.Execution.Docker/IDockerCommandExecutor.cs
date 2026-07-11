@@ -8,5 +8,5 @@ internal interface IDockerCommandExecutor
         CancellationToken cancellationToken,
         string? standardInput = null);
 
-    int ResolveDefaultTimeoutSeconds();
+    Task<int> ResolveDefaultTimeoutSecondsAsync(CancellationToken cancellationToken = default);
 }

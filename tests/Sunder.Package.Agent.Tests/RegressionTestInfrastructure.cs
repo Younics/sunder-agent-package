@@ -66,7 +66,7 @@ internal sealed class RegressionTestPackageContext(string rootPath) : IPackageCo
 {
     public string PackageId => "test.package.agent";
 
-    public Version Version { get; } = new(1, 0, 0);
+    public string Version { get; } = "1.0.0";
 
     public string InstallPath => AppContext.BaseDirectory;
 
@@ -86,41 +86,52 @@ internal sealed class RegressionTestStorageContext : IPackageStorageContext
 {
     public RegressionTestStorageContext(string rootPath)
     {
-        DataRootPath = Path.Combine(rootPath, "data");
-        CacheRootPath = Path.Combine(rootPath, "cache");
-        LogsRootPath = Path.Combine(rootPath, "logs");
-        Directory.CreateDirectory(DataRootPath);
-        Directory.CreateDirectory(CacheRootPath);
-        Directory.CreateDirectory(LogsRootPath);
+        Directory.CreateDirectory(rootPath);
         Files = new RegressionTestFileStore(Path.Combine(rootPath, "files"));
+        LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
     }
-
-    public string DataRootPath { get; }
-
-    public string CacheRootPath { get; }
-
-    public string LogsRootPath { get; }
 
     public IPackageFileStore Files { get; }
 
     public IPackageKeyValueStore State { get; } = new RegressionTestKeyValueStore();
+
+    public IPackageLocalWorkspaceLease LocalWorkspace { get; }
 }
 
 internal sealed class RegressionTestFileStore(string rootPath) : IPackageFileStore
 {
-    public string RootPath { get; } = rootPath;
+    private readonly string _rootPath = rootPath;
 
-    public string GetPath(string relativePath) => Path.Combine(RootPath, relativePath);
+    public async Task<byte[]?> ReadAsync(string relativePath, CancellationToken cancellationToken = default)
+    {
+        var path = Path.Combine(_rootPath, relativePath);
+        return File.Exists(path) ? await File.ReadAllBytesAsync(path, cancellationToken) : null;
+    }
+
+    public async Task WriteAsync(string relativePath, ReadOnlyMemory<byte> contents, CancellationToken cancellationToken = default)
+    {
+        var path = Path.Combine(_rootPath, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllBytesAsync(path, contents.ToArray(), cancellationToken);
+    }
+
+    public Task DeleteAsync(string relativePath, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        File.Delete(Path.Combine(_rootPath, relativePath));
+        return Task.CompletedTask;
+    }
 }
 
 internal sealed class RegressionTestKeyValueStore : IPackageKeyValueStore
 {
     private readonly ConcurrentDictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
 
-    public string? GetValue(string key) => _values.GetValueOrDefault(key);
-
     public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
-        => Task.FromResult(GetValue(key));
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(_values.GetValueOrDefault(key));
+    }
 
     public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
     {
@@ -148,16 +159,26 @@ internal sealed class RegressionTestKeyValueStore : IPackageKeyValueStore
 
 internal sealed class RegressionTestConfiguration : IPackageConfiguration
 {
-    public string? GetValue(string key) => null;
+    public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
+        => Task.FromResult<string?>(null);
 }
 
 internal sealed class RegressionTestSecrets : IPackageSecrets
 {
     private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
 
-    public string? GetSecret(string key) => _values.GetValueOrDefault(key);
+    public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default)
+        => Task.FromResult(_values.GetValueOrDefault(key));
 
-    public void SetSecret(string key, string value) => _values[key] = value;
+    public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default)
+    {
+        _values[key] = value;
+        return Task.CompletedTask;
+    }
 
-    public void DeleteSecret(string key) => _values.Remove(key);
+    public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default)
+    {
+        _values.Remove(key);
+        return Task.CompletedTask;
+    }
 }

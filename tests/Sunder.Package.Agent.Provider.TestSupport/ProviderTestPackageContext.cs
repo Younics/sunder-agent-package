@@ -21,7 +21,7 @@ public sealed class ProviderTestPackageContext : IPackageContext
 
     public string PackageId { get; }
 
-    public Version Version { get; } = new(1, 0, 0);
+    public string Version { get; } = "1.0.0";
 
     public string InstallPath { get; } = AppContext.BaseDirectory;
 
@@ -47,17 +47,13 @@ public sealed class ProviderTestStorageContext : IPackageStorageContext
         State = state ?? new ProviderTestKeyValueStore(values);
     }
 
-    public string DataRootPath { get; } = AppContext.BaseDirectory;
-
-    public string CacheRootPath { get; } = AppContext.BaseDirectory;
-
-    public string LogsRootPath { get; } = AppContext.BaseDirectory;
-
     public IPackageFileStore Files => throw new NotSupportedException();
 
     public IPackageKeyValueStore State { get; }
 
     IPackageKeyValueStore IPackageStorageContext.State => State;
+
+    public IPackageLocalWorkspaceLease LocalWorkspace { get; } = new ProviderTestWorkspace();
 }
 
 public sealed class ProviderTestKeyValueStore : IPackageKeyValueStore
@@ -71,10 +67,11 @@ public sealed class ProviderTestKeyValueStore : IPackageKeyValueStore
             : new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase);
     }
 
-    public string? GetValue(string key) => _values.GetValueOrDefault(key);
-
     public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
-        => Task.FromResult(GetValue(key));
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(_values.GetValueOrDefault(key));
+    }
 
     public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
     {
@@ -99,7 +96,8 @@ public sealed class ProviderTestKeyValueStore : IPackageKeyValueStore
 
 public sealed class ProviderTestConfiguration(IPackageKeyValueStore state) : IPackageConfiguration
 {
-    public string? GetValue(string key) => state.GetValue(key);
+    public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
+        => state.GetValueAsync(key, cancellationToken);
 }
 
 public sealed class ProviderTestSecrets : IPackageSecrets
@@ -113,9 +111,30 @@ public sealed class ProviderTestSecrets : IPackageSecrets
             : new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase);
     }
 
-    public string? GetSecret(string key) => _values.GetValueOrDefault(key);
+    public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(_values.GetValueOrDefault(key));
+    }
 
-    public void SetSecret(string key, string value) => _values[key] = value;
+    public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _values[key] = value;
+        return Task.CompletedTask;
+    }
 
-    public void DeleteSecret(string key) => _values.Remove(key);
+    public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _values.Remove(key);
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class ProviderTestWorkspace : IPackageLocalWorkspaceLease
+{
+    public string WorkspaceRootPath => AppContext.BaseDirectory;
+    public string GetLocalPath(string relativePath) => Path.GetFullPath(Path.Combine(WorkspaceRootPath, relativePath));
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

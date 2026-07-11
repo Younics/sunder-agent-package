@@ -6,12 +6,13 @@ using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Avalonia;
 
 namespace Sunder.Package.Agent;
 
-public sealed partial class PackageModule : ISunderPackageModule
+public sealed partial class PackageModule : ISunderRuntimePackageModule
 {
-    public void ConfigureServices(IServiceCollection services, IPackageContext context)
+    public void ConfigureRuntimeServices(IServiceCollection services, IPackageContext context)
     {
         services.AddSingleton(new AgentLocalStore(context));
         services.AddSingleton<AgentExecutionTargetService>();
@@ -84,8 +85,11 @@ public sealed partial class PackageModule : ISunderPackageModule
         );
     }
 
-    public void RegisterContributions(
-        IPackageContributionRegistry registry,
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
+        => ConfigureRuntimeServices(services, context);
+
+    public void RegisterRuntimeContributions(
+        ISunderRuntimeContributionRegistry registry,
         IServiceProvider services
     )
     {
@@ -127,34 +131,42 @@ public sealed partial class PackageModule : ISunderPackageModule
             services.GetRequiredService<AgentWorkspaceStackContributor>()
         );
 
-        // Middle
-        registry.RegisterPackageView<AgentChatView>(
-            new PackageViewRegistration(
-                "sunder.package.agent.chat",
-                "Agent Chat",
-                "Assets/chat-icon.png",
-                defaultPlacement: PackageViewPlacement.Middle
-            )
-        );
+    }
 
-        // Right-Top
-        registry.RegisterPackageView<AgentWorkspacesView>(
-            new PackageViewRegistration(
-                "sunder.package.agent.workspaces",
-                "Workspaces",
-                "Assets/workspace-icon.png",
-                defaultPlacement: PackageViewPlacement.RightTop
-            )
-        );
-        registry.RegisterPackageView<AgentProfilesView>(
-            new PackageViewRegistration(
-                "sunder.package.agent.profiles",
-                "Agents",
-                "Assets/profile-icon.png",
-                defaultPlacement: PackageViewPlacement.RightTop
-            )
-        );
-
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
+    {
+        registry.RegisterExtension(PackageExtensionPoints.RuntimeCatalogs, services.GetRequiredService<AgentRuntimeCatalog>());
+        registry.RegisterExtension(PackageExtensionPoints.WorkspaceExecutionResolvers, services.GetRequiredService<AgentWorkspaceExecutionResolver>());
+        registry.RegisterExtension(PackageExtensionPoints.ChildRunExecutors, services.GetRequiredService<AgentRunCoordinator>());
+        registry.RegisterExtension(PackageExtensionPoints.AttachmentContentStores, services.GetRequiredService<AgentAttachmentService>());
+        registry.RegisterExtension(PackageExtensionPoints.SessionDataCleaners, services.GetRequiredService<AgentAttachmentService>());
+        registry.RegisterExtension(PackageExtensionPoints.BehaviorLoops, services.GetRequiredService<DefaultAgentBehaviorLoop>());
+        registry.RegisterExtension(PackageExtensionPoints.SystemPromptContributors, services.GetRequiredService<WorkspaceDocumentationContextService>());
+        registry.RegisterExtension(Sunder.Sdk.Stacks.SunderStackExtensionPoints.StackContributors, services.GetRequiredService<AgentProfileStackContributor>());
+        registry.RegisterExtension(Sunder.Sdk.Stacks.SunderStackExtensionPoints.StackContributors, services.GetRequiredService<AgentWorkspaceStackContributor>());
+        registry.RegisterPackageView<AgentChatView>(new PackageViewRegistration(
+            "sunder.package.agent.chat",
+            "Agent Chat",
+            "Assets/chat-icon.png",
+            defaultPlacement: PackageViewPlacement.Middle));
+        registry.RegisterPackageView<AgentWorkspacesView>(new PackageViewRegistration(
+            "sunder.package.agent.workspaces",
+            "Workspaces",
+            "Assets/workspace-icon.png",
+            defaultPlacement: PackageViewPlacement.RightTop));
+        registry.RegisterPackageView<AgentProfilesView>(new PackageViewRegistration(
+            "sunder.package.agent.profiles",
+            "Agents",
+            "Assets/profile-icon.png",
+            defaultPlacement: PackageViewPlacement.RightTop));
         registry.RegisterSettingsView<AgentPermissionsView>();
     }
+}
+
+public sealed class AppPackageModule : ISunderAppPackageModule
+{
+    private readonly PackageModule _module = new();
+
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
 }

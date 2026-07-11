@@ -140,7 +140,7 @@ public sealed class BuilderServiceTests
 
         await Assert.ThrowsAnyAsync<Exception>(() => store.LoadAsync());
 
-        Assert.Equal(persisted, scope.Context.Storage.State.GetValue(key));
+        Assert.Equal(persisted, await scope.Context.Storage.State.GetValueAsync(key));
     }
 
     [Fact]

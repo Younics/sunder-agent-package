@@ -22,7 +22,7 @@ public sealed class MemoryEvaluationTests
     [Fact]
     public async Task LongSessionPromotion_SelectivelyCapturesHighValueFacts()
     {
-        using var harness = new MemoryEvaluationHarness();
+        await using var harness = new MemoryEvaluationHarness();
 
         for (var index = 0; index < 12; index++)
         {
@@ -51,7 +51,7 @@ public sealed class MemoryEvaluationTests
     [Fact]
     public async Task RecallEvaluation_ReturnsRelevantEntriesWithinBudget()
     {
-        using var harness = new MemoryEvaluationHarness(enableEmbeddings: true);
+        await using var harness = new MemoryEvaluationHarness(enableEmbeddings: true);
 
         await harness.AddUserTurnAsync("I prefer concise final summaries.");
         await harness.AddUserTurnAsync("Always use apply_patch for file edits.");
@@ -94,7 +94,7 @@ public sealed class MemoryEvaluationTests
     [Fact]
     public async Task ContinuityEvaluation_ReturnsProjectAndInstructionContext()
     {
-        using var harness = new MemoryEvaluationHarness(enableEmbeddings: true);
+        await using var harness = new MemoryEvaluationHarness(enableEmbeddings: true);
 
         await harness.AddUserTurnAsync("Always use apply_patch for file edits.");
         await harness.AddUserTurnAsync("I prefer concise final summaries.");
@@ -121,7 +121,7 @@ public sealed class MemoryEvaluationTests
     [Fact]
     public async Task DiversityEvaluation_ContinuityRecall_CoversMultipleCategories()
     {
-        using var harness = new MemoryEvaluationHarness(enableEmbeddings: true);
+        await using var harness = new MemoryEvaluationHarness(enableEmbeddings: true);
 
         await harness.AddUserTurnAsync("Always use apply_patch for file edits.");
         await harness.AddUserTurnAsync("I prefer concise final summaries.");
@@ -147,7 +147,7 @@ public sealed class MemoryEvaluationTests
     [Fact]
     public async Task ContestedEvaluation_RanksActiveMemoryAboveContestedMemory()
     {
-        using var harness = new MemoryEvaluationHarness();
+        await using var harness = new MemoryEvaluationHarness();
 
         var activeMemory = harness.Store.UpsertMemory(new MemoryUpsertRequest(
             harness.SessionId,
@@ -190,7 +190,7 @@ public sealed class MemoryEvaluationTests
     [Fact]
     public async Task CorrectionEvaluation_PrefersCorrectedMemoryOverSupersededOriginal()
     {
-        using var harness = new MemoryEvaluationHarness();
+        await using var harness = new MemoryEvaluationHarness();
 
         var source = harness.Store.UpsertMemory(new MemoryUpsertRequest(
             harness.SessionId,
@@ -223,7 +223,7 @@ public sealed class MemoryEvaluationTests
     [Fact]
     public async Task NoisySessionEvaluation_MaintainsUsefulPrecisionForEnvironmentRecall()
     {
-        using var harness = new MemoryEvaluationHarness(enableEmbeddings: true);
+        await using var harness = new MemoryEvaluationHarness(enableEmbeddings: true);
 
         for (var index = 0; index < 10; index++)
         {
@@ -313,7 +313,7 @@ public sealed class MemoryEvaluationTests
         IReadOnlyList<string> MatchReasons,
         bool IsBounded);
 
-    private sealed class MemoryEvaluationHarness : IDisposable
+    private sealed class MemoryEvaluationHarness : IAsyncDisposable
     {
         private readonly EvalExtensionCatalog _extensionCatalog;
         private readonly EvaluationRuntimeCatalog _runtimeCatalog;
@@ -416,10 +416,8 @@ public sealed class MemoryEvaluationTests
             return recall?.Entries ?? [];
         }
 
-        public void Dispose()
-        {
-            _indexingBackgroundService.Dispose();
-        }
+        public async ValueTask DisposeAsync()
+            => await _indexingBackgroundService.DisposeAsync();
 
         private AgentProfileRecord CreateProfile(bool enableEmbeddings)
             => new(
@@ -602,7 +600,7 @@ public sealed class MemoryEvaluationTests
 
         public string PackageId => "test.memory.evaluation";
 
-        public Version Version => new(1, 0, 0);
+        public string Version => "1.0.0";
 
         public string InstallPath { get; }
 
@@ -621,38 +619,22 @@ public sealed class MemoryEvaluationTests
     {
         public EvaluationPackageStorageContext(string rootPath)
         {
-            DataRootPath = Path.Combine(rootPath, "data");
-            CacheRootPath = Path.Combine(rootPath, "cache");
-            LogsRootPath = Path.Combine(rootPath, "logs");
-            Directory.CreateDirectory(DataRootPath);
-            Directory.CreateDirectory(CacheRootPath);
-            Directory.CreateDirectory(LogsRootPath);
+            Directory.CreateDirectory(rootPath);
             Files = new EvaluationPackageFileStore(rootPath);
             State = new EvaluationPackageKeyValueStore();
+            LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
         }
-
-        public string DataRootPath { get; }
-
-        public string CacheRootPath { get; }
-
-        public string LogsRootPath { get; }
 
         public IPackageFileStore Files { get; }
 
         public IPackageKeyValueStore State { get; }
+        public IPackageLocalWorkspaceLease LocalWorkspace { get; }
     }
 
-    private sealed class EvaluationPackageFileStore(string rootPath) : IPackageFileStore
-    {
-        public string RootPath { get; } = rootPath;
-
-        public string GetPath(string relativePath) => Path.Combine(RootPath, relativePath);
-    }
+    private sealed class EvaluationPackageFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
 
     private sealed class EvaluationPackageKeyValueStore : IPackageKeyValueStore
     {
-        public string? GetValue(string key) => null;
-
         public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
 
         public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -665,21 +647,7 @@ public sealed class MemoryEvaluationTests
             => Task.FromResult<IReadOnlyList<string>>([]);
     }
 
-    private sealed class EvaluationPackageConfiguration : IPackageConfiguration
-    {
-        public string? GetValue(string key) => null;
-    }
+    private sealed class EvaluationPackageConfiguration : EmptyPackageConfiguration;
 
-    private sealed class EvaluationPackageSecrets : IPackageSecrets
-    {
-        public string? GetSecret(string key) => null;
-
-        public void SetSecret(string key, string value)
-        {
-        }
-
-        public void DeleteSecret(string key)
-        {
-        }
-    }
+    private sealed class EvaluationPackageSecrets : InMemoryPackageSecrets;
 }

@@ -26,11 +26,12 @@ internal sealed class LMStudioModelCatalogService
     public async ValueTask<LMStudioModelCatalogResult> GetCatalogAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!_connection.TryGetOptions(out var options, out var validationError))
+        var connection = await _connection.GetOptionsAsync(cancellationToken).ConfigureAwait(false);
+        if (connection.Options is not { } options)
         {
             return LMStudioModelCatalogResult.Failed(new LMStudioCatalogFailure(
                 LMStudioCatalogFailureKind.Configuration,
-                validationError));
+                connection.ValidationError ?? "Invalid LM Studio configuration."));
         }
 
         InflightEntry inflight;
@@ -74,11 +75,12 @@ internal sealed class LMStudioModelCatalogService
         try
         {
             var result = await FetchAsync(options, inflight.Cancellation.Token).ConfigureAwait(false);
+            var currentConnection = await _connection.GetOptionsAsync(inflight.Cancellation.Token).ConfigureAwait(false);
             lock (_cacheLock)
             {
                 if (OwnsInflightEntry(inflight)
                     && !inflight.Cancellation.IsCancellationRequested
-                    && _connection.TryGetOptions(out var currentOptions, out _)
+                    && currentConnection.Options is { } currentOptions
                     && currentOptions.CacheKey == options.CacheKey)
                 {
                     _cache = new CacheEntry(

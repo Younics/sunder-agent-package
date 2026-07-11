@@ -105,7 +105,10 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
 
         try
         {
-            var result = await _exaWebSearchBackend.SearchAsync(arguments.Query, arguments.MaxResults ?? _settingsService.GetDefaultMaxResults(), cancellationToken);
+            var result = await _exaWebSearchBackend.SearchAsync(
+                arguments.Query,
+                arguments.MaxResults ?? await _settingsService.GetDefaultMaxResultsAsync(cancellationToken),
+                cancellationToken);
             return new AgentToolResult(
                 Descriptor.ToolId,
                 result.Summary,

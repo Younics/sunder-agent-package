@@ -179,7 +179,7 @@ public sealed class McpSettingsRaceTests
 
         public ControlledKeyValueStore State { get; }
         public string PackageId => "test.mcp.presentation";
-        public Version Version { get; } = new(1, 0, 0);
+        public string Version { get; } = "1.0.0";
         public string InstallPath => AppContext.BaseDirectory;
         public IPackageStorageContext Storage => _storage;
         public IPackageConfiguration Configuration { get; } = new EmptyConfiguration();
@@ -190,11 +190,9 @@ public sealed class McpSettingsRaceTests
 
     private sealed class ControlledStorage(IPackageKeyValueStore state) : IPackageStorageContext
     {
-        public string DataRootPath => Path.GetTempPath();
-        public string CacheRootPath => Path.GetTempPath();
-        public string LogsRootPath => Path.GetTempPath();
         public IPackageFileStore Files { get; } = new EmptyFiles();
         public IPackageKeyValueStore State => state;
+        public IPackageLocalWorkspaceLease LocalWorkspace { get; } = new EmptyWorkspace();
     }
 
     private sealed class ControlledKeyValueStore : IPackageKeyValueStore
@@ -221,8 +219,6 @@ public sealed class McpSettingsRaceTests
             return block;
         }
 
-        public string? GetValue(string key) => _values.GetValueOrDefault(key);
-
         public async Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
         {
             var block = _readBlock;
@@ -233,7 +229,7 @@ public sealed class McpSettingsRaceTests
                 Interlocked.CompareExchange(ref _readBlock, null, block);
             }
 
-            return GetValue(key);
+            return _values.GetValueOrDefault(key);
         }
 
         public async Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
@@ -284,19 +280,27 @@ public sealed class McpSettingsRaceTests
 
     private sealed class EmptyFiles : IPackageFileStore
     {
-        public string RootPath => Path.GetTempPath();
-        public string GetPath(string relativePath) => Path.Combine(RootPath, relativePath);
+        public Task<byte[]?> ReadAsync(string relativePath, CancellationToken cancellationToken = default) => Task.FromResult<byte[]?>(null);
+        public Task WriteAsync(string relativePath, ReadOnlyMemory<byte> contents, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task DeleteAsync(string relativePath, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private sealed class EmptyConfiguration : IPackageConfiguration
     {
-        public string? GetValue(string key) => null;
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
     }
 
     private sealed class EmptySecrets : IPackageSecrets
     {
-        public string? GetSecret(string key) => null;
-        public void SetSecret(string key, string value) { }
-        public void DeleteSecret(string key) { }
+        public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
+        public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class EmptyWorkspace : IPackageLocalWorkspaceLease
+    {
+        public string WorkspaceRootPath => Path.GetTempPath();
+        public string GetLocalPath(string relativePath) => Path.Combine(WorkspaceRootPath, relativePath);
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

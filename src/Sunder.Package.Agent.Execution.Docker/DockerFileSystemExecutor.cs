@@ -15,7 +15,7 @@ internal sealed class DockerFileSystemExecutor(IDockerCommandExecutor commandRun
         var path = DockerPathResolver.ResolvePath(config, requestedPath, allowOutsideConfiguredScope);
         var result = await commandRunner.RunAsync(
             BuildArguments(config, containerName, "exists", path, ranged: false, 1, 1, option: false, redirectStandardInput: false, expectedContentHash: null),
-            commandRunner.ResolveDefaultTimeoutSeconds(),
+            await commandRunner.ResolveDefaultTimeoutSecondsAsync(cancellationToken),
             cancellationToken);
         if (!TryParseProtocol(result.Output, out var fields, out _) || result.ExitCode != 0)
         {
@@ -61,7 +61,7 @@ internal sealed class DockerFileSystemExecutor(IDockerCommandExecutor commandRun
                 option: false,
                 redirectStandardInput: false,
                 expectedContentHash: null),
-            commandRunner.ResolveDefaultTimeoutSeconds(),
+            await commandRunner.ResolveDefaultTimeoutSecondsAsync(cancellationToken),
             cancellationToken);
 
         if (result.TimedOut)
@@ -143,7 +143,7 @@ internal sealed class DockerFileSystemExecutor(IDockerCommandExecutor commandRun
 
         var result = await commandRunner.RunAsync(
             BuildArguments(config, containerName, "write", path, ranged: false, 1, 2000, request.Overwrite, redirectStandardInput: true, request.ExpectedContentHash),
-            commandRunner.ResolveDefaultTimeoutSeconds(),
+            await commandRunner.ResolveDefaultTimeoutSecondsAsync(cancellationToken),
             cancellationToken,
             request.Content);
         if (TryParseProtocol(result.Output, out var fields, out _))
@@ -192,7 +192,7 @@ internal sealed class DockerFileSystemExecutor(IDockerCommandExecutor commandRun
 
         var result = await commandRunner.RunAsync(
             BuildArguments(config, containerName, "delete", path, ranged: false, 1, 2000, request.Recursive, redirectStandardInput: false, request.ExpectedContentHash),
-            commandRunner.ResolveDefaultTimeoutSeconds(),
+            await commandRunner.ResolveDefaultTimeoutSecondsAsync(cancellationToken),
             cancellationToken);
         if (TryParseProtocol(result.Output, out var fields, out _))
         {

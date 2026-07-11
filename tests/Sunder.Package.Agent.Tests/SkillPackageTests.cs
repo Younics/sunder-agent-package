@@ -733,7 +733,7 @@ public sealed class SkillPackageTests
     {
         public string PackageId => SkillsPackageId;
 
-        public Version Version { get; } = new(1, 0, 0);
+        public string Version { get; } = "1.0.0";
 
         public string InstallPath => AppContext.BaseDirectory;
 
@@ -752,44 +752,24 @@ public sealed class SkillPackageTests
     {
         public TestStorageContext(string rootPath)
         {
-            DataRootPath = Path.Combine(rootPath, "data");
-            CacheRootPath = Path.Combine(rootPath, "cache");
-            LogsRootPath = Path.Combine(rootPath, "logs");
-            Directory.CreateDirectory(DataRootPath);
-            Directory.CreateDirectory(CacheRootPath);
-            Directory.CreateDirectory(LogsRootPath);
+            Directory.CreateDirectory(rootPath);
             Files = new TestFileStore(Path.Combine(rootPath, "files"));
-            Directory.CreateDirectory(Files.RootPath);
+            LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
         }
-
-        public string DataRootPath { get; }
-
-        public string CacheRootPath { get; }
-
-        public string LogsRootPath { get; }
 
         public IPackageFileStore Files { get; }
 
         public IPackageKeyValueStore State { get; } = new TestKeyValueStore();
+        public IPackageLocalWorkspaceLease LocalWorkspace { get; }
     }
 
-    private sealed class TestFileStore(string rootPath) : IPackageFileStore
-    {
-        public string RootPath { get; } = rootPath;
-
-        public string GetPath(string relativePath)
-            => string.IsNullOrWhiteSpace(relativePath)
-                ? RootPath
-                : Path.Combine([RootPath, .. relativePath.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)]);
-    }
+    private sealed class TestFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
 
     private sealed class TestKeyValueStore : IPackageKeyValueStore
     {
         private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
 
-        public string? GetValue(string key) => _values.GetValueOrDefault(key);
-
-        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(GetValue(key));
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(_values.GetValueOrDefault(key));
 
         public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
         {
@@ -809,21 +789,7 @@ public sealed class SkillPackageTests
             => Task.FromResult<IReadOnlyList<string>>(_values.Keys.Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray());
     }
 
-    private sealed class TestConfiguration : IPackageConfiguration
-    {
-        public string? GetValue(string key) => null;
-    }
+    private sealed class TestConfiguration : EmptyPackageConfiguration;
 
-    private sealed class TestSecrets : IPackageSecrets
-    {
-        public string? GetSecret(string key) => null;
-
-        public void SetSecret(string key, string value)
-        {
-        }
-
-        public void DeleteSecret(string key)
-        {
-        }
-    }
+    private sealed class TestSecrets : InMemoryPackageSecrets;
 }

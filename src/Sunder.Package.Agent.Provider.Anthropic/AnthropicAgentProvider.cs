@@ -41,19 +41,19 @@ public sealed class AnthropicAgentProvider : IAgentChatProvider, IAgentUtilityMo
         return ValueTask.FromResult(AnthropicModelCatalog.Models);
     }
 
-    public ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult<string?>(UtilityModelSettingsState.ResolveModelId(
-            _packageContext.Configuration.GetValue(AnthropicProviderConfiguration.UtilityModelKey),
+        return UtilityModelSettingsState.ResolveModelId(
+            await _packageContext.Configuration.GetValueAsync(AnthropicProviderConfiguration.UtilityModelKey, cancellationToken),
             AnthropicProviderConfiguration.DefaultUtilityModelId,
-            AnthropicModelCatalog.UtilityModelOptions.Select(option => option.Value)));
+            AnthropicModelCatalog.UtilityModelOptions.Select(option => option.Value));
     }
 
-    public ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(!_credentials.HasCredential
+        return !await _credentials.HasCredentialAsync(cancellationToken)
             ? new AgentProviderReadiness(
                 Descriptor.ProviderId,
                 AgentProviderReadinessStatus.NeedsConfiguration,
@@ -61,7 +61,7 @@ public sealed class AnthropicAgentProvider : IAgentChatProvider, IAgentUtilityMo
             : new AgentProviderReadiness(
                 Descriptor.ProviderId,
                 AgentProviderReadinessStatus.Ready,
-                "Anthropic API-key mode is configured."));
+                "Anthropic API-key mode is configured.");
     }
 
     public ValueTask<AgentProviderRunCapabilities> GetRunCapabilitiesAsync(string? modelId, CancellationToken cancellationToken = default)

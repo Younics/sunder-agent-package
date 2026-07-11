@@ -5,8 +5,10 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Sunder package development -->
-    <PackageVersion Include="Sunder.Sdk" Version="0.8.7" />
-    <PackageVersion Include="Sunder.Package.Build" Version="0.8.7" />
+    <PackageVersion Include="Sunder.Sdk" Version="1.0.0" />
+    <PackageVersion Include="Sunder.Sdk.Avalonia" Version="1.0.0" />
+    <PackageVersion Include="Sunder.Sdk.Stacks" Version="1.0.0" />
+    <PackageVersion Include="Sunder.Package.Build" Version="1.0.0" />
     <!-- UI -->
     <PackageVersion Include="Avalonia" Version="12.0.3" />
     <PackageVersion Include="Avalonia.AvaloniaEdit" Version="12.0.0" />

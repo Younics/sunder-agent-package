@@ -96,7 +96,9 @@ internal sealed class McpClientConnectionFactory(
             TransportMode = HttpTransportMode.AutoDetect,
             ConnectionTimeout = ToSdkTimeout(timeoutMilliseconds),
             AdditionalHeaders = headers.Count == 0 ? null : new Dictionary<string, string>(headers, StringComparer.OrdinalIgnoreCase),
-            OAuth = oauthService?.CreateClientOptions(server, allowInteractive: false),
+            OAuth = oauthService is null
+                ? null
+                : await oauthService.CreateClientOptionsAsync(server, allowInteractive: false, cancellationToken),
         };
         var httpClient = new HttpClient { Timeout = ToSdkTimeout(timeoutMilliseconds) };
         try

@@ -197,7 +197,7 @@ public sealed class OpenAiAgentProviderTests
     {
         public string PackageId { get; } = "sunder.package.agent.provider.openai";
 
-        public Version Version { get; } = new(1, 0, 0);
+        public string Version { get; } = "1.0.0";
 
         public string InstallPath { get; } = AppContext.BaseDirectory;
 
@@ -240,30 +240,36 @@ public sealed class OpenAiAgentProviderTests
 
     private sealed class TestPackageConfiguration(IReadOnlyDictionary<string, string> values) : IPackageConfiguration
     {
-        public string? GetValue(string key) => values.TryGetValue(key, out var value) ? value : null;
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
+            => Task.FromResult(values.TryGetValue(key, out var value) ? value : null);
     }
 
     private sealed class TestPackageSecrets(IReadOnlyDictionary<string, string> values) : IPackageSecrets
     {
         private readonly Dictionary<string, string> _values = new(values, StringComparer.OrdinalIgnoreCase);
 
-        public string? GetSecret(string key) => _values.TryGetValue(key, out var value) ? value : null;
+        public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default)
+            => Task.FromResult(_values.TryGetValue(key, out var value) ? value : null);
 
-        public void SetSecret(string key, string value) => _values[key] = value;
+        public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default)
+        {
+            _values[key] = value;
+            return Task.CompletedTask;
+        }
 
-        public void DeleteSecret(string key) => _values.Remove(key);
+        public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default)
+        {
+            _values.Remove(key);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class TestPackageStorageContext : IPackageStorageContext
     {
-        public string DataRootPath { get; } = AppContext.BaseDirectory;
-
-        public string CacheRootPath { get; } = AppContext.BaseDirectory;
-
-        public string LogsRootPath { get; } = AppContext.BaseDirectory;
-
         public IPackageFileStore Files => throw new NotSupportedException();
 
         public IPackageKeyValueStore State => throw new NotSupportedException();
+
+        public IPackageLocalWorkspaceLease LocalWorkspace => throw new NotSupportedException();
     }
 }

@@ -4,7 +4,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Memory.Semantic.Services;
 
-public sealed class SemanticMemoryIndexingBackgroundService : IPackageBackgroundService, IDisposable, IAsyncDisposable
+public sealed class SemanticMemoryIndexingBackgroundService : IPackageBackgroundService, IAsyncDisposable
 {
     private const int DefaultQueueCapacity = 256;
 
@@ -88,7 +88,7 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageBackground
                 _subscribedRuntimeCatalog.ProfileChanged += OnProfileChanged;
             }
 
-            _lastSettingsFingerprint = BuildSettingsFingerprint();
+            _lastSettingsFingerprint = await BuildSettingsFingerprintAsync(cancellationToken);
             UpdateStatus(status => status with { IsRunning = true, LastFailureAtUtc = null, LastFailureMessage = null });
             _processingTask = ProcessQueueAsync(_stoppingCts.Token);
             _monitoringTask = MonitorAsync(_stoppingCts.Token);
@@ -130,12 +130,6 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageBackground
         {
             _lifecycleGate.Release();
         }
-    }
-
-    public void Dispose()
-    {
-        DisposeAsync().AsTask().GetAwaiter().GetResult();
-        GC.SuppressFinalize(this);
     }
 
     public async ValueTask DisposeAsync()
@@ -317,7 +311,7 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageBackground
         {
             while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
             {
-                var currentFingerprint = BuildSettingsFingerprint();
+                var currentFingerprint = await BuildSettingsFingerprintAsync(cancellationToken);
                 if (!string.Equals(currentFingerprint, _lastSettingsFingerprint, StringComparison.Ordinal))
                 {
                     _lastSettingsFingerprint = currentFingerprint;
@@ -351,12 +345,12 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageBackground
         }
     }
 
-    private string BuildSettingsFingerprint()
+    private async Task<string> BuildSettingsFingerprintAsync(CancellationToken cancellationToken)
         => string.Join('|',
-            _settingsService.IsSemanticRetrievalEnabled(),
-            _settingsService.GetEmbeddingBatchSize(),
-            _settingsService.GetMaxCanonicalTextChars(),
-            _settingsService.GetReindexMode());
+            await _settingsService.IsSemanticRetrievalEnabledAsync(cancellationToken),
+            await _settingsService.GetEmbeddingBatchSizeAsync(cancellationToken),
+            await _settingsService.GetMaxCanonicalTextCharsAsync(cancellationToken),
+            await _settingsService.GetReindexModeAsync(cancellationToken));
 
     private void ResetQueue()
     {

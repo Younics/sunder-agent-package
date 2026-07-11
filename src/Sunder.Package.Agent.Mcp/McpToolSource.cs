@@ -111,8 +111,8 @@ public sealed class McpToolSource(
                 continue;
             }
 
-            var headers = _serverCatalogService.GetHeaders(server);
-            var environmentVariables = _serverCatalogService.GetEnvironmentVariables(server);
+            var headers = await _serverCatalogService.GetHeadersAsync(server, cancellationToken);
+            var environmentVariables = await _serverCatalogService.GetEnvironmentVariablesAsync(server, cancellationToken);
             var tools = await _connectionManager.GetToolsAsync(
                 server,
                 headers,
@@ -152,8 +152,8 @@ public sealed class McpToolSource(
         var tools = _connectionManager.GetCachedTools(server);
         if (tools is null)
         {
-            var headers = _serverCatalogService.GetHeaders(server);
-            var environmentVariables = _serverCatalogService.GetEnvironmentVariables(server);
+            var headers = await _serverCatalogService.GetHeadersAsync(server, cancellationToken);
+            var environmentVariables = await _serverCatalogService.GetEnvironmentVariablesAsync(server, cancellationToken);
             var discoveryTimeoutMilliseconds = McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server);
             tools = await _connectionManager.GetToolsAsync(
                 server,
@@ -217,8 +217,8 @@ public sealed class McpToolSource(
             var discoveryTimeoutMilliseconds = McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server);
             var client = await _connectionManager.GetClientAsync(
                 server,
-                _serverCatalogService.GetHeaders(server),
-                _serverCatalogService.GetEnvironmentVariables(server),
+                await _serverCatalogService.GetHeadersAsync(server, cancellationToken),
+                await _serverCatalogService.GetEnvironmentVariablesAsync(server, cancellationToken),
                 discoveryTimeoutMilliseconds,
                 McpConnectionScope.For(context.SessionId, context.Workspace?.WorkspaceId),
                 cancellationToken);

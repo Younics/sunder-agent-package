@@ -23,17 +23,20 @@ internal sealed class McpServerStackContributor(
         CancellationToken cancellationToken = default)
     {
         var servers = await serverCatalog.ListServersAsync(cancellationToken);
-        return servers
-            .OrderBy(server => server.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .Select(server => new StackExportItemDescriptor(
+        var items = new List<StackExportItemDescriptor>();
+        foreach (var server in servers.OrderBy(server => server.DisplayName, StringComparer.OrdinalIgnoreCase))
+        {
+            items.Add(new StackExportItemDescriptor(
                 server.ServerId,
                 server.DisplayName,
                 "mcp-server",
                 Description: null,
                 DefaultSelected: true,
                 Sensitivities: BuildSensitivities(server),
-                Details: BuildExportDetails(server)))
-            .ToArray();
+                Details: await BuildExportDetailsAsync(server, cancellationToken)));
+        }
+
+        return items;
     }
 
     public async ValueTask<StackExportContribution> ExportAsync(
@@ -75,8 +78,8 @@ internal sealed class McpServerStackContributor(
                 server,
                 request,
                 warnings,
-                serverCatalog.GetHeaders(server),
-                serverCatalog.GetEnvironmentVariables(server));
+                await serverCatalog.GetHeadersAsync(server, cancellationToken),
+                await serverCatalog.GetEnvironmentVariablesAsync(server, cancellationToken));
             if (payload is null)
             {
                 continue;
@@ -160,10 +163,10 @@ internal sealed class McpServerStackContributor(
                 var existing = await serverCatalog.GetServerAsync(payload.ServerId, cancellationToken);
                 var headers = existing is null
                     ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    : new Dictionary<string, string>(serverCatalog.GetHeaders(existing), StringComparer.OrdinalIgnoreCase);
+                    : new Dictionary<string, string>(await serverCatalog.GetHeadersAsync(existing, cancellationToken), StringComparer.OrdinalIgnoreCase);
                 var environmentVariables = existing is null
                     ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    : new Dictionary<string, string>(serverCatalog.GetEnvironmentVariables(existing), StringComparer.OrdinalIgnoreCase);
+                    : new Dictionary<string, string>(await serverCatalog.GetEnvironmentVariablesAsync(existing, cancellationToken), StringComparer.OrdinalIgnoreCase);
                 var missingSecrets = ApplySecretInputs(payload.Headers, request.InputValues, headers)
                                      + ApplySecretInputs(payload.EnvironmentVariables, request.InputValues, environmentVariables);
                 var isEnabled = payload.IsEnabled && missingSecrets == 0;
@@ -238,7 +241,9 @@ internal sealed class McpServerStackContributor(
         return sensitivities.Count == 0 ? [StackValueSensitivity.Public] : sensitivities.Distinct().ToArray();
     }
 
-    private IReadOnlyList<StackExportItemDetail> BuildExportDetails(ConfiguredMcpServerRecord server)
+    private async Task<IReadOnlyList<StackExportItemDetail>> BuildExportDetailsAsync(
+        ConfiguredMcpServerRecord server,
+        CancellationToken cancellationToken)
     {
         var details = new List<StackExportItemDetail>();
         if (!string.IsNullOrWhiteSpace(server.Description))
@@ -298,7 +303,7 @@ internal sealed class McpServerStackContributor(
                 DetailId: DetailIds.WorkingFolder));
         }
 
-        var headers = serverCatalog.GetHeaders(server);
+        var headers = await serverCatalog.GetHeadersAsync(server, cancellationToken);
         foreach (var headerName in server.HeaderNames.Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name, StringComparer.OrdinalIgnoreCase))
         {
             var isSecret = IsLikelySecretName(headerName);

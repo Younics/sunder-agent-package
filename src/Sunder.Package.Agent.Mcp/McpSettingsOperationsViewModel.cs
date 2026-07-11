@@ -323,10 +323,11 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
         try
         {
             var tools = await _connections.DiscoverAsync(server, reconnect, cancellation.Token);
+            var presentation = await _connections.GetPresentationAsync(server, cancellation.Token);
             await RunOnUiAsync(() =>
             {
                 _host.RefreshConnectionStatus(server);
-                var status = _connections.GetPresentation(server).Status;
+                var status = presentation.Status;
                 Complete(operation, status.Kind == McpConnectionStatusKind.Error
                         ? status.Message
                         : $"Discovered {tools.Count} MCP tool(s) from '{server.DisplayName}'.",

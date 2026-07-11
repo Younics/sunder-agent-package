@@ -56,8 +56,8 @@ public sealed class LMStudioAgentProvider : IAgentChatProvider, IAgentUtilityMod
     public async ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var configuredModelId = _packageContext.Configuration
-            .GetValue(LMStudioProviderConfiguration.UtilityModelKey)?.Trim();
+        var configuredModelId = (await _packageContext.Configuration
+            .GetValueAsync(LMStudioProviderConfiguration.UtilityModelKey, cancellationToken))?.Trim();
         if (!string.IsNullOrWhiteSpace(configuredModelId))
         {
             return configuredModelId.StartsWith("lmstudio/", StringComparison.OrdinalIgnoreCase)
@@ -72,12 +72,13 @@ public sealed class LMStudioAgentProvider : IAgentChatProvider, IAgentUtilityMod
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!_connection.TryGetOptions(out _, out var validationError))
+        var connection = await _connection.GetOptionsAsync(cancellationToken);
+        if (connection.Options is null)
         {
             return new AgentProviderReadiness(
                 Descriptor.ProviderId,
                 AgentProviderReadinessStatus.NeedsConfiguration,
-                $"The LM Studio base URL is invalid: {validationError}");
+                $"The LM Studio base URL is invalid: {connection.ValidationError}");
         }
 
         var result = await _catalog.GetCatalogAsync(cancellationToken).ConfigureAwait(false);

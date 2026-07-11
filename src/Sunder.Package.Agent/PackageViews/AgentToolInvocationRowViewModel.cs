@@ -8,7 +8,7 @@ using LiveMarkdown.Avalonia;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Services;
-using Sunder.Sdk.Theming;
+using Sunder.Sdk.Avalonia.Theming;
 
 namespace Sunder.Package.Agent.PackageViews;
 

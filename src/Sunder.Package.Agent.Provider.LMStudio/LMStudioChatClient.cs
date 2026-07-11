@@ -35,9 +35,10 @@ internal sealed class LMStudioChatClient(
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (!_connection.TryGetOptions(out var connectionOptions, out var validationError))
+        var connection = await _connection.GetOptionsAsync(cancellationToken).ConfigureAwait(false);
+        if (connection.Options is not { } connectionOptions)
         {
-            throw LMStudioExceptionMapper.InvalidConfiguration(validationError);
+            throw LMStudioExceptionMapper.InvalidConfiguration(connection.ValidationError ?? "Invalid LM Studio configuration.");
         }
 
         var modelId = options?.ModelId ?? _context.ModelId;

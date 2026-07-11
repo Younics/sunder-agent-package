@@ -9,12 +9,12 @@ public sealed class LocalShellCatalogService(IPackageContext packageContext)
     private const string CustomShellsKey = "shells.custom";
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
-    public IReadOnlyList<LocalShellDefinition> ListShells()
+    public async Task<IReadOnlyList<LocalShellDefinition>> ListShellsAsync(CancellationToken cancellationToken = default)
     {
         var result = new List<LocalShellDefinition>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var shells = DetectShells()
-            .Concat(ListCustomShells().OrderBy(shell => shell.DisplayName, StringComparer.OrdinalIgnoreCase));
+            .Concat((await ListCustomShellsAsync(cancellationToken)).OrderBy(shell => shell.DisplayName, StringComparer.OrdinalIgnoreCase));
 
         foreach (var shell in shells)
         {
@@ -27,9 +27,9 @@ public sealed class LocalShellCatalogService(IPackageContext packageContext)
         return result;
     }
 
-    public IReadOnlyList<LocalShellDefinition> ListCustomShells()
+    public async Task<IReadOnlyList<LocalShellDefinition>> ListCustomShellsAsync(CancellationToken cancellationToken = default)
     {
-        var json = packageContext.Storage.State.GetValue(CustomShellsKey);
+        var json = await packageContext.Storage.State.GetValueAsync(CustomShellsKey, cancellationToken);
         if (string.IsNullOrWhiteSpace(json))
         {
             return [];
@@ -48,7 +48,9 @@ public sealed class LocalShellCatalogService(IPackageContext packageContext)
         }
     }
 
-    public void SaveCustomShells(IReadOnlyList<LocalShellDefinition> shells)
+    public Task SaveCustomShellsAsync(
+        IReadOnlyList<LocalShellDefinition> shells,
+        CancellationToken cancellationToken = default)
     {
         var normalized = shells
             .Where(shell => !shell.IsDetected && !string.IsNullOrWhiteSpace(shell.ExecutablePath))
@@ -61,19 +63,23 @@ public sealed class LocalShellCatalogService(IPackageContext packageContext)
                 IsDetected = false,
             })
             .ToArray();
-        packageContext.Storage.State.SetValueAsync(CustomShellsKey, JsonSerializer.Serialize(normalized, JsonOptions)).GetAwaiter().GetResult();
+        return packageContext.Storage.State.SetValueAsync(
+            CustomShellsKey,
+            JsonSerializer.Serialize(normalized, JsonOptions),
+            cancellationToken);
     }
 
-    public LocalShellDefinition GetDefaultShell()
-        => ListShells().FirstOrDefault()
+    public async Task<LocalShellDefinition> GetDefaultShellAsync(CancellationToken cancellationToken = default)
+        => (await ListShellsAsync(cancellationToken)).FirstOrDefault()
            ?? new LocalShellDefinition("cmd", "Command Prompt", Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", AgentShellSyntaxKinds.Cmd, true);
 
-    public LocalShellDefinition ResolveShell(string? shellId)
+    public async Task<LocalShellDefinition> ResolveShellAsync(string? shellId, CancellationToken cancellationToken = default)
     {
-        var shells = ListShells();
+        var shells = await ListShellsAsync(cancellationToken);
         return string.IsNullOrWhiteSpace(shellId)
-            ? shells.FirstOrDefault() ?? GetDefaultShell()
-            : shells.FirstOrDefault(shell => string.Equals(shell.ShellId, shellId, StringComparison.OrdinalIgnoreCase)) ?? GetDefaultShell();
+            ? shells.FirstOrDefault() ?? await GetDefaultShellAsync(cancellationToken)
+            : shells.FirstOrDefault(shell => string.Equals(shell.ShellId, shellId, StringComparison.OrdinalIgnoreCase))
+                ?? await GetDefaultShellAsync(cancellationToken);
     }
 
     private static IReadOnlyList<LocalShellDefinition> DetectShells()

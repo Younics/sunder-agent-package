@@ -30,13 +30,11 @@ public sealed class AgentWorkspaceService
 
     public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces()
     {
-        EnsureLegacyWorkspacePathMigration();
         return _store.ListWorkspaces();
     }
 
     public AgentWorkspaceRecord? GetWorkspace(string workspaceId)
     {
-        EnsureLegacyWorkspacePathMigration();
         return _store.GetWorkspace(workspaceId);
     }
 
@@ -187,7 +185,7 @@ public sealed class AgentWorkspaceService
         WorkspacesChanged?.Invoke();
     }
 
-    private void EnsureLegacyWorkspacePathMigration()
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         if (_isMigratingWorkspacePaths || _extensionCatalog is null)
         {
@@ -230,7 +228,7 @@ public sealed class AgentWorkspaceService
                             continue;
                         }
 
-                        var items = migrator.GetLegacyWorkspacePaths(context)
+                        var items = (await migrator.GetLegacyWorkspacePathsAsync(context, cancellationToken))
                             .Where(item => !string.IsNullOrWhiteSpace(item.HostPath))
                             .ToArray();
                         if (items.Length == 0)
@@ -257,7 +255,7 @@ public sealed class AgentWorkspaceService
                 {
                     try
                     {
-                        migrator.CompleteWorkspacePathMigration(context);
+                        await migrator.CompleteWorkspacePathMigrationAsync(context, cancellationToken);
                     }
                     catch
                     {

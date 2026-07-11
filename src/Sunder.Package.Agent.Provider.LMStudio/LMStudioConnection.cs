@@ -143,18 +143,24 @@ internal sealed class LMStudioConnection : IDisposable
         _transport = new HttpClientPipelineTransport(_httpClient);
     }
 
-    public bool TryGetOptions(out LMStudioConnectionOptions options, out string validationError)
-        => LMStudioConnectionOptions.TryCreate(
-            _packageContext.Configuration.GetValue(LMStudioProviderConfiguration.BaseUrlKey),
-            _credentials.GetCredential(),
-            _timeout,
-            out options,
-            out validationError);
+    public async Task<LMStudioConnectionValidationResult> GetOptionsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var baseUrl = await _packageContext.Configuration.GetValueAsync(
+            LMStudioProviderConfiguration.BaseUrlKey,
+            cancellationToken);
+        var credential = await _credentials.GetCredentialAsync(cancellationToken);
+        return LMStudioConnectionOptions.TryCreate(baseUrl, credential, _timeout, out var options, out var validationError)
+            ? new LMStudioConnectionValidationResult(options, null)
+            : new LMStudioConnectionValidationResult(null, validationError);
+    }
 
-    public LMStudioConnectionOptions GetRequiredOptions()
-        => TryGetOptions(out var options, out var validationError)
-            ? options
-            : throw new InvalidOperationException(validationError);
+    public async Task<LMStudioConnectionOptions> GetRequiredOptionsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var result = await GetOptionsAsync(cancellationToken);
+        return result.Options ?? throw new InvalidOperationException(result.ValidationError);
+    }
 
     public HttpRequestMessage CreateRequest(
         HttpMethod method,
@@ -229,3 +235,7 @@ internal sealed class LMStudioConnection : IDisposable
         }
     }
 }
+
+internal sealed record LMStudioConnectionValidationResult(
+    LMStudioConnectionOptions? Options,
+    string? ValidationError);

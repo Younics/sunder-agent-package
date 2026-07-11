@@ -6,6 +6,8 @@
         <AnalysisLevel>latest</AnalysisLevel>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <SunderSdkProject>$(MSBuildThisFileDirectory)..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj</SunderSdkProject>
+        <SunderSdkAvaloniaProject>$(MSBuildThisFileDirectory)..\sunder-core\src\Sdk\Sunder.Sdk.Avalonia\Sunder.Sdk.Avalonia.csproj</SunderSdkAvaloniaProject>
+        <SunderSdkStacksProject>$(MSBuildThisFileDirectory)..\sunder-core\src\Sdk\Sunder.Sdk.Stacks\Sunder.Sdk.Stacks.csproj</SunderSdkStacksProject>
         <SunderPackageBuildTargets>$(MSBuildThisFileDirectory)..\sunder-core\src\Sdk\Sunder.Package.Build\build\Sunder.Package.Build.targets</SunderPackageBuildTargets>
         <SunderUseSourceSdk Condition="'$(SunderUseSourceSdk)' == '' and Exists('$(SunderSdkProject)')">true</SunderUseSourceSdk>
         <SunderUseSourceSdk Condition="'$(SunderUseSourceSdk)' == ''">false</SunderUseSourceSdk>

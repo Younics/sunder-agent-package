@@ -5,13 +5,14 @@ using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Avalonia;
 using Sunder.Sdk.Configuration;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
-public sealed class PackageModule : ISunderPackageModule
+public sealed class PackageModule : ISunderRuntimePackageModule
 {
-    public void ConfigureServices(IServiceCollection services, IPackageContext context)
+    public void ConfigureRuntimeServices(IServiceCollection services, IPackageContext context)
     {
         services.AddSingleton(new ProviderCredentialAccessor(
             context.Secrets,
@@ -35,12 +36,30 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddSingleton<IAgentEmbeddingProvider>(serviceProvider => serviceProvider.GetRequiredService<OpenAiEmbeddingProvider>());
     }
 
-    public void RegisterContributions(IPackageContributionRegistry registry, IServiceProvider services)
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
+        => ConfigureRuntimeServices(services, context);
+
+    public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterConfigurationSchema(OpenAiProviderConfiguration.Schema);
+        registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<OpenAiAgentProvider>());
+        registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<OpenAiEmbeddingProvider>());
+        registry.RegisterExtension(PackageExtensionPoints.SessionDataCleaners, services.GetRequiredService<CodexResponseContinuationStore>());
+    }
+
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
+    {
         registry.RegisterSettingsView<OpenAiSettingsView>();
         registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<OpenAiAgentProvider>());
         registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<OpenAiEmbeddingProvider>());
         registry.RegisterExtension(PackageExtensionPoints.SessionDataCleaners, services.GetRequiredService<CodexResponseContinuationStore>());
     }
+}
+
+public sealed class AppPackageModule : ISunderAppPackageModule
+{
+    private readonly PackageModule _module = new();
+
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
 }

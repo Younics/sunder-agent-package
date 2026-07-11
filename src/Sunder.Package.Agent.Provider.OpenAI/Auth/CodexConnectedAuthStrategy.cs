@@ -45,7 +45,8 @@ public sealed class CodexConnectedAuthStrategy : IDisposable
 
     public string ModeId { get; } = "codex-connected";
 
-    public OpenAiCodexSession? GetCachedSession() => _sessionStore.Get();
+    public Task<OpenAiCodexSession?> GetCachedSessionAsync(CancellationToken cancellationToken = default)
+        => _sessionStore.GetAsync(cancellationToken);
 
     public Task<OpenAiCodexSession> EnsureAuthenticatedAsync(CancellationToken cancellationToken = default)
         => EnsureAuthenticatedAsync(allowInteractive: true, cancellationToken);
@@ -58,7 +59,7 @@ public sealed class CodexConnectedAuthStrategy : IDisposable
         {
             await _sessionGate.WaitAsync(operation.Token);
             enteredGate = true;
-            var cached = _sessionStore.Get();
+            var cached = await _sessionStore.GetAsync(operation.Token);
             if (cached is null)
             {
                 return null;
@@ -99,7 +100,7 @@ public sealed class CodexConnectedAuthStrategy : IDisposable
         {
             await _sessionGate.WaitAsync(operation.Token);
             enteredGate = true;
-            var cached = _sessionStore.Get();
+            var cached = await _sessionStore.GetAsync(operation.Token);
             if (cached is not null && !RequiresRefresh(cached))
             {
                 return cached;
@@ -124,7 +125,7 @@ public sealed class CodexConnectedAuthStrategy : IDisposable
                 "openai.codex.auth.interactive.start",
                 "Starting interactive Codex browser authorization.");
             var session = await _browserAuthorization.SignInWithBrowserAsync(operation.Token);
-            if (!TrySaveSession("interactive", session, operation.Generation))
+            if (!await TrySaveSessionAsync("interactive", session, operation.Generation, operation.Token))
             {
                 throw new OperationCanceledException(operation.Token);
             }
@@ -150,7 +151,7 @@ public sealed class CodexConnectedAuthStrategy : IDisposable
         {
             await _sessionGate.WaitAsync(operation.Token);
             enteredGate = true;
-            var cached = _sessionStore.Get();
+            var cached = await _sessionStore.GetAsync(operation.Token);
             if (cached is null)
             {
                 return null;
@@ -210,7 +211,7 @@ public sealed class CodexConnectedAuthStrategy : IDisposable
                 authSessionId,
                 queryValues,
                 operation.Token);
-            if (!TrySaveSession("runtime_callback", session, operation.Generation))
+            if (!await TrySaveSessionAsync("runtime_callback", session, operation.Generation, operation.Token))
             {
                 throw new OperationCanceledException(operation.Token);
             }
@@ -236,7 +237,6 @@ public sealed class CodexConnectedAuthStrategy : IDisposable
             _sessionGeneration++;
             canceledGeneration.Cancel();
             _browserAuthorization.CancelPendingAuthorizations();
-            _sessionStore.Clear();
         }
 
         var enteredGate = false;
@@ -244,6 +244,7 @@ public sealed class CodexConnectedAuthStrategy : IDisposable
         {
             await _sessionGate.WaitAsync(cancellationToken);
             enteredGate = true;
+            await _sessionStore.ClearAsync(cancellationToken);
         }
         finally
         {
@@ -283,14 +284,14 @@ public sealed class CodexConnectedAuthStrategy : IDisposable
         var result = await _oauthClient.RefreshAsync(refreshToken, cancellationToken);
         if (result.Session is not null)
         {
-            return TrySaveSession(flow, result.Session, generation)
+            return await TrySaveSessionAsync(flow, result.Session, generation, cancellationToken)
                 ? result.Session
                 : null;
         }
 
         if (result.FailureKind == CodexAuthFailureKind.Terminal)
         {
-            TryClearSession(generation);
+            await TryClearSessionAsync(generation, cancellationToken);
             _telemetry.Write(
                 PackageLogLevel.Warning,
                 "openai.codex.auth.refresh.terminal_failure",
@@ -309,7 +310,11 @@ public sealed class CodexConnectedAuthStrategy : IDisposable
         return null;
     }
 
-    private bool TrySaveSession(string flow, OpenAiCodexSession session, long generation)
+    private async Task<bool> TrySaveSessionAsync(
+        string flow,
+        OpenAiCodexSession session,
+        long generation,
+        CancellationToken cancellationToken)
     {
         lock (_lifecycleGate)
         {
@@ -318,20 +323,24 @@ public sealed class CodexConnectedAuthStrategy : IDisposable
                 return false;
             }
 
-            _sessionStore.Save(session);
-            _telemetry.SessionSaved(flow, session);
-            return true;
         }
+
+        await _sessionStore.SaveAsync(session, cancellationToken);
+        _telemetry.SessionSaved(flow, session);
+        return true;
     }
 
-    private void TryClearSession(long generation)
+    private async Task TryClearSessionAsync(long generation, CancellationToken cancellationToken)
     {
+        var shouldClear = false;
         lock (_lifecycleGate)
         {
-            if (generation == _sessionGeneration)
-            {
-                _sessionStore.Clear();
-            }
+            shouldClear = generation == _sessionGeneration;
+        }
+
+        if (shouldClear)
+        {
+            await _sessionStore.ClearAsync(cancellationToken);
         }
     }
 

@@ -8,7 +8,11 @@ public interface IAgentWorkspacePathMigrationContributor
 
     bool CanMigrate(AgentWorkspacePathMigrationContext context);
 
-    IReadOnlyList<AgentWorkspacePathMigrationItem> GetLegacyWorkspacePaths(AgentWorkspacePathMigrationContext context);
+    Task<IReadOnlyList<AgentWorkspacePathMigrationItem>> GetLegacyWorkspacePathsAsync(
+        AgentWorkspacePathMigrationContext context,
+        CancellationToken cancellationToken = default);
 
-    void CompleteWorkspacePathMigration(AgentWorkspacePathMigrationContext context);
+    Task CompleteWorkspacePathMigrationAsync(
+        AgentWorkspacePathMigrationContext context,
+        CancellationToken cancellationToken = default);
 }

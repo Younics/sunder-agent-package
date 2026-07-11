@@ -41,19 +41,19 @@ public sealed class GeminiAgentProvider : IAgentChatProvider, IAgentUtilityModel
         return ValueTask.FromResult(GeminiModelCatalog.Models);
     }
 
-    public ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult<string?>(UtilityModelSettingsState.ResolveModelId(
-            _packageContext.Configuration.GetValue(GeminiProviderConfiguration.UtilityModelKey),
+        return UtilityModelSettingsState.ResolveModelId(
+            await _packageContext.Configuration.GetValueAsync(GeminiProviderConfiguration.UtilityModelKey, cancellationToken),
             GeminiProviderConfiguration.DefaultUtilityModelId,
-            GeminiModelCatalog.UtilityModelOptions.Select(option => option.Value)));
+            GeminiModelCatalog.UtilityModelOptions.Select(option => option.Value));
     }
 
-    public ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(!_credentials.HasCredential
+        return !await _credentials.HasCredentialAsync(cancellationToken)
             ? new AgentProviderReadiness(
                 Descriptor.ProviderId,
                 AgentProviderReadinessStatus.NeedsConfiguration,
@@ -61,7 +61,7 @@ public sealed class GeminiAgentProvider : IAgentChatProvider, IAgentUtilityModel
             : new AgentProviderReadiness(
                 Descriptor.ProviderId,
                 AgentProviderReadinessStatus.Ready,
-                "Gemini API-key mode is configured."));
+                "Gemini API-key mode is configured.");
     }
 
     public ValueTask<AgentProviderRunCapabilities> GetRunCapabilitiesAsync(string? modelId, CancellationToken cancellationToken = default)

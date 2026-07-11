@@ -60,7 +60,7 @@ public sealed class DockerExecutionTarget
     {
         try
         {
-            var config = BuildRuntimeConfig(context);
+            var config = await BuildRuntimeConfigAsync(context, cancellationToken);
             if (string.IsNullOrWhiteSpace(config.ImageReference))
             {
                 return new AgentExecutionTargetReadiness(Descriptor.TargetKind, Descriptor.TargetId, AgentExecutionTargetReadinessStatus.NeedsConfiguration, "Configure a Docker image before using Docker execution.");
@@ -101,35 +101,35 @@ public sealed class DockerExecutionTarget
         }
     }
 
-    public ValueTask<AgentExecutionShellDescriptor> GetShellAsync(
+    public async ValueTask<AgentExecutionShellDescriptor> GetShellAsync(
         AgentExecutionTargetContext context,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var config = _configService.GetConfig(context.Binding.BindingId);
-        return ValueTask.FromResult(DockerCommandRunner.GetShellDescriptor(config));
+        var config = await _configService.GetConfigAsync(context.Binding.BindingId, cancellationToken);
+        return DockerCommandRunner.GetShellDescriptor(config);
     }
 
-    public ValueTask<AgentExecutionScopeDescriptor> GetExecutionScopeAsync(
+    public async ValueTask<AgentExecutionScopeDescriptor> GetExecutionScopeAsync(
         AgentExecutionTargetContext context,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var config = BuildRuntimeConfig(context);
-        return ValueTask.FromResult(new AgentExecutionScopeDescriptor(
+        var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        return new AgentExecutionScopeDescriptor(
             Descriptor.DisplayName,
             config.Mounts.Select(mount => mount.ContainerPath).ToArray(),
             DockerPathResolver.ResolveDefaultBaseDirectory(config),
-            "Container filesystem paths. Use POSIX-style absolute paths inside the selected Docker container."));
+            "Container filesystem paths. Use POSIX-style absolute paths inside the selected Docker container.");
     }
 
-    public ValueTask<AgentResolvedResource> ResolveFileResourceAsync(
+    public async ValueTask<AgentResolvedResource> ResolveFileResourceAsync(
         AgentExecutionTargetContext context,
         string path,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var config = BuildRuntimeConfig(context);
+        var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         var resolved = DockerPathResolver.ResolveFileResource(
             config,
             path,
@@ -137,14 +137,14 @@ public sealed class DockerExecutionTarget
             exists: false);
         if (!DockerPathResolver.IsInsideWorkspacePath(config, resolved.CanonicalReference))
         {
-            return ValueTask.FromResult(resolved);
+            return resolved;
         }
 
         var mapping = DockerPathResolver.MapToHostPath(config, resolved.CanonicalReference);
-        return ValueTask.FromResult(resolved with
+        return resolved with
         {
             Exists = File.Exists(mapping.HostPath) || Directory.Exists(mapping.HostPath),
-        });
+        };
     }
 
     public async ValueTask<AgentShellCommandResult> ExecuteShellAsync(
@@ -152,7 +152,7 @@ public sealed class DockerExecutionTarget
         AgentShellCommandRequest request,
         CancellationToken cancellationToken = default)
     {
-        var config = BuildRuntimeConfig(context);
+        var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         using var lease = await AcquireContainerAsync(context, config, cancellationToken);
         return await _commandRunner.ExecuteShellAsync(config, lease.ContainerName, context, request, cancellationToken);
     }
@@ -162,30 +162,30 @@ public sealed class DockerExecutionTarget
         AgentProcessCommandRequest request,
         CancellationToken cancellationToken = default)
     {
-        var config = BuildRuntimeConfig(context);
+        var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         using var lease = await AcquireContainerAsync(context, config, cancellationToken);
         return await _commandRunner.ExecuteProcessAsync(config, lease.ContainerName, context, request, cancellationToken);
     }
 
-    public ValueTask<AgentExecutionPathMapping> MapToHostPathAsync(
+    public async ValueTask<AgentExecutionPathMapping> MapToHostPathAsync(
         AgentExecutionTargetContext context,
         string executionPath,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var config = BuildRuntimeConfig(context);
-        return ValueTask.FromResult(DockerPathResolver.MapToHostPath(config, executionPath));
+        var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        return DockerPathResolver.MapToHostPath(config, executionPath);
     }
 
-    public ValueTask<IReadOnlyList<string>> ListPathEntriesAsync(
+    public async ValueTask<IReadOnlyList<string>> ListPathEntriesAsync(
         AgentExecutionTargetContext context,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(_configService.GetConfig(context.Binding.BindingId).PathEntries ?? []);
+        return (await _configService.GetConfigAsync(context.Binding.BindingId, cancellationToken)).PathEntries ?? [];
     }
 
-    public ValueTask AddPathEntryAsync(
+    public async ValueTask AddPathEntryAsync(
         AgentExecutionTargetContext context,
         string executionPath,
         CancellationToken cancellationToken = default)
@@ -193,17 +193,16 @@ public sealed class DockerExecutionTarget
         cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(executionPath))
         {
-            return ValueTask.CompletedTask;
+            return;
         }
 
-        var config = _configService.GetConfig(context.Binding.BindingId);
+        var config = await _configService.GetConfigAsync(context.Binding.BindingId, cancellationToken);
         var pathEntry = DockerExecutionWorkspaceConfigService.NormalizeContainerPath(executionPath.Trim());
         var pathEntries = (config.PathEntries ?? [])
             .Append(pathEntry)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        _configService.SaveConfig(context.Binding.BindingId, config with { PathEntries = pathEntries });
-        return ValueTask.CompletedTask;
+        await _configService.SaveConfigAsync(context.Binding.BindingId, config with { PathEntries = pathEntries }, cancellationToken);
     }
 
     public async ValueTask<AgentFileReadResult> ReadFileAsync(
@@ -211,7 +210,7 @@ public sealed class DockerExecutionTarget
         AgentFileReadRequest request,
         CancellationToken cancellationToken = default)
     {
-        var config = BuildRuntimeConfig(context);
+        var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         using var lease = await AcquireContainerAsync(context, config, cancellationToken);
         return await _fileSystemExecutor.ReadFileAsync(config, lease.ContainerName, request, context.AllowOutsideConfiguredScope, cancellationToken);
     }
@@ -221,7 +220,7 @@ public sealed class DockerExecutionTarget
         AgentFileWriteRequest request,
         CancellationToken cancellationToken = default)
     {
-        var config = BuildRuntimeConfig(context);
+        var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         using var lease = await AcquireContainerAsync(context, config, cancellationToken);
         return await _fileSystemExecutor.WriteFileAsync(config, lease.ContainerName, request, context.AllowOutsideConfiguredScope, cancellationToken);
     }
@@ -231,16 +230,18 @@ public sealed class DockerExecutionTarget
         AgentFileDeleteRequest request,
         CancellationToken cancellationToken = default)
     {
-        var config = BuildRuntimeConfig(context);
+        var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         using var lease = await AcquireContainerAsync(context, config, cancellationToken);
         return await _fileSystemExecutor.DeleteFileAsync(config, lease.ContainerName, request, context.AllowOutsideConfiguredScope, cancellationToken);
     }
 
-    private DockerExecutionRuntimeConfig BuildRuntimeConfig(AgentExecutionTargetContext context)
+    private async Task<DockerExecutionRuntimeConfig> BuildRuntimeConfigAsync(
+        AgentExecutionTargetContext context,
+        CancellationToken cancellationToken)
         => _configService.BuildRuntimeConfig(
             context.Binding.BindingId,
             context.Workspace,
-            _configService.GetConfig(context.Binding.BindingId));
+            await _configService.GetConfigAsync(context.Binding.BindingId, cancellationToken));
 
     private Task<DockerContainerLifecycleService.DockerContainerLease> AcquireContainerAsync(
         AgentExecutionTargetContext context,
@@ -403,5 +404,8 @@ public sealed class DockerExecutionTarget
     }
 
     private async Task<DockerCliRunResult> RunDockerAsync(IReadOnlyList<string> args, CancellationToken cancellationToken)
-        => await _commandRunner.RunAsync(args, _commandRunner.ResolveDefaultTimeoutSeconds(), cancellationToken);
+        => await _commandRunner.RunAsync(
+            args,
+            await _commandRunner.ResolveDefaultTimeoutSecondsAsync(cancellationToken),
+            cancellationToken);
 }

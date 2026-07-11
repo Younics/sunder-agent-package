@@ -44,10 +44,10 @@ public sealed class GeminiEmbeddingProvider : IAgentEmbeddingProvider
         return ValueTask.FromResult(Models);
     }
 
-    public ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(!_credentials.HasCredential
+        return !await _credentials.HasCredentialAsync(cancellationToken)
             ? new AgentEmbeddingProviderReadiness(
                 Descriptor.ProviderId,
                 AgentProviderReadinessStatus.NeedsConfiguration,
@@ -55,7 +55,7 @@ public sealed class GeminiEmbeddingProvider : IAgentEmbeddingProvider
             : new AgentEmbeddingProviderReadiness(
                 Descriptor.ProviderId,
                 AgentProviderReadinessStatus.Ready,
-                "Gemini embeddings are ready via API key."));
+                "Gemini embeddings are ready via API key.");
     }
 
     public async ValueTask<AgentEmbeddingGenerationResult?> GenerateEmbeddingAsync(
@@ -63,7 +63,7 @@ public sealed class GeminiEmbeddingProvider : IAgentEmbeddingProvider
         string text,
         CancellationToken cancellationToken = default)
     {
-        var apiKey = _credentials.GetCredential();
+        var apiKey = await _credentials.GetCredentialAsync(cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException("A Gemini API key is required for embeddings.");
@@ -83,7 +83,7 @@ public sealed class GeminiEmbeddingProvider : IAgentEmbeddingProvider
         IReadOnlyList<string> texts,
         CancellationToken cancellationToken = default)
     {
-        var apiKey = _credentials.GetCredential();
+        var apiKey = await _credentials.GetCredentialAsync(cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException("A Gemini API key is required for embeddings.");

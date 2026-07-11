@@ -33,13 +33,19 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         _backgroundProcessQueue = backgroundProcessQueue;
         _imageCatalogService.ImagesChanged += OnImagesChanged;
         _backgroundProcessQueue.ProcessChanged += BackgroundProcessQueue_OnProcessChanged;
-        TimeoutSeconds = _packageContext.Storage.State.GetValue(TimeoutKey)
-                         ?? _packageContext.Configuration.GetValue(TimeoutKey)
-                         ?? DefaultTimeoutSeconds;
-        DockerCliPath = _packageContext.Storage.State.GetValue(DockerCli.ExecutablePathConfigurationKey)
-                        ?? _packageContext.Configuration.GetValue(DockerCli.ExecutablePathConfigurationKey)
-                        ?? string.Empty;
-        ReloadImages();
+        TimeoutSeconds = DefaultTimeoutSeconds;
+        DockerCliPath = string.Empty;
+    }
+
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        TimeoutSeconds = await _packageContext.Storage.State.GetValueAsync(TimeoutKey, cancellationToken)
+            ?? await _packageContext.Configuration.GetValueAsync(TimeoutKey, cancellationToken)
+            ?? DefaultTimeoutSeconds;
+        DockerCliPath = await _packageContext.Storage.State.GetValueAsync(DockerCli.ExecutablePathConfigurationKey, cancellationToken)
+            ?? await _packageContext.Configuration.GetValueAsync(DockerCli.ExecutablePathConfigurationKey, cancellationToken)
+            ?? string.Empty;
+        await ReloadImagesAsync(cancellationToken: cancellationToken);
     }
 
     public ObservableCollection<DockerImageRowViewModel> Images { get; } = [];
@@ -87,7 +93,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
     }
 
     [RelayCommand(CanExecute = nameof(CanAddImage))]
-    private void AddImage()
+    private async Task AddImageAsync()
     {
         try
         {
@@ -95,7 +101,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
             _suppressImageChangeNotifications = true;
             try
             {
-                image = _imageCatalogService.AddImage(NewImageReference);
+                image = await _imageCatalogService.AddImageAsync(NewImageReference);
             }
             finally
             {
@@ -103,7 +109,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
             }
 
             NewImageReference = string.Empty;
-            ReloadImages(image.ImageReference);
+            await ReloadImagesAsync(image.ImageReference);
             StatusText = $"Added Docker image '{image.ImageReference}'. Pull it before assigning it to workspaces.";
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
@@ -113,7 +119,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
     }
 
     [RelayCommand(CanExecute = nameof(CanUseSelectedImage))]
-    private void DeleteSelectedImage()
+    private async Task DeleteSelectedImageAsync()
     {
         if (SelectedImage is null)
         {
@@ -124,14 +130,14 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         _suppressImageChangeNotifications = true;
         try
         {
-            _imageCatalogService.DeleteImage(imageReference);
+            await _imageCatalogService.DeleteImageAsync(imageReference);
         }
         finally
         {
             _suppressImageChangeNotifications = false;
         }
 
-        ReloadImages();
+        await ReloadImagesAsync();
         StatusText = $"Deleted Docker image '{imageReference}' from Sunder settings. Existing Docker images on disk were not removed.";
     }
 
@@ -173,11 +179,11 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
                     }));
             }
 
-            ReloadImages(selected.ImageReference);
+            _ = ReloadImagesAsync(selected.ImageReference);
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
         {
-            ReloadImages(selected.ImageReference);
+            _ = ReloadImagesAsync(selected.ImageReference);
             StatusText = ex.Message;
         }
     }
@@ -195,7 +201,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         try
         {
             var image = await _imageCatalogService.RefreshImageAsync(selected.ImageReference);
-            ReloadImages(image.ImageReference);
+            await ReloadImagesAsync(image.ImageReference);
             StatusText = image.LastMessage ?? $"Refreshed Docker image '{image.ImageReference}'.";
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
@@ -215,7 +221,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         try
         {
             await _imageCatalogService.RefreshImagesAsync();
-            ReloadImages(SelectedImage?.ImageReference);
+            await ReloadImagesAsync(SelectedImage?.ImageReference);
             StatusText = "Docker image status refreshed.";
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
@@ -263,11 +269,13 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
 
     private bool CanRunBusyCommand() => !IsBusy;
 
-    private void ReloadImages(string? selectedImageReference = null)
+    private async Task ReloadImagesAsync(
+        string? selectedImageReference = null,
+        CancellationToken cancellationToken = default)
     {
         var activePulls = GetActivePullImageReferences();
         Images.Clear();
-        foreach (var image in _imageCatalogService.ListImages())
+        foreach (var image in await _imageCatalogService.ListImagesAsync(cancellationToken))
         {
             var displayedImage = activePulls.Contains(image.ImageReference)
                 ? image with { Status = DockerImageStatus.Pulling, LastMessage = "Pulling image..." }
@@ -307,7 +315,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         {
             if (!_disposed)
             {
-                ReloadImages(SelectedImage?.ImageReference ?? imageReference);
+                _ = ReloadImagesAsync(SelectedImage?.ImageReference ?? imageReference);
             }
         }, DispatcherPriority.Background);
     }
@@ -317,7 +325,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         {
             if (!_disposed && !_suppressImageChangeNotifications)
             {
-                ReloadImages(SelectedImage?.ImageReference);
+                _ = ReloadImagesAsync(SelectedImage?.ImageReference);
             }
         });
 

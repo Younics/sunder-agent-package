@@ -31,11 +31,11 @@ public sealed class OpenAiEmbeddingProvider(
         return ValueTask.FromResult(Models);
     }
 
-    public ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        return ValueTask.FromResult(string.IsNullOrWhiteSpace(apiKeyAuthStrategy.GetApiKey())
+        return string.IsNullOrWhiteSpace(await apiKeyAuthStrategy.GetApiKeyAsync(cancellationToken))
             ? new AgentEmbeddingProviderReadiness(
                 Descriptor.ProviderId,
                 AgentProviderReadinessStatus.NeedsConfiguration,
@@ -43,7 +43,7 @@ public sealed class OpenAiEmbeddingProvider(
             : new AgentEmbeddingProviderReadiness(
                 Descriptor.ProviderId,
                 AgentProviderReadinessStatus.Ready,
-                "OpenAI embeddings are ready via stored API key."));
+                "OpenAI embeddings are ready via stored API key.");
     }
 
     public async ValueTask<AgentEmbeddingGenerationResult?> GenerateEmbeddingAsync(
@@ -60,7 +60,7 @@ public sealed class OpenAiEmbeddingProvider(
         IReadOnlyList<string> texts,
         CancellationToken cancellationToken = default)
     {
-        var apiKey = apiKeyAuthStrategy.GetApiKey();
+        var apiKey = await apiKeyAuthStrategy.GetApiKeyAsync(cancellationToken);
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException("An OpenAI API key is required for embeddings.");

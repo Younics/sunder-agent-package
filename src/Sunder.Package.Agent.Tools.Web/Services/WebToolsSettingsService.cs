@@ -6,11 +6,11 @@ public sealed class WebToolsSettingsService(IPackageContext packageContext)
 {
     private readonly IPackageContext _packageContext = packageContext;
 
-    public int GetDefaultMaxResults()
-        => int.TryParse(_packageContext.Configuration.GetValue("search.maxResults.default"), out var value) && value > 0
+    public async Task<int> GetDefaultMaxResultsAsync(CancellationToken cancellationToken = default)
+        => int.TryParse(await _packageContext.Configuration.GetValueAsync("search.maxResults.default", cancellationToken), out var value) && value > 0
             ? Math.Min(value, 10)
             : 5;
 
-    public string? GetExaApiKey()
-        => _packageContext.Secrets.GetSecret("search.exa.apiKey");
+    public Task<string?> GetExaApiKeyAsync(CancellationToken cancellationToken = default)
+        => _packageContext.Secrets.GetSecretAsync("search.exa.apiKey", cancellationToken);
 }

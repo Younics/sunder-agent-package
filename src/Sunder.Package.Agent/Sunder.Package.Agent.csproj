@@ -2,6 +2,8 @@
 
   <PropertyGroup>
     <SunderPackageProject>true</SunderPackageProject>
+    <SunderSdkStacksReference>true</SunderSdkStacksReference>
+    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <SunderAgentSharedTranscript>true</SunderAgentSharedTranscript>

@@ -368,7 +368,12 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
             return;
         }
 
-        var presentation = _connections.GetPresentation(server);
+        _ = RefreshConnectionStatusAsync(server);
+    }
+
+    private async Task RefreshConnectionStatusAsync(ConfiguredMcpServerRecord server)
+    {
+        var presentation = await _connections.GetPresentationAsync(server);
         ConnectionStatusKind = presentation.Status.Kind;
         ConnectionStatusText = presentation.Status.Message;
         ConnectionStatusDetail = presentation.Detail;

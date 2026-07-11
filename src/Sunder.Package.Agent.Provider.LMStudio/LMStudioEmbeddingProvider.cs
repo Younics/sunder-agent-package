@@ -50,12 +50,13 @@ public sealed class LMStudioEmbeddingProvider : IAgentEmbeddingProvider, IDispos
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!_connection.TryGetOptions(out _, out var validationError))
+        var connection = await _connection.GetOptionsAsync(cancellationToken);
+        if (connection.Options is null)
         {
             return new AgentEmbeddingProviderReadiness(
                 Descriptor.ProviderId,
                 AgentProviderReadinessStatus.NeedsConfiguration,
-                $"The LM Studio base URL is invalid: {validationError}");
+                $"The LM Studio base URL is invalid: {connection.ValidationError}");
         }
 
         var result = await _catalog.GetCatalogAsync(cancellationToken).ConfigureAwait(false);
@@ -93,7 +94,7 @@ public sealed class LMStudioEmbeddingProvider : IAgentEmbeddingProvider, IDispos
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var connectionOptions = _connection.GetRequiredOptions();
+        var connectionOptions = await _connection.GetRequiredOptionsAsync(cancellationToken);
         var results = ProviderEmbeddingBatch.CreateResultBuffer(texts, out var validTexts);
         if (validTexts.Count == 0)
         {

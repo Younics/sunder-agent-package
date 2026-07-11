@@ -1,4 +1,6 @@
 #nullable enable
+*REMOVED*Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspacePathMigrationContributor.CompleteWorkspacePathMigration(Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathMigrationContext! context) -> void
+*REMOVED*Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspacePathMigrationContributor.GetLegacyWorkspacePaths(Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathMigrationContext! context) -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathMigrationItem!>!
 const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.BinaryFile = "file-binary" -> string!
 const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.FileNotFound = "file-not-found" -> string!
 const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.InvalidRange = "file-range-invalid" -> string!
@@ -29,3 +31,5 @@ Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.TotalLines.get -> int?
 Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.TotalLines.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentFileWriteRequest.ExpectedContentHash.get -> string?
 Sunder.Package.Agent.Contracts.Models.AgentFileWriteRequest.ExpectedContentHash.init -> void
+Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspacePathMigrationContributor.CompleteWorkspacePathMigrationAsync(Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathMigrationContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspacePathMigrationContributor.GetLegacyWorkspacePathsAsync(Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathMigrationContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathMigrationItem!>!>!

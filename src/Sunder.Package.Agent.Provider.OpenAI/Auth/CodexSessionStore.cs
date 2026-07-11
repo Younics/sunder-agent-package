@@ -7,42 +7,27 @@ internal sealed class CodexSessionStore(IPackageSecrets secrets)
 {
     private const string SessionSecretKey = "auth.codex.session";
     private readonly IPackageSecrets _secrets = secrets;
-    private readonly object _gate = new();
-
-    public OpenAiCodexSession? Get()
+    public async Task<OpenAiCodexSession?> GetAsync(CancellationToken cancellationToken = default)
     {
-        lock (_gate)
+        var payload = await _secrets.GetSecretAsync(SessionSecretKey, cancellationToken);
+        if (string.IsNullOrWhiteSpace(payload))
         {
-            var payload = _secrets.GetSecret(SessionSecretKey);
-            if (string.IsNullOrWhiteSpace(payload))
-            {
-                return null;
-            }
+            return null;
+        }
 
-            try
-            {
-                return JsonSerializer.Deserialize<OpenAiCodexSession>(payload);
-            }
-            catch (Exception ex) when (ex is JsonException or NotSupportedException)
-            {
-                return null;
-            }
+        try
+        {
+            return JsonSerializer.Deserialize<OpenAiCodexSession>(payload);
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException)
+        {
+            return null;
         }
     }
 
-    public void Save(OpenAiCodexSession session)
-    {
-        lock (_gate)
-        {
-            _secrets.SetSecret(SessionSecretKey, JsonSerializer.Serialize(session));
-        }
-    }
+    public Task SaveAsync(OpenAiCodexSession session, CancellationToken cancellationToken = default)
+        => _secrets.SetSecretAsync(SessionSecretKey, JsonSerializer.Serialize(session), cancellationToken);
 
-    public void Clear()
-    {
-        lock (_gate)
-        {
-            _secrets.DeleteSecret(SessionSecretKey);
-        }
-    }
+    public Task ClearAsync(CancellationToken cancellationToken = default)
+        => _secrets.DeleteSecretAsync(SessionSecretKey, cancellationToken);
 }

@@ -20,11 +20,11 @@ internal sealed class DockerImageStackContributor(
 
     public string DisplayName => "Docker Images";
 
-    public ValueTask<IReadOnlyList<StackExportItemDescriptor>> ListExportItemsAsync(
+    public async ValueTask<IReadOnlyList<StackExportItemDescriptor>> ListExportItemsAsync(
         StackExportDiscoveryContext context,
         CancellationToken cancellationToken = default)
     {
-        var details = imageCatalog.ListImages()
+        var details = (await imageCatalog.ListImagesAsync(cancellationToken))
             .Select(image => new StackExportItemDetail(
                 "Image",
                 image.ImageReference,
@@ -34,7 +34,7 @@ internal sealed class DockerImageStackContributor(
                 IsEditable: false))
             .ToArray();
 
-        return ValueTask.FromResult<IReadOnlyList<StackExportItemDescriptor>>(details.Length == 0
+        return details.Length == 0
             ? []
             : [new StackExportItemDescriptor(
                 ItemId,
@@ -43,19 +43,19 @@ internal sealed class DockerImageStackContributor(
                 "Configure Docker image references when this Stack is used. Images are not pulled during import.",
                 DefaultSelected: false,
                 Sensitivities: [StackValueSensitivity.Public],
-                Details: details)]);
+                Details: details)];
     }
 
-    public ValueTask<StackExportContribution> ExportAsync(
+    public async ValueTask<StackExportContribution> ExportAsync(
         StackExportRequest request,
         CancellationToken cancellationToken = default)
     {
         if (!request.ItemIds.Contains(ItemId, StringComparer.OrdinalIgnoreCase))
         {
-            return ValueTask.FromResult(new StackExportContribution([], [], []));
+            return new StackExportContribution([], [], []);
         }
 
-        var selectedReferences = imageCatalog.ListImages()
+        var selectedReferences = (await imageCatalog.ListImagesAsync(cancellationToken))
             .Select(image => image.ImageReference)
             .Where(reference => request.IsDetailSelected(ItemId, reference))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -63,7 +63,7 @@ internal sealed class DockerImageStackContributor(
             .ToArray();
         if (selectedReferences.Length == 0)
         {
-            return ValueTask.FromResult(new StackExportContribution([], [], ["No Docker images were selected for export."]));
+            return new StackExportContribution([], [], ["No Docker images were selected for export."]);
         }
 
         var payload = new DockerImageStackPayload(selectedReferences);
@@ -78,10 +78,10 @@ internal sealed class DockerImageStackContributor(
             DefaultSelected: true,
             SourceItemId: ItemId);
 
-        return ValueTask.FromResult(new StackExportContribution([fragment], [CreatePackageRequirement()], []));
+        return new StackExportContribution([fragment], [CreatePackageRequirement()], []);
     }
 
-    public ValueTask<StackImportPreview> PreviewImportAsync(
+    public async ValueTask<StackImportPreview> PreviewImportAsync(
         StackImportPreviewRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -96,21 +96,22 @@ internal sealed class DockerImageStackContributor(
 
             foreach (var imageReference in payload.ImageReferences)
             {
+                var containsImage = await imageCatalog.ContainsImageAsync(imageReference, cancellationToken);
                 actions.Add(new StackImportAction(
                     BuildActionId(fragment.FragmentId, imageReference),
-                    imageCatalog.ContainsImage(imageReference)
+                    containsImage
                         ? $"Keep Docker image reference {imageReference}"
                         : $"Add Docker image reference {imageReference}",
-                    imageCatalog.ContainsImage(imageReference) ? StackImportActionKind.Reuse : StackImportActionKind.Create,
+                    containsImage ? StackImportActionKind.Reuse : StackImportActionKind.Create,
                     DefaultSelected: true,
                     Description: "Configures the Docker image reference without pulling the image."));
             }
         }
 
-        return ValueTask.FromResult(new StackImportPreview(actions, [], [], warnings));
+        return new StackImportPreview(actions, [], [], warnings);
     }
 
-    public ValueTask<StackImportResult> ImportAsync(
+    public async ValueTask<StackImportResult> ImportAsync(
         StackImportRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -134,7 +135,7 @@ internal sealed class DockerImageStackContributor(
 
                 try
                 {
-                    var image = imageCatalog.AddImage(imageReference);
+                    var image = await imageCatalog.AddImageAsync(imageReference, cancellationToken);
                     imported.Add(new StackImportedItem(image.ImageReference, image.ImageReference, "docker-image"));
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -144,7 +145,7 @@ internal sealed class DockerImageStackContributor(
             }
         }
 
-        return ValueTask.FromResult(new StackImportResult(errors.Count == 0, imported, new Dictionary<string, string>(), warnings, errors));
+        return new StackImportResult(errors.Count == 0, imported, new Dictionary<string, string>(), warnings, errors);
     }
 
     public ValueTask OnStackImportAppliedAsync(

@@ -328,7 +328,7 @@ internal sealed class DurableRunTestPackageContext(string rootPath) : IPackageCo
 {
     public string PackageId => "test.package.agent.durable-runs";
 
-    public Version Version { get; } = new(1, 0, 0);
+    public string Version { get; } = "1.0.0";
 
     public string InstallPath => AppContext.BaseDirectory;
 
@@ -348,41 +348,26 @@ internal sealed class DurableRunTestStorageContext : IPackageStorageContext
 {
     public DurableRunTestStorageContext(string rootPath)
     {
-        DataRootPath = Path.Combine(rootPath, "data");
-        CacheRootPath = Path.Combine(rootPath, "cache");
-        LogsRootPath = Path.Combine(rootPath, "logs");
-        Directory.CreateDirectory(DataRootPath);
-        Directory.CreateDirectory(CacheRootPath);
-        Directory.CreateDirectory(LogsRootPath);
+        Directory.CreateDirectory(rootPath);
         Files = new DurableRunTestFileStore(Path.Combine(rootPath, "files"));
+        LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
     }
-
-    public string DataRootPath { get; }
-
-    public string CacheRootPath { get; }
-
-    public string LogsRootPath { get; }
 
     public IPackageFileStore Files { get; }
 
     public IPackageKeyValueStore State { get; } = new DurableRunTestKeyValueStore();
+
+    public IPackageLocalWorkspaceLease LocalWorkspace { get; }
 }
 
-internal sealed class DurableRunTestFileStore(string rootPath) : IPackageFileStore
-{
-    public string RootPath { get; } = rootPath;
-
-    public string GetPath(string relativePath) => Path.Combine(RootPath, relativePath);
-}
+internal sealed class DurableRunTestFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
 
 internal sealed class DurableRunTestKeyValueStore : IPackageKeyValueStore
 {
     private readonly ConcurrentDictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
 
-    public string? GetValue(string key) => _values.GetValueOrDefault(key);
-
     public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
-        => Task.FromResult(GetValue(key));
+        => Task.FromResult(_values.GetValueOrDefault(key));
 
     public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
     {
@@ -408,18 +393,6 @@ internal sealed class DurableRunTestKeyValueStore : IPackageKeyValueStore
                 .ToArray());
 }
 
-internal sealed class DurableRunTestConfiguration : IPackageConfiguration
-{
-    public string? GetValue(string key) => null;
-}
+internal sealed class DurableRunTestConfiguration : EmptyPackageConfiguration;
 
-internal sealed class DurableRunTestSecrets : IPackageSecrets
-{
-    private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
-
-    public string? GetSecret(string key) => _values.GetValueOrDefault(key);
-
-    public void SetSecret(string key, string value) => _values[key] = value;
-
-    public void DeleteSecret(string key) => _values.Remove(key);
-}
+internal sealed class DurableRunTestSecrets : InMemoryPackageSecrets;

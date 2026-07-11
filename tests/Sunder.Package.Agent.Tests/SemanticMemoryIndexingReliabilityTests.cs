@@ -294,7 +294,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         }
 
         public string PackageId => "test.package.agent.memory.semantic";
-        public Version Version => new(1, 0, 0);
+        public string Version => "1.0.0";
         public string InstallPath { get; }
         public IPackageStorageContext Storage { get; }
         public IPackageConfiguration Configuration { get; } = new TestPackageConfiguration();
@@ -307,31 +307,20 @@ public sealed class SemanticMemoryIndexingReliabilityTests
     {
         public TestPackageStorageContext(string rootPath)
         {
-            DataRootPath = Path.Combine(rootPath, "data");
-            CacheRootPath = Path.Combine(rootPath, "cache");
-            LogsRootPath = Path.Combine(rootPath, "logs");
-            Directory.CreateDirectory(DataRootPath);
-            Directory.CreateDirectory(CacheRootPath);
-            Directory.CreateDirectory(LogsRootPath);
-            Files = new TestPackageFileStore(DataRootPath);
+            Directory.CreateDirectory(rootPath);
+            Files = new TestPackageFileStore(rootPath);
+            LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
         }
 
-        public string DataRootPath { get; }
-        public string CacheRootPath { get; }
-        public string LogsRootPath { get; }
         public IPackageFileStore Files { get; }
         public IPackageKeyValueStore State { get; } = new TestPackageKeyValueStore();
+        public IPackageLocalWorkspaceLease LocalWorkspace { get; }
     }
 
-    private sealed class TestPackageFileStore(string rootPath) : IPackageFileStore
-    {
-        public string RootPath { get; } = rootPath;
-        public string GetPath(string relativePath) => Path.Combine(RootPath, relativePath);
-    }
+    private sealed class TestPackageFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
 
     private sealed class TestPackageKeyValueStore : IPackageKeyValueStore
     {
-        public string? GetValue(string key) => null;
         public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
         public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(false);
@@ -340,15 +329,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             => Task.FromResult<IReadOnlyList<string>>([]);
     }
 
-    private sealed class TestPackageConfiguration : IPackageConfiguration
-    {
-        public string? GetValue(string key) => null;
-    }
+    private sealed class TestPackageConfiguration : EmptyPackageConfiguration;
 
-    private sealed class TestPackageSecrets : IPackageSecrets
-    {
-        public string? GetSecret(string key) => null;
-        public void SetSecret(string key, string value) { }
-        public void DeleteSecret(string key) { }
-    }
+    private sealed class TestPackageSecrets : InMemoryPackageSecrets;
 }

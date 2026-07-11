@@ -12,6 +12,7 @@
   <ItemGroup>
     <Compile Include="..\Sunder.Package.Agent.Tests\MemoryLocalStorePersistenceTests.cs" Link="MemoryLocalStorePersistenceTests.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\SemanticMemoryIndexingReliabilityTests.cs" Link="SemanticMemoryIndexingReliabilityTests.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\TestPackageStorageFakes.cs" Link="TestPackageStorageFakes.cs" />
   </ItemGroup>
 
   <ItemGroup>

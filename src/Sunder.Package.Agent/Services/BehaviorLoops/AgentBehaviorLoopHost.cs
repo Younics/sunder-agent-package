@@ -210,9 +210,19 @@ internal sealed partial class AgentBehaviorLoopHost(
             }
         }
 
+        _ = WriteEventSafelyAsync(level, eventName, message, mergedAttributes, exception);
+    }
+
+    private async Task WriteEventSafelyAsync(
+        AgentLogLevel level,
+        string eventName,
+        string message,
+        IReadOnlyDictionary<string, object?> attributes,
+        Exception? exception)
+    {
         try
         {
-            _eventLogger.WriteAsync(ToPackageLogLevel(level), eventName, message, mergedAttributes, exception).GetAwaiter().GetResult();
+            await _eventLogger.WriteAsync(ToPackageLogLevel(level), eventName, message, attributes, exception);
         }
         catch
         {

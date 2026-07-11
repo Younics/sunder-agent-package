@@ -1,7 +1,7 @@
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Theming;
+using Sunder.Sdk.Avalonia.Theming;
 
 namespace Sunder.Package.Agent.PackageViews;
 

@@ -25,12 +25,13 @@ internal static class DockerCli
         @"C:\Program Files\Docker\Docker\resources\bin\docker.exe",
     ];
 
-    internal static ProcessStartInfo CreateStartInfo(
+    internal static async Task<ProcessStartInfo> CreateStartInfoAsync(
         IPackageContext packageContext,
         IReadOnlyList<string> args,
-        bool redirectStandardInput)
+        bool redirectStandardInput,
+        CancellationToken cancellationToken = default)
     {
-        var resolution = ResolveExecutable(packageContext);
+        var resolution = await ResolveExecutableAsync(packageContext, cancellationToken);
         if (resolution.ExecutablePath is null)
         {
             throw new InvalidOperationException(resolution.FailureMessage);
@@ -59,10 +60,12 @@ internal static class DockerCli
         return startInfo;
     }
 
-    internal static DockerCliResolution ResolveExecutable(IPackageContext packageContext)
+    internal static async Task<DockerCliResolution> ResolveExecutableAsync(
+        IPackageContext packageContext,
+        CancellationToken cancellationToken = default)
         => ResolveExecutable(
-            packageContext.Storage.State.GetValue(ExecutablePathConfigurationKey)
-            ?? packageContext.Configuration.GetValue(ExecutablePathConfigurationKey),
+            await packageContext.Storage.State.GetValueAsync(ExecutablePathConfigurationKey, cancellationToken)
+            ?? await packageContext.Configuration.GetValueAsync(ExecutablePathConfigurationKey, cancellationToken),
             Environment.GetEnvironmentVariable(ExecutablePathEnvironmentVariable),
             Environment.GetEnvironmentVariable(PathEnvironmentVariable),
             OperatingSystem.IsWindows() ? WindowsFallbackPaths : UnixFallbackPaths,

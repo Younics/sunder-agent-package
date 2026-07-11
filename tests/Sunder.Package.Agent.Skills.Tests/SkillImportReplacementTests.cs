@@ -13,7 +13,8 @@ public sealed class SkillImportReplacementTests
         try
         {
             var context = new TestPackageContext(root);
-            var indexPath = Path.Combine(context.Storage.DataRootPath, "skills.json");
+            var indexPath = context.Storage.LocalWorkspace.GetLocalPath("skills/skills.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(indexPath)!);
             const string malformedIndex = "{not-json";
             File.WriteAllText(indexPath, malformedIndex);
             var store = new SkillStore(context);
@@ -37,7 +38,7 @@ public sealed class SkillImportReplacementTests
             var context = new TestPackageContext(root);
             var store = new SkillStore(context);
             store.SaveSkill(CreateRecord("existing"));
-            var indexPath = Path.Combine(context.Storage.DataRootPath, "skills.json");
+            var indexPath = context.Storage.LocalWorkspace.GetLocalPath("skills/skills.json");
             var originalIndex = File.ReadAllBytes(indexPath);
 
             using (new FileStream(indexPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
@@ -83,7 +84,7 @@ public sealed class SkillImportReplacementTests
         {
             var context = new TestPackageContext(root);
             var store = new SkillStore(context);
-            var lockPath = Path.Combine(context.Storage.DataRootPath, "skills.json.lock");
+            var lockPath = context.Storage.LocalWorkspace.GetLocalPath("skills/skills.json.lock");
             using var externalLease = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
 
             var save = Task.Run(() => store.SaveSkill(CreateRecord("blocked")));
@@ -179,7 +180,7 @@ public sealed class SkillImportReplacementTests
             var store = new SkillStore(context);
             var originalRecord = await new SkillImportService(store, new UnusedGitHubSkillClient(), context)
                 .ImportLocalFolderAsync(originalSource);
-            var originalIndex = await File.ReadAllBytesAsync(Path.Combine(context.Storage.DataRootPath, "skills.json"));
+            var originalIndex = await File.ReadAllBytesAsync(context.Storage.LocalWorkspace.GetLocalPath("skills/skills.json"));
             var importer = new SkillImportService(
                 store,
                 new UnusedGitHubSkillClient(),
@@ -200,9 +201,9 @@ public sealed class SkillImportReplacementTests
             Assert.Equal(originalRecord.Version, restoredRecord.Version);
             Assert.Equal(originalRecord.UpdatedAtUtc, restoredRecord.UpdatedAtUtc);
             Assert.Equal("original content", await File.ReadAllTextAsync(Path.Combine(store.GetSkillRootPath(restoredRecord), "resource.txt")));
-            Assert.Equal(originalIndex, await File.ReadAllBytesAsync(Path.Combine(context.Storage.DataRootPath, "skills.json")));
+            Assert.Equal(originalIndex, await File.ReadAllBytesAsync(context.Storage.LocalWorkspace.GetLocalPath("skills/skills.json")));
             Assert.Empty(Directory.EnumerateDirectories(store.SkillsRootPath, "replacement-safety.backup-*"));
-            Assert.Empty(Directory.EnumerateDirectories(context.Storage.CacheRootPath, "skill-import-*"));
+            Assert.Empty(Directory.EnumerateDirectories(context.Storage.LocalWorkspace.GetLocalPath("skill-import"), "*"));
         }
         finally
         {
@@ -289,7 +290,7 @@ public sealed class SkillImportReplacementTests
     {
         public string PackageId => "sunder.package.agent.skills";
 
-        public Version Version { get; } = new(1, 0, 0);
+        public string Version { get; } = "1.0.0";
 
         public string InstallPath => AppContext.BaseDirectory;
 
@@ -308,41 +309,30 @@ public sealed class SkillImportReplacementTests
     {
         public TestStorageContext(string rootPath)
         {
-            DataRootPath = Path.Combine(rootPath, "data");
-            CacheRootPath = Path.Combine(rootPath, "cache");
-            LogsRootPath = Path.Combine(rootPath, "logs");
-            Files = new TestFileStore(Path.Combine(rootPath, "files"));
-            Directory.CreateDirectory(DataRootPath);
-            Directory.CreateDirectory(CacheRootPath);
-            Directory.CreateDirectory(LogsRootPath);
-            Directory.CreateDirectory(Files.RootPath);
+            Files = new TestFileStore();
+            LocalWorkspace = new TestWorkspace(rootPath);
+            Directory.CreateDirectory(rootPath);
         }
-
-        public string DataRootPath { get; }
-
-        public string CacheRootPath { get; }
-
-        public string LogsRootPath { get; }
 
         public IPackageFileStore Files { get; }
 
         public IPackageKeyValueStore State { get; } = new TestKeyValueStore();
+
+        public IPackageLocalWorkspaceLease LocalWorkspace { get; }
     }
 
-    private sealed class TestFileStore(string rootPath) : IPackageFileStore
+    private sealed class TestFileStore : IPackageFileStore
     {
-        public string RootPath { get; } = rootPath;
-
-        public string GetPath(string relativePath)
-            => string.IsNullOrWhiteSpace(relativePath)
-                ? RootPath
-                : Path.Combine([RootPath, .. relativePath.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)]);
+        public Task<byte[]?> ReadAsync(string relativePath, CancellationToken cancellationToken = default)
+            => Task.FromResult<byte[]?>(null);
+        public Task WriteAsync(string relativePath, ReadOnlyMemory<byte> contents, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+        public Task DeleteAsync(string relativePath, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
     }
 
     private sealed class TestKeyValueStore : IPackageKeyValueStore
     {
-        public string? GetValue(string key) => null;
-
         public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
 
         public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -357,19 +347,21 @@ public sealed class SkillImportReplacementTests
 
     private sealed class TestConfiguration : IPackageConfiguration
     {
-        public string? GetValue(string key) => null;
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
+            => Task.FromResult<string?>(null);
     }
 
     private sealed class TestSecrets : IPackageSecrets
     {
-        public string? GetSecret(string key) => null;
+        public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
+        public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
 
-        public void SetSecret(string key, string value)
-        {
-        }
-
-        public void DeleteSecret(string key)
-        {
-        }
+    private sealed class TestWorkspace(string rootPath) : IPackageLocalWorkspaceLease
+    {
+        public string WorkspaceRootPath { get; } = rootPath;
+        public string GetLocalPath(string relativePath) => Path.Combine(WorkspaceRootPath, relativePath);
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

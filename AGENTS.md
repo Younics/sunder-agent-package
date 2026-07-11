@@ -29,7 +29,7 @@ Package projects must not reference `Sunder.App` or `Sunder.Runtime.Host`.
 - Runtime package dependencies are authored with `[assembly: SunderPackageDependency(...)]`.
 - Package authors do not maintain source `sunder-package.json` files.
 - `Sunder.Package.Build` generates manifests, emits `sunder-dev` on build, and emits `.sunderpkg` on publish.
-- Package modules implement `ISunderPackageModule` and register services/contributions through SDK APIs.
+- Package modules implement `ISunderRuntimePackageModule`, `ISunderAppPackageModule`, or both, and keep role-specific service/contribution registration explicit.
 
 ## Build And Test
 

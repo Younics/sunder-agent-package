@@ -1,6 +1,7 @@
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Avalonia;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -149,8 +150,16 @@ public sealed class PackageModuleCompositionTests
         services.AddSingleton<IPackageSessionService>(NullPackageSessionService.Instance);
         services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
 
-        var module = CreatePackageModule(packageName);
-        module.ConfigureServices(services, packageScope.Context);
+        var (runtimeModule, appModule) = CreatePackageModules(packageName);
+        if (runtimeModule is not null)
+        {
+            runtimeModule.ConfigureRuntimeServices(services, packageScope.Context);
+        }
+        else
+        {
+            Assert.NotNull(appModule);
+            appModule.ConfigureAppServices(services, packageScope.Context);
+        }
 
         await using var serviceProvider = services.BuildServiceProvider(new ServiceProviderOptions
         {
@@ -159,7 +168,14 @@ public sealed class PackageModuleCompositionTests
         });
         var registry = new RecordingPackageContributionRegistry();
 
-        module.RegisterContributions(registry, serviceProvider);
+        if (runtimeModule is not null)
+        {
+            runtimeModule.RegisterRuntimeContributions(registry, serviceProvider);
+        }
+        if (appModule is not null)
+        {
+            appModule.RegisterAppContributions(registry, serviceProvider);
+        }
 
         Assert.Equal(
             ExpectedRegistrations[packageName].Order(StringComparer.Ordinal),
@@ -186,15 +202,22 @@ public sealed class PackageModuleCompositionTests
             ExpectedRegistrations.Keys.Order(StringComparer.Ordinal));
     }
 
-    private static ISunderPackageModule CreatePackageModule(string packageName)
+    private static (ISunderRuntimePackageModule? Runtime, ISunderAppPackageModule? App) CreatePackageModules(string packageName)
     {
         var assembly = Assembly.Load(packageName);
-        var moduleTypes = assembly.GetTypes()
-            .Where(static type => !type.IsAbstract && typeof(ISunderPackageModule).IsAssignableFrom(type))
+        var runtimeTypes = assembly.GetTypes()
+            .Where(static type => !type.IsAbstract && typeof(ISunderRuntimePackageModule).IsAssignableFrom(type))
+            .ToArray();
+        var appTypes = assembly.GetTypes()
+            .Where(static type => !type.IsAbstract && typeof(ISunderAppPackageModule).IsAssignableFrom(type))
             .ToArray();
 
-        Assert.Single(moduleTypes);
-        return Assert.IsAssignableFrom<ISunderPackageModule>(Activator.CreateInstance(moduleTypes[0]));
+        Assert.True(runtimeTypes.Length + appTypes.Length > 0);
+        Assert.True(runtimeTypes.Length <= 1);
+        Assert.True(appTypes.Length <= 1);
+        return (
+            runtimeTypes.Length == 0 ? null : Assert.IsAssignableFrom<ISunderRuntimePackageModule>(Activator.CreateInstance(runtimeTypes[0])),
+            appTypes.Length == 0 ? null : Assert.IsAssignableFrom<ISunderAppPackageModule>(Activator.CreateInstance(appTypes[0])));
     }
 
     private static string Extension(string extensionPoint, string implementationType)

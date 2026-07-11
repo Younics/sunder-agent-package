@@ -17,7 +17,7 @@ public sealed class SemanticMemoryRetrievalBackend(
 
     public async Task IndexMemoryAsync(StoredMemoryRecord memory, string profileId, CancellationToken cancellationToken = default)
     {
-        if (!_settingsService.IsSemanticRetrievalEnabled())
+        if (!await _settingsService.IsSemanticRetrievalEnabledAsync(cancellationToken))
         {
             return;
         }
@@ -29,7 +29,7 @@ public sealed class SemanticMemoryRetrievalBackend(
         }
 
         var existingEmbeddings = new Dictionary<Guid, StoredMemoryEmbeddingRecord>();
-        var preparedMemory = PrepareEmbeddingMemory(memory);
+        var preparedMemory = await PrepareEmbeddingMemoryAsync(memory, cancellationToken);
         await EnsureEmbeddingsAsync(memory.SessionId, [preparedMemory], resolved, existingEmbeddings, allowLazyReindex: true, cancellationToken);
     }
 
@@ -39,7 +39,7 @@ public sealed class SemanticMemoryRetrievalBackend(
         IReadOnlyList<StoredMemoryRecord> memories,
         CancellationToken cancellationToken = default)
     {
-        if (!_settingsService.IsSemanticRetrievalEnabled())
+        if (!await _settingsService.IsSemanticRetrievalEnabledAsync(cancellationToken))
         {
             return 0;
         }
@@ -50,7 +50,8 @@ public sealed class SemanticMemoryRetrievalBackend(
             return 0;
         }
 
-        var preparedMemories = memories.Select(PrepareEmbeddingMemory).ToArray();
+        var preparedMemories = await Task.WhenAll(
+            memories.Select(memory => PrepareEmbeddingMemoryAsync(memory, cancellationToken)));
         var generationId = _store.BeginEmbeddingGeneration(
             sessionId,
             resolved.ProviderId,
@@ -80,7 +81,7 @@ public sealed class SemanticMemoryRetrievalBackend(
         string providerId,
         string modelId)
     {
-        var preparedMemory = PrepareEmbeddingMemory(memory);
+        var preparedMemory = PrepareEmbeddingMemoryForStatus(memory);
         var embedding = _store.GetEmbedding(memory.MemoryId, providerId, modelId);
         if (embedding is null)
         {
@@ -103,7 +104,7 @@ public sealed class SemanticMemoryRetrievalBackend(
         string query,
         CancellationToken cancellationToken = default)
     {
-        if (!_settingsService.IsSemanticRetrievalEnabled())
+        if (!await _settingsService.IsSemanticRetrievalEnabledAsync(cancellationToken))
         {
             return new Dictionary<Guid, float>();
         }
@@ -120,7 +121,8 @@ public sealed class SemanticMemoryRetrievalBackend(
         }
 
         var sessionId = memories[0].SessionId;
-        var preparedMemories = memories.Select(PrepareEmbeddingMemory).ToArray();
+        var preparedMemories = await Task.WhenAll(
+            memories.Select(memory => PrepareEmbeddingMemoryAsync(memory, cancellationToken)));
         var existingEmbeddings = _store.ListEmbeddings(sessionId, resolved.ProviderId, resolved.ModelId)
             .ToDictionary(item => item.Key, item => item.Value);
 
@@ -226,7 +228,8 @@ public sealed class SemanticMemoryRetrievalBackend(
                              || !string.Equals(existing.CanonicalTextHash, memory.CanonicalTextHash, StringComparison.Ordinal))
             .ToArray();
 
-        if (!allowLazyReindex && _settingsService.GetReindexMode() == SemanticReindexMode.Never)
+        if (!allowLazyReindex
+            && await _settingsService.GetReindexModeAsync(cancellationToken) == SemanticReindexMode.Never)
         {
             return;
         }
@@ -250,7 +253,7 @@ public sealed class SemanticMemoryRetrievalBackend(
         Action<StoredMemoryEmbeddingRecord> persist,
         CancellationToken cancellationToken)
     {
-        foreach (var batch in memories.Chunk(_settingsService.GetEmbeddingBatchSize()))
+        foreach (var batch in memories.Chunk(await _settingsService.GetEmbeddingBatchSizeAsync(cancellationToken)))
         {
             var embeddingResults = await resolved.Provider.GenerateEmbeddingsAsync(
                 resolved.ModelId,
@@ -282,13 +285,29 @@ public sealed class SemanticMemoryRetrievalBackend(
         }
     }
 
-    private PreparedEmbeddingMemory PrepareEmbeddingMemory(StoredMemoryRecord memory)
+    private async Task<PreparedEmbeddingMemory> PrepareEmbeddingMemoryAsync(
+        StoredMemoryRecord memory,
+        CancellationToken cancellationToken)
     {
-        var canonicalText = BuildCanonicalText(memory);
+        var canonicalText = await BuildCanonicalTextAsync(memory, cancellationToken);
         return new PreparedEmbeddingMemory(memory, canonicalText, ComputeCanonicalTextHash(canonicalText));
     }
 
-    private string BuildCanonicalText(StoredMemoryRecord memory)
+    private PreparedEmbeddingMemory PrepareEmbeddingMemoryForStatus(StoredMemoryRecord memory)
+    {
+        var canonicalText = BuildCanonicalText(memory, _settingsService.CachedMaxCanonicalTextChars);
+        return new PreparedEmbeddingMemory(memory, canonicalText, ComputeCanonicalTextHash(canonicalText));
+    }
+
+    private async Task<string> BuildCanonicalTextAsync(
+        StoredMemoryRecord memory,
+        CancellationToken cancellationToken)
+    {
+        var maxLength = await _settingsService.GetMaxCanonicalTextCharsAsync(cancellationToken);
+        return BuildCanonicalText(memory, maxLength);
+    }
+
+    private static string BuildCanonicalText(StoredMemoryRecord memory, int maxLength)
     {
         var builder = new StringBuilder();
         builder.Append("Category: ").AppendLine(memory.Category);
@@ -300,7 +319,6 @@ public sealed class SemanticMemoryRetrievalBackend(
 
         builder.Append("Trust: ").Append(memory.State);
         var canonicalText = builder.ToString().Trim();
-        var maxLength = _settingsService.GetMaxCanonicalTextChars();
         return canonicalText.Length <= maxLength
             ? canonicalText
             : canonicalText[..maxLength].TrimEnd();

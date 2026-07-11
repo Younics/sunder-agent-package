@@ -37,10 +37,11 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
                     continue;
                 }
 
-                if (!McpServerRecordSerializer.TryDeserialize(payload, _packageContext.Secrets, NormalizeServerName, out var server, out var error)
-                    || server is null)
+                var deserialized = await McpServerRecordSerializer.DeserializeAsync(
+                    payload, _packageContext.Secrets, NormalizeServerName, cancellationToken);
+                if (deserialized.Server is not { } server)
                 {
-                    diagnostics.Add(new McpCatalogDiagnostic(key, error ?? "Stored MCP server metadata is invalid."));
+                    diagnostics.Add(new McpCatalogDiagnostic(key, deserialized.Error ?? "Stored MCP server metadata is invalid."));
                     continue;
                 }
 
@@ -71,16 +72,24 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
     public async Task<ConfiguredMcpServerRecord?> GetServerAsync(string serverId, CancellationToken cancellationToken = default)
     {
         var payload = await _packageContext.Storage.State.GetValueAsync(BuildServerKey(serverId), cancellationToken).ConfigureAwait(false);
-        return !string.IsNullOrWhiteSpace(payload)
-               && McpServerRecordSerializer.TryDeserialize(payload, _packageContext.Secrets, NormalizeServerName, out var server, out _)
-            ? server
-            : null;
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return null;
+        }
+
+        return (await McpServerRecordSerializer.DeserializeAsync(
+            payload, _packageContext.Secrets, NormalizeServerName, cancellationToken)).Server;
     }
 
     public async Task<string?> ExportServerJsonAsync(string serverId, CancellationToken cancellationToken = default)
     {
         var server = await GetServerAsync(serverId, cancellationToken).ConfigureAwait(false);
-        return server is null ? null : McpConfigurationDocument.BuildEditorText(server, GetHeaders(server), GetEnvironmentVariables(server));
+        return server is null
+            ? null
+            : McpConfigurationDocument.BuildEditorText(
+                server,
+                await GetHeadersAsync(server, cancellationToken),
+                await GetEnvironmentVariablesAsync(server, cancellationToken));
     }
 
     public async Task SaveServerAsync(
@@ -109,7 +118,7 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
                 HeaderNames = [.. server.HeaderNames.Where(name => !string.IsNullOrWhiteSpace(name)).Select(name => name.Trim()).Distinct(StringComparer.OrdinalIgnoreCase)],
                 EnvironmentVariableNames = [.. server.EnvironmentVariableNames.Where(name => !string.IsNullOrWhiteSpace(name)).Select(name => name.Trim()).Distinct(StringComparer.OrdinalIgnoreCase)],
             };
-            var stagedSecretKeys = StageVersionedSecrets(persisted, headers, environmentVariables);
+            var stagedSecretKeys = await StageVersionedSecretsAsync(persisted, headers, environmentVariables, cancellationToken);
             try
             {
                 await _packageContext.Storage.State.SetValueAsync(
@@ -119,10 +128,10 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
             }
             catch (Exception commitError)
             {
-                throw CompensateStagedSecrets(stagedSecretKeys, commitError);
+                throw await CompensateStagedSecretsAsync(stagedSecretKeys, commitError, cancellationToken);
             }
 
-            CleanupSupersededSecrets(existing, persisted);
+            await CleanupSupersededSecretsAsync(existing, persisted, cancellationToken);
             ServersChanged?.Invoke();
         }
         finally
@@ -138,7 +147,7 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         {
             var existing = await GetServerAsync(serverId, cancellationToken).ConfigureAwait(false);
             await _packageContext.Storage.State.DeleteValueAsync(BuildServerKey(serverId), cancellationToken).ConfigureAwait(false);
-            CleanupDeletedServerSecrets(existing, serverId);
+            await CleanupDeletedServerSecretsAsync(existing, serverId, cancellationToken);
             ServersChanged?.Invoke();
         }
         finally
@@ -147,11 +156,15 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         }
     }
 
-    public IReadOnlyDictionary<string, string> GetHeaders(ConfiguredMcpServerRecord server)
-        => ReadSecrets(server, server.HeaderNames, BuildHeaderSecretKey, readLegacyHeaderFallbacks: true);
+    public Task<IReadOnlyDictionary<string, string>> GetHeadersAsync(
+        ConfiguredMcpServerRecord server,
+        CancellationToken cancellationToken = default)
+        => ReadSecretsAsync(server, server.HeaderNames, BuildHeaderSecretKey, readLegacyHeaderFallbacks: true, cancellationToken);
 
-    public IReadOnlyDictionary<string, string> GetEnvironmentVariables(ConfiguredMcpServerRecord server)
-        => ReadSecrets(server, server.EnvironmentVariableNames, BuildEnvironmentSecretKey, readLegacyHeaderFallbacks: false);
+    public Task<IReadOnlyDictionary<string, string>> GetEnvironmentVariablesAsync(
+        ConfiguredMcpServerRecord server,
+        CancellationToken cancellationToken = default)
+        => ReadSecretsAsync(server, server.EnvironmentVariableNames, BuildEnvironmentSecretKey, readLegacyHeaderFallbacks: false, cancellationToken);
 
     public string NormalizeServerName(string? value)
     {
@@ -166,30 +179,32 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         return string.IsNullOrWhiteSpace(normalized) ? "mcp_server" : normalized;
     }
 
-    private IReadOnlyList<string> StageVersionedSecrets(
+    private async Task<IReadOnlyList<string>> StageVersionedSecretsAsync(
         ConfiguredMcpServerRecord server,
         IReadOnlyDictionary<string, string> headers,
-        IReadOnlyDictionary<string, string> environmentVariables)
+        IReadOnlyDictionary<string, string> environmentVariables,
+        CancellationToken cancellationToken)
     {
         var staged = new List<string>();
         try
         {
-            StageValues(server, server.HeaderNames, headers, BuildHeaderSecretKey, staged);
-            StageValues(server, server.EnvironmentVariableNames, environmentVariables, BuildEnvironmentSecretKey, staged);
+            await StageValuesAsync(server, server.HeaderNames, headers, BuildHeaderSecretKey, staged, cancellationToken);
+            await StageValuesAsync(server, server.EnvironmentVariableNames, environmentVariables, BuildEnvironmentSecretKey, staged, cancellationToken);
             return staged;
         }
         catch (Exception ex)
         {
-            throw CompensateStagedSecrets(staged, ex);
+            throw await CompensateStagedSecretsAsync(staged, ex, cancellationToken);
         }
     }
 
-    private void StageValues(
+    private async Task StageValuesAsync(
         ConfiguredMcpServerRecord server,
         IEnumerable<string> names,
         IReadOnlyDictionary<string, string> values,
         Func<string, int, string, string> buildKey,
-        ICollection<string> staged)
+        ICollection<string> staged,
+        CancellationToken cancellationToken)
     {
         foreach (var name in names.Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
@@ -205,18 +220,21 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
 
             var key = buildKey(server.ServerId, server.PersistenceVersion, name);
             staged.Add(key);
-            _packageContext.Secrets.SetSecret(key, value.Trim());
+            await _packageContext.Secrets.SetSecretAsync(key, value.Trim(), cancellationToken);
         }
     }
 
-    private Exception CompensateStagedSecrets(IEnumerable<string> keys, Exception original)
+    private async Task<Exception> CompensateStagedSecretsAsync(
+        IEnumerable<string> keys,
+        Exception original,
+        CancellationToken cancellationToken)
     {
         var errors = new List<Exception> { original };
         foreach (var key in keys)
         {
             try
             {
-                _packageContext.Secrets.DeleteSecret(key);
+                await _packageContext.Secrets.DeleteSecretAsync(key, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -227,22 +245,24 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         return errors.Count == 1 ? original : new AggregateException("MCP server save failed and staged secret cleanup was incomplete.", errors);
     }
 
-    private IReadOnlyDictionary<string, string> ReadSecrets(
+    private async Task<IReadOnlyDictionary<string, string>> ReadSecretsAsync(
         ConfiguredMcpServerRecord server,
         IEnumerable<string> names,
         Func<string, int, string, string> buildKey,
-        bool readLegacyHeaderFallbacks)
+        bool readLegacyHeaderFallbacks,
+        CancellationToken cancellationToken)
     {
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var name in names)
         {
-            var value = _packageContext.Secrets.GetSecret(buildKey(server.ServerId, server.PersistenceVersion, name));
+            var value = await _packageContext.Secrets.GetSecretAsync(
+                buildKey(server.ServerId, server.PersistenceVersion, name), cancellationToken);
             if (server.PersistenceVersion == 0 && readLegacyHeaderFallbacks && string.IsNullOrWhiteSpace(value))
             {
                 value = string.Equals(name, "Authorization", StringComparison.OrdinalIgnoreCase)
-                    ? _packageContext.Secrets.GetSecret(BuildAuthorizationSecretKey(server.ServerId))
+                    ? await _packageContext.Secrets.GetSecretAsync(BuildAuthorizationSecretKey(server.ServerId), cancellationToken)
                     : null;
-                value ??= _packageContext.Secrets.GetSecret(BuildApiKeySecretKey(server.ServerId));
+                value ??= await _packageContext.Secrets.GetSecretAsync(BuildApiKeySecretKey(server.ServerId), cancellationToken);
             }
 
             if (!string.IsNullOrWhiteSpace(value))
@@ -254,58 +274,64 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         return values;
     }
 
-    private void CleanupSupersededSecrets(ConfiguredMcpServerRecord? existing, ConfiguredMcpServerRecord persisted)
+    private async Task CleanupSupersededSecretsAsync(
+        ConfiguredMcpServerRecord? existing,
+        ConfiguredMcpServerRecord persisted,
+        CancellationToken cancellationToken)
     {
         if (existing is not null)
         {
-            DeleteVersionedSecrets(existing);
+            await DeleteVersionedSecretsAsync(existing, cancellationToken);
         }
 
-        TryDeleteSecret(BuildApiKeySecretKey(persisted.ServerId));
-        TryDeleteSecret(BuildAuthorizationSecretKey(persisted.ServerId));
+        await TryDeleteSecretAsync(BuildApiKeySecretKey(persisted.ServerId), cancellationToken);
+        await TryDeleteSecretAsync(BuildAuthorizationSecretKey(persisted.ServerId), cancellationToken);
         if (existing?.OAuthEnabled == true && !persisted.OAuthEnabled)
         {
-            DeleteOAuthSecrets(persisted.ServerId);
+            await DeleteOAuthSecretsAsync(persisted.ServerId, cancellationToken);
         }
     }
 
-    private void CleanupDeletedServerSecrets(ConfiguredMcpServerRecord? existing, string serverId)
+    private async Task CleanupDeletedServerSecretsAsync(
+        ConfiguredMcpServerRecord? existing,
+        string serverId,
+        CancellationToken cancellationToken)
     {
         if (existing is not null)
         {
-            DeleteVersionedSecrets(existing);
+            await DeleteVersionedSecretsAsync(existing, cancellationToken);
         }
 
-        TryDeleteSecret(BuildApiKeySecretKey(serverId));
-        TryDeleteSecret(BuildAuthorizationSecretKey(serverId));
-        DeleteOAuthSecrets(serverId);
+        await TryDeleteSecretAsync(BuildApiKeySecretKey(serverId), cancellationToken);
+        await TryDeleteSecretAsync(BuildAuthorizationSecretKey(serverId), cancellationToken);
+        await DeleteOAuthSecretsAsync(serverId, cancellationToken);
     }
 
-    private void DeleteVersionedSecrets(ConfiguredMcpServerRecord server)
+    private async Task DeleteVersionedSecretsAsync(ConfiguredMcpServerRecord server, CancellationToken cancellationToken)
     {
         foreach (var name in server.HeaderNames)
         {
-            TryDeleteSecret(BuildHeaderSecretKey(server.ServerId, server.PersistenceVersion, name));
+            await TryDeleteSecretAsync(BuildHeaderSecretKey(server.ServerId, server.PersistenceVersion, name), cancellationToken);
         }
 
         foreach (var name in server.EnvironmentVariableNames)
         {
-            TryDeleteSecret(BuildEnvironmentSecretKey(server.ServerId, server.PersistenceVersion, name));
+            await TryDeleteSecretAsync(BuildEnvironmentSecretKey(server.ServerId, server.PersistenceVersion, name), cancellationToken);
         }
     }
 
-    private void DeleteOAuthSecrets(string serverId)
+    private async Task DeleteOAuthSecretsAsync(string serverId, CancellationToken cancellationToken)
     {
-        TryDeleteSecret(McpOAuthSecretKeys.TokenCache(serverId));
-        TryDeleteSecret(McpOAuthSecretKeys.ClientRegistration(serverId));
-        TryDeleteSecret(McpOAuthSecretKeys.ClientSecret(serverId));
+        await TryDeleteSecretAsync(McpOAuthSecretKeys.TokenCache(serverId), cancellationToken);
+        await TryDeleteSecretAsync(McpOAuthSecretKeys.ClientRegistration(serverId), cancellationToken);
+        await TryDeleteSecretAsync(McpOAuthSecretKeys.ClientSecret(serverId), cancellationToken);
     }
 
-    private void TryDeleteSecret(string key)
+    private async Task TryDeleteSecretAsync(string key, CancellationToken cancellationToken)
     {
         try
         {
-            _packageContext.Secrets.DeleteSecret(key);
+            await _packageContext.Secrets.DeleteSecretAsync(key, cancellationToken);
         }
         catch (Exception ex)
         {

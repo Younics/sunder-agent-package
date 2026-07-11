@@ -12,21 +12,21 @@ public sealed class ExaWebSearchBackend(WebToolsSettingsService settingsService)
 
     public string BackendId { get; } = "exa";
 
-    public ValueTask<AgentToolReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<AgentToolReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(new AgentToolReadiness(
+        return new AgentToolReadiness(
             "web_search",
             AgentToolReadinessStatus.Ready,
-            string.IsNullOrWhiteSpace(_settingsService.GetExaApiKey())
+            string.IsNullOrWhiteSpace(await _settingsService.GetExaApiKeyAsync(cancellationToken))
                 ? "Web search is ready via the default Exa MCP-backed route."
-                : "Web search is ready via the Exa MCP-backed route using your optional Exa API key."));
+                : "Web search is ready via the Exa MCP-backed route using your optional Exa API key.");
     }
 
     public async Task<WebSearchBackendResult> SearchAsync(string query, int maxResults, CancellationToken cancellationToken = default)
     {
         using var httpClient = new HttpClient();
-        using var request = new HttpRequestMessage(HttpMethod.Post, BuildEndpointUri())
+        using var request = new HttpRequestMessage(HttpMethod.Post, await BuildEndpointUriAsync(cancellationToken))
         {
             Content = new StringContent(
                 JsonSerializer.Serialize(new
@@ -73,9 +73,9 @@ public sealed class ExaWebSearchBackend(WebToolsSettingsService settingsService)
             Content: content);
     }
 
-    private Uri BuildEndpointUri()
+    private async Task<Uri> BuildEndpointUriAsync(CancellationToken cancellationToken)
     {
-        var apiKey = _settingsService.GetExaApiKey();
+        var apiKey = await _settingsService.GetExaApiKeyAsync(cancellationToken);
         return string.IsNullOrWhiteSpace(apiKey)
             ? new Uri("https://mcp.exa.ai/mcp")
             : new Uri($"https://mcp.exa.ai/mcp?exaApiKey={Uri.EscapeDataString(apiKey)}");

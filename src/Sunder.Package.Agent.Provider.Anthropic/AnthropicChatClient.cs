@@ -47,7 +47,7 @@ internal sealed class AnthropicChatClient : IChatClient
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var apiKey = _credentials.GetCredential();
+        var apiKey = await _credentials.GetCredentialAsync(cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw AnthropicExceptionMapper.MissingApiKey();

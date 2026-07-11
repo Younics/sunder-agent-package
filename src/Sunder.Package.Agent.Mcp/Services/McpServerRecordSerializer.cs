@@ -6,30 +6,25 @@ namespace Sunder.Package.Agent.Mcp.Services;
 
 internal static class McpServerRecordSerializer
 {
-    public static bool TryDeserialize(
+    public static async Task<McpServerDeserializeResult> DeserializeAsync(
         string payload,
         IPackageSecrets secrets,
         Func<string?, string> normalizeName,
-        out ConfiguredMcpServerRecord? server,
-        out string? error)
+        CancellationToken cancellationToken = default)
     {
-        server = null;
-        error = null;
         try
         {
             using var document = JsonDocument.Parse(payload);
             if (document.RootElement.ValueKind != JsonValueKind.Object)
             {
-                error = "Stored MCP server metadata is not a JSON object.";
-                return false;
+                return new(null, "Stored MCP server metadata is not a JSON object.");
             }
 
             var root = document.RootElement;
             var serverId = ReadString(root, "ServerId") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(serverId))
             {
-                error = "Stored MCP server metadata is missing ServerId.";
-                return false;
+                return new(null, "Stored MCP server metadata is missing ServerId.");
             }
 
             var name = normalizeName(ReadString(root, "Name"));
@@ -43,10 +38,10 @@ internal static class McpServerRecordSerializer
             var headerNames = ReadStringArray(root, "HeaderNames");
             if (headerNames.Length == 0)
             {
-                headerNames = ReadLegacyHeaderNames(secrets, serverId, root);
+                headerNames = await ReadLegacyHeaderNamesAsync(secrets, serverId, root, cancellationToken);
             }
 
-            server = new ConfiguredMcpServerRecord
+            var server = new ConfiguredMcpServerRecord
             {
                 PersistenceVersion = ReadInt(root, "PersistenceVersion") ?? 0,
                 ServerId = serverId,
@@ -74,26 +69,31 @@ internal static class McpServerRecordSerializer
                 CreatedAtUtc = ReadDateTimeOffset(root, "CreatedAtUtc") ?? DateTimeOffset.UtcNow,
                 UpdatedAtUtc = ReadDateTimeOffset(root, "UpdatedAtUtc") ?? DateTimeOffset.UtcNow,
             };
-            return true;
+            return new(server, null);
         }
         catch (JsonException ex)
         {
-            error = $"Stored MCP server metadata is malformed JSON: {ex.Message}";
-            return false;
+            return new(null, $"Stored MCP server metadata is malformed JSON: {ex.Message}");
         }
     }
 
-    private static string[] ReadLegacyHeaderNames(IPackageSecrets secrets, string serverId, JsonElement root)
+    private static async Task<string[]> ReadLegacyHeaderNamesAsync(
+        IPackageSecrets secrets,
+        string serverId,
+        JsonElement root,
+        CancellationToken cancellationToken)
     {
         var names = new List<string>();
         var apiKeyHeaderName = ReadString(root, "ApiKeyHeaderName");
         if (!string.IsNullOrWhiteSpace(apiKeyHeaderName)
-            && !string.IsNullOrWhiteSpace(secrets.GetSecret(McpServerCatalogService.BuildApiKeySecretKey(serverId))))
+            && !string.IsNullOrWhiteSpace(await secrets.GetSecretAsync(
+                McpServerCatalogService.BuildApiKeySecretKey(serverId), cancellationToken)))
         {
             names.Add(apiKeyHeaderName.Trim());
         }
 
-        if (!string.IsNullOrWhiteSpace(secrets.GetSecret(McpServerCatalogService.BuildAuthorizationSecretKey(serverId))))
+        if (!string.IsNullOrWhiteSpace(await secrets.GetSecretAsync(
+            McpServerCatalogService.BuildAuthorizationSecretKey(serverId), cancellationToken)))
         {
             names.Add("Authorization");
         }
@@ -204,3 +204,7 @@ internal static class McpServerRecordSerializer
     private static string? TrimOrNull(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }
+
+internal sealed record McpServerDeserializeResult(
+    ConfiguredMcpServerRecord? Server,
+    string? Error);

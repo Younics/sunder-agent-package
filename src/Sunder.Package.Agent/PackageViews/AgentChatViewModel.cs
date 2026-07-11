@@ -92,8 +92,19 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _sessionService.TurnChanged += OnTurnChanged;
         _sessionService.TranscriptReset += OnTranscriptReset;
         _sessionService.RunActivityChanged += OnRunActivityChanged;
-        ReloadProfiles(_selectionState?.GetSelectedProfileId());
-        ReloadWorkspaces(_selectionState?.GetSelectedWorkspaceId());
+    }
+
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        await _workspaceService.InitializeAsync(cancellationToken);
+        var selectedProfileId = _selectionState is null
+            ? null
+            : await _selectionState.GetSelectedProfileIdAsync(cancellationToken);
+        var selectedWorkspaceId = _selectionState is null
+            ? null
+            : await _selectionState.GetSelectedWorkspaceIdAsync(cancellationToken);
+        ReloadProfiles(selectedProfileId);
+        ReloadWorkspaces(selectedWorkspaceId);
         ScheduleSelectedWorkspaceWarmup();
     }
 

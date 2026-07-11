@@ -1,10 +1,11 @@
 using Avalonia.Controls;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Avalonia;
 using Sunder.Sdk.Configuration;
 
 namespace Sunder.Package.Agent.Tests;
 
-internal sealed class RecordingPackageContributionRegistry : IPackageContributionRegistry
+internal sealed class RecordingPackageContributionRegistry : ISunderRuntimeContributionRegistry, IAvaloniaPackageContributionRegistry
 {
     private readonly List<string> _registrations = [];
     private readonly List<object> _activatedContributions = [];
@@ -32,8 +33,12 @@ internal sealed class RecordingPackageContributionRegistry : IPackageContributio
     public void RegisterExtension<TContract>(PackageExtensionPoint<TContract> extensionPoint, TContract contribution)
     {
         ArgumentNullException.ThrowIfNull(contribution);
-        _registrations.Add($"extension:{extensionPoint.Id}:{contribution.GetType().FullName}");
-        _activatedContributions.Add(contribution);
+        var registration = $"extension:{extensionPoint.Id}:{contribution.GetType().FullName}";
+        if (!_registrations.Contains(registration, StringComparer.Ordinal))
+        {
+            _registrations.Add(registration);
+            _activatedContributions.Add(contribution);
+        }
     }
 
     public void RegisterConfigurationSchema(PackageConfigurationSchema schema)

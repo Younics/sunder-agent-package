@@ -37,24 +37,24 @@ public sealed class OpenAiAgentProvider(
         return ValueTask.FromResult(OpenAiModelCatalog.Models);
     }
 
-    public ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult<string?>(UtilityModelSettingsState.ResolveModelId(
+        return UtilityModelSettingsState.ResolveModelId(
             OpenAiSettingsViewModel.NormalizeLegacyUtilityModelId(
-                _packageContext.Configuration.GetValue(OpenAiProviderConfiguration.UtilityModelKey)),
+                await _packageContext.Configuration.GetValueAsync(OpenAiProviderConfiguration.UtilityModelKey, cancellationToken)),
             OpenAiProviderConfiguration.DefaultUtilityModelId,
-            OpenAiProviderConfiguration.UtilityModelOptions.Select(option => option.Value)));
+            OpenAiProviderConfiguration.UtilityModelOptions.Select(option => option.Value));
     }
 
     public async ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var authMode = OpenAiAuthMode.GetSelected(_packageContext.Configuration);
+        var authMode = await OpenAiAuthMode.GetSelectedAsync(_packageContext.Configuration, cancellationToken);
         if (authMode == OpenAiAuthMode.ApiKey)
         {
-            return !string.IsNullOrWhiteSpace(apiKeyAuthStrategy.GetApiKey())
+            return !string.IsNullOrWhiteSpace(await apiKeyAuthStrategy.GetApiKeyAsync(cancellationToken))
                 ? new AgentProviderReadiness(
                     Descriptor.ProviderId,
                     AgentProviderReadinessStatus.Ready,
@@ -92,11 +92,11 @@ public sealed class OpenAiAgentProvider(
     public async ValueTask<IChatClient> CreateChatClientAsync(AgentChatClientContext context, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var authMode = OpenAiAuthMode.GetSelected(_packageContext.Configuration);
+        var authMode = await OpenAiAuthMode.GetSelectedAsync(_packageContext.Configuration, cancellationToken);
 
         if (authMode == OpenAiAuthMode.ApiKey)
         {
-            var apiKey = apiKeyAuthStrategy.GetApiKey();
+            var apiKey = await apiKeyAuthStrategy.GetApiKeyAsync(cancellationToken);
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 throw new AgentChatProviderException(

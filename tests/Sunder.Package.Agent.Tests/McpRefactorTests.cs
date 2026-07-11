@@ -228,7 +228,7 @@ public sealed class McpRefactorTests
 
         var after = Assert.Single(await catalog.ListServersAsync());
         Assert.Equal(persisted.PersistenceVersion, after.PersistenceVersion);
-        Assert.Equal("old", catalog.GetHeaders(after)["Authorization"]);
+        Assert.Equal("old", (await catalog.GetHeadersAsync(after))["Authorization"]);
         Assert.DoesNotContain(secrets.Keys, key => key.Contains($".v{persisted.PersistenceVersion + 1}.", StringComparison.Ordinal));
     }
 
@@ -249,7 +249,7 @@ public sealed class McpRefactorTests
 
         var after = Assert.Single(await catalog.ListServersAsync());
         Assert.Equal(persisted.PersistenceVersion, after.PersistenceVersion);
-        Assert.Equal("old", catalog.GetHeaders(after)["Authorization"]);
+        Assert.Equal("old", (await catalog.GetHeadersAsync(after))["Authorization"]);
         Assert.DoesNotContain(context.Secrets.Keys, key => key.Contains($".v{persisted.PersistenceVersion + 1}.", StringComparison.Ordinal));
     }
 
@@ -265,7 +265,7 @@ public sealed class McpRefactorTests
 
         Assert.Single(servers);
         Assert.Contains(catalog.LastDiagnostics, diagnostic => diagnostic.StorageKey == "mcp.servers.broken");
-        Assert.Equal("{ not-json", context.State.GetValue("mcp.servers.broken"));
+        Assert.Equal("{ not-json", await context.State.GetValueAsync("mcp.servers.broken"));
     }
 
     [Fact]
@@ -430,7 +430,7 @@ public sealed class McpRefactorTests
         public TestState State { get; }
         public FaultingSecrets Secrets { get; }
         public string PackageId => "test.mcp";
-        public Version Version { get; } = new(1, 0, 0);
+        public string Version { get; } = "1.0.0";
         public string InstallPath => AppContext.BaseDirectory;
         public IPackageStorageContext Storage => _storage;
         public IPackageConfiguration Configuration { get; } = new EmptyConfiguration();
@@ -441,17 +441,14 @@ public sealed class McpRefactorTests
 
     private sealed class TestStorage(IPackageKeyValueStore state) : IPackageStorageContext
     {
-        public string DataRootPath => Path.GetTempPath();
-        public string CacheRootPath => Path.GetTempPath();
-        public string LogsRootPath => Path.GetTempPath();
         public IPackageFileStore Files { get; } = new TestFiles();
         public IPackageKeyValueStore State { get; } = state;
+        public IPackageLocalWorkspaceLease LocalWorkspace { get; } = new TestPackageWorkspaceLease(Path.GetTempPath());
     }
 
-    private sealed class TestFiles : IPackageFileStore
+    private sealed class TestFiles : TestPackageFileStoreBase
     {
-        public string RootPath => Path.GetTempPath();
-        public string GetPath(string relativePath) => Path.Combine(RootPath, relativePath);
+        public TestFiles() : base(Path.GetTempPath()) { }
     }
 
     private sealed class TestState : IPackageKeyValueStore
@@ -462,8 +459,8 @@ public sealed class McpRefactorTests
         public bool BlockOnNextSet { get; set; }
         public TaskCompletionSource SetStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseSet { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public string? GetValue(string key) => _values.GetValueOrDefault(key);
-        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(GetValue(key));
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
+            => Task.FromResult(_values.GetValueOrDefault(key));
 
         public async Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
         {
@@ -503,24 +500,27 @@ public sealed class McpRefactorTests
         public int SetCount { get; private set; }
         public int? FailOnSetNumber { get; set; }
         public IReadOnlyCollection<string> Keys => _values.Keys;
-        public string? GetSecret(string key) => _values.GetValueOrDefault(key);
+        public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default)
+            => Task.FromResult(_values.GetValueOrDefault(key));
 
-        public void SetSecret(string key, string value)
+        public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default)
         {
             SetCount++;
             if (SetCount == FailOnSetNumber)
             {
-                throw new InvalidOperationException("Injected secret failure.");
+                return Task.FromException(new InvalidOperationException("Injected secret failure."));
             }
 
             _values[key] = value;
+            return Task.CompletedTask;
         }
 
-        public void DeleteSecret(string key) => _values.Remove(key);
+        public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default)
+        {
+            _values.Remove(key);
+            return Task.CompletedTask;
+        }
     }
 
-    private sealed class EmptyConfiguration : IPackageConfiguration
-    {
-        public string? GetValue(string key) => null;
-    }
+    private sealed class EmptyConfiguration : EmptyPackageConfiguration;
 }

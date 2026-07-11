@@ -18,24 +18,24 @@ public sealed class AnthropicSettingsStateTests
 
         viewModel.ApiKeySettings.EnteredCredential = " first-key ";
         await viewModel.ApiKeySettings.SaveCredentialCommand.ExecuteAsync(null);
-        Assert.Equal("first-key", context.Secrets.GetSecret(AnthropicProviderConfiguration.ApiKeySecretKey));
+        Assert.Equal("first-key", await context.Secrets.GetSecretAsync(AnthropicProviderConfiguration.ApiKeySecretKey));
         Assert.Null(viewModel.ApiKeySettings.EnteredCredential);
 
         viewModel.ApiKeySettings.EnteredCredential = "   ";
         await viewModel.ApiKeySettings.SaveCredentialCommand.ExecuteAsync(null);
-        Assert.Equal("first-key", context.Secrets.GetSecret(AnthropicProviderConfiguration.ApiKeySecretKey));
+        Assert.Equal("first-key", await context.Secrets.GetSecretAsync(AnthropicProviderConfiguration.ApiKeySecretKey));
         Assert.Null(viewModel.ApiKeySettings.EnteredCredential);
 
         viewModel.ApiKeySettings.EnteredCredential = "second-key";
         await viewModel.ApiKeySettings.SaveCredentialCommand.ExecuteAsync(null);
-        Assert.Equal("second-key", context.Secrets.GetSecret(AnthropicProviderConfiguration.ApiKeySecretKey));
+        Assert.Equal("second-key", await context.Secrets.GetSecretAsync(AnthropicProviderConfiguration.ApiKeySecretKey));
         Assert.Null(viewModel.ApiKeySettings.EnteredCredential);
 
         viewModel.ApiKeySettings.RequestClearCredentialCommand.Execute(null);
         Assert.True(viewModel.ApiKeySettings.IsClearConfirmationRequested);
         await viewModel.ApiKeySettings.ClearCredentialCommand.ExecuteAsync(null);
 
-        Assert.Null(context.Secrets.GetSecret(AnthropicProviderConfiguration.ApiKeySecretKey));
+        Assert.Null(await context.Secrets.GetSecretAsync(AnthropicProviderConfiguration.ApiKeySecretKey));
         Assert.False(viewModel.ApiKeySettings.HasStoredCredential);
         Assert.Null(viewModel.ApiKeySettings.EnteredCredential);
     }
@@ -76,16 +76,19 @@ public sealed class AnthropicSettingsStateTests
 
         Assert.True(viewModel.UtilityModelSettings.IsOperationStatusWarning);
         Assert.Contains("canceled", viewModel.UtilityModelSettings.OperationStatus, StringComparison.OrdinalIgnoreCase);
-        Assert.Null(state.GetValue(AnthropicProviderConfiguration.UtilityModelKey));
+        Assert.Null(await state.GetValueAsync(AnthropicProviderConfiguration.UtilityModelKey));
     }
 
     private sealed class ThrowingSecrets : IPackageSecrets
     {
-        public string? GetSecret(string key) => null;
+        public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default)
+            => Task.FromResult<string?>(null);
 
-        public void SetSecret(string key, string value) => throw new InvalidOperationException("secret store unavailable");
+        public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("secret store unavailable");
 
-        public void DeleteSecret(string key) => throw new InvalidOperationException("secret store unavailable");
+        public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("secret store unavailable");
     }
 
     private sealed class BlockingKeyValueStore : IPackageKeyValueStore
@@ -94,10 +97,8 @@ public sealed class AnthropicSettingsStateTests
 
         internal TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public string? GetValue(string key) => _values.GetValueOrDefault(key);
-
         public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
-            => Task.FromResult(GetValue(key));
+            => Task.FromResult(_values.GetValueOrDefault(key));
 
         public async Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
         {

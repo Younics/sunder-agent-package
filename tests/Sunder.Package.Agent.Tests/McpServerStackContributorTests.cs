@@ -191,7 +191,7 @@ public sealed class McpServerStackContributorTests
             Assert.True(higgsfield.OAuthEnabled);
             var meshy = Assert.Single(servers, server => server.Name == "meshy");
             Assert.Equal(["npx", "-y", "@meshy/mcp"], meshy.CommandParts);
-            Assert.Equal("secret", catalog.GetEnvironmentVariables(meshy)["MESHY_API_KEY"]);
+            Assert.Equal("secret", (await catalog.GetEnvironmentVariablesAsync(meshy))["MESHY_API_KEY"]);
         }
         finally
         {
@@ -540,7 +540,7 @@ public sealed class McpServerStackContributorTests
     {
         public string PackageId => "sunder.package.agent.mcp";
 
-        public Version Version { get; } = new(1, 2, 3);
+        public string Version { get; } = "1.2.3";
 
         public string InstallPath => AppContext.BaseDirectory;
 
@@ -559,44 +559,25 @@ public sealed class McpServerStackContributorTests
     {
         public TestStorageContext(string rootPath)
         {
-            DataRootPath = Path.Combine(rootPath, "data");
-            CacheRootPath = Path.Combine(rootPath, "cache");
-            LogsRootPath = Path.Combine(rootPath, "logs");
-            Directory.CreateDirectory(DataRootPath);
-            Directory.CreateDirectory(CacheRootPath);
-            Directory.CreateDirectory(LogsRootPath);
+            Directory.CreateDirectory(rootPath);
             Files = new TestFileStore(Path.Combine(rootPath, "files"));
             State = new TestKeyValueStore();
+            LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
         }
-
-        public string DataRootPath { get; }
-
-        public string CacheRootPath { get; }
-
-        public string LogsRootPath { get; }
 
         public IPackageFileStore Files { get; }
 
         public IPackageKeyValueStore State { get; }
+        public IPackageLocalWorkspaceLease LocalWorkspace { get; }
     }
 
-    private sealed class TestFileStore(string rootPath) : IPackageFileStore
-    {
-        public string RootPath { get; } = rootPath;
-
-        public string GetPath(string relativePath)
-            => string.IsNullOrWhiteSpace(relativePath)
-                ? RootPath
-                : Path.Combine([RootPath, .. relativePath.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)]);
-    }
+    private sealed class TestFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
 
     private sealed class TestKeyValueStore : IPackageKeyValueStore
     {
         private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
 
-        public string? GetValue(string key) => _values.GetValueOrDefault(key);
-
-        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(GetValue(key));
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(_values.GetValueOrDefault(key));
 
         public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
         {
@@ -616,12 +597,9 @@ public sealed class McpServerStackContributorTests
             => Task.FromResult<IReadOnlyList<string>>(_values.Keys.Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray());
     }
 
-    private sealed class TestConfiguration : IPackageConfiguration
-    {
-        public string? GetValue(string key) => null;
-    }
+    private sealed class TestConfiguration : EmptyPackageConfiguration;
 
-    private sealed class TestSecrets : IPackageSecrets
+    private sealed class TestSecrets : InMemoryPackageSecrets
     {
         private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
 

@@ -20,29 +20,38 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
 
     public string ContributorId => "sunder.package.agent.execution.docker.workspace-path-migration";
 
-    public DockerExecutionWorkspaceConfig GetConfig(string bindingId)
+    public async Task<DockerExecutionWorkspaceConfig> GetConfigAsync(
+        string bindingId,
+        CancellationToken cancellationToken = default)
     {
-        var json = packageContext.Storage.State.GetValue(BuildKey(bindingId));
+        var defaultImageReference = await _imageCatalogService.GetDefaultImageReferenceAsync(cancellationToken);
+        var json = await packageContext.Storage.State.GetValueAsync(BuildKey(bindingId), cancellationToken);
         if (string.IsNullOrWhiteSpace(json))
         {
-            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(null, null, DefaultShellPath, []));
+            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(null, null, DefaultShellPath, []), defaultImageReference);
         }
 
         try
         {
             return Normalize(bindingId, JsonSerializer.Deserialize<DockerExecutionWorkspaceConfig>(json, JsonOptions)
-                                         ?? new DockerExecutionWorkspaceConfig(null, null, null, []));
+                                         ?? new DockerExecutionWorkspaceConfig(null, null, null, []), defaultImageReference);
         }
         catch
         {
-            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(null, null, DefaultShellPath, []));
+            return Normalize(bindingId, new DockerExecutionWorkspaceConfig(null, null, DefaultShellPath, []), defaultImageReference);
         }
     }
 
-    public void SaveConfig(string bindingId, DockerExecutionWorkspaceConfig config)
+    public Task SaveConfigAsync(
+        string bindingId,
+        DockerExecutionWorkspaceConfig config,
+        CancellationToken cancellationToken = default)
     {
         var normalized = Normalize(bindingId, config);
-        packageContext.Storage.State.SetValueAsync(BuildKey(bindingId), JsonSerializer.Serialize(normalized, JsonOptions)).GetAwaiter().GetResult();
+        return packageContext.Storage.State.SetValueAsync(
+            BuildKey(bindingId),
+            JsonSerializer.Serialize(normalized, JsonOptions),
+            cancellationToken);
     }
 
     internal DockerExecutionRuntimeConfig BuildRuntimeConfig(
@@ -79,7 +88,7 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
     public string ResolveDefaultHostPath(string containerRoot)
     {
         var relativePath = ToFileStoreRelativePath(containerRoot);
-        return ValidateHostPath(Path.GetFullPath(packageContext.Storage.Files.GetPath(relativePath)));
+        return ValidateHostPath(packageContext.Storage.LocalWorkspace.GetLocalPath(relativePath));
     }
 
     internal void EnsureHostMountPaths(DockerExecutionRuntimeConfig config)
@@ -101,9 +110,11 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
     public bool CanMigrate(AgentWorkspacePathMigrationContext context)
         => string.Equals(context.Binding.ContributionId, "docker", StringComparison.OrdinalIgnoreCase);
 
-    public IReadOnlyList<AgentWorkspacePathMigrationItem> GetLegacyWorkspacePaths(AgentWorkspacePathMigrationContext context)
+    public async Task<IReadOnlyList<AgentWorkspacePathMigrationItem>> GetLegacyWorkspacePathsAsync(
+        AgentWorkspacePathMigrationContext context,
+        CancellationToken cancellationToken = default)
     {
-        var json = packageContext.Storage.State.GetValue(BuildKey(context.Binding.BindingId));
+        var json = await packageContext.Storage.State.GetValueAsync(BuildKey(context.Binding.BindingId), cancellationToken);
         if (string.IsNullOrWhiteSpace(json))
         {
             return [];
@@ -154,10 +165,18 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
         }
     }
 
-    public void CompleteWorkspacePathMigration(AgentWorkspacePathMigrationContext context)
-        => SaveConfig(context.Binding.BindingId, GetConfig(context.Binding.BindingId));
+    public async Task CompleteWorkspacePathMigrationAsync(
+        AgentWorkspacePathMigrationContext context,
+        CancellationToken cancellationToken = default)
+        => await SaveConfigAsync(
+            context.Binding.BindingId,
+            await GetConfigAsync(context.Binding.BindingId, cancellationToken),
+            cancellationToken);
 
-    private DockerExecutionWorkspaceConfig Normalize(string bindingId, DockerExecutionWorkspaceConfig config)
+    private DockerExecutionWorkspaceConfig Normalize(
+        string bindingId,
+        DockerExecutionWorkspaceConfig config,
+        string? defaultImageReference = DefaultImageReference)
     {
         var shellPath = string.IsNullOrWhiteSpace(config.ShellPath)
             ? DefaultShellPath
@@ -169,7 +188,7 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
             .ToArray();
 
         return new DockerExecutionWorkspaceConfig(
-            string.IsNullOrWhiteSpace(config.ImageReference) ? _imageCatalogService.GetDefaultImageReference() : DockerImageCatalogService.NormalizeImageReference(config.ImageReference),
+            string.IsNullOrWhiteSpace(config.ImageReference) ? defaultImageReference : DockerImageCatalogService.NormalizeImageReference(config.ImageReference),
             ResolveContainerName(bindingId, config.ContainerName),
             shellPath,
             pathEntries);

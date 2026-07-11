@@ -8,8 +8,13 @@ internal static class OpenAiAuthMode
     public const string ApiKey = "api-key";
     public const string CodexConnected = "codex-connected";
 
-    public static string GetSelected(IPackageConfiguration configuration)
-        => string.Equals(configuration.GetValue(ConfigurationKey), ApiKey, StringComparison.OrdinalIgnoreCase)
+    public static async Task<string> GetSelectedAsync(
+        IPackageConfiguration configuration,
+        CancellationToken cancellationToken = default)
+        => string.Equals(
+            await configuration.GetValueAsync(ConfigurationKey, cancellationToken),
+            ApiKey,
+            StringComparison.OrdinalIgnoreCase)
             ? ApiKey
             : CodexConnected;
 }

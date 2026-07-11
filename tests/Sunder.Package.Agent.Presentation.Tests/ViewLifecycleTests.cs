@@ -263,7 +263,7 @@ public sealed class ViewLifecycleTests
         using var scope = RegressionTestPackageScope.Create();
         var store = new SkillStore(scope.Context);
         await File.WriteAllTextAsync(
-            Path.Combine(scope.Context.Storage.DataRootPath, "skills.json"),
+            scope.Context.Storage.LocalWorkspace.GetLocalPath("skills/skills.json"),
             "{ malformed");
         var viewModel = new SkillSettingsViewModel(
             store,
@@ -282,7 +282,7 @@ public sealed class ViewLifecycleTests
         using var scope = RegressionTestPackageScope.Create();
         var store = new SubagentStore(scope.Context);
         await File.WriteAllTextAsync(
-            Path.Combine(scope.Context.Storage.DataRootPath, "subagents.json"),
+            scope.Context.Storage.LocalWorkspace.GetLocalPath("subagents/subagents.json"),
             "{ malformed");
         var viewModel = new SubagentsViewModel(
             new SubagentService(store),

@@ -11,53 +11,55 @@ public sealed class AgentChatSelectionStateService(IPackageContext packageContex
 
     private readonly IPackageKeyValueStore _state = packageContext.Storage.State;
 
-    public string? GetSelectedWorkspaceId()
-        => Normalize(_state.GetValue(SelectedWorkspaceIdKey));
+    public async Task<string?> GetSelectedWorkspaceIdAsync(CancellationToken cancellationToken = default)
+        => Normalize(await _state.GetValueAsync(SelectedWorkspaceIdKey, cancellationToken));
 
-    public Guid? GetSelectedSessionId()
-        => null;
+    public Task<Guid?> GetSelectedSessionIdAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult<Guid?>(null);
 
-    public Guid? GetSelectedSessionId(string? workspaceId)
+    public async Task<Guid?> GetSelectedSessionIdAsync(string? workspaceId, CancellationToken cancellationToken = default)
         => GetWorkspaceSessionKey(workspaceId) is { } key
-           && Guid.TryParse(Normalize(_state.GetValue(key)), out var sessionId)
+           && Guid.TryParse(Normalize(await _state.GetValueAsync(key, cancellationToken)), out var sessionId)
             ? sessionId
             : null;
 
-    public string? GetSelectedProfileId()
-        => Normalize(_state.GetValue(SelectedProfileIdKey));
+    public async Task<string?> GetSelectedProfileIdAsync(CancellationToken cancellationToken = default)
+        => Normalize(await _state.GetValueAsync(SelectedProfileIdKey, cancellationToken));
 
-    public void SaveSelectedWorkspaceId(string? workspaceId)
-        => SaveOrClear(SelectedWorkspaceIdKey, Normalize(workspaceId));
+    public Task SaveSelectedWorkspaceIdAsync(string? workspaceId, CancellationToken cancellationToken = default)
+        => SaveOrClearAsync(SelectedWorkspaceIdKey, Normalize(workspaceId), cancellationToken);
 
-    public void SaveSelectedSessionId(Guid? sessionId)
-        => SaveOrClear(SelectedSessionIdKey, sessionId?.ToString("N"));
+    public Task SaveSelectedSessionIdAsync(Guid? sessionId, CancellationToken cancellationToken = default)
+        => SaveOrClearAsync(SelectedSessionIdKey, sessionId?.ToString("N"), cancellationToken);
 
-    public void SaveSelectedSessionId(string? workspaceId, Guid? sessionId)
+    public Task SaveSelectedSessionIdAsync(
+        string? workspaceId,
+        Guid? sessionId,
+        CancellationToken cancellationToken = default)
     {
         var key = GetWorkspaceSessionKey(workspaceId);
         if (key is null)
         {
-            SaveSelectedSessionId(sessionId);
-            return;
+            return SaveSelectedSessionIdAsync(sessionId, cancellationToken);
         }
 
-        SaveOrClear(key, sessionId?.ToString("N"));
+        return SaveOrClearAsync(key, sessionId?.ToString("N"), cancellationToken);
     }
 
-    public void SaveSelectedProfileId(string? profileId)
-        => SaveOrClear(SelectedProfileIdKey, Normalize(profileId));
+    public Task SaveSelectedProfileIdAsync(string? profileId, CancellationToken cancellationToken = default)
+        => SaveOrClearAsync(SelectedProfileIdKey, Normalize(profileId), cancellationToken);
 
-    private void SaveOrClear(string key, string? value)
+    private async Task SaveOrClearAsync(string key, string? value, CancellationToken cancellationToken)
     {
         try
         {
             if (string.IsNullOrWhiteSpace(value))
             {
-                _state.DeleteValueAsync(key).GetAwaiter().GetResult();
+                await _state.DeleteValueAsync(key, cancellationToken);
                 return;
             }
 
-            _state.SetValueAsync(key, value).GetAwaiter().GetResult();
+            await _state.SetValueAsync(key, value, cancellationToken);
         }
         catch
         {

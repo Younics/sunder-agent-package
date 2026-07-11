@@ -13,7 +13,8 @@ public sealed class AgentPermissionStoreTests
     public void Migration_ExpiresLegacyRequestsWithoutDurableContinuationState()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var databasePath = Path.Combine(scope.Context.Storage.DataRootPath, "agent.db");
+        var databasePath = scope.Context.Storage.LocalWorkspace.GetLocalPath("agent/agent.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
         using (var connection = OpenDatabase(databasePath))
         using (var command = connection.CreateCommand())
         {

@@ -434,7 +434,7 @@ public sealed class BuilderViewModelTests
     {
         public string PackageId => "local.test.builder";
 
-        public Version Version { get; } = new(1, 0, 0);
+        public string Version { get; } = "1.0.0";
 
         public string InstallPath => AppContext.BaseDirectory;
 
@@ -451,35 +451,23 @@ public sealed class BuilderViewModelTests
 
     private sealed class TestStorageContext : IPackageStorageContext
     {
-        public string DataRootPath => AppContext.BaseDirectory;
-
-        public string CacheRootPath => AppContext.BaseDirectory;
-
-        public string LogsRootPath => AppContext.BaseDirectory;
-
         public IPackageFileStore Files { get; } = new TestFileStore();
 
         public IPackageKeyValueStore State { get; } = new TestKeyValueStore();
+        public IPackageLocalWorkspaceLease LocalWorkspace { get; } = new TestPackageWorkspaceLease(AppContext.BaseDirectory);
     }
 
-    private sealed class TestFileStore : IPackageFileStore
+    private sealed class TestFileStore : TestPackageFileStoreBase
     {
-        public string RootPath => AppContext.BaseDirectory;
-
-        public string GetPath(string relativePath)
-            => string.IsNullOrWhiteSpace(relativePath)
-                ? RootPath
-                : Path.Combine([RootPath, .. relativePath.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)]);
+        public TestFileStore() : base(AppContext.BaseDirectory) { }
     }
 
     private sealed class TestKeyValueStore : IPackageKeyValueStore
     {
         private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
 
-        public string? GetValue(string key) => _values.GetValueOrDefault(key);
-
         public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
-            => Task.FromResult(GetValue(key));
+            => Task.FromResult(_values.GetValueOrDefault(key));
 
         public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
         {
@@ -500,23 +488,9 @@ public sealed class BuilderViewModelTests
             => Task.FromResult<IReadOnlyList<string>>(_values.Keys.Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray());
     }
 
-    private sealed class TestConfiguration : IPackageConfiguration
-    {
-        public string? GetValue(string key) => null;
-    }
+    private sealed class TestConfiguration : EmptyPackageConfiguration;
 
-    private sealed class TestSecrets : IPackageSecrets
-    {
-        public string? GetSecret(string key) => null;
-
-        public void SetSecret(string key, string value)
-        {
-        }
-
-        public void DeleteSecret(string key)
-        {
-        }
-    }
+    private sealed class TestSecrets : InMemoryPackageSecrets;
 
     private sealed class TestBackgroundProcessQueue : IBackgroundProcessQueue
     {

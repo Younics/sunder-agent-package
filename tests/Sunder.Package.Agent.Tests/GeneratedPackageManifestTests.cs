@@ -45,6 +45,29 @@ public sealed class GeneratedPackageManifestTests
             {
                 Assert.Contains(expectedCapability, capabilities);
             }
+
+            var avaloniaSdkPath = Path.Combine(
+                package.DirectoryPath,
+                "bin",
+                configuration,
+                targetFramework,
+                "sunder-dev",
+                "lib",
+                "Sunder.Sdk.Avalonia.dll");
+            Assert.False(File.Exists(avaloniaSdkPath), $"Host-shared Avalonia SDK assembly was emitted for {package.Name}: {avaloniaSdkPath}");
+
+            if (capabilities.Contains(SunderSdkCapabilities.StackContributionsV1))
+            {
+                var stackSdkPath = Path.Combine(
+                    package.DirectoryPath,
+                    "bin",
+                    configuration,
+                    targetFramework,
+                    "sunder-dev",
+                    "lib",
+                    "Sunder.Sdk.Stacks.dll");
+                Assert.False(File.Exists(stackSdkPath), $"Host-shared Stack SDK assembly was emitted for {package.Name}: {stackSdkPath}");
+            }
         }
     }
 
@@ -65,13 +88,30 @@ public sealed class GeneratedPackageManifestTests
             SunderSdkCapabilities.NotificationsV1,
             SunderSdkCapabilities.ShellViewV1,
             SunderSdkCapabilities.StorageV1,
+            SunderSdkCapabilities.LocalWorkspaceV1,
+            SunderSdkCapabilities.StacksV1,
+            SunderSdkCapabilities.StackContributionsV1,
         ],
         ["Sunder.Package.Agent.Builder"] = [SunderSdkCapabilities.ViewsV1],
         ["Sunder.Package.Agent.Tools.Web"] = [SunderSdkCapabilities.ConfigurationSchemaV1, SunderSdkCapabilities.ExtensionsV1],
         ["Sunder.Package.Agent.Tools.Shell"] = [SunderSdkCapabilities.ExtensionsV1],
         ["Sunder.Package.Agent.Tools.Files"] = [SunderSdkCapabilities.ExtensionsV1],
-        ["Sunder.Package.Agent.Subagents"] = [SunderSdkCapabilities.ViewsV1, SunderSdkCapabilities.ExtensionsV1],
-        ["Sunder.Package.Agent.Skills"] = [SunderSdkCapabilities.SettingsViewsV1, SunderSdkCapabilities.ExtensionsV1],
+        ["Sunder.Package.Agent.Subagents"] =
+        [
+            SunderSdkCapabilities.ViewsV1,
+            SunderSdkCapabilities.ExtensionsV1,
+            SunderSdkCapabilities.StacksV1,
+            SunderSdkCapabilities.StackContributionsV1,
+            SunderSdkCapabilities.LocalWorkspaceV1,
+        ],
+        ["Sunder.Package.Agent.Skills"] =
+        [
+            SunderSdkCapabilities.SettingsViewsV1,
+            SunderSdkCapabilities.ExtensionsV1,
+            SunderSdkCapabilities.StacksV1,
+            SunderSdkCapabilities.StackContributionsV1,
+            SunderSdkCapabilities.LocalWorkspaceV1,
+        ],
         ["Sunder.Package.Agent.Provider.OpenAI"] =
         [
             SunderSdkCapabilities.ConfigurationSchemaV1,
@@ -91,12 +131,15 @@ public sealed class GeneratedPackageManifestTests
             SunderSdkCapabilities.BackgroundServicesV1,
             SunderSdkCapabilities.ExtensionsV1,
             SunderSdkCapabilities.ViewsV1,
+            SunderSdkCapabilities.LocalWorkspaceV1,
         ],
         ["Sunder.Package.Agent.Mcp"] =
         [
             SunderSdkCapabilities.ConfigurationSchemaV1,
             SunderSdkCapabilities.SettingsViewsV1,
             SunderSdkCapabilities.ExtensionsV1,
+            SunderSdkCapabilities.StacksV1,
+            SunderSdkCapabilities.StackContributionsV1,
         ],
         ["Sunder.Package.Agent.Execution.Local"] =
         [
@@ -109,6 +152,9 @@ public sealed class GeneratedPackageManifestTests
             SunderSdkCapabilities.ConfigurationSchemaV1,
             SunderSdkCapabilities.ExtensionsV1,
             SunderSdkCapabilities.BackgroundProcessesV1,
+            SunderSdkCapabilities.StacksV1,
+            SunderSdkCapabilities.StackContributionsV1,
+            SunderSdkCapabilities.LocalWorkspaceV1,
         ],
     };
 

@@ -1,11 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Avalonia;
 
 namespace Sunder.Package.Agent.Builder;
 
-public sealed class PackageModule : ISunderPackageModule
+public sealed class PackageModule : ISunderAppPackageModule
 {
-    public void ConfigureServices(IServiceCollection services, IPackageContext context)
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
     {
         services.AddSingleton<IBuilderUiDispatcher, AvaloniaBuilderUiDispatcher>();
         services.AddSingleton<BuilderPathService>();
@@ -20,7 +21,7 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddTransient<BuilderView>();
     }
 
-    public void RegisterContributions(IPackageContributionRegistry registry, IServiceProvider services)
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterPackageView<BuilderView>(new PackageViewRegistration(
             "sunder.package.agent.builder",

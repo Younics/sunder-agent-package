@@ -74,9 +74,19 @@ public sealed class AgentRunEventLogger(IPackageContext packageContext)
             }
         }
 
+        _ = WriteSafelyAsync(level, eventName, message, mergedAttributes, exception);
+    }
+
+    private async Task WriteSafelyAsync(
+        PackageLogLevel level,
+        string eventName,
+        string message,
+        IReadOnlyDictionary<string, object?> attributes,
+        Exception? exception)
+    {
         try
         {
-            _eventLogger.WriteAsync(level, eventName, message, mergedAttributes, exception).GetAwaiter().GetResult();
+            await _eventLogger.WriteAsync(level, eventName, message, attributes, exception);
         }
         catch
         {

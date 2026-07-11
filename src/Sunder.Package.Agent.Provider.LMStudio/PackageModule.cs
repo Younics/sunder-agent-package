@@ -3,12 +3,13 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Avalonia;
 
 namespace Sunder.Package.Agent.Provider.LMStudio;
 
-public sealed class PackageModule : ISunderPackageModule
+public sealed class PackageModule : ISunderRuntimePackageModule
 {
-    public void ConfigureServices(IServiceCollection services, IPackageContext context)
+    public void ConfigureRuntimeServices(IServiceCollection services, IPackageContext context)
     {
         services.AddSingleton(new ProviderCredentialAccessor(
             context.Secrets,
@@ -33,11 +34,28 @@ public sealed class PackageModule : ISunderPackageModule
         services.AddSingleton<IAgentEmbeddingProvider>(serviceProvider => serviceProvider.GetRequiredService<LMStudioEmbeddingProvider>());
     }
 
-    public void RegisterContributions(IPackageContributionRegistry registry, IServiceProvider services)
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
+        => ConfigureRuntimeServices(services, context);
+
+    public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterConfigurationSchema(LMStudioProviderConfiguration.Schema);
+        registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<LMStudioAgentProvider>());
+        registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<LMStudioEmbeddingProvider>());
+    }
+
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
+    {
         registry.RegisterSettingsView<LMStudioSettingsView>();
         registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<LMStudioAgentProvider>());
         registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<LMStudioEmbeddingProvider>());
     }
+}
+
+public sealed class AppPackageModule : ISunderAppPackageModule
+{
+    private readonly PackageModule _module = new();
+
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
 }

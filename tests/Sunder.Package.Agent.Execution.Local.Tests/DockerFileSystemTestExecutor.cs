@@ -55,7 +55,8 @@ internal sealed class ShellDockerCommandExecutor : IDockerCommandExecutor
         return new DockerCliRunResult(run.ExitCode, run.CombinedOutput, run.TimedOut, run.WasTruncated);
     }
 
-    public int ResolveDefaultTimeoutSeconds() => DefaultTimeoutSeconds;
+    public Task<int> ResolveDefaultTimeoutSecondsAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult(DefaultTimeoutSeconds);
 }
 
 internal sealed class StubDockerCommandExecutor(Func<CancellationToken, DockerCliRunResult> run) : IDockerCommandExecutor
@@ -70,7 +71,8 @@ internal sealed class StubDockerCommandExecutor(Func<CancellationToken, DockerCl
         return Task.FromResult(run(cancellationToken));
     }
 
-    public int ResolveDefaultTimeoutSeconds() => 1;
+    public Task<int> ResolveDefaultTimeoutSecondsAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult(1);
 }
 
 internal static class ReadOnlyListExtensions

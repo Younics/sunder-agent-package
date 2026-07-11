@@ -8,20 +8,25 @@ internal sealed class ProviderCredentialAccessor(IPackageSecrets secrets, string
         ? throw new ArgumentException("A canonical secret key is required.", nameof(secretKey))
         : secretKey;
 
-    internal bool HasCredential => !string.IsNullOrWhiteSpace(GetCredential());
+    internal async Task<bool> HasCredentialAsync(CancellationToken cancellationToken = default)
+        => !string.IsNullOrWhiteSpace(await GetCredentialAsync(cancellationToken).ConfigureAwait(false));
 
-    internal string? GetCredential() => secrets.GetSecret(SecretKey);
+    internal Task<string?> GetCredentialAsync(CancellationToken cancellationToken = default)
+        => secrets.GetSecretAsync(SecretKey, cancellationToken);
 
-    internal bool SetCredentialIfProvided(string? value)
+    internal async Task<bool> SetCredentialIfProvidedAsync(
+        string? value,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
             return false;
         }
 
-        secrets.SetSecret(SecretKey, value.Trim());
+        await secrets.SetSecretAsync(SecretKey, value.Trim(), cancellationToken).ConfigureAwait(false);
         return true;
     }
 
-    internal void DeleteCredential() => secrets.DeleteSecret(SecretKey);
+    internal Task DeleteCredentialAsync(CancellationToken cancellationToken = default)
+        => secrets.DeleteSecretAsync(SecretKey, cancellationToken);
 }

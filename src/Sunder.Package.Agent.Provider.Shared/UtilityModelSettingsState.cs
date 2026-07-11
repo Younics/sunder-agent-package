@@ -40,9 +40,14 @@ internal sealed partial class UtilityModelSettingsState : ObservableObject, IDis
         }
 
         _operation.PropertyChanged += OnOperationPropertyChanged;
-        SelectedUtilityModel = ResolveOption(
-            packageContext.Storage.State.GetValue(configurationKey)
-            ?? packageContext.Configuration.GetValue(configurationKey));
+        SelectedUtilityModel = ResolveOption(defaultModelId);
+    }
+
+    internal async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        var configured = await _packageContext.Storage.State.GetValueAsync(_configurationKey, cancellationToken)
+            ?? await _packageContext.Configuration.GetValueAsync(_configurationKey, cancellationToken);
+        SelectedUtilityModel = ResolveOption(configured);
     }
 
     public ObservableCollection<ProviderUtilityModelOption> UtilityModels { get; }

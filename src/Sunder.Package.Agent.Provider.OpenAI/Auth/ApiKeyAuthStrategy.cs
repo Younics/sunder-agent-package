@@ -19,7 +19,8 @@ public sealed class ApiKeyAuthStrategy
 
     public string ModeId { get; } = "api-key";
 
-    public string? GetApiKey() => _credentials.GetCredential();
+    public Task<string?> GetApiKeyAsync(CancellationToken cancellationToken = default)
+        => _credentials.GetCredentialAsync(cancellationToken);
 
     internal ProviderCredentialAccessor Credentials => _credentials;
 }

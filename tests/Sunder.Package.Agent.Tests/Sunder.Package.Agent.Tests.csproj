@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <IsPackable>false</IsPackable>
     <SunderSdkReference>true</SunderSdkReference>
+    <SunderSdkStacksReference>true</SunderSdkStacksReference>
   </PropertyGroup>
 
   <ItemGroup>

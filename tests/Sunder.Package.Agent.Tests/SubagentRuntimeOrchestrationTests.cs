@@ -177,7 +177,8 @@ public sealed class SubagentRuntimeOrchestrationTests
     public void Store_RefusesToOverwriteCorruptOrFutureDocuments(string existingContent)
     {
         using var scope = RegressionTestPackageScope.Create();
-        var filePath = Path.Combine(scope.Context.Storage.DataRootPath, "subagents.json");
+        var filePath = scope.Context.Storage.LocalWorkspace.GetLocalPath("subagents/subagents.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
         File.WriteAllText(filePath, existingContent);
         var store = new SubagentStore(scope.Context);
 
@@ -190,7 +191,8 @@ public sealed class SubagentRuntimeOrchestrationTests
     public void Store_PreservesUnknownFieldsWhenUpdatingCurrentDocument()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var filePath = Path.Combine(scope.Context.Storage.DataRootPath, "subagents.json");
+        var filePath = scope.Context.Storage.LocalWorkspace.GetLocalPath("subagents/subagents.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
         var existing = CreateSubagent("agent-1");
         var serialized = JsonSerializer.Serialize(existing, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         File.WriteAllText(filePath, $$"""
@@ -235,7 +237,7 @@ public sealed class SubagentRuntimeOrchestrationTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var store = new SubagentStore(scope.Context);
-        var lockPath = Path.Combine(scope.Context.Storage.DataRootPath, "subagents.json.lock");
+        var lockPath = scope.Context.Storage.LocalWorkspace.GetLocalPath("subagents/subagents.json.lock");
         using var externalLease = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
 
         var save = Task.Run(() => store.Save(CreateSubagent("blocked")));
@@ -251,7 +253,8 @@ public sealed class SubagentRuntimeOrchestrationTests
     public async Task StackImport_ReportsStoreFailureWithoutPartialImport()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var filePath = Path.Combine(scope.Context.Storage.DataRootPath, "subagents.json");
+        var filePath = scope.Context.Storage.LocalWorkspace.GetLocalPath("subagents/subagents.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
         const string corruptContent = "{broken";
         File.WriteAllText(filePath, corruptContent);
         var service = new SubagentService(new SubagentStore(scope.Context));

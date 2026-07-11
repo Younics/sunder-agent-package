@@ -75,7 +75,7 @@ public sealed class AgentAttachmentService : IAgentAttachmentContentStore, IAgen
 
     public AgentAttachmentService(IPackageContext packageContext)
     {
-        _attachmentRootPath = Path.Combine(packageContext.Storage.DataRootPath, "agent-attachments");
+        _attachmentRootPath = packageContext.Storage.LocalWorkspace.GetLocalPath("agent/attachments");
         Directory.CreateDirectory(_attachmentRootPath);
     }
 

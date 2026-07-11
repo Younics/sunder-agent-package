@@ -221,7 +221,7 @@ public sealed partial class SkillImportService
         var parsed = SkillMarkdownParser.Parse(await File.ReadAllTextAsync(skillMarkdownPath, cancellationToken));
         var skillId = ResolveSkillId(parsed.Name, folderPath, parsed.RawContent);
         var relativeRoot = string.Concat(SkillConstants.SkillsRelativeRoot, "/", skillId);
-        var targetRoot = _packageContext.Storage.Files.GetPath(relativeRoot);
+        var targetRoot = _packageContext.Storage.LocalWorkspace.GetLocalPath(relativeRoot);
         var stagingRoot = CreateStagingRoot();
         string? backupRoot = null;
         byte[]? indexSnapshot = null;
@@ -393,7 +393,7 @@ public sealed partial class SkillImportService
 
     private string CreateStagingRoot()
     {
-        var root = Path.Combine(_packageContext.Storage.CacheRootPath, "skill-import-" + Guid.NewGuid().ToString("N"));
+        var root = _packageContext.Storage.LocalWorkspace.GetLocalPath("skill-import/" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         return root;
     }

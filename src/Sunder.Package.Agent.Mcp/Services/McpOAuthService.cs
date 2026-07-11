@@ -21,14 +21,23 @@ public sealed class McpOAuthService(IPackageContext packageContext)
     private readonly ILogger<McpOAuthService> _logger = packageContext.LoggerFactory.CreateLogger<McpOAuthService>();
     private readonly SemaphoreSlim _authorizationGate = new(1, 1);
 
-    public ClientOAuthOptions? CreateClientOptions(ConfiguredMcpServerRecord server, bool allowInteractive)
-        => CreateClientOptions(server, allowInteractive, BuildRedirectUri(PreferredCallbackPort), callbackListener: null);
+    public Task<ClientOAuthOptions?> CreateClientOptionsAsync(
+        ConfiguredMcpServerRecord server,
+        bool allowInteractive,
+        CancellationToken cancellationToken = default)
+        => CreateClientOptionsAsync(
+            server,
+            allowInteractive,
+            BuildRedirectUri(PreferredCallbackPort),
+            callbackListener: null,
+            cancellationToken);
 
-    private ClientOAuthOptions? CreateClientOptions(
+    private async Task<ClientOAuthOptions?> CreateClientOptionsAsync(
         ConfiguredMcpServerRecord server,
         bool allowInteractive,
         Uri redirectUri,
-        OAuthCallbackListener? callbackListener)
+        OAuthCallbackListener? callbackListener,
+        CancellationToken cancellationToken)
     {
         if (!server.OAuthEnabled || string.IsNullOrWhiteSpace(server.EndpointUrl))
         {
@@ -36,9 +45,10 @@ public sealed class McpOAuthService(IPackageContext packageContext)
         }
 
         var registration = allowInteractive
-            ? ReadClientRegistration(server.ServerId, redirectUri)
-            : ReadClientRegistration(server.ServerId);
-        var explicitClientSecret = _packageContext.Secrets.GetSecret(McpOAuthSecretKeys.ClientSecret(server.ServerId));
+            ? await ReadClientRegistrationAsync(server.ServerId, redirectUri, cancellationToken)
+            : await ReadClientRegistrationAsync(server.ServerId, cancellationToken);
+        var explicitClientSecret = await _packageContext.Secrets.GetSecretAsync(
+            McpOAuthSecretKeys.ClientSecret(server.ServerId), cancellationToken);
         return new ClientOAuthOptions
         {
             RedirectUri = redirectUri,
@@ -53,25 +63,24 @@ public sealed class McpOAuthService(IPackageContext packageContext)
                 ? new DynamicClientRegistrationOptions
                 {
                     ClientName = "Sunder",
-                    ResponseDelegate = (response, cancellationToken) =>
+                    ResponseDelegate = async (response, cancellationToken) =>
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        SaveClientRegistration(response, server.ServerId, redirectUri);
-                        return Task.CompletedTask;
+                        await SaveClientRegistrationAsync(response, server.ServerId, redirectUri, cancellationToken);
                     },
                 }
                 : null,
         };
     }
 
-    public bool HasCachedAuthorization(string serverId)
-        => !string.IsNullOrWhiteSpace(_packageContext.Secrets.GetSecret(McpOAuthSecretKeys.TokenCache(serverId)));
+    public async Task<bool> HasCachedAuthorizationAsync(string serverId, CancellationToken cancellationToken = default)
+        => !string.IsNullOrWhiteSpace(await _packageContext.Secrets.GetSecretAsync(
+            McpOAuthSecretKeys.TokenCache(serverId), cancellationToken));
 
-    public void ClearAuthorization(string serverId)
+    public async Task ClearAuthorizationAsync(string serverId, CancellationToken cancellationToken = default)
     {
-        _packageContext.Secrets.DeleteSecret(McpOAuthSecretKeys.TokenCache(serverId));
-        _packageContext.Secrets.DeleteSecret(McpOAuthSecretKeys.ClientRegistration(serverId));
-        _packageContext.Secrets.DeleteSecret(McpOAuthSecretKeys.ClientSecret(serverId));
+        await _packageContext.Secrets.DeleteSecretAsync(McpOAuthSecretKeys.TokenCache(serverId), cancellationToken);
+        await _packageContext.Secrets.DeleteSecretAsync(McpOAuthSecretKeys.ClientRegistration(serverId), cancellationToken);
+        await _packageContext.Secrets.DeleteSecretAsync(McpOAuthSecretKeys.ClientSecret(serverId), cancellationToken);
     }
 
     public async Task AuthorizeAsync(
@@ -99,7 +108,12 @@ public sealed class McpOAuthService(IPackageContext packageContext)
                 Endpoint = new Uri(server.EndpointUrl),
                 TransportMode = HttpTransportMode.AutoDetect,
                 ConnectionTimeout = ToSdkTimeout(discoveryTimeoutMilliseconds),
-                OAuth = CreateClientOptions(server, allowInteractive: true, callbackListener.RedirectUri, callbackListener),
+                OAuth = await CreateClientOptionsAsync(
+                    server,
+                    allowInteractive: true,
+                    callbackListener.RedirectUri,
+                    callbackListener,
+                    cancellationToken),
             };
             using var httpClient = new HttpClient
             {
@@ -204,15 +218,25 @@ public sealed class McpOAuthService(IPackageContext packageContext)
         }
     }
 
-    private void SaveClientRegistration(DynamicClientRegistrationResponse response, string serverId, Uri redirectUri)
+    private Task SaveClientRegistrationAsync(
+        DynamicClientRegistrationResponse response,
+        string serverId,
+        Uri redirectUri,
+        CancellationToken cancellationToken)
     {
         var registration = new StoredOAuthClientRegistration(response.ClientId, response.ClientSecret, redirectUri.ToString());
-        _packageContext.Secrets.SetSecret(McpOAuthSecretKeys.ClientRegistration(serverId), JsonSerializer.Serialize(registration, JsonOptions));
+        return _packageContext.Secrets.SetSecretAsync(
+            McpOAuthSecretKeys.ClientRegistration(serverId),
+            JsonSerializer.Serialize(registration, JsonOptions),
+            cancellationToken);
     }
 
-    private StoredOAuthClientRegistration? ReadClientRegistration(string serverId)
+    private async Task<StoredOAuthClientRegistration?> ReadClientRegistrationAsync(
+        string serverId,
+        CancellationToken cancellationToken)
     {
-        var payload = _packageContext.Secrets.GetSecret(McpOAuthSecretKeys.ClientRegistration(serverId));
+        var payload = await _packageContext.Secrets.GetSecretAsync(
+            McpOAuthSecretKeys.ClientRegistration(serverId), cancellationToken);
         if (string.IsNullOrWhiteSpace(payload))
         {
             return null;
@@ -228,9 +252,12 @@ public sealed class McpOAuthService(IPackageContext packageContext)
         }
     }
 
-    private StoredOAuthClientRegistration? ReadClientRegistration(string serverId, Uri redirectUri)
+    private async Task<StoredOAuthClientRegistration?> ReadClientRegistrationAsync(
+        string serverId,
+        Uri redirectUri,
+        CancellationToken cancellationToken)
     {
-        var registration = ReadClientRegistration(serverId);
+        var registration = await ReadClientRegistrationAsync(serverId, cancellationToken);
         if (registration is null)
         {
             return null;
@@ -329,29 +356,32 @@ public sealed class McpOAuthService(IPackageContext packageContext)
 
     private sealed class SecretTokenCache(IPackageContext packageContext, string serverId) : ITokenCache
     {
-        public ValueTask StoreTokensAsync(TokenContainer tokens, CancellationToken cancellationToken)
+        public async ValueTask StoreTokensAsync(TokenContainer tokens, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            packageContext.Secrets.SetSecret(McpOAuthSecretKeys.TokenCache(serverId), JsonSerializer.Serialize(tokens, JsonOptions));
-            return ValueTask.CompletedTask;
+            await packageContext.Secrets.SetSecretAsync(
+                McpOAuthSecretKeys.TokenCache(serverId),
+                JsonSerializer.Serialize(tokens, JsonOptions),
+                cancellationToken);
         }
 
-        public ValueTask<TokenContainer?> GetTokensAsync(CancellationToken cancellationToken)
+        public async ValueTask<TokenContainer?> GetTokensAsync(CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var payload = packageContext.Secrets.GetSecret(McpOAuthSecretKeys.TokenCache(serverId));
+            var payload = await packageContext.Secrets.GetSecretAsync(
+                McpOAuthSecretKeys.TokenCache(serverId), cancellationToken);
             if (string.IsNullOrWhiteSpace(payload))
             {
-                return ValueTask.FromResult<TokenContainer?>(null);
+                return null;
             }
 
             try
             {
-                return ValueTask.FromResult(JsonSerializer.Deserialize<TokenContainer>(payload, JsonOptions));
+                return JsonSerializer.Deserialize<TokenContainer>(payload, JsonOptions);
             }
             catch
             {
-                return ValueTask.FromResult<TokenContainer?>(null);
+                return null;
             }
         }
     }

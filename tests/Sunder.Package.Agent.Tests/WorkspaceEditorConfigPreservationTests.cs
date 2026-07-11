@@ -16,7 +16,7 @@ public sealed class WorkspaceEditorConfigPreservationTests
         const string bindingId = "workspace:local";
         var pathEntries = new[] { Path.Combine(scope.RootPath, "bin") };
         var configService = new LocalExecutionWorkspaceConfigService(scope.Context);
-        configService.SaveConfig(bindingId, new LocalExecutionWorkspaceConfig("bash", pathEntries));
+        await configService.SaveConfigAsync(bindingId, new LocalExecutionWorkspaceConfig("bash", pathEntries));
         var contributor = new LocalExecutionWorkspaceEditorContributor(
             configService,
             new LocalShellCatalogService(scope.Context));
@@ -31,7 +31,7 @@ public sealed class WorkspaceEditorConfigPreservationTests
                 }));
 
         Assert.True(result.Success);
-        var saved = configService.GetConfig(bindingId);
+        var saved = await configService.GetConfigAsync(bindingId);
         Assert.Equal("zsh", saved.SelectedShellId);
         Assert.Equal(pathEntries.Select(Path.GetFullPath), saved.PathEntries);
     }
@@ -43,9 +43,9 @@ public sealed class WorkspaceEditorConfigPreservationTests
         const string bindingId = "workspace:docker";
         var dockerRunner = new ReadyDockerCliRunner(scope.Context);
         var imageCatalog = new DockerImageCatalogService(scope.Context, dockerRunner);
-        imageCatalog.AddImage("test-image:latest");
+        await imageCatalog.AddImageAsync("test-image:latest");
         var configService = new DockerExecutionWorkspaceConfigService(scope.Context, imageCatalog);
-        configService.SaveConfig(
+        await configService.SaveConfigAsync(
             bindingId,
             new DockerExecutionWorkspaceConfig(
                 "test-image:latest",
@@ -65,7 +65,7 @@ public sealed class WorkspaceEditorConfigPreservationTests
                 }));
 
         Assert.True(result.Success);
-        var saved = configService.GetConfig(bindingId);
+        var saved = await configService.GetConfigAsync(bindingId);
         Assert.Equal("test-image:latest", saved.ImageReference);
         Assert.Equal("preserved-container", saved.ContainerName);
         Assert.Equal("/bin/bash", saved.ShellPath);

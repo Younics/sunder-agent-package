@@ -17,7 +17,7 @@ internal sealed class DockerCommandRunner(IPackageContext packageContext, Docker
         var workingDirectory = DockerPathResolver.ResolveWorkingDirectory(config, request.WorkingDirectory, context.AllowOutsideConfiguredScope);
         var result = await RunAsync(
             ["exec", "-w", workingDirectory, containerName, ResolveShellPath(config), "-c", ApplyPathEntries(request.Command, config.PathEntries)],
-            request.TimeoutSeconds ?? ResolveDefaultTimeoutSeconds(),
+            request.TimeoutSeconds ?? await ResolveDefaultTimeoutSecondsAsync(cancellationToken),
             cancellationToken);
         return new AgentShellCommandResult(result.ExitCode, result.Output, result.TimedOut, workingDirectory, result.WasTruncated);
     }
@@ -36,7 +36,7 @@ internal sealed class DockerCommandRunner(IPackageContext packageContext, Docker
 
         var workingDirectory = DockerPathResolver.ResolveWorkingDirectory(config, request.WorkingDirectory, context.AllowOutsideConfiguredScope);
         var dockerArgs = new List<string> { "exec", "-w", workingDirectory, containerName, ResolveShellPath(config), "-c", ApplyPathEntries(BuildProcessCommand(request), config.PathEntries) };
-        var result = await RunAsync(dockerArgs, request.TimeoutSeconds ?? ResolveDefaultTimeoutSeconds(), cancellationToken);
+        var result = await RunAsync(dockerArgs, request.TimeoutSeconds ?? await ResolveDefaultTimeoutSecondsAsync(cancellationToken), cancellationToken);
         return new AgentShellCommandResult(result.ExitCode, result.Output, result.TimedOut, workingDirectory, result.WasTruncated);
     }
 
@@ -47,8 +47,8 @@ internal sealed class DockerCommandRunner(IPackageContext packageContext, Docker
         string? standardInput = null)
         => await dockerCliRunner.RunAsync(args, timeoutSeconds, cancellationToken, standardInput).ConfigureAwait(false);
 
-    public int ResolveDefaultTimeoutSeconds()
-        => int.TryParse(packageContext.Configuration.GetValue("docker.timeoutSeconds.default"), out var parsed) && parsed > 0
+    public async Task<int> ResolveDefaultTimeoutSecondsAsync(CancellationToken cancellationToken = default)
+        => int.TryParse(await packageContext.Configuration.GetValueAsync("docker.timeoutSeconds.default", cancellationToken), out var parsed) && parsed > 0
             ? parsed
             : DefaultTimeoutSeconds;
 
