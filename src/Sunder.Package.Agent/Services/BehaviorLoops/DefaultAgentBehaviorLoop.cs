@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
+using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
@@ -54,7 +55,7 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
     {
         var loopStopwatch = Stopwatch.StartNew();
         host.LogEvent(
-            AgentLogLevel.Debug,
+            PackageLogLevel.Debug,
             "behavior.loop.start",
             "Behavior loop started.",
             attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -132,7 +133,7 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
         catch (AgentRunTranscriptWriteRejectedException)
         {
             host.LogEvent(
-                AgentLogLevel.Debug,
+                PackageLogLevel.Debug,
                 "behavior.loop.transcript_write_rejected",
                 "The run changed before a transcript mutation could be committed.",
                 loopStopwatch.ElapsedMilliseconds);
@@ -155,7 +156,7 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
             }
 
             host.LogEvent(
-                AgentLogLevel.Debug,
+                PackageLogLevel.Debug,
                 "behavior.loop.canceled",
                 "Behavior loop was canceled.",
                 loopStopwatch.ElapsedMilliseconds);

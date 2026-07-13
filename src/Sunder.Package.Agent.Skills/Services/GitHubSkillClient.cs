@@ -49,7 +49,7 @@ public sealed class OctokitGitHubSkillClient(GitHubClient client) : IGitHubSkill
         try
         {
             var commit = await client.Repository.Commit.Get(request.Owner, request.Repo, request.Ref);
-            var treeSha = await ResolveFolderTreeShaAsync(request.Owner, request.Repo, folderPath, request.Ref, cancellationToken);
+            var treeSha = await ResolveFolderTreeShaAsync(request.Owner, request.Repo, folderPath, commit.Sha, cancellationToken);
             if (!string.IsNullOrWhiteSpace(folderPath) && string.IsNullOrWhiteSpace(treeSha))
             {
                 return null;
@@ -74,14 +74,14 @@ public sealed class OctokitGitHubSkillClient(GitHubClient client) : IGitHubSkill
         var skillMarkdownPath = CombineGitHubPath(folderPath, "SKILL.md");
         try
         {
-            var skillContent = await client.Repository.Content.GetAllContentsByRef(request.Owner, request.Repo, skillMarkdownPath, request.Ref);
+            var commit = await client.Repository.Commit.Get(request.Owner, request.Repo, request.Ref);
+            var skillContent = await client.Repository.Content.GetAllContentsByRef(request.Owner, request.Repo, skillMarkdownPath, commit.Sha);
             if (skillContent.Count == 0 || !skillContent.Any(content => string.Equals(content.Path, skillMarkdownPath, StringComparison.Ordinal)))
             {
                 return null;
             }
 
-            var commit = await client.Repository.Commit.Get(request.Owner, request.Repo, request.Ref);
-            var treeSha = await ResolveFolderTreeShaAsync(request.Owner, request.Repo, folderPath, request.Ref, cancellationToken);
+            var treeSha = await ResolveFolderTreeShaAsync(request.Owner, request.Repo, folderPath, commit.Sha, cancellationToken);
             if (!string.IsNullOrWhiteSpace(folderPath) && string.IsNullOrWhiteSpace(treeSha))
             {
                 return null;
@@ -132,7 +132,7 @@ public sealed class OctokitGitHubSkillClient(GitHubClient client) : IGitHubSkill
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
-            return await client.Repository.Content.GetRawContentByRef(folder.Owner, folder.Repo, file.RepositoryPath, folder.Ref);
+            return await client.Repository.Content.GetRawContentByRef(folder.Owner, folder.Repo, file.RepositoryPath, folder.CommitSha);
         }
         catch (ApiException ex) when (IsRateLimit(ex))
         {

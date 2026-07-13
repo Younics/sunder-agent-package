@@ -4,12 +4,15 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 
 namespace Sunder.Package.Agent.Services;
 
 internal static class AgentPermissionFingerprint
 {
     private const string Version = "agent-permission-fingerprint-v1";
+    private const int SnapshotVersion = 1;
+    private static readonly JsonSerializerOptions SnapshotJsonOptions = new(JsonSerializerDefaults.Web);
 
     public static string Create(
         Guid runId,
@@ -20,7 +23,10 @@ internal static class AgentPermissionFingerprint
         AgentWorkspaceRecord? workspace,
         AgentWorkspaceBindingRecord? binding,
         AgentExecutionTargetDescriptor? target,
-        AgentPermissionRequest? permissionRequest)
+        AgentPermissionRequest? permissionRequest,
+        AgentProfileRecord? profile = null,
+        string? providerId = null,
+        string? modelId = null)
     {
         var values = new[]
         {
@@ -46,6 +52,19 @@ internal static class AgentPermissionFingerprint
             NormalizeResource(permissionRequest?.ResourceReference),
             NormalizeResource(permissionRequest?.Path),
             NormalizeResource(permissionRequest?.Command),
+            NormalizeJson(CreateExecutionSnapshot(
+                runId,
+                runRevision,
+                descriptor,
+                callId,
+                argumentsJson,
+                workspace,
+                binding,
+                target,
+                permissionRequest,
+                profile,
+                providerId,
+                modelId)),
         };
 
         var material = new StringBuilder();
@@ -58,6 +77,76 @@ internal static class AgentPermissionFingerprint
 
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material.ToString()))).ToLowerInvariant();
     }
+
+    public static string CreateExecutionSnapshot(
+        Guid runId,
+        long runRevision,
+        AgentToolDescriptor descriptor,
+        string callId,
+        string argumentsJson,
+        AgentWorkspaceRecord? workspace,
+        AgentWorkspaceBindingRecord? binding,
+        AgentExecutionTargetDescriptor? target,
+        AgentPermissionRequest? permissionRequest,
+        AgentProfileRecord? profile,
+        string? providerId,
+        string? modelId)
+        => JsonSerializer.Serialize(
+            new PermissionExecutionSnapshot(
+                SnapshotVersion,
+                runId,
+                runRevision,
+                callId,
+                NormalizeJson(argumentsJson),
+                profile,
+                providerId,
+                modelId,
+                workspace,
+                binding,
+                target,
+                descriptor,
+                permissionRequest),
+            SnapshotJsonOptions);
+
+    public static bool MatchesExecutionContext(
+        string snapshotJson,
+        AgentPendingPermissionRequestRecord pending,
+        AgentProfileRecord profile,
+        string? providerId,
+        string? modelId,
+        AgentWorkspaceRecord workspace,
+        AgentWorkspaceBindingRecord? binding)
+    {
+        if (string.IsNullOrWhiteSpace(snapshotJson))
+        {
+            return false;
+        }
+        try
+        {
+            var snapshot = JsonSerializer.Deserialize<PermissionExecutionSnapshot>(snapshotJson, SnapshotJsonOptions);
+            return snapshot is not null
+                   && snapshot.Version == SnapshotVersion
+                   && snapshot.RunId == pending.RunId
+                   && snapshot.RunRevision == pending.RunRevision
+                   && string.Equals(snapshot.CallId, pending.CallId, StringComparison.Ordinal)
+                   && string.Equals(snapshot.ArgumentsJson, NormalizeJson(pending.ArgumentsJson), StringComparison.Ordinal)
+                   && JsonEquals(snapshot.Profile, profile)
+                   && string.Equals(snapshot.ProviderId, providerId, StringComparison.OrdinalIgnoreCase)
+                   && string.Equals(snapshot.ModelId, modelId, StringComparison.OrdinalIgnoreCase)
+                   && JsonEquals(snapshot.Workspace, workspace)
+                   && JsonEquals(snapshot.Binding, binding);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool JsonEquals<T>(T left, T right)
+        => string.Equals(
+            NormalizeJson(JsonSerializer.Serialize(left, SnapshotJsonOptions)),
+            NormalizeJson(JsonSerializer.Serialize(right, SnapshotJsonOptions)),
+            StringComparison.Ordinal);
 
     private static string NormalizeIdentity(string? value)
         => string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim().ToLowerInvariant();
@@ -117,4 +206,19 @@ internal static class AgentPermissionFingerprint
                 break;
         }
     }
+
+    private sealed record PermissionExecutionSnapshot(
+        int Version,
+        Guid RunId,
+        long RunRevision,
+        string CallId,
+        string ArgumentsJson,
+        AgentProfileRecord? Profile,
+        string? ProviderId,
+        string? ModelId,
+        AgentWorkspaceRecord? Workspace,
+        AgentWorkspaceBindingRecord? Binding,
+        AgentExecutionTargetDescriptor? Target,
+        AgentToolDescriptor Descriptor,
+        AgentPermissionRequest? PermissionRequest);
 }

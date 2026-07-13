@@ -129,6 +129,49 @@ public sealed partial class ProviderArchitectureTests
         }
     }
 
+    [Fact]
+    public void ProviderPackages_DoNotReimplementSharedResponseAndLifecycleScaffolding()
+    {
+        var sourceDirectory = Path.Combine(GetRepositoryRoot(), "src");
+        var providerFiles = Directory.EnumerateDirectories(sourceDirectory, "Sunder.Package.Agent.Provider.*")
+            .Where(path => !path.EndsWith(".Shared", StringComparison.Ordinal))
+            .SelectMany(path => Directory.EnumerateFiles(path, "*.cs", SearchOption.AllDirectories))
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                           && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .ToArray();
+        var forbiddenFragments = new[]
+        {
+            "new ChatResponseUpdate",
+            "new UsageContent",
+            "\"provider.request.start\"",
+            "\"provider.stream.first_event\"",
+            "\"provider.stream.canceled\"",
+            "\"provider.stream.failed\"",
+        };
+        var violations = providerFiles
+            .SelectMany(path => File.ReadLines(path)
+                .Select((line, index) => (path, line, lineNumber: index + 1)))
+            .Where(item => forbiddenFragments.Any(fragment => item.line.Contains(fragment, StringComparison.Ordinal)))
+            .Select(item => $"{Path.GetRelativePath(sourceDirectory, item.path)}:{item.lineNumber}: {item.line.Trim()}")
+            .ToArray();
+
+        Assert.True(
+            violations.Length == 0,
+            "Provider response/lifecycle scaffolding belongs in Provider.Shared:\n" + string.Join("\n", violations));
+    }
+
+    [Fact]
+    public void ProviderSharedSource_UsesCompositionRatherThanAProviderBaseClass()
+    {
+        var sharedDirectory = Path.Combine(GetRepositoryRoot(), "src", "Sunder.Package.Agent.Provider.Shared");
+        var declarations = Directory.EnumerateFiles(sharedDirectory, "*.cs", SearchOption.TopDirectoryOnly)
+            .SelectMany(File.ReadLines)
+            .Where(line => line.Contains("abstract class", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.Empty(declarations);
+    }
+
     private static string GetRepositoryRoot()
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)

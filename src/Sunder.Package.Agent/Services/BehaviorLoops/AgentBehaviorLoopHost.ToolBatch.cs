@@ -3,8 +3,10 @@ using Sunder.Package.Agent.Models;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
-internal sealed partial class AgentBehaviorLoopHost
+internal sealed class AgentToolBatchCoordinator(AgentBehaviorLoopHost host)
 {
+    private readonly AgentBehaviorLoopHost _host = host;
+
     public async ValueTask<AgentToolCallOutcome> InvokeToolAsync(
         AgentToolCallRequest toolCall,
         AgentTurnRecord? assistantTurn,
@@ -16,7 +18,7 @@ internal sealed partial class AgentBehaviorLoopHost
             return outcomes[0];
         }
 
-        var failedCheckpoint = SaveCheckpoint(
+        var failedCheckpoint = _host.SaveCheckpoint(
             AgentRunStatus.Failed,
             "Tool invocation produced no outcome.");
         return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Failed, failedCheckpoint);
@@ -32,17 +34,17 @@ internal sealed partial class AgentBehaviorLoopHost
             return [];
         }
 
-        var availableToolsById = await GetAvailableToolsByIdAsync(cancellationToken);
+        var availableToolsById = await _host.GetAvailableToolsByIdAsync(cancellationToken);
         var outcomes = new AgentToolCallOutcome?[toolCalls.Count];
         var nextToolCallIndex = 0;
-        foreach (var batch in BuildToolExecutionBatches(toolCalls, availableToolsById))
+        foreach (var batch in AgentBehaviorLoopHost.BuildToolExecutionBatches(toolCalls, availableToolsById))
         {
             var batchStartIndex = nextToolCallIndex;
             nextToolCallIndex += batch.Count;
             for (var batchIndex = 0; batchIndex < batch.Count; batchIndex++)
             {
                 var toolCall = batch[batchIndex];
-                var permissionOutcome = await EvaluateToolPermissionAsync(
+                var permissionOutcome = await _host.EvaluateToolPermissionAsync(
                     toolCall,
                     assistantTurn,
                     availableToolsById,
@@ -57,19 +59,19 @@ internal sealed partial class AgentBehaviorLoopHost
 
             foreach (var toolCall in batch)
             {
-                RecordToolCallStart(toolCall);
+                _host.RecordToolCallStart(toolCall);
             }
 
-            var executedResults = await ExecuteToolBatchAsync(
+            var executedResults = await _host.ExecuteToolBatchAsync(
                 batch,
                 availableToolsById,
                 cancellationToken);
             var recordingOrder = Enumerable.Range(0, executedResults.Count)
-                .OrderBy(index => RequiresTerminalRecordingLast(executedResults[index]));
+                .OrderBy(index => AgentBehaviorLoopHost.RequiresTerminalRecordingLast(executedResults[index]));
             var terminalOutcomeRecorded = false;
             foreach (var index in recordingOrder)
             {
-                var outcome = await RecordExecutedToolResultAsync(
+                var outcome = await _host.RecordExecutedToolResultAsync(
                     executedResults[index],
                     cancellationToken);
                 outcomes[batchStartIndex + index] = outcome;
@@ -86,7 +88,7 @@ internal sealed partial class AgentBehaviorLoopHost
                 {
                     if (outcomes[index] is null)
                     {
-                        outcomes[index] = RecordUnexecutedToolCall(
+                        outcomes[index] = _host.RecordUnexecutedToolCall(
                             toolCalls[index],
                             "Tool result was not recorded because another call in the provider batch suspended the run.");
                     }
@@ -110,7 +112,7 @@ internal sealed partial class AgentBehaviorLoopHost
         {
             if (outcomes[index] is null && index != terminalIndex)
             {
-                outcomes[index] = RecordUnexecutedToolCall(
+                outcomes[index] = _host.RecordUnexecutedToolCall(
                     toolCalls[index],
                     terminalOutcome.Kind == AgentToolCallOutcomeKind.WaitingForApproval
                         ? "Tool call was not executed because another call in the provider batch is waiting for permission."
@@ -119,30 +121,4 @@ internal sealed partial class AgentBehaviorLoopHost
         }
     }
 
-    private AgentToolCallOutcome RecordUnexecutedToolCall(
-        AgentToolCallRequest toolCall,
-        string summary)
-    {
-        try
-        {
-            _sessionService.AppendToolCallTurn(
-                _runLease,
-                AgentMessageRole.Assistant,
-                toolCall.CallId,
-                toolCall.ToolId,
-                toolCall.ArgumentsJson);
-            var result = new AgentToolResult(
-                toolCall.ToolId,
-                summary,
-                Content: $"### Tool call canceled\n\n{summary}",
-                IsError: true,
-                ErrorCode: "tool-batch-canceled");
-            AppendToolResult(toolCall.CallId, toolCall.ToolId, toolCall.ArgumentsJson, result);
-            return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: result);
-        }
-        catch (AgentRunTranscriptWriteRejectedException)
-        {
-            return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Failed);
-        }
-    }
 }

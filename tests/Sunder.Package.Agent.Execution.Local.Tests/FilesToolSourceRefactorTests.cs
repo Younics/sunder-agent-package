@@ -284,6 +284,44 @@ public sealed class FilesToolSourceRefactorTests
         Assert.Contains("```json", filesDetail, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("files", false)]
+    [InlineData("shell", true)]
+    public async Task FilesAndShell_PreserveBackendTruncationContract(string sourceKind, bool expectedError)
+    {
+        var target = new MemoryExecutionTarget(new Dictionary<string, string> { ["file.txt"] = "content" })
+        {
+            ResultsTruncated = true,
+            ShellTimedOut = true,
+        };
+        var (files, _, context) = CreateSource(target);
+        var result = sourceKind switch
+        {
+            "files" => await files.ExecuteAsync(context, new AgentToolRequest("read", "{\"path\":\"file.txt\"}")),
+            "shell" => await new ShellToolSource(new TestExtensionCatalog(target)).ExecuteAsync(
+                context,
+                new AgentToolRequest("shell", "{\"command\":\"test\"}")),
+            _ => throw new ArgumentOutOfRangeException(nameof(sourceKind)),
+        };
+
+        Assert.Equal(expectedError, result.IsError);
+        Assert.True(result.WasTruncated);
+        Assert.Equal("memory:memory", result.BackendId);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(121)]
+    public async Task WebFetch_RejectsOutOfRangeTimeoutBeforeNetworkCall(int timeoutSeconds)
+    {
+        var result = await new WebFetchTool(new WebFetchService()).ExecuteAsync(
+            new AgentToolExecutionContext(null),
+            new AgentToolRequest("web_fetch", $$"""{"url":"https://example.com","timeoutSeconds":{{timeoutSeconds}}}"""));
+
+        Assert.True(result.IsError);
+        Assert.Equal("web-fetch-args", result.ErrorCode);
+    }
+
     private static (FilesToolSource Source, MemoryExecutionTarget Target, AgentToolExecutionContext Context) CreateSource(MemoryExecutionTarget target)
     {
         var catalog = new TestExtensionCatalog(target);
@@ -321,6 +359,11 @@ public sealed class FilesToolSourceRefactorTests
             => string.Equals(extensionPoint.Id, PackageExtensionPoints.ExecutionTargets.Id, StringComparison.Ordinal)
                 ? [((TContract)(object)target)]
                 : [];
+
+        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
+            => GetExtensions(extensionPoint)
+                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
+                .ToArray();
     }
 
     private class MemoryExecutionTarget : IAgentProcessExecutionTarget
@@ -355,6 +398,10 @@ public sealed class FilesToolSourceRefactorTests
 
         public string ProcessOutput { get; init; } = string.Empty;
 
+        public bool ResultsTruncated { get; init; }
+
+        public bool ShellTimedOut { get; init; }
+
         public AgentFileReadRequest? LastReadRequest { get; protected set; }
 
         public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(AgentExecutionTargetContext context, CancellationToken cancellationToken = default)
@@ -370,7 +417,11 @@ public sealed class FilesToolSourceRefactorTests
         }
 
         public ValueTask<AgentShellCommandResult> ExecuteShellAsync(AgentExecutionTargetContext context, AgentShellCommandRequest request, CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentShellCommandResult(0, ProcessOutput));
+            => ValueTask.FromResult(new AgentShellCommandResult(
+                ShellTimedOut ? 124 : 0,
+                ProcessOutput,
+                ShellTimedOut,
+                WasTruncated: ResultsTruncated));
 
         public ValueTask<AgentShellCommandResult> ExecuteProcessAsync(AgentExecutionTargetContext context, AgentProcessCommandRequest request, CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new AgentShellCommandResult(0, ProcessOutput));
@@ -379,7 +430,7 @@ public sealed class FilesToolSourceRefactorTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             LastReadRequest = request;
-            return ValueTask.FromResult(new AgentFileReadResult(request.Path, Files[request.Path]));
+            return ValueTask.FromResult(new AgentFileReadResult(request.Path, Files[request.Path], WasTruncated: ResultsTruncated));
         }
 
         public ValueTask<AgentFileMutationResult> WriteFileAsync(AgentExecutionTargetContext context, AgentFileWriteRequest request, CancellationToken cancellationToken = default)

@@ -1,5 +1,4 @@
-using System.Security.Cryptography;
-using System.Text;
+using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 
@@ -68,7 +67,7 @@ internal static class FilePatchPlanner
             operation.Path,
             current,
             next,
-            ComputeContentHash(current),
+            FileOperation.ComputeContentHash(current),
             FileDiffPresentation.UpdatedFile(operation.Path, diffLines));
     }
 
@@ -85,7 +84,7 @@ internal static class FilePatchPlanner
             operation.Path,
             current,
             NextContent: null,
-            ComputeContentHash(current),
+            FileOperation.ComputeContentHash(current),
             FileDiffPresentation.DeletedFile(operation.Path));
     }
 
@@ -115,6 +114,4 @@ internal static class FilePatchPlanner
         return current.Content;
     }
 
-    internal static string ComputeContentHash(string content)
-        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
 }

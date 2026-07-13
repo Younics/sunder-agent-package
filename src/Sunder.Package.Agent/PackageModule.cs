@@ -5,6 +5,8 @@ using Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Package.Agent.Storage;
+using Sunder.Package.Agent.Runtime;
+using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 
@@ -29,9 +31,7 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<AgentWorkspaceStackContributor>();
         services.AddSingleton<AgentAttachmentService>();
         services.AddSingleton<AgentRunAttachmentStore>();
-        services.AddSingleton<IAgentAttachmentContentStore>(provider =>
-            provider.GetRequiredService<AgentAttachmentService>()
-        );
+        services.AddSingletonAlias<IAgentAttachmentContentStore, AgentAttachmentService>();
         services.AddSingleton<AgentRuntimeCatalog>();
         services.AddSingleton<AgentChatSelectionStateService>();
         services.AddSingleton<InstalledPackageToolSource>();
@@ -80,13 +80,20 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
             provider.GetRequiredService<AgentSessionTransitionGate>()
         ));
         services.AddSingleton<AgentRunCoordinator>();
-        services.AddSingleton<IAgentChildRunExecutor>(provider =>
-            provider.GetRequiredService<AgentRunCoordinator>()
-        );
+        services.AddSingletonAlias<IAgentChildRunExecutor, AgentRunCoordinator>();
+        services.AddSingleton<AgentLocalStoreAccessor>();
+        services.AddSingleton<AgentRuntimeChangeHub>();
+        services.AddSingleton<AgentDashboardHandler>();
+        services.AddSingleton<AgentSessionPageHandler>();
+        services.AddSingleton<AgentTranscriptPageHandler>();
+        services.AddSingleton<AgentCatalogHandler>();
+        services.AddSingleton<AgentProfileCommandHandler>();
+        services.AddSingleton<AgentWorkspaceCommandHandler>();
+        services.AddSingleton<AgentSessionCommandHandler>();
+        services.AddSingleton<AgentRunCommandHandler>();
+        services.AddSingleton<AgentPermissionCommandHandler>();
+        services.AddSingleton<AgentAttachmentReadHandler>();
     }
-
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
-        => ConfigureRuntimeServices(services, context);
 
     public void RegisterRuntimeContributions(
         ISunderRuntimeContributionRegistry registry,
@@ -130,43 +137,49 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
             Sunder.Sdk.Stacks.SunderStackExtensionPoints.StackContributors,
             services.GetRequiredService<AgentWorkspaceStackContributor>()
         );
-
-    }
-
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
-    {
-        registry.RegisterExtension(PackageExtensionPoints.RuntimeCatalogs, services.GetRequiredService<AgentRuntimeCatalog>());
-        registry.RegisterExtension(PackageExtensionPoints.WorkspaceExecutionResolvers, services.GetRequiredService<AgentWorkspaceExecutionResolver>());
-        registry.RegisterExtension(PackageExtensionPoints.ChildRunExecutors, services.GetRequiredService<AgentRunCoordinator>());
-        registry.RegisterExtension(PackageExtensionPoints.AttachmentContentStores, services.GetRequiredService<AgentAttachmentService>());
-        registry.RegisterExtension(PackageExtensionPoints.SessionDataCleaners, services.GetRequiredService<AgentAttachmentService>());
-        registry.RegisterExtension(PackageExtensionPoints.BehaviorLoops, services.GetRequiredService<DefaultAgentBehaviorLoop>());
-        registry.RegisterExtension(PackageExtensionPoints.SystemPromptContributors, services.GetRequiredService<WorkspaceDocumentationContextService>());
-        registry.RegisterExtension(Sunder.Sdk.Stacks.SunderStackExtensionPoints.StackContributors, services.GetRequiredService<AgentProfileStackContributor>());
-        registry.RegisterExtension(Sunder.Sdk.Stacks.SunderStackExtensionPoints.StackContributors, services.GetRequiredService<AgentWorkspaceStackContributor>());
-        registry.RegisterPackageView<AgentChatView>(new PackageViewRegistration(
-            "sunder.package.agent.chat",
-            "Agent Chat",
-            "Assets/chat-icon.png",
-            defaultPlacement: PackageViewPlacement.Middle));
-        registry.RegisterPackageView<AgentWorkspacesView>(new PackageViewRegistration(
-            "sunder.package.agent.workspaces",
-            "Workspaces",
-            "Assets/workspace-icon.png",
-            defaultPlacement: PackageViewPlacement.RightTop));
-        registry.RegisterPackageView<AgentProfilesView>(new PackageViewRegistration(
-            "sunder.package.agent.profiles",
-            "Agents",
-            "Assets/profile-icon.png",
-            defaultPlacement: PackageViewPlacement.RightTop));
-        registry.RegisterSettingsView<AgentPermissionsView>();
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.Dashboard, services.GetRequiredService<AgentDashboardHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.Sessions, services.GetRequiredService<AgentSessionPageHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.Transcript, services.GetRequiredService<AgentTranscriptPageHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.Catalog, services.GetRequiredService<AgentCatalogHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.Profiles, services.GetRequiredService<AgentProfileCommandHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.Workspaces, services.GetRequiredService<AgentWorkspaceCommandHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.SessionCommands, services.GetRequiredService<AgentSessionCommandHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.Runs, services.GetRequiredService<AgentRunCommandHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.Permissions, services.GetRequiredService<AgentPermissionCommandHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.Attachments, services.GetRequiredService<AgentAttachmentReadHandler>());
+        registry.RegisterRuntimeStream(AgentRuntimeOperations.Changes, services.GetRequiredService<AgentRuntimeChangeHub>());
     }
 }
 
 public sealed class AppPackageModule : ISunderAppPackageModule
 {
-    private readonly PackageModule _module = new();
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
+    {
+        services.AddSingleton<AgentAppRuntimeGateway>();
+        services.AddSingletonAlias<IAgentRuntimeAvailability, AgentAppRuntimeGateway>();
+        services.AddSingletonAlias<IAgentProfileGateway, AgentAppRuntimeGateway>();
+        services.AddSingletonAlias<IAgentWorkspaceGateway, AgentAppRuntimeGateway>();
+        services.AddSingletonAlias<IAgentSessionGateway, AgentAppRuntimeGateway>();
+        services.AddSingletonAlias<IAgentPermissionGateway, AgentAppRuntimeGateway>();
+        services.AddSingletonAlias<IAgentRunGateway, AgentAppRuntimeGateway>();
+        services.AddSingletonAlias<IAgentAttachmentGateway, AgentAppRuntimeGateway>();
+        services.AddSingletonAlias<IAgentExecutionGateway, AgentAppRuntimeGateway>();
+        services.AddSingleton<AgentChatSelectionStateService>();
+        services.AddSingleton<AgentToolPresentationService>();
+        services.AddTransient<AgentWorkspacesViewContext>();
+    }
 
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
+    {
+        registry.RegisterPackageView<AgentChatView>(new PackageViewRegistration(
+            "sunder.package.agent.chat", "Agent Chat", "Assets/chat-icon.png",
+            defaultPlacement: PackageViewPlacement.Middle));
+        registry.RegisterPackageView<AgentWorkspacesView>(new PackageViewRegistration(
+            "sunder.package.agent.workspaces", "Workspaces", "Assets/workspace-icon.png",
+            defaultPlacement: PackageViewPlacement.RightTop));
+        registry.RegisterPackageView<AgentProfilesView>(new PackageViewRegistration(
+            "sunder.package.agent.profiles", "Agents", "Assets/profile-icon.png",
+            defaultPlacement: PackageViewPlacement.RightTop));
+        registry.RegisterSettingsView<AgentPermissionsView>();
+    }
 }

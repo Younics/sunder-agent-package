@@ -7,6 +7,8 @@ namespace Sunder.Package.Agent.Provider.Anthropic;
 
 public sealed partial class AnthropicSettingsViewModel : ObservableObject, IDisposable
 {
+    private readonly ApiKeyUtilitySettingsState _settings;
+
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
         [AnthropicProviderConfiguration.ApiKeySecretKey, AnthropicProviderConfiguration.UtilityModelKey];
 
@@ -21,34 +23,29 @@ public sealed partial class AnthropicSettingsViewModel : ObservableObject, IDisp
         IPackageContext packageContext,
         ProviderCredentialAccessor credentials)
     {
-        ApiKeySettings = new ApiKeySettingsState(
+        _settings = new ApiKeyUtilitySettingsState(
+            packageContext,
             credentials,
             "A stored API key is used for Claude chat. Blank input retains the current key.",
             "sk-ant-...",
             static hasCredential => hasCredential
                 ? new ApiKeyStatus("Stored", "Anthropic API-key chat is ready.")
-                : new ApiKeyStatus("Not stored", "Add an API key to enable Claude chat.", IsWarning: true));
-        UtilityModelSettings = new UtilityModelSettingsState(
-            packageContext,
-            AnthropicProviderConfiguration.UtilityModelKey,
-            AnthropicProviderConfiguration.DefaultUtilityModelId,
-            AnthropicModelCatalog.UtilityModelOptions.Select(option => (option.Value, option.Label)));
+                : new ApiKeyStatus("Not stored", "Add an API key to enable Claude chat.", IsWarning: true),
+            AnthropicProviderConfiguration.UtilityModelSelection);
     }
 
-    internal ApiKeySettingsState ApiKeySettings { get; }
+    internal ApiKeySettingsState ApiKeySettings => _settings.ApiKey;
 
-    internal UtilityModelSettingsState UtilityModelSettings { get; }
+    internal UtilityModelSettingsState UtilityModelSettings => _settings.UtilityModel;
 
     [RelayCommand]
     private async Task SaveSettingsAsync()
     {
-        await ApiKeySettings.SaveCredentialAsync();
-        await UtilityModelSettings.SaveUtilityModelAsync();
+        await _settings.SaveAsync();
     }
 
     public void Dispose()
     {
-        ApiKeySettings.Dispose();
-        UtilityModelSettings.Dispose();
+        _settings.Dispose();
     }
 }

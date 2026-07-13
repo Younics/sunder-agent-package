@@ -21,7 +21,7 @@
           <Button Content="Add Shell"
                   HorizontalAlignment="Left"
                   Command="{Binding AddShellCommand}" />
-          <Grid ColumnDefinitions="2*,3*,Auto"
+          <Grid ColumnDefinitions="2*,3*,Auto,Auto"
                 ColumnSpacing="10"
                 Margin="0,4,0,0">
             <TextBlock Text="Name"
@@ -29,8 +29,11 @@
             <TextBlock Grid.Column="1"
                        Text="Executable Path"
                        FontWeight="SemiBold" />
-            <TextBlock Grid.Column="2"
-                       Text="Syntax"
+             <TextBlock Grid.Column="2"
+                        Text="Syntax"
+                        FontWeight="SemiBold" />
+            <TextBlock Grid.Column="3"
+                       Text="Path"
                        FontWeight="SemiBold" />
           </Grid>
           <ListBox ItemsSource="{Binding Shells}"
@@ -38,16 +41,16 @@
                    MinHeight="160">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="vm:LocalShellRowViewModel">
-                <Grid ColumnDefinitions="2*,3*,Auto"
+                <Grid ColumnDefinitions="2*,3*,Auto,Auto"
                       ColumnSpacing="10"
                       Margin="0,4">
                   <TextBox Text="{Binding DisplayName, Mode=TwoWay}"
                            IsReadOnly="{Binding IsDetected}"
                            PlaceholderText="Display name" />
-                  <TextBox Grid.Column="1"
-                           Text="{Binding ExecutablePath, Mode=TwoWay}"
-                           IsReadOnly="{Binding IsDetected}"
-                           PlaceholderText="Executable path" />
+                   <TextBox Grid.Column="1"
+                            Text="{Binding ExecutablePath}"
+                            IsReadOnly="True"
+                            PlaceholderText="Executable path" />
                   <shared:SunderComboBox Grid.Column="2"
                                          ItemsSource="{Binding SyntaxOptions}"
                                          IsEnabled="{Binding CanEdit}"
@@ -57,7 +60,11 @@
                         <TextBlock Text="{Binding DisplayName}" />
                       </DataTemplate>
                     </shared:SunderComboBox.ItemTemplate>
-                  </shared:SunderComboBox>
+                   </shared:SunderComboBox>
+                  <Button Grid.Column="3"
+                          Content="Choose..."
+                          IsVisible="{Binding CanEdit}"
+                          Click="OnChooseShellExecutableClicked" />
                 </Grid>
               </DataTemplate>
             </ListBox.ItemTemplate>

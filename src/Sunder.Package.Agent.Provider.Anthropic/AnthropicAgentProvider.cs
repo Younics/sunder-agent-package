@@ -44,10 +44,8 @@ public sealed class AnthropicAgentProvider : IAgentChatProvider, IAgentUtilityMo
     public async ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return UtilityModelSettingsState.ResolveModelId(
-            await _packageContext.Configuration.GetValueAsync(AnthropicProviderConfiguration.UtilityModelKey, cancellationToken),
-            AnthropicProviderConfiguration.DefaultUtilityModelId,
-            AnthropicModelCatalog.UtilityModelOptions.Select(option => option.Value));
+        return await AnthropicProviderConfiguration.UtilityModelSelection
+            .ResolveAsync(_packageContext.Settings, cancellationToken);
     }
 
     public async ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)

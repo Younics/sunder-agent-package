@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+using System.Text.Json;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -91,40 +91,30 @@ public sealed class SolutionPackageInventoryTests
     [Fact]
     public void ReleaseWorkflowInventory_MatchesRuntimePackages()
     {
-        var workflowPath = Path.Combine(
-            AgentPackageRepositoryInventory.RepositoryRoot.FullName,
-            ".github",
-            "workflows",
-            "sunder-package-release.yml");
+        var repositoryRoot = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
+        var workflowPath = Path.Combine(repositoryRoot, ".github", "workflows", "sunder-package-release.yml");
         var workflow = File.ReadAllText(workflowPath);
         var expected = AgentPackageRepositoryInventory.GetRuntimePackageProjects().ToDictionary(
             static package => GetReleaseKey(package.Name),
             package => NormalizeRepositoryPath(package.ProjectPath),
             StringComparer.Ordinal);
-        var triggerKeys = ReleaseTagPattern.Matches(workflow)
-            .Select(static match => match.Groups["key"].Value)
-            .ToHashSet(StringComparer.Ordinal);
-        var caseProjects = ReleaseCasePattern.Matches(workflow).ToDictionary(
-            static match => match.Groups["key"].Value,
-            static match => match.Groups["project"].Value,
-            StringComparer.Ordinal);
+        using var inventory = JsonDocument.Parse(File.ReadAllText(Path.Combine(repositoryRoot, "packages.json")));
+        var releaseProjects = inventory.RootElement.GetProperty("packages").EnumerateArray()
+            .Where(static package => package.GetProperty("artifactType").GetString() == "sunderpkg")
+            .ToDictionary(
+                static package => package.GetProperty("key").GetString()!,
+                static package => package.GetProperty("projectPath").GetString()!,
+                StringComparer.Ordinal);
 
-        Assert.True(triggerKeys.SetEquals(expected.Keys), "Release tag triggers must exactly match runtime package inventory.");
-        Assert.Equal(expected.Count, caseProjects.Count);
+        Assert.Contains("- \"agent*/v*\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("select(.key == $key and .artifactType == \"sunderpkg\")", workflow, StringComparison.Ordinal);
+        Assert.Equal(expected.Count, releaseProjects.Count);
         foreach (var (releaseKey, projectPath) in expected)
         {
-            Assert.True(caseProjects.TryGetValue(releaseKey, out var releaseProject));
+            Assert.True(releaseProjects.TryGetValue(releaseKey, out var releaseProject));
             Assert.Equal(projectPath, releaseProject);
         }
     }
-
-    private static readonly Regex ReleaseTagPattern = new(
-        "^\\s*-\\s*\"(?<key>[a-z0-9-]+)/v\\*\"\\s*$",
-        RegexOptions.Multiline | RegexOptions.CultureInvariant);
-
-    private static readonly Regex ReleaseCasePattern = new(
-        "^\\s{12}(?<key>[a-z0-9-]+)\\)\\s*$.*?^\\s+project_path=\"(?<project>[^\"]+)\"\\s*$.*?^\\s{14};;\\s*$",
-        RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.CultureInvariant);
 
     private static readonly IReadOnlySet<string> SupportOnlyTestProjects = new HashSet<string>(
         ["tests/Sunder.Package.Agent.Provider.TestSupport/Sunder.Package.Agent.Provider.TestSupport.csproj"],

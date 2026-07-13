@@ -7,18 +7,11 @@ namespace Sunder.Package.Agent.Skills.Services;
 
 public sealed partial class SkillImportService
 {
-    private const long MaxFileBytes = 10 * 1024 * 1024;
-    private const long MaxTotalBytes = 50 * 1024 * 1024;
     private readonly SkillStore _store;
     private readonly IGitHubSkillClient _gitHubClient;
     private readonly IPackageContext _packageContext;
     private readonly Action<SkillImportFaultPoint>? _faultInjector;
-    private static readonly EnumerationOptions SkillFolderEnumerationOptions = new()
-    {
-        RecurseSubdirectories = true,
-        IgnoreInaccessible = true,
-        AttributesToSkip = FileAttributes.ReparsePoint,
-    };
+    private readonly SkillSourceAcquirer _sourceAcquirer;
 
     public SkillImportService(SkillStore store, IGitHubSkillClient gitHubClient, IPackageContext packageContext)
         : this(store, gitHubClient, packageContext, null)
@@ -35,6 +28,7 @@ public sealed partial class SkillImportService
         _gitHubClient = gitHubClient;
         _packageContext = packageContext;
         _faultInjector = faultInjector;
+        _sourceAcquirer = new SkillSourceAcquirer(gitHubClient, packageContext);
     }
 
     public Task<InstalledSkillRecord> ImportLocalFolderAsync(string folderPath, CancellationToken cancellationToken = default)
@@ -67,19 +61,38 @@ public sealed partial class SkillImportService
             return [await ImportLocalFolderAsync(folderPath, cancellationToken).ConfigureAwait(false)];
         }
 
-        var skillFolders = FindSkillFolders(folderPath).ToArray();
+        var skillFolders = FindSkillFolders(folderPath, cancellationToken).ToArray();
         if (skillFolders.Length == 0)
         {
             throw new InvalidOperationException("Selected folder does not contain any skill folders with SKILL.md files.");
         }
 
-        var imported = new List<InstalledSkillRecord>();
-        foreach (var skillFolder in skillFolders)
+        return await ImportLocalFolderSetAsync(skillFolders, includeSourceUri: true, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<IReadOnlyList<InstalledSkillRecord>> ImportTransferredSkillsAsync(
+        string folderPath,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (File.Exists(Path.Combine(folderPath, "SKILL.md")))
         {
-            imported.Add(await ImportLocalFolderAsync(skillFolder, cancellationToken).ConfigureAwait(false));
+            return [await InstallFromFolderAsync(
+                folderPath,
+                sourceKind: "local",
+                sourceUri: null,
+                sourceRef: null,
+                resolvedCommitSha: null,
+                cancellationToken).ConfigureAwait(false)];
         }
 
-        return imported;
+        var skillFolders = FindSkillFolders(folderPath, cancellationToken).ToArray();
+        if (skillFolders.Length == 0)
+        {
+            throw new InvalidOperationException("Transferred folder does not contain any skill folders with SKILL.md files.");
+        }
+
+        return await ImportLocalFolderSetAsync(skillFolders, includeSourceUri: false, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<InstalledSkillRecord>> ImportCommonSkillFoldersAsync(CancellationToken cancellationToken = default)
@@ -87,7 +100,7 @@ public sealed partial class SkillImportService
         var imported = new List<InstalledSkillRecord>();
         foreach (var folder in EnumerateCommonSkillRoots().Where(Directory.Exists).Distinct(StringComparer.Ordinal))
         {
-            if (!File.Exists(Path.Combine(folder, "SKILL.md")) && !FindSkillFolders(folder).Any())
+            if (!File.Exists(Path.Combine(folder, "SKILL.md")) && !FindSkillFolders(folder, cancellationToken).Any())
             {
                 continue;
             }
@@ -124,74 +137,62 @@ public sealed partial class SkillImportService
             throw new InvalidOperationException("The selected GitHub folder does not contain any skill folders with SKILL.md files.");
         }
 
-        var imported = new List<InstalledSkillRecord>();
-        foreach (var skillRoot in skillRoots)
+        var stagedSources = new List<(GitHubSkillFolder Folder, StagedSkillSource Source)>();
+        try
         {
-            var skillFolderPath = CombineGitHubPath(parent.FolderPath, skillRoot);
-            var skillUrl = $"https://github.com/{parent.Owner}/{parent.Repo}/tree/{parent.Ref}/{skillFolderPath}";
-            imported.Add(await ImportGitHubFolderAsync(skillUrl, cancellationToken).ConfigureAwait(false));
-        }
+            foreach (var skillRoot in skillRoots)
+            {
+                var skillFolderPath = CombineGitHubPath(parent.FolderPath, skillRoot);
+                var folder = await _gitHubClient.TryGetSkillFolderAsync(
+                    new GitHubSkillFolderRequest(parent.Owner, parent.Repo, parent.CommitSha, skillFolderPath),
+                    cancellationToken).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"GitHub skill folder '{skillFolderPath}' changed while resolving commit '{parent.CommitSha}'.");
+                if (!string.Equals(folder.CommitSha, parent.CommitSha, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException("GitHub returned inconsistent commit identities while importing skills.");
+                }
 
-        return imported;
+                stagedSources.Add((folder, await _sourceAcquirer.AcquireGitHubAsync(folder, cancellationToken).ConfigureAwait(false)));
+            }
+
+            var replacements = new List<PreparedSkillReplacement>(stagedSources.Count);
+            foreach (var (folder, staged) in stagedSources)
+            {
+                var skillUrl = $"https://github.com/{folder.Owner}/{folder.Repo}/tree/{parent.Ref}/{folder.FolderPath}";
+                replacements.Add(await PrepareReplacementAsync(
+                    staged,
+                    folder.FolderPath,
+                    "github",
+                    skillUrl,
+                    parent.Ref,
+                    parent.CommitSha,
+                    cancellationToken).ConfigureAwait(false));
+            }
+
+            return new SkillBatchReplacementCommitter(_store, _faultInjector).Commit(replacements);
+        }
+        finally
+        {
+            foreach (var (_, staged) in stagedSources)
+            {
+                staged.Dispose();
+            }
+        }
     }
 
     public async Task<InstalledSkillRecord> ImportGitHubFolderAsync(string githubUrl, CancellationToken cancellationToken = default)
     {
         var parsedUrl = ParseGitHubUrl(githubUrl) ?? throw new InvalidOperationException("Enter a GitHub tree/blob/raw URL that points to a skill folder or SKILL.md.");
         var reference = await ResolveGitHubReferenceAsync(parsedUrl, cancellationToken);
-        var files = await _gitHubClient.ListFilesAsync(reference, cancellationToken);
-        if (files.All(file => !string.Equals(file.RelativePath, "SKILL.md", StringComparison.Ordinal)))
-        {
-            throw new InvalidOperationException("The selected GitHub folder does not contain a root SKILL.md file.");
-        }
-
-        var stagingRoot = CreateStagingRoot();
-        try
-        {
-            var totalBytes = 0L;
-            foreach (var file in files)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var relativePath = file.RelativePath;
-                if (!IsSafeRelativePath(relativePath) || IsIgnoredPath(relativePath))
-                {
-                    continue;
-                }
-
-                if (file.Size > MaxFileBytes)
-                {
-                    throw new InvalidOperationException($"GitHub file is too large: {relativePath}");
-                }
-
-                var targetPath = Path.Combine(stagingRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
-                Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-                var bytes = await _gitHubClient.ReadFileAsync(reference, file, cancellationToken);
-                if (bytes.Length > MaxFileBytes)
-                {
-                    throw new InvalidOperationException($"GitHub file is too large: {relativePath}");
-                }
-
-                totalBytes += bytes.Length;
-                if (totalBytes > MaxTotalBytes)
-                {
-                    throw new InvalidOperationException("GitHub skill folder is too large.");
-                }
-
-                await File.WriteAllBytesAsync(targetPath, bytes, cancellationToken);
-            }
-
-            return await InstallFromFolderAsync(
-                stagingRoot,
+        using var staged = await _sourceAcquirer.AcquireGitHubAsync(reference, cancellationToken).ConfigureAwait(false);
+        return await InstallStagedAsync(
+                staged,
+                reference.FolderPath,
                 sourceKind: "github",
                 sourceUri: githubUrl,
                 sourceRef: reference.Ref,
                 resolvedCommitSha: reference.CommitSha,
-                cancellationToken);
-        }
-        finally
-        {
-            TryDeleteDirectory(stagingRoot);
-        }
+                cancellationToken).ConfigureAwait(false);
     }
 
     public Task<InstalledSkillRecord> ImportStackFolderAsync(string folderPath, CancellationToken cancellationToken = default)
@@ -212,190 +213,118 @@ public sealed partial class SkillImportService
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var skillMarkdownPath = Path.Combine(folderPath, "SKILL.md");
-        if (!File.Exists(skillMarkdownPath))
-        {
-            throw new InvalidOperationException("Skill folder must contain a root SKILL.md file.");
-        }
+        using var staged = await _sourceAcquirer.AcquireLocalAsync(folderPath, cancellationToken).ConfigureAwait(false);
+        return await InstallStagedAsync(
+            staged,
+            folderPath,
+            sourceKind,
+            sourceUri,
+            sourceRef,
+            resolvedCommitSha,
+            cancellationToken).ConfigureAwait(false);
+    }
 
-        var parsed = SkillMarkdownParser.Parse(await File.ReadAllTextAsync(skillMarkdownPath, cancellationToken));
-        var skillId = ResolveSkillId(parsed.Name, folderPath, parsed.RawContent);
-        var relativeRoot = string.Concat(SkillConstants.SkillsRelativeRoot, "/", skillId);
-        var targetRoot = _packageContext.Storage.LocalWorkspace.GetLocalPath(relativeRoot);
-        var stagingRoot = CreateStagingRoot();
-        string? backupRoot = null;
-        byte[]? indexSnapshot = null;
-        var swapStarted = false;
-        var backupCreated = false;
-        var stagedContentMoved = false;
-        using var importTransaction = _store.EnterImportTransaction();
+    private async Task<IReadOnlyList<InstalledSkillRecord>> ImportLocalFolderSetAsync(
+        IReadOnlyList<string> folderPaths,
+        bool includeSourceUri,
+        CancellationToken cancellationToken)
+    {
+        var stagedSources = new List<(string FolderPath, StagedSkillSource Source)>();
         try
         {
-            var warnings = CopySkillFolder(folderPath, stagingRoot);
-            var contentHash = ComputeContentHash(stagingRoot);
-            var now = DateTimeOffset.UtcNow;
-            var existing = _store.GetSkill(skillId);
-            var record = new InstalledSkillRecord(
-                skillId,
-                relativeRoot,
-                parsed.Name,
-                parsed.Description,
-                parsed.Version,
-                parsed.Author,
-                sourceKind,
-                sourceUri,
-                sourceRef,
-                resolvedCommitSha,
-                contentHash,
-                existing?.InstalledAtUtc ?? now,
-                now,
-                parsed.Metadata,
-                warnings);
-
-            indexSnapshot = _store.CaptureIndexSnapshot();
-            backupRoot = targetRoot + ".backup-" + Guid.NewGuid().ToString("N");
-            swapStarted = true;
-            if (Directory.Exists(targetRoot))
+            var skillIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var folderPath in folderPaths)
             {
-                Directory.Move(targetRoot, backupRoot);
-                backupCreated = true;
-            }
-
-            _faultInjector?.Invoke(SkillImportFaultPoint.AfterBackup);
-            Directory.CreateDirectory(Path.GetDirectoryName(targetRoot)!);
-            Directory.Move(stagingRoot, targetRoot);
-            stagedContentMoved = true;
-            _faultInjector?.Invoke(SkillImportFaultPoint.AfterStagedMove);
-
-            _store.SaveSkill(record);
-            TryDeleteDirectory(backupRoot);
-            return record;
-        }
-        catch (Exception importError)
-        {
-            if (!swapStarted)
-            {
-                throw;
-            }
-
-            var compensationErrors = new List<Exception>();
-            try
-            {
-                if (stagedContentMoved && Directory.Exists(targetRoot))
+                cancellationToken.ThrowIfCancellationRequested();
+                var staged = await _sourceAcquirer.AcquireLocalAsync(folderPath, cancellationToken).ConfigureAwait(false);
+                stagedSources.Add((folderPath, staged));
+                var manifest = await SkillManifestReader.ReadAsync(staged.RootPath, cancellationToken).ConfigureAwait(false);
+                var skillId = ResolveSkillId(manifest.Name, folderPath, manifest.RawContent);
+                if (!skillIds.Add(skillId))
                 {
-                    Directory.Delete(targetRoot, recursive: true);
-                }
-
-                if (backupCreated && backupRoot is not null && Directory.Exists(backupRoot))
-                {
-                    Directory.Move(backupRoot, targetRoot);
+                    throw new InvalidDataException($"Skill import contains duplicate or case-colliding id '{skillId}'.");
                 }
             }
-            catch (Exception compensationError)
+
+            var replacements = new List<PreparedSkillReplacement>(stagedSources.Count);
+            foreach (var (folderPath, staged) in stagedSources)
             {
-                compensationErrors.Add(compensationError);
+                replacements.Add(await PrepareReplacementAsync(
+                    staged,
+                    folderPath,
+                    sourceKind: "local",
+                    sourceUri: includeSourceUri ? folderPath : null,
+                    sourceRef: null,
+                    resolvedCommitSha: null,
+                    cancellationToken).ConfigureAwait(false));
             }
 
-            try
-            {
-                _store.RestoreIndexSnapshot(indexSnapshot);
-            }
-            catch (Exception compensationError)
-            {
-                compensationErrors.Add(compensationError);
-            }
-
-            if (compensationErrors.Count > 0)
-            {
-                throw new AggregateException("Skill import failed and its prior state could not be fully restored.", [importError, .. compensationErrors]);
-            }
-
-            throw;
+            return new SkillBatchReplacementCommitter(_store, _faultInjector).Commit(replacements);
         }
         finally
         {
-            TryDeleteDirectory(stagingRoot);
+            foreach (var (_, staged) in stagedSources)
+            {
+                staged.Dispose();
+            }
         }
     }
 
-    private static IReadOnlyList<string> CopySkillFolder(string sourceRoot, string targetRoot)
+    private async Task<InstalledSkillRecord> InstallStagedAsync(
+        StagedSkillSource staged,
+        string identityPath,
+        string sourceKind,
+        string? sourceUri,
+        string? sourceRef,
+        string? resolvedCommitSha,
+        CancellationToken cancellationToken)
     {
-        var warnings = new List<string>();
-        var totalBytes = 0L;
-        foreach (var directory in Directory.EnumerateDirectories(sourceRoot, "*", SearchOption.AllDirectories))
-        {
-            var relativePath = Path.GetRelativePath(sourceRoot, directory);
-            if (!IsSafeRelativePath(relativePath) || IsIgnoredPath(relativePath))
-            {
-                continue;
-            }
-
-            if (File.GetAttributes(directory).HasFlag(FileAttributes.ReparsePoint))
-            {
-                warnings.Add($"Skipped symlinked directory: {relativePath}");
-                continue;
-            }
-
-            Directory.CreateDirectory(Path.Combine(targetRoot, relativePath));
-        }
-
-        foreach (var file in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
-        {
-            var relativePath = Path.GetRelativePath(sourceRoot, file);
-            if (!IsSafeRelativePath(relativePath) || IsIgnoredPath(relativePath))
-            {
-                continue;
-            }
-
-            if (File.GetAttributes(file).HasFlag(FileAttributes.ReparsePoint))
-            {
-                warnings.Add($"Skipped symlinked file: {relativePath}");
-                continue;
-            }
-
-            var length = new FileInfo(file).Length;
-            if (length > MaxFileBytes)
-            {
-                throw new InvalidOperationException($"Skill file is too large: {relativePath}");
-            }
-
-            totalBytes += length;
-            if (totalBytes > MaxTotalBytes)
-            {
-                throw new InvalidOperationException("Skill folder is too large.");
-            }
-
-            var targetPath = Path.Combine(targetRoot, relativePath);
-            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-            File.Copy(file, targetPath, overwrite: true);
-        }
-
-        return warnings;
+        var replacement = await PrepareReplacementAsync(
+            staged,
+            identityPath,
+            sourceKind,
+            sourceUri,
+            sourceRef,
+            resolvedCommitSha,
+            cancellationToken).ConfigureAwait(false);
+        return new SkillBatchReplacementCommitter(_store, _faultInjector).Commit([replacement]).Single();
     }
 
-    private static string ComputeContentHash(string rootPath)
+    private async Task<PreparedSkillReplacement> PrepareReplacementAsync(
+        StagedSkillSource staged,
+        string identityPath,
+        string sourceKind,
+        string? sourceUri,
+        string? sourceRef,
+        string? resolvedCommitSha,
+        CancellationToken cancellationToken)
     {
-        using var sha = SHA256.Create();
-        foreach (var file in Directory.EnumerateFiles(rootPath, "*", SearchOption.AllDirectories)
-                     .OrderBy(path => Path.GetRelativePath(rootPath, path), StringComparer.Ordinal))
-        {
-            var relativePath = Path.GetRelativePath(rootPath, file).Replace(Path.DirectorySeparatorChar, '/');
-            var pathBytes = Encoding.UTF8.GetBytes(relativePath);
-            sha.TransformBlock(pathBytes, 0, pathBytes.Length, null, 0);
-            sha.TransformBlock([0], 0, 1, null, 0);
-            var content = File.ReadAllBytes(file);
-            sha.TransformBlock(content, 0, content.Length, null, 0);
-        }
-
-        sha.TransformFinalBlock([], 0, 0);
-        return Convert.ToHexString(sha.Hash ?? []).ToLowerInvariant();
-    }
-
-    private string CreateStagingRoot()
-    {
-        var root = _packageContext.Storage.LocalWorkspace.GetLocalPath("skill-import/" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
-        return root;
+        var parsed = await SkillManifestReader.ReadAsync(staged.RootPath, cancellationToken).ConfigureAwait(false);
+        var skillId = ResolveSkillId(parsed.Name, identityPath, parsed.RawContent);
+        var relativeRoot = string.Concat(SkillConstants.SkillsRelativeRoot, "/", skillId);
+        var targetRoot = _packageContext.Storage.RoleLocalWorkspace.GetLocalPath(relativeRoot);
+        var contentHash = await SkillContentHasher.ComputeAsync(staged.RootPath, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        var now = DateTimeOffset.UtcNow;
+        var existing = _store.GetSkill(skillId);
+        var record = new InstalledSkillRecord(
+            skillId,
+            relativeRoot,
+            parsed.Name,
+            parsed.Description,
+            parsed.Version,
+            parsed.Author,
+            sourceKind,
+            sourceUri,
+            sourceRef,
+            resolvedCommitSha,
+            contentHash,
+            existing?.InstalledAtUtc ?? now,
+            now,
+            parsed.Metadata,
+            staged.Warnings);
+        cancellationToken.ThrowIfCancellationRequested();
+        return new PreparedSkillReplacement(staged.RootPath, targetRoot, record);
     }
 
     private static string ResolveSkillId(string? name, string folderPath, string rawContent)
@@ -422,32 +351,6 @@ public sealed partial class SkillImportService
         return string.IsNullOrWhiteSpace(normalized) ? null : normalized.Length <= 64 ? normalized : normalized[..64].Trim('-');
     }
 
-    private static bool IsSafeRelativePath(string relativePath)
-        => !string.IsNullOrWhiteSpace(relativePath)
-           && !Path.IsPathRooted(relativePath)
-           && relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-               .All(segment => segment is not "" and not "." and not "..");
-
-    private static bool IsIgnoredPath(string relativePath)
-    {
-        var segments = relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return segments.Any(segment => segment is ".git" or ".svn" or ".hg");
-    }
-
-    private static void TryDeleteDirectory(string path)
-    {
-        try
-        {
-            if (Directory.Exists(path))
-            {
-                Directory.Delete(path, recursive: true);
-            }
-        }
-        catch
-        {
-        }
-    }
-
     private static string NormalizeGitHubPath(string path)
         => path.Trim().Trim('/');
 
@@ -458,13 +361,11 @@ public sealed partial class SkillImportService
         return string.IsNullOrWhiteSpace(left) ? right : string.IsNullOrWhiteSpace(right) ? left : left + "/" + right;
     }
 
-    private static IEnumerable<string> FindSkillFolders(string rootPath)
-        => Directory.EnumerateFiles(rootPath, "SKILL.md", SkillFolderEnumerationOptions)
-            .Select(Path.GetDirectoryName)
-            .Where(path => !string.IsNullOrWhiteSpace(path)
-                           && IsSafeRelativePath(Path.GetRelativePath(rootPath, path!))
-                           && !IsIgnoredPath(Path.GetRelativePath(rootPath, path!)))
-            .Select(path => path!)
+    private static IEnumerable<string> FindSkillFolders(string rootPath, CancellationToken cancellationToken)
+        => Sunder.Package.Agent.Shared.Importing.BoundedImportIO.ValidateTree(rootPath, SkillSourceAcquirer.Limits, cancellationToken)
+            .Where(file => string.Equals(Path.GetFileName(file.RelativePath), "SKILL.md", StringComparison.Ordinal)
+                           && !file.RelativePath.Split('/').Any(segment => segment is ".git" or ".svn" or ".hg"))
+            .Select(file => Path.GetDirectoryName(file.SourcePath)!)
             .Distinct(StringComparer.Ordinal)
             .OrderBy(path => path, StringComparer.Ordinal);
 
@@ -621,4 +522,5 @@ internal enum SkillImportFaultPoint
 {
     AfterBackup,
     AfterStagedMove,
+    AfterIndexCommitted,
 }

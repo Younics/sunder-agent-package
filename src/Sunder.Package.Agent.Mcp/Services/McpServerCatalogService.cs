@@ -24,6 +24,7 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         var diagnostics = new List<McpCatalogDiagnostic>();
         var servers = new List<ConfiguredMcpServerRecord>();
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var keys = await _packageContext.Storage.State.ListKeysAsync(ServerKeyPrefix, cancellationToken).ConfigureAwait(false);
         foreach (var key in keys.OrderBy(key => key, StringComparer.OrdinalIgnoreCase))
         {
@@ -48,6 +49,12 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
                 if (!string.Equals(key, BuildServerKey(server.ServerId), StringComparison.OrdinalIgnoreCase))
                 {
                     diagnostics.Add(new McpCatalogDiagnostic(key, $"Stored ServerId '{server.ServerId}' does not match its storage key."));
+                    continue;
+                }
+
+                if (!ids.Add(server.ServerId))
+                {
+                    diagnostics.Add(new McpCatalogDiagnostic(key, $"MCP server id '{server.ServerId}' is duplicated or case-colliding."));
                     continue;
                 }
 
@@ -97,42 +104,20 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         IReadOnlyDictionary<string, string> headers,
         IReadOnlyDictionary<string, string> environmentVariables,
         CancellationToken cancellationToken = default)
+        => await ApplyBatchAsync(
+            [new McpServerCatalogWrite(server, headers, environmentVariables)],
+            [],
+            cancellationToken).ConfigureAwait(false);
+
+    internal async Task ApplyBatchAsync(
+        IReadOnlyList<McpServerCatalogWrite> writes,
+        IReadOnlyCollection<string> deletedServerIds,
+        CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(server.ServerId);
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var normalizedName = NormalizeServerName(server.Name);
-            var allServers = await ListServersAsync(cancellationToken).ConfigureAwait(false);
-            if (allServers.Any(item => !string.Equals(item.ServerId, server.ServerId, StringComparison.OrdinalIgnoreCase)
-                                       && string.Equals(item.Name, normalizedName, StringComparison.OrdinalIgnoreCase)))
-            {
-                throw new InvalidOperationException($"An MCP server named '{normalizedName}' already exists.");
-            }
-
-            var existing = await GetServerAsync(server.ServerId, cancellationToken).ConfigureAwait(false);
-            var persisted = server with
-            {
-                Name = normalizedName,
-                PersistenceVersion = Math.Max(existing?.PersistenceVersion ?? 0, 0) + 1,
-                HeaderNames = [.. server.HeaderNames.Where(name => !string.IsNullOrWhiteSpace(name)).Select(name => name.Trim()).Distinct(StringComparer.OrdinalIgnoreCase)],
-                EnvironmentVariableNames = [.. server.EnvironmentVariableNames.Where(name => !string.IsNullOrWhiteSpace(name)).Select(name => name.Trim()).Distinct(StringComparer.OrdinalIgnoreCase)],
-            };
-            var stagedSecretKeys = await StageVersionedSecretsAsync(persisted, headers, environmentVariables, cancellationToken);
-            try
-            {
-                await _packageContext.Storage.State.SetValueAsync(
-                    BuildServerKey(persisted.ServerId),
-                    JsonSerializer.Serialize(persisted),
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception commitError)
-            {
-                throw await CompensateStagedSecretsAsync(stagedSecretKeys, commitError, cancellationToken);
-            }
-
-            await CleanupSupersededSecretsAsync(existing, persisted, cancellationToken);
-            ServersChanged?.Invoke();
+            await ApplyBatchCoreAsync(writes, deletedServerIds, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -141,19 +126,167 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
     }
 
     public async Task DeleteServerAsync(string serverId, CancellationToken cancellationToken = default)
+        => await ApplyBatchAsync([], [serverId], cancellationToken).ConfigureAwait(false);
+
+    private async Task ApplyBatchCoreAsync(
+        IReadOnlyList<McpServerCatalogWrite> writes,
+        IReadOnlyCollection<string> deletedServerIds,
+        CancellationToken cancellationToken)
     {
-        await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        var allServers = await ListServersAsync(cancellationToken).ConfigureAwait(false);
+        var existingById = allServers.ToDictionary(server => server.ServerId, StringComparer.OrdinalIgnoreCase);
+        var deletedIds = deletedServerIds
+            .Select(id => existingById.TryGetValue(id, out var existing) ? existing.ServerId : id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var writeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var write in writes)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(write.Server.ServerId);
+            if (!writeIds.Add(write.Server.ServerId))
+            {
+                throw new InvalidOperationException($"MCP import contains duplicate or case-colliding server id '{write.Server.ServerId}'.");
+            }
+        }
+
+        var finalNames = allServers
+            .Where(server => !deletedIds.Contains(server.ServerId) && !writeIds.Contains(server.ServerId))
+            .ToDictionary(server => server.Name, server => server.ServerId, StringComparer.OrdinalIgnoreCase);
+        var stagedWrites = new List<StagedCatalogWrite>();
+        foreach (var write in writes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            existingById.TryGetValue(write.Server.ServerId, out var existing);
+            var normalizedName = NormalizeServerName(write.Server.Name);
+            if (finalNames.TryGetValue(normalizedName, out var conflictingId)
+                && !string.Equals(conflictingId, write.Server.ServerId, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException($"An MCP server named '{normalizedName}' already exists.");
+            }
+
+            finalNames[normalizedName] = write.Server.ServerId;
+            var persisted = write.Server with
+            {
+                ServerId = existing?.ServerId ?? write.Server.ServerId,
+                Name = normalizedName,
+                PersistenceVersion = Math.Max(existing?.PersistenceVersion ?? 0, 0) + 1,
+                HeaderNames = NormalizeSecretNames(write.Server.HeaderNames, "header"),
+                EnvironmentVariableNames = NormalizeSecretNames(write.Server.EnvironmentVariableNames, "environment variable"),
+            };
+            stagedWrites.Add(new StagedCatalogWrite(write, existing, persisted));
+        }
+
+        var persistedWriteIds = stagedWrites
+            .Select(staged => staged.Persisted.ServerId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var affectedIds = persistedWriteIds.Concat(deletedIds).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var snapshots = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in affectedIds)
+        {
+            snapshots[id] = await _packageContext.Storage.State.GetValueAsync(BuildServerKey(id), cancellationToken).ConfigureAwait(false);
+        }
+
+        var stagedSecretKeys = new List<string>();
         try
         {
-            var existing = await GetServerAsync(serverId, cancellationToken).ConfigureAwait(false);
-            await _packageContext.Storage.State.DeleteValueAsync(BuildServerKey(serverId), cancellationToken).ConfigureAwait(false);
-            await CleanupDeletedServerSecretsAsync(existing, serverId, cancellationToken);
+            foreach (var staged in stagedWrites)
+            {
+                stagedSecretKeys.AddRange(await StageVersionedSecretsAsync(
+                    staged.Persisted,
+                    staged.Write.Headers,
+                    staged.Write.EnvironmentVariables,
+                    cancellationToken).ConfigureAwait(false));
+            }
+
+            foreach (var staged in stagedWrites)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await _packageContext.Storage.State.SetValueAsync(
+                    BuildServerKey(staged.Persisted.ServerId),
+                    JsonSerializer.Serialize(staged.Persisted),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            foreach (var id in deletedIds.Where(id => !persistedWriteIds.Contains(id)))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await _packageContext.Storage.State.DeleteValueAsync(BuildServerKey(id), cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception commitError)
+        {
+            var errors = new List<Exception> { commitError };
+            foreach (var snapshot in snapshots)
+            {
+                try
+                {
+                    if (snapshot.Value is null)
+                    {
+                        await _packageContext.Storage.State.DeleteValueAsync(BuildServerKey(snapshot.Key), CancellationToken.None).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await _packageContext.Storage.State.SetValueAsync(BuildServerKey(snapshot.Key), snapshot.Value, CancellationToken.None).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception rollbackError)
+                {
+                    errors.Add(rollbackError);
+                }
+            }
+
+            var cleanupError = await CompensateStagedSecretsAsync(stagedSecretKeys, commitError, CancellationToken.None).ConfigureAwait(false);
+            if (!ReferenceEquals(cleanupError, commitError))
+            {
+                errors.Add(cleanupError);
+            }
+
+            if (errors.Count > 1)
+            {
+                throw new AggregateException("MCP catalog mutation failed and its prior state could not be fully restored.", errors);
+            }
+
+            throw;
+        }
+
+        foreach (var staged in stagedWrites)
+        {
+            await CleanupSupersededSecretsAsync(staged.Existing, staged.Persisted, CancellationToken.None).ConfigureAwait(false);
+        }
+
+        foreach (var id in deletedIds.Where(id => !persistedWriteIds.Contains(id)))
+        {
+            existingById.TryGetValue(id, out var existing);
+            await CleanupDeletedServerSecretsAsync(existing, id, CancellationToken.None).ConfigureAwait(false);
+        }
+
+        if (writes.Count > 0 || deletedIds.Count > 0)
+        {
             ServersChanged?.Invoke();
         }
-        finally
+    }
+
+    private static string[] NormalizeSecretNames(IEnumerable<string> names, string kind)
+    {
+        var result = new List<string>();
+        var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in names)
         {
-            _mutationGate.Release();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new InvalidOperationException($"MCP {kind} names must not be empty.");
+            }
+
+            var normalized = name.Trim();
+            if (!unique.Add(normalized))
+            {
+                throw new InvalidOperationException($"MCP configuration contains duplicate or case-colliding {kind} name '{normalized}'.");
+            }
+
+            result.Add(normalized);
         }
+
+        return [.. result];
     }
 
     public Task<IReadOnlyDictionary<string, string>> GetHeadersAsync(
@@ -167,6 +300,9 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         => ReadSecretsAsync(server, server.EnvironmentVariableNames, BuildEnvironmentSecretKey, readLegacyHeaderFallbacks: false, cancellationToken);
 
     public string NormalizeServerName(string? value)
+        => NormalizeName(value);
+
+    internal static string NormalizeName(string? value)
     {
         var raw = string.IsNullOrWhiteSpace(value) ? "mcp_server" : value.Trim().ToLowerInvariant();
         var builder = new StringBuilder(raw.Length);
@@ -194,7 +330,7 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         }
         catch (Exception ex)
         {
-            throw await CompensateStagedSecretsAsync(staged, ex, cancellationToken);
+            throw await CompensateStagedSecretsAsync(staged, ex, CancellationToken.None);
         }
     }
 
@@ -354,4 +490,9 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         => version <= 0
             ? $"mcp.servers.{serverId}.environment.{Uri.EscapeDataString(name)}"
             : $"mcp.servers.{serverId}.v{version}.environment.{Uri.EscapeDataString(name)}";
+
+    private sealed record StagedCatalogWrite(
+        McpServerCatalogWrite Write,
+        ConfiguredMcpServerRecord? Existing,
+        ConfiguredMcpServerRecord Persisted);
 }

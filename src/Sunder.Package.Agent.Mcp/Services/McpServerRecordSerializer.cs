@@ -14,7 +14,16 @@ internal static class McpServerRecordSerializer
     {
         try
         {
-            using var document = JsonDocument.Parse(payload);
+            if (payload.Length > McpConfigurationSourceReader.MaxDocumentBytes)
+            {
+                return new(null, "Stored MCP server metadata exceeds the size limit.");
+            }
+
+            using var document = JsonDocument.Parse(payload, new JsonDocumentOptions
+            {
+                MaxDepth = McpConfigurationSourceReader.MaxJsonDepth,
+            });
+            McpJsonShapeValidator.RejectDuplicateProperties(document.RootElement);
             if (document.RootElement.ValueKind != JsonValueKind.Object)
             {
                 return new(null, "Stored MCP server metadata is not a JSON object.");
@@ -74,6 +83,10 @@ internal static class McpServerRecordSerializer
         catch (JsonException ex)
         {
             return new(null, $"Stored MCP server metadata is malformed JSON: {ex.Message}");
+        }
+        catch (InvalidDataException ex)
+        {
+            return new(null, ex.Message);
         }
     }
 
@@ -155,13 +168,32 @@ internal static class McpServerRecordSerializer
     }
 
     private static string[] ReadStringArray(JsonElement root, string propertyName)
-        => !root.TryGetProperty(propertyName, out var value) || value.ValueKind != JsonValueKind.Array
-            ? []
-            : value.EnumerateArray()
-                .Where(item => item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
-                .Select(item => item.GetString()!.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+    {
+        if (!root.TryGetProperty(propertyName, out var value) || value.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var result = new List<string>();
+        var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
+            {
+                continue;
+            }
+
+            var parsed = item.GetString()!.Trim();
+            if (!unique.Add(parsed))
+            {
+                throw new InvalidDataException($"Stored MCP server metadata contains duplicate or case-colliding '{propertyName}' value '{parsed}'.");
+            }
+
+            result.Add(parsed);
+        }
+
+        return [.. result];
+    }
 
     private static string[] SplitArguments(string? args)
     {

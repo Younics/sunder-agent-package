@@ -1,8 +1,8 @@
 using System.Collections.ObjectModel;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Shared.Presentation;
+using Sunder.Package.Agent.Skills.Runtime;
 using Sunder.Package.Agent.Skills.Services;
 
 namespace Sunder.Package.Agent.Skills.PackageViews;
@@ -11,9 +11,10 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
 {
     private static readonly TimeSpan SuccessStatusDisplayDuration = TimeSpan.FromSeconds(3);
 
-    private readonly SkillStore _store;
-    private readonly SkillImportService _importService;
+    private readonly ISkillManagementGateway _gateway;
     private readonly TimedStatusController _successStatus = new();
+    private readonly IPresentationDispatcher _uiDispatcher = PresentationDispatcher.Capture();
+    private readonly PresentationTaskScope _tasks = new();
     private readonly Task _initialization;
     private bool _suppressSelectionHandlers;
     private bool _suppressSkillChangeNotifications;
@@ -22,10 +23,14 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } = [];
 
     public SkillSettingsViewModel(SkillStore store, SkillImportService importService)
+        : this(new SkillLocalManagementGateway(store, importService))
     {
-        _store = store;
-        _importService = importService;
-        _store.SkillsChanged += OnSkillsChanged;
+    }
+
+    internal SkillSettingsViewModel(ISkillManagementGateway gateway)
+    {
+        _gateway = gateway;
+        _gateway.SkillsChanged += OnSkillsChanged;
         _initialization = InitializeCoreAsync();
     }
 
@@ -131,18 +136,18 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
             return;
         }
 
-        await RunImportAsync(() => _importService.ImportGitHubAsync(GithubUrl.Trim()), "Imported skill from GitHub.");
+        await RunImportAsync(token => _gateway.ImportGitHubAsync(GithubUrl.Trim(), token), "Imported skill from GitHub.");
     }
 
     public Task ImportLocalFolderAsync(string folderPath)
-        => RunImportAsync(() => _importService.ImportLocalSkillsAsync(folderPath), "Imported local skill folder.");
+        => RunImportAsync(token => _gateway.ImportLocalAsync(folderPath, token), "Imported local skill folder.");
 
     [RelayCommand]
     private Task ImportCommonSkillFoldersAsync()
-        => RunImportAsync(() => _importService.ImportCommonSkillFoldersAsync(), "Imported common skill folder(s).");
+        => RunImportAsync(token => _gateway.ImportCommonAsync(token), "Imported common skill folder(s).");
 
     [RelayCommand(CanExecute = nameof(CanDeleteSelectedSkill))]
-    private void DeleteSelectedSkill()
+    private async Task DeleteSelectedSkillAsync()
     {
         if (SelectedSkill is null)
         {
@@ -156,14 +161,14 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
             _suppressSkillChangeNotifications = true;
             try
             {
-                _store.DeleteSkill(SelectedSkill.SkillId);
+                await _gateway.DeleteAsync(SelectedSkill.SkillId);
             }
             finally
             {
                 _suppressSkillChangeNotifications = false;
             }
 
-            Reload();
+            await ReloadAsync();
             if (shouldClearSelection)
             {
                 SelectedSkill = null;
@@ -232,7 +237,9 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
         }
     }
 
-    private async Task RunImportAsync(Func<Task<IReadOnlyList<InstalledSkillRecord>>> action, string successMessage)
+    private async Task RunImportAsync(
+        Func<CancellationToken, Task<IReadOnlyList<InstalledSkillRecord>>> action,
+        string successMessage)
     {
         IsBusy = true;
         try
@@ -241,7 +248,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
             _suppressSkillChangeNotifications = true;
             try
             {
-                imported = await action();
+                imported = await action(CancellationToken.None);
             }
             finally
             {
@@ -250,12 +257,12 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
 
             if (imported.Count == 0)
             {
-                Reload();
+                await ReloadAsync();
                 SetStatus("No skill folders were found to import.", SkillStatusKind.Warning);
                 return;
             }
 
-            Reload(imported[0].SkillId);
+            await ReloadAsync(imported[0].SkillId);
             if (IsCompactLayout)
             {
                 SelectedSkill = null;
@@ -278,15 +285,16 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
         }
     }
 
-    private void Reload(string? selectSkillId = null)
+    private async Task ReloadAsync(string? selectSkillId = null)
     {
         var currentSkillId = SelectedSkill?.SkillId;
+        var skills = await _gateway.ListAsync();
         SetSelectionSilently(() =>
         {
             Skills.Clear();
-            foreach (var skill in _store.ListSkills())
+            foreach (var skill in skills)
             {
-                Skills.Add(new InstalledSkillItemViewModel(skill, _store.GetSkillRootPath(skill)));
+                Skills.Add(new InstalledSkillItemViewModel(skill, skill.RelativeRootPath));
             }
 
             var selectedSkill = Skills.FirstOrDefault(skill => string.Equals(skill.SkillId, selectSkillId, StringComparison.OrdinalIgnoreCase));
@@ -300,18 +308,17 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
         });
     }
 
-    private Task InitializeCoreAsync()
+    private async Task InitializeCoreAsync()
     {
         try
         {
-            Reload();
+            await ReloadAsync();
         }
         catch (Exception ex)
         {
             SetStatus(ex.Message, SkillStatusKind.Error);
         }
 
-        return Task.CompletedTask;
     }
 
     private void OnSkillsChanged()
@@ -319,9 +326,21 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
         {
             if (!_disposed && !_suppressSkillChangeNotifications)
             {
-                Reload(SelectedSkill?.SkillId);
+                _ = ReloadSafelyAsync(SelectedSkill?.SkillId);
             }
         });
+
+    private async Task ReloadSafelyAsync(string? skillId)
+    {
+        try
+        {
+            await ReloadAsync(skillId);
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message, SkillStatusKind.Error);
+        }
+    }
 
     public void Dispose()
     {
@@ -331,8 +350,9 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
         }
 
         _disposed = true;
-        _store.SkillsChanged -= OnSkillsChanged;
+        _gateway.SkillsChanged -= OnSkillsChanged;
         _successStatus.Dispose();
+        _tasks.Dispose();
     }
 
     private void ClearStatus()
@@ -345,7 +365,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
         StatusText = message;
         if (autoClear && StatusKind == SkillStatusKind.Success)
         {
-            _ = _successStatus.ScheduleAsync(
+            _tasks.Run(_ => _successStatus.ScheduleAsync(
                 SuccessStatusDisplayDuration,
                 () => RunOnUiThread(() =>
                 {
@@ -354,7 +374,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
                     {
                         ClearStatus();
                     }
-                }));
+                })));
         }
     }
 
@@ -371,15 +391,15 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
         }
     }
 
-    private static void RunOnUiThread(Action action)
+    private void RunOnUiThread(Action action)
     {
-        if (Avalonia.Application.Current is null || Dispatcher.UIThread.CheckAccess())
+        if (_uiDispatcher.CheckAccess())
         {
             action();
             return;
         }
 
-        Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
+        _tasks.Run(_ => _uiDispatcher.InvokeAsync(action));
     }
 }
 

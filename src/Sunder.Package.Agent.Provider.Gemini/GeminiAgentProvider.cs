@@ -44,10 +44,8 @@ public sealed class GeminiAgentProvider : IAgentChatProvider, IAgentUtilityModel
     public async ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return UtilityModelSettingsState.ResolveModelId(
-            await _packageContext.Configuration.GetValueAsync(GeminiProviderConfiguration.UtilityModelKey, cancellationToken),
-            GeminiProviderConfiguration.DefaultUtilityModelId,
-            GeminiModelCatalog.UtilityModelOptions.Select(option => option.Value));
+        return await GeminiProviderConfiguration.UtilityModelSelection
+            .ResolveAsync(_packageContext.Settings, cancellationToken);
     }
 
     public async ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)

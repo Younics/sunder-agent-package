@@ -6,6 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Sunder.Agent.Execution.Common\Sunder.Agent.Execution.Common.csproj" />
     <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
     <Compile Include="..\Sunder.Package.Agent.Shared\Presentation\AgentToolPresentationMarkdown.cs"
              Link="Presentation\AgentToolPresentationMarkdown.cs" />

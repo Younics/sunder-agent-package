@@ -88,7 +88,7 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
     public string ResolveDefaultHostPath(string containerRoot)
     {
         var relativePath = ToFileStoreRelativePath(containerRoot);
-        return ValidateHostPath(packageContext.Storage.LocalWorkspace.GetLocalPath(relativePath));
+        return ValidateHostPath(packageContext.Storage.RoleLocalWorkspace.GetLocalPath(relativePath));
     }
 
     internal void EnsureHostMountPaths(DockerExecutionRuntimeConfig config)

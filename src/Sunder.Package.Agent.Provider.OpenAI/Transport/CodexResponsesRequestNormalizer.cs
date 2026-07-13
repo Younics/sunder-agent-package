@@ -10,36 +10,66 @@ internal static class CodexResponsesRequestNormalizer
         AgentChatClientContext context,
         IReadOnlyList<AIChatMessage> messages,
         ChatOptions? options,
-        bool toolAware)
+        bool toolAware,
+        string? promptCacheKeyOverride = null)
     {
         var modelId = options?.ModelId ?? context.ModelId;
         var model = OpenAiModelIds.Normalize(modelId);
         var modelCapabilities = OpenAiModelCatalog.GetCapabilities(model);
         var isReasoningModel = modelCapabilities.SupportsReasoning;
-        var input = CodexResponsesInputNormalizer.BuildNativeInput(messages, isReasoningModel);
-        var hasDeclaredTools = options?.Tools is { Count: > 0 };
+        var conversationInput = CodexResponsesInputNormalizer.BuildNativeInput(messages, isReasoningModel);
+        var hasDeclaredTools = options?.Tools is { Count: > 0 }
+                               && (!modelCapabilities.UseResponsesLite || toolAware);
         var tools = hasDeclaredTools
             ? CodexResponsesInputNormalizer.BuildFunctionTools(options?.Tools ?? [])
             : [];
-        var promptCacheKey = string.IsNullOrWhiteSpace(options?.ConversationId) ? null : options.ConversationId;
+        var promptCacheKey = !string.IsNullOrWhiteSpace(promptCacheKeyOverride)
+            ? promptCacheKeyOverride
+            : string.IsNullOrWhiteSpace(options?.ConversationId) ? null : options.ConversationId;
         var instructions = string.IsNullOrWhiteSpace(options?.Instructions) ? null : options.Instructions;
         IReadOnlyList<string>? include = isReasoningModel ? ["reasoning.encrypted_content"] : null;
-        var reasoning = BuildReasoningOptions(isReasoningModel, options?.Reasoning);
+        var reasoning = BuildReasoningOptions(modelCapabilities, options?.Reasoning);
+        var input = modelCapabilities.UseResponsesLite
+            ? BuildResponsesLiteInput(conversationInput, instructions, tools)
+            : conversationInput;
+        var usesDeveloperInstructionInput = CodexResponsesInputNormalizer.UsesDeveloperInstructionInput(messages, isReasoningModel)
+                                            || modelCapabilities.UseResponsesLite && instructions is not null;
 
         return new CodexNormalizedResponsesRequest(
             model,
             input,
-            instructions,
+            modelCapabilities.UseResponsesLite ? string.Empty : instructions,
             tools,
-            BuildToolChoice(options, tools, hasDeclaredTools),
-            hasDeclaredTools ? options?.AllowMultipleToolCalls == true : null,
+            modelCapabilities.UseResponsesLite ? "auto" : BuildToolChoice(options, tools, hasDeclaredTools),
+            modelCapabilities.UseResponsesLite
+                ? false
+                : hasDeclaredTools ? options?.AllowMultipleToolCalls == true : null,
             promptCacheKey,
             include,
             GetServiceTier(modelId, options),
-            options?.MaxOutputTokens,
+            MaxOutputTokens: null,
             reasoning,
             modelCapabilities.UseLowTextVerbosity ? new CodexTextOptions("low") : null,
-            CodexResponsesInputNormalizer.UsesDeveloperInstructionInput(messages, isReasoningModel));
+            usesDeveloperInstructionInput,
+            modelCapabilities.UseResponsesLite);
+    }
+
+    private static IReadOnlyList<object> BuildResponsesLiteInput(
+        IReadOnlyList<object> conversationInput,
+        string? instructions,
+        IReadOnlyList<object> tools)
+    {
+        var input = new List<object>(conversationInput.Count + 2)
+        {
+            new CodexAdditionalToolsInput(tools),
+        };
+        if (instructions is not null)
+        {
+            input.Add(new CodexDeveloperMessageInput([new CodexTextPart("input_text", instructions)]));
+        }
+
+        input.AddRange(conversationInput);
+        return input;
     }
 
     private static object? BuildToolChoice(
@@ -83,10 +113,10 @@ internal static class CodexResponsesRequestNormalizer
             "openai-unsupported-tool-mode");
 
     private static CodexReasoningOptions? BuildReasoningOptions(
-        bool isReasoningModel,
+        OpenAiModelCapabilities modelCapabilities,
         ReasoningOptions? reasoning)
     {
-        if (!isReasoningModel)
+        if (!modelCapabilities.SupportsReasoning)
         {
             return null;
         }
@@ -94,7 +124,11 @@ internal static class CodexResponsesRequestNormalizer
         var summary = reasoning?.Output == ReasoningOutput.None ? null : "auto";
 
         // The Codex-connected endpoint rejects reasoning.mode. API-key mode applies Pro in OpenAiModelOptionsChatClient.
-        return new CodexReasoningOptions(ToOpenAiReasoningEffort(reasoning?.Effort) ?? "medium", summary, Mode: null);
+        return new CodexReasoningOptions(
+            ToOpenAiReasoningEffort(reasoning?.Effort) ?? modelCapabilities.DefaultReasoningEffort,
+            summary,
+            Mode: null,
+            Context: modelCapabilities.UseResponsesLite ? "all_turns" : null);
     }
 
     private static string? ToOpenAiReasoningEffort(ReasoningEffort? effort)

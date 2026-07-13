@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
@@ -31,7 +32,7 @@ internal sealed class AgentLoopTerminalHandler
                 checkpoint: emptyCheckpoint,
                 cancellationToken: cancellationToken);
             host.LogEvent(
-                AgentLogLevel.Information,
+                PackageLogLevel.Information,
                 "behavior.loop.completed",
                 "No visible assistant response was produced.",
                 loopStopwatch.ElapsedMilliseconds);
@@ -40,7 +41,7 @@ internal sealed class AgentLoopTerminalHandler
 
         assistantTurnState.Turn = host.UpsertAssistantTurn(assistantTurnState.Turn, responseContent);
         host.LogEvent(
-            AgentLogLevel.Information,
+            PackageLogLevel.Information,
             "assistant.response.completed",
             $"{responseContent.Length} characters",
             loopStopwatch.ElapsedMilliseconds,
@@ -59,7 +60,7 @@ internal sealed class AgentLoopTerminalHandler
             cancellationToken: cancellationToken);
         var result = new AgentBehaviorLoopResult(checkpoint, ToCompletionKind(checkpoint.Status));
         host.LogEvent(
-            AgentLogLevel.Information,
+            PackageLogLevel.Information,
             "behavior.loop.completed",
             result.CompletionKind.ToString(),
             loopStopwatch.ElapsedMilliseconds);
@@ -96,7 +97,7 @@ internal sealed class AgentLoopTerminalHandler
         if (!host.IsCurrentRun())
         {
             host.LogEvent(
-                AgentLogLevel.Information,
+                PackageLogLevel.Information,
                 "behavior.loop.interrupted",
                 "Run was replaced or stopped after transient provider failure.",
                 elapsedMilliseconds);
@@ -120,7 +121,7 @@ internal sealed class AgentLoopTerminalHandler
             isInterrupted: true,
             cancellationToken: cancellationToken);
         host.LogEvent(
-            AgentLogLevel.Warning,
+            PackageLogLevel.Warning,
             "behavior.loop.interrupted",
             message,
             elapsedMilliseconds,
@@ -138,7 +139,7 @@ internal sealed class AgentLoopTerminalHandler
         if (!host.IsCurrentRun())
         {
             host.LogEvent(
-                AgentLogLevel.Information,
+                PackageLogLevel.Information,
                 "behavior.loop.interrupted",
                 "Run was replaced or stopped after provider failure.",
                 elapsedMilliseconds);
@@ -154,7 +155,7 @@ internal sealed class AgentLoopTerminalHandler
             exception.ErrorCode ?? exception.Message,
             CancellationToken.None);
         host.LogEvent(
-            AgentLogLevel.Error,
+            PackageLogLevel.Error,
             "provider.request.failed",
             exception.ErrorCode ?? exception.Message,
             elapsedMilliseconds,
@@ -172,7 +173,7 @@ internal sealed class AgentLoopTerminalHandler
         if (!host.IsCurrentRun())
         {
             host.LogEvent(
-                AgentLogLevel.Information,
+                PackageLogLevel.Information,
                 "behavior.loop.interrupted",
                 "Run was replaced or stopped after failure.",
                 elapsedMilliseconds);
@@ -188,7 +189,7 @@ internal sealed class AgentLoopTerminalHandler
             exception.Message,
             CancellationToken.None);
         host.LogEvent(
-            AgentLogLevel.Error,
+            PackageLogLevel.Error,
             "behavior.loop.failed",
             exception.Message,
             elapsedMilliseconds,

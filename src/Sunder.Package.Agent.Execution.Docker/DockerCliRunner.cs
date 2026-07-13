@@ -38,18 +38,11 @@ public class DockerCliRunner(IPackageContext packageContext)
             return new DockerCliRunResult(127, $"Failed to start Docker CLI: {FormatStartError(run.StartException)}", TimedOut: false, WasTruncated: false);
         }
 
-        if (run.TimedOut)
-        {
-            var timeoutOutput = ProcessOutput.Truncate(run.CombinedOutput, MaxOutputLength, out var timeoutWasTruncated);
-            var timeoutMessage = $"Docker command timed out after {timeoutSeconds} seconds.";
-            var output = string.IsNullOrWhiteSpace(timeoutOutput)
-                ? timeoutMessage
-                : string.Concat(timeoutMessage, Environment.NewLine, timeoutOutput);
-            return new DockerCliRunResult(124, output, TimedOut: true, run.WasTruncated || timeoutWasTruncated);
-        }
-
-        var truncatedOutput = ProcessOutput.Truncate(run.CombinedOutput, MaxOutputLength, out var wasTruncated);
-        return new DockerCliRunResult(run.ExitCode, truncatedOutput, TimedOut: false, run.WasTruncated || wasTruncated);
+        var output = ProcessOutput.Format(
+            run,
+            MaxOutputLength,
+            timeoutMessage: $"Docker command timed out after {timeoutSeconds} seconds.");
+        return new DockerCliRunResult(run.ExitCode, output.Content, run.TimedOut, output.WasTruncated);
     }
 
     private static string FormatStartError(Exception exception)

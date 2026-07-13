@@ -114,4 +114,28 @@ public sealed class GeminiResponseTranslatorTests
         Assert.Equal("gemini-multiple-tool-calls", exception.ErrorCode);
         Assert.Equal(2, allowed.Contents.OfType<FunctionCallContent>().Count());
     }
+
+    [Fact]
+    public void Translate_PreservesUsageAccounting()
+    {
+        var response = new GenerateContentResponse
+        {
+            UsageMetadata = new GenerateContentResponseUsageMetadata
+            {
+                PromptTokenCount = 12,
+                CandidatesTokenCount = 7,
+                TotalTokenCount = 19,
+                CachedContentTokenCount = 4,
+                ThoughtsTokenCount = 3,
+            },
+        };
+
+        var usage = new GeminiResponseTranslator().Translate(response, true).Usage;
+
+        Assert.Equal(12, usage.InputTokenCount);
+        Assert.Equal(7, usage.OutputTokenCount);
+        Assert.Equal(19, usage.TotalTokenCount);
+        Assert.Equal(4, usage.CachedInputTokenCount);
+        Assert.Equal(3, usage.ReasoningTokenCount);
+    }
 }

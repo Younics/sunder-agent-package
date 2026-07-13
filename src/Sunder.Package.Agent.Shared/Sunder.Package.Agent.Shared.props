@@ -1,14 +1,28 @@
 <Project>
   <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)Composition\*.cs"
+             Link="Composition\%(Filename)%(Extension)" />
     <Compile Include="$(MSBuildThisFileDirectory)Presentation\*.cs"
+             Exclude="$(MSBuildThisFileDirectory)Presentation\PackageCallbackFlowRunner.cs"
              Link="Presentation\%(Filename)%(Extension)" />
+    <Compile Include="$(MSBuildThisFileDirectory)Importing\*.cs"
+             Link="Importing\%(Filename)%(Extension)" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading\*.cs"
+             Link="Threading\%(Filename)%(Extension)" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\SunderComboBox.cs"
              Link="PackageViews\SunderComboBox.cs" />
     <AvaloniaResource Include="$(MSBuildThisFileDirectory)Presentation\PresentationStyles.axaml"
                       Link="Presentation\PresentationStyles.axaml" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(SunderAgentSharedCallbackFlow)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)Presentation\PackageCallbackFlowRunner.cs"
+             Link="Presentation\PackageCallbackFlowRunner.cs" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(SunderAgentSharedTranscript)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\ActivityTicker.cs"
+             Link="PackageViews\ActivityTicker.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\AgentRunActivityState.cs"
              Link="PackageViews\AgentRunActivityState.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\InlineRenameFocusCoordinator.cs"
@@ -17,6 +31,12 @@
              Link="PackageViews\TranscriptRowProjector.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptScrollCoordinator.cs"
              Link="PackageViews\TranscriptScrollCoordinator.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptScrollCoordinator.Anchors.cs"
+             Link="PackageViews\TranscriptScrollCoordinator.Anchors.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptScrollCoordinator.Lifetime.cs"
+             Link="PackageViews\TranscriptScrollCoordinator.Lifetime.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptScrollCoordinator.Paging.cs"
+             Link="PackageViews\TranscriptScrollCoordinator.Paging.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptTimelineState.cs"
              Link="PackageViews\TranscriptTimelineState.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptToolPresentationService.cs"

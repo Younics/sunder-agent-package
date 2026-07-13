@@ -9,6 +9,8 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
+using Sunder.Package.Agent.Shared.Presentation;
+using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia.Theming;
@@ -23,9 +25,17 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     private readonly IPackageExtensionCatalog? _extensionCatalog;
     private readonly TranscriptTimelineState<SubsessionTranscriptRowViewModel> _timeline;
+    private readonly ActivityTicker _activityTicker = new();
     private readonly AgentRunActivityState _runActivity;
     private readonly Task _initialization;
-    private IAgentRuntimeCatalog? _runtimeCatalog;
+    private readonly PresentationTaskScope _tasks = new();
+    private readonly Dictionary<Guid, AgentSessionRecord> _knownSessions = [];
+    private readonly Dictionary<string, AgentProfileRecord> _knownProfiles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<Guid, AgentRunCheckpointRecord> _knownCheckpoints = [];
+    private ISubsessionSessionReader? _sessionReader;
+    private ISubsessionCheckpointReader? _checkpointReader;
+    private ISubsessionTranscriptPageReader? _transcriptReader;
+    private ISubsessionChangeNotifications? _changeNotifications;
     private bool _isReconcilingSubsessionSelection;
     private bool _isRestoringReconciledSubsessionSelection;
     private bool _disposed;
@@ -54,6 +64,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             ?? []);
         var rowFactory = new SubsessionTranscriptRowFactory(
             toolPresentation,
+            _activityTicker,
             ResolveChildSessionLinksFromRuntime);
         var rowProjector = new TranscriptRowProjector<SubsessionTranscriptRowViewModel>(
             Messages,
@@ -179,7 +190,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ShowDetailPane));
     }
 
-    public ValueTask OnNavigatedToAsync(
+    public async ValueTask OnNavigatedToAsync(
         PackageViewNavigationContext context,
         CancellationToken cancellationToken = default)
     {
@@ -189,16 +200,14 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             && SelectedSubsession?.SessionId == sessionId.Value
             && IsDetailActive)
         {
-            return ValueTask.CompletedTask;
+            return;
         }
 
-        ReloadSubsessions(sessionId);
+        await ReloadSubsessionsAsync(sessionId, cancellationToken);
         if (sessionId is not null)
         {
             IsDetailActive = true;
         }
-
-        return ValueTask.CompletedTask;
     }
 
     [RelayCommand]
@@ -235,7 +244,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private void OpenChildSession(SubsessionChildSessionLinkViewModel? childSession)
+    private async Task OpenChildSessionAsync(SubsessionChildSessionLinkViewModel? childSession)
     {
         if (childSession is null
             || SelectedSubsession?.SessionId == childSession.SessionId && IsDetailActive)
@@ -243,59 +252,8 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        ReloadSubsessions(childSession.SessionId);
+        await ReloadSubsessionsAsync(childSession.SessionId);
         IsDetailActive = true;
-    }
-
-    public async Task<bool> LoadOlderTranscriptRowsAsync(object? protectedAnchorKey = null)
-    {
-        var runtime = _runtimeCatalog;
-        if (runtime is null)
-        {
-            return false;
-        }
-
-        var loaded = await _timeline.LoadOlderAsync(
-            (sessionId, beforeCreatedAt, beforeTurnId, limit, cancellationToken) => Task.Run(
-                () => runtime.ListTurnsBefore(
-                    sessionId,
-                    beforeCreatedAt,
-                    beforeTurnId,
-                    limit),
-                cancellationToken),
-            protectedAnchorKey);
-        if (loaded)
-        {
-            ApplyRunActivityState();
-        }
-
-        return loaded;
-    }
-
-    public async Task<bool> LoadNewerTranscriptRowsAsync(object? protectedAnchorKey = null)
-    {
-        var runtime = _runtimeCatalog;
-        if (runtime is null)
-        {
-            return false;
-        }
-
-        var loaded = await _timeline.LoadNewerAsync(
-            (sessionId, afterCreatedAt, afterTurnId, limit, cancellationToken) => Task.Run(
-                () => runtime.ListTurnsAfter(
-                    sessionId,
-                    afterCreatedAt,
-                    afterTurnId,
-                    limit),
-                cancellationToken),
-            protectedAnchorKey);
-        if (loaded)
-        {
-            _runActivity.NotifyFollowStateChanged();
-            ApplyRunActivityState();
-        }
-
-        return loaded;
     }
 
     [RelayCommand]
@@ -334,45 +292,68 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         bool isExpanded)
         => _timeline.SetRowExpanded(row, isExpanded);
 
-    private void EnsureRuntimeCatalog()
+    private void EnsureRuntimeReaders()
     {
-        if (_runtimeCatalog is not null || _extensionCatalog is null)
+        if (_sessionReader is not null || _extensionCatalog is null)
         {
             return;
         }
 
-        _runtimeCatalog = _extensionCatalog
+        var runtime = _extensionCatalog
             .GetExtensions(PackageExtensionPoints.RuntimeCatalogs)
             .FirstOrDefault();
-        if (_runtimeCatalog is not null)
+        if (runtime is not null)
         {
-            _runtimeCatalog.SessionChanged += OnSessionChanged;
-            _runtimeCatalog.TurnChanged += OnTurnChanged;
+            var adapter = new SubsessionLocalRuntimeAdapter(runtime);
+            SetRuntimePorts(adapter, adapter, adapter, adapter);
         }
     }
 
-    private void ReloadSubsessions(Guid? selectedSessionId)
+    private async Task ReloadSubsessionsAsync(
+        Guid? selectedSessionId,
+        CancellationToken cancellationToken = default)
     {
-        EnsureRuntimeCatalog();
-        var runtime = _runtimeCatalog;
-        if (runtime is null)
+        EnsureRuntimeReaders();
+        if (_sessionReader is null || _checkpointReader is null)
         {
             StatusText = "The Agent runtime is not available.";
             return;
         }
 
         var currentSelectionId = selectedSessionId ?? SelectedSubsession?.SessionId;
-        var subsessions = runtime.ListSessions()
+        var sessionsTask = _sessionReader.ListSessionsAsync(cancellationToken);
+        var checkpointsTask = _checkpointReader.ListLatestCheckpointsAsync(cancellationToken);
+        await Task.WhenAll(sessionsTask, checkpointsTask);
+        var catalog = await sessionsTask;
+        var checkpoints = await checkpointsTask;
+        var subsessions = catalog.Sessions
             .Where(session => session.ParentSessionId is not null)
             .OrderByDescending(session => session.UpdatedAtUtc)
             .ThenByDescending(session => session.CreatedAtUtc)
             .ToArray();
-        ReconcileSubsessions(runtime, subsessions);
+        await RunOnUiThreadAsync(
+            () => ApplySubsessionSnapshot(
+                selectedSessionId,
+                currentSelectionId,
+                catalog,
+                checkpoints,
+                subsessions),
+            cancellationToken);
+    }
 
+    private void ApplySubsessionSnapshot(
+        Guid? requestedSessionId,
+        Guid? currentSelectionId,
+        SubsessionSessionCatalog catalog,
+        IReadOnlyList<AgentRunCheckpointRecord> checkpoints,
+        IReadOnlyList<AgentSessionRecord> subsessions)
+    {
+        ReplaceRuntimeSnapshot(catalog, checkpoints);
+        ReconcileSubsessions(subsessions);
         OnPropertyChanged(nameof(HasNoSubsessions));
         var selectedSubsession = Subsessions.FirstOrDefault(
             session => session.SessionId == currentSelectionId);
-        if (selectedSubsession is null && (!IsCompactLayout || selectedSessionId is not null))
+        if (selectedSubsession is null && (!IsCompactLayout || requestedSessionId is not null))
         {
             selectedSubsession = Subsessions.FirstOrDefault();
         }
@@ -385,9 +366,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         ApplyRunActivityState();
     }
 
-    private void ReconcileSubsessions(
-        IAgentRuntimeCatalog runtime,
-        IReadOnlyList<AgentSessionRecord> sessions)
+    private void ReconcileSubsessions(IReadOnlyList<AgentSessionRecord> sessions)
     {
         var desiredSessionIds = sessions.Select(session => session.SessionId).ToHashSet();
         var selectedSessionId = SelectedSubsession?.SessionId;
@@ -409,8 +388,8 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             {
                 var session = sessions[index];
                 var existingIndex = FindSubsessionIndex(session.SessionId);
-                var subtitle = BuildSubtitle(runtime, session);
-                var checkpoint = runtime.GetLatestCheckpoint(session.SessionId);
+                var subtitle = BuildSubtitle(session);
+                _knownCheckpoints.TryGetValue(session.SessionId, out var checkpoint);
                 if (existingIndex < 0)
                 {
                     Subsessions.Insert(
@@ -478,14 +457,15 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         return index < 0 ? null : Subsessions[index];
     }
 
-    private static string BuildSubtitle(IAgentRuntimeCatalog runtime, AgentSessionRecord session)
+    private string BuildSubtitle(AgentSessionRecord session)
     {
         var parentTitle = session.ParentSessionId is { } parentSessionId
-            ? runtime.GetSession(parentSessionId)?.Title
+            && _knownSessions.TryGetValue(parentSessionId, out var parentSession)
+            ? parentSession.Title
             : null;
         var profileName = string.IsNullOrWhiteSpace(session.ProfileId)
             ? null
-            : runtime.GetProfile(session.ProfileId)?.DisplayName;
+            : _knownProfiles.GetValueOrDefault(session.ProfileId)?.DisplayName;
         var subtitle = string.Join(
             " · ",
             new[] { FormatAgentKind(profileName, session.AgentKind), parentTitle }
@@ -507,84 +487,17 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             : name;
     }
 
-    private void LoadTranscript(Guid? sessionId)
-    {
-        _runActivity.Reset();
-        if (_runtimeCatalog is null || sessionId is null)
-        {
-            _timeline.ClearSession();
-            return;
-        }
-
-        var ticket = _timeline.BeginInitialLoad(sessionId.Value);
-        if (Application.Current is null)
-        {
-            CompleteTranscriptLoad(
-                ticket,
-                _runtimeCatalog.ListRecentTurns(
-                    sessionId.Value,
-                    InitialTranscriptTurnLimit + 1));
-            return;
-        }
-
-        _ = LoadTranscriptAsync(ticket);
-    }
-
-    private async Task LoadTranscriptAsync(TranscriptLoadTicket ticket)
-    {
-        try
-        {
-            var runtime = _runtimeCatalog;
-            if (runtime is null)
-            {
-                _timeline.TryFailInitialLoad(ticket);
-                return;
-            }
-
-            var turns = await Task.Run(
-                () => runtime.ListRecentTurns(ticket.SessionId, InitialTranscriptTurnLimit + 1),
-                ticket.Generation.CancellationToken);
-            await Dispatcher.UIThread.InvokeAsync(
-                () => CompleteTranscriptLoad(ticket, turns),
-                DispatcherPriority.Background);
-        }
-        catch (OperationCanceledException) when (ticket.Generation.CancellationToken.IsCancellationRequested)
-        {
-        }
-        catch
-        {
-            await Dispatcher.UIThread.InvokeAsync(
-                () => _timeline.TryFailInitialLoad(ticket),
-                DispatcherPriority.Background);
-        }
-    }
-
-    private void CompleteTranscriptLoad(
-        TranscriptLoadTicket ticket,
-        IReadOnlyList<AgentTurnRecord> turns)
-    {
-        if (!_timeline.TryCompleteInitialLoad(ticket, turns))
-        {
-            return;
-        }
-
-        _runActivity.TrackCheckpoint(_runtimeCatalog?.GetLatestCheckpoint(ticket.SessionId));
-        ApplyRunActivityState();
-    }
-
     private IReadOnlyList<SubsessionChildSessionLinkViewModel> ResolveChildSessionLinksFromRuntime(
         AgentTurnRecord turn,
         AgentTurnItemRecord item)
     {
-        var runtime = _runtimeCatalog;
-        if (runtime is null
-            || !IsSubagentTool(item.ToolId)
+        if (!IsSubagentTool(item.ToolId)
             || string.IsNullOrWhiteSpace(item.CallId))
         {
             return [];
         }
 
-        return runtime.ListSessions()
+        return _knownSessions.Values
             .Where(session => session.ParentSessionId == turn.SessionId
                               && string.Equals(
                                   session.ParentToolCallId,
@@ -595,13 +508,13 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             {
                 var profileName = string.IsNullOrWhiteSpace(session.ProfileId)
                     ? null
-                    : runtime.GetProfile(session.ProfileId)?.DisplayName;
+                    : _knownProfiles.GetValueOrDefault(session.ProfileId)?.DisplayName;
+                _knownCheckpoints.TryGetValue(session.SessionId, out var checkpoint);
                 return new SubsessionChildSessionLinkViewModel(
                     session.SessionId,
                     session.Title,
                     FormatAgentKind(profileName, session.AgentKind) ?? "Subsession",
-                    runtime.GetLatestCheckpoint(session.SessionId)?.Status
-                    ?? AgentRunStatus.Idle);
+                    checkpoint?.Status ?? AgentRunStatus.Idle);
             })
             .ToArray();
     }
@@ -614,7 +527,21 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
                StringComparison.OrdinalIgnoreCase);
 
     private void OnSessionChanged(Guid sessionId)
-        => RunOnUiThread(() => ApplySessionChanged(sessionId));
+        => _tasks.Run(async cancellationToken =>
+        {
+            try
+            {
+                await ReloadSubsessionsAsync(SelectedSubsession?.SessionId, cancellationToken);
+                await RunOnUiThreadAsync(() => ApplySessionChanged(sessionId), cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                await RunOnUiThreadAsync(() => StatusText = ex.Message, cancellationToken);
+            }
+        });
 
     private void ApplySessionChanged(Guid sessionId)
     {
@@ -623,11 +550,10 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var selectedId = SelectedSubsession?.SessionId;
-        ReloadSubsessions(selectedId);
         if (SelectedSubsession?.SessionId == sessionId)
         {
-            _runActivity.TrackCheckpoint(_runtimeCatalog?.GetLatestCheckpoint(sessionId));
+            _knownCheckpoints.TryGetValue(sessionId, out var checkpoint);
+            _runActivity.TrackCheckpoint(checkpoint);
             ApplyRunActivityState();
             _timeline.NotifyRowsChanged();
         }
@@ -707,15 +633,83 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanLoadNewerTranscriptRows));
     }
 
-    private static void RunOnUiThread(Action action)
+    private void RunOnUiThread(Action action)
     {
+        _tasks.Run(async cancellationToken =>
+        {
+            if (Application.Current is null || Dispatcher.UIThread.CheckAccess())
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    action();
+                }
+                return;
+            }
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    action();
+                }
+            }, DispatcherPriority.Background);
+        });
+    }
+
+    private async Task RunOnUiThreadAsync(Action action, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         if (Application.Current is null || Dispatcher.UIThread.CheckAccess())
         {
             action();
             return;
         }
 
-        Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                action();
+            }
+        }, DispatcherPriority.Background);
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    private void ReplaceRuntimeSnapshot(
+        SubsessionSessionCatalog catalog,
+        IReadOnlyList<AgentRunCheckpointRecord> checkpoints)
+    {
+        _knownSessions.Clear();
+        foreach (var session in catalog.Sessions)
+        {
+            _knownSessions[session.SessionId] = session;
+        }
+
+        _knownProfiles.Clear();
+        foreach (var profile in catalog.Profiles)
+        {
+            _knownProfiles[profile.ProfileId] = profile;
+        }
+
+        _knownCheckpoints.Clear();
+        foreach (var checkpoint in checkpoints)
+        {
+            _knownCheckpoints[checkpoint.SessionId] = checkpoint;
+        }
+    }
+
+    private void SetRuntimePorts(
+        ISubsessionSessionReader sessionReader,
+        ISubsessionCheckpointReader checkpointReader,
+        ISubsessionTranscriptPageReader transcriptReader,
+        ISubsessionChangeNotifications changeNotifications)
+    {
+        _sessionReader = sessionReader;
+        _checkpointReader = checkpointReader;
+        _transcriptReader = transcriptReader;
+        _changeNotifications = changeNotifications;
+        changeNotifications.SessionChanged += OnSessionChanged;
+        changeNotifications.TurnChanged += OnTurnChanged;
     }
 
     private static Guid? TryGetSessionId(IReadOnlyDictionary<string, string?> parameters)
@@ -725,89 +719,4 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
            && Guid.TryParse(value, out var sessionId)
             ? sessionId
             : null;
-}
-
-public sealed partial class SubsessionListItemViewModel : ObservableObject
-{
-    private AgentSessionRecord _session;
-
-    public SubsessionListItemViewModel(
-        AgentSessionRecord session,
-        string subtitle,
-        AgentRunCheckpointRecord? checkpoint)
-    {
-        _session = session;
-        Subtitle = subtitle;
-        ApplyCheckpoint(checkpoint);
-    }
-
-    public Guid SessionId => _session.SessionId;
-
-    public AgentSessionRecord Session => _session;
-
-    public string Title => _session.Title;
-
-    [ObservableProperty]
-    private string _subtitle = string.Empty;
-
-    [ObservableProperty]
-    private string _statusText = "No run state recorded yet.";
-
-    [ObservableProperty]
-    private string _statusBadgeText = "Idle";
-
-    [ObservableProperty]
-    private IBrush? _statusBrush;
-
-    [ObservableProperty]
-    private bool _isRunActive;
-
-    public void UpdateSession(AgentSessionRecord session, string subtitle)
-    {
-        var oldTitle = _session.Title;
-        _session = session;
-        if (!string.Equals(oldTitle, session.Title, StringComparison.Ordinal))
-        {
-            OnPropertyChanged(nameof(Title));
-        }
-
-        if (!string.Equals(Subtitle, subtitle, StringComparison.Ordinal))
-        {
-            Subtitle = subtitle;
-        }
-
-        OnPropertyChanged(nameof(Session));
-    }
-
-    public void ApplyCheckpoint(AgentRunCheckpointRecord? checkpoint)
-    {
-        if (checkpoint is null)
-        {
-            StatusText = "No run state recorded yet.";
-            StatusBadgeText = "Idle";
-            StatusBrush = ResolveStatusBrush(AgentRunStatus.Idle);
-            IsRunActive = false;
-            return;
-        }
-
-        StatusText = $"Run revision {checkpoint.RunRevision}: {checkpoint.Status} · {checkpoint.Summary}";
-        StatusBadgeText = checkpoint.Status == AgentRunStatus.Completed
-            ? "Done"
-            : checkpoint.Status.ToString();
-        StatusBrush = ResolveStatusBrush(checkpoint.Status);
-        IsRunActive = checkpoint.Status == AgentRunStatus.Running;
-    }
-
-    private static IBrush? ResolveStatusBrush(AgentRunStatus status)
-    {
-        var resourceKey = status switch
-        {
-            AgentRunStatus.Completed => SunderThemeKeys.SuccessBrush,
-            AgentRunStatus.Running => SunderThemeKeys.AccentBrush,
-            AgentRunStatus.Failed => SunderThemeKeys.DangerBrush,
-            AgentRunStatus.Interrupted or AgentRunStatus.Stopped => SunderThemeKeys.WarningBrush,
-            _ => SunderThemeKeys.ForegroundMutedBrush,
-        };
-        return SubagentThemeBrushes.Resolve(resourceKey);
-    }
 }

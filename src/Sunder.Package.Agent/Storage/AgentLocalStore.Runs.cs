@@ -203,6 +203,31 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        var result = TryTransitionRun(
+            connection,
+            transaction,
+            key,
+            expectedEpoch,
+            status,
+            summary);
+        if (result is null)
+        {
+            transaction.Rollback();
+            return null;
+        }
+
+        transaction.Commit();
+        return result;
+    }
+
+    private static AgentRunTransitionResult? TryTransitionRun(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        AgentDurableRunKey key,
+        long expectedEpoch,
+        AgentRunStatus status,
+        string? summary)
+    {
         var now = DateTimeOffset.UtcNow;
         var isTerminal = IsFinishedRunStatus(status);
 
@@ -245,7 +270,6 @@ public sealed partial class AgentLocalStore
             command.Parameters.AddWithValue("$expectedEpoch", expectedEpoch);
             if (command.ExecuteNonQuery() != 1)
             {
-                transaction.Rollback();
                 return null;
             }
         }
@@ -261,7 +285,6 @@ public sealed partial class AgentLocalStore
         TouchSessionForCheckpoint(connection, transaction, checkpoint);
         var run = GetRun(connection, transaction, key.RunId)
             ?? throw new InvalidOperationException("The transitioned durable run could not be reloaded.");
-        transaction.Commit();
         return new AgentRunTransitionResult(run, checkpoint);
     }
 

@@ -1,11 +1,88 @@
+using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Microsoft.Extensions.DependencyInjection;
+using Sunder.Package.Agent.Services;
+using Sunder.Package.Agent.Storage;
+using Sunder.Package.Agent.Subagents.Services;
+using Sunder.Sdk.Abstractions;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed class ArchitectureReferenceTests
 {
+    [Fact]
+    public void AgentAppComposition_CannotResolveStoreOrCreateAgentDatabase()
+    {
+        using var packageScope = RegressionTestPackageScope.Create();
+        var databasePath = packageScope.Context.Storage.RoleLocalWorkspace.GetLocalPath("agent/agent.db");
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        services.AddSingleton(packageScope.Context);
+        services.AddSingleton<IPackageContext>(packageScope.Context);
+        services.AddSingleton<Sunder.Sdk.Runtime.IPackageRuntimeClient>(
+            Sunder.Sdk.Runtime.NullPackageRuntimeClient.Instance);
+
+        new AppPackageModule().ConfigureAppServices(services, packageScope.Context);
+        using var provider = services.BuildServiceProvider(new Microsoft.Extensions.DependencyInjection.ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = true,
+        });
+
+        Assert.Null(provider.GetService(typeof(AgentLocalStore)));
+        Assert.False(File.Exists(databasePath));
+    }
+
+    [Fact]
+    public void AgentDatabase_IsOpenedOnlyByRuntimeComposition()
+    {
+        using var packageScope = RegressionTestPackageScope.Create();
+        var databasePath = packageScope.Context.Storage.RoleLocalWorkspace.GetLocalPath("agent/agent.db");
+        Assert.False(File.Exists(databasePath));
+
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        services.AddSingleton<IPackageContext>(packageScope.Context);
+        services.AddSingleton<IPackageExtensionCatalog>(new RegressionTestExtensionCatalog());
+        services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
+        new PackageModule().ConfigureRuntimeServices(services, packageScope.Context);
+
+        Assert.True(File.Exists(databasePath));
+    }
+
+    [Fact]
+    public void AgentAppModule_DoesNotRegisterRuntimeServicesOrExtensions()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            AgentPackageRepositoryInventory.RepositoryRoot.FullName,
+            "src", "Sunder.Package.Agent", "PackageModule.cs"));
+        var appModuleSource = source[(source.IndexOf("public sealed class AppPackageModule", StringComparison.Ordinal))..];
+
+        Assert.DoesNotContain("AgentLocalStore", appModuleSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("RegisterExtension", appModuleSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("ConfigureRuntimeServices", appModuleSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StackDependencyContributors_RequireOwnedExtensionCatalogs()
+    {
+        var contributorTypes = new[]
+        {
+            typeof(AgentProfileStackContributor),
+            typeof(AgentWorkspaceStackContributor),
+            typeof(SubagentStackContributor),
+        };
+
+        foreach (var contributorType in contributorTypes)
+        {
+            var parameter = Assert.Single(
+                Assert.Single(contributorType.GetConstructors()).GetParameters(),
+                candidate => candidate.ParameterType == typeof(IPackageExtensionCatalog));
+            Assert.False(parameter.IsOptional);
+            Assert.False(parameter.HasDefaultValue);
+        }
+    }
+
     [Fact]
     public void AgentExtensionPackages_DoNotReferenceBaseAgentImplementationProjectOrPackage()
     {
@@ -185,6 +262,31 @@ public sealed class ArchitectureReferenceTests
     }
 
     [Fact]
+    public void AgentContracts_PublicApiDoesNotExposeSourceLinkedSharedTypes()
+    {
+        var contractsAssembly = typeof(Sunder.Package.Agent.Contracts.PackageExtensionPoints).Assembly;
+        var prohibitedNamespaces = new[]
+        {
+            "Sunder.Agent.Execution.Common",
+            "Sunder.Package.Agent.Shared",
+            "Sunder.Package.Agent.Provider.Shared",
+        };
+
+        var exposedTypes = contractsAssembly.ExportedTypes
+            .SelectMany(type => type.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
+                .SelectMany(GetSignatureTypes)
+                .Append(type))
+            .SelectMany(FlattenType)
+            .Where(type => type.Namespace is not null)
+            .Where(type => prohibitedNamespaces.Any(prefix =>
+                type.Namespace!.StartsWith(prefix, StringComparison.Ordinal)))
+            .Distinct()
+            .ToArray();
+
+        Assert.Empty(exposedTypes);
+    }
+
+    [Fact]
     public void SunderPackages_DoNotReferenceHostImplementationProjectsOrNamespaces()
     {
         var packagesRoot = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "src");
@@ -211,6 +313,35 @@ public sealed class ArchitectureReferenceTests
             .ToArray();
 
         Assert.Empty(manifestPaths);
+    }
+
+    [Fact]
+    public void SchemaOwnedSettings_DoNotUseOpaquePackageState()
+    {
+        var sourceRoot = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "src");
+        var settingsOwners = new[]
+        {
+            "Sunder.Package.Agent.Execution.Docker/DockerExecutionSettingsViewModel.cs",
+            "Sunder.Package.Agent.Execution.Local/LocalExecutionSettingsViewModel.cs",
+            "Sunder.Package.Agent.Provider.LMStudio/LMStudioSettingsViewModel.cs",
+            "Sunder.Package.Agent.Provider.OpenAI/OpenAiSettingsViewModel.cs",
+            "Sunder.Package.Agent.Provider.Shared/UtilityModelSettingsState.cs",
+        };
+
+        foreach (var relativePath in settingsOwners)
+        {
+            var source = File.ReadAllText(Path.Combine(sourceRoot, NormalizePath(relativePath)));
+            Assert.DoesNotContain("Storage.State", source, StringComparison.Ordinal);
+        }
+
+        foreach (var relativePath in settingsOwners.Skip(2))
+        {
+            var source = File.ReadAllText(Path.Combine(sourceRoot, NormalizePath(relativePath)));
+            Assert.Contains(".Settings", source, StringComparison.Ordinal);
+        }
+
+        var allSource = string.Join('\n', EnumerateSourceFiles(sourceRoot, [".cs"]).Select(File.ReadAllText));
+        Assert.DoesNotContain("IPackageConfiguration", allSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -348,6 +479,38 @@ public sealed class ArchitectureReferenceTests
             .Where(AgentPackageRepositoryInventory.IsSourceFile)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+
+    private static IEnumerable<Type> GetSignatureTypes(MemberInfo member)
+        => member switch
+        {
+            MethodInfo method => method.GetParameters().Select(static parameter => parameter.ParameterType)
+                .Append(method.ReturnType),
+            ConstructorInfo constructor => constructor.GetParameters()
+                .Select(static parameter => parameter.ParameterType),
+            PropertyInfo property => [property.PropertyType],
+            FieldInfo field => [field.FieldType],
+            EventInfo eventInfo when eventInfo.EventHandlerType is not null => [eventInfo.EventHandlerType],
+            _ => [],
+        };
+
+    private static IEnumerable<Type> FlattenType(Type type)
+    {
+        yield return type;
+        if (type.HasElementType && type.GetElementType() is { } elementType)
+        {
+            foreach (var nested in FlattenType(elementType))
+            {
+                yield return nested;
+            }
+        }
+        foreach (var argument in type.GetGenericArguments())
+        {
+            foreach (var nested in FlattenType(argument))
+            {
+                yield return nested;
+            }
+        }
+    }
 
     private sealed record SourceLink(string DeclarationPath, string SourcePath);
 }

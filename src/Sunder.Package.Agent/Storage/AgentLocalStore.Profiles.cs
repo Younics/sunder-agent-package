@@ -22,21 +22,7 @@ public sealed partial class AgentLocalStore
         command.CommandText = "SELECT ProfileId, DisplayName, Description, Instructions, ProviderId, ModelId, EmbeddingProviderId, EmbeddingModelId, CreatedAtUtc, UpdatedAtUtc, BehaviorLoopId, BehaviorLoopSourceId, BehaviorLoopSettingsJson, IsInternal FROM AgentProfiles WHERE ProfileId = $id;";
         command.Parameters.AddWithValue("$id", profileId);
 
-        string loadedProfileId;
-        string displayName;
-        string? description;
-        string? instructions;
-        string? chatProviderId;
-        string? chatModelId;
-        string? embeddingProviderId;
-        string? embeddingModelId;
-        DateTimeOffset createdAtUtc;
-        DateTimeOffset updatedAtUtc;
-        string? behaviorLoopId;
-        string? behaviorLoopSourceId;
-        string? behaviorLoopSettingsJson;
-        bool isInternal;
-
+        ProfileRow row;
         using (var reader = command.ExecuteReader())
         {
             if (!reader.Read())
@@ -44,39 +30,14 @@ public sealed partial class AgentLocalStore
                 return null;
             }
 
-            loadedProfileId = reader.GetString(0);
-            displayName = reader.GetString(1);
-            description = reader.IsDBNull(2) ? null : reader.GetString(2);
-            instructions = reader.IsDBNull(3) ? null : reader.GetString(3);
-            chatProviderId = reader.IsDBNull(4) ? null : reader.GetString(4);
-            chatModelId = reader.IsDBNull(5) ? null : reader.GetString(5);
-            embeddingProviderId = reader.IsDBNull(6) ? null : reader.GetString(6);
-            embeddingModelId = reader.IsDBNull(7) ? null : reader.GetString(7);
-            createdAtUtc = DateTimeOffset.Parse(reader.GetString(8));
-            updatedAtUtc = DateTimeOffset.Parse(reader.GetString(9));
-            behaviorLoopId = reader.IsDBNull(10) ? null : reader.GetString(10);
-            behaviorLoopSourceId = reader.IsDBNull(11) ? null : reader.GetString(11);
-            behaviorLoopSettingsJson = reader.IsDBNull(12) ? null : reader.GetString(12);
-            isInternal = !reader.IsDBNull(13) && reader.GetInt64(13) != 0;
+            row = ReadProfileRow(reader);
         }
 
-        return new AgentProfileRecord(
-            loadedProfileId,
-            displayName,
-            description,
-            instructions,
-            chatProviderId,
-            chatModelId,
-            embeddingProviderId,
-            embeddingModelId,
-            createdAtUtc,
-            updatedAtUtc,
-            ListProfileModelBindings(connection, loadedProfileId, chatProviderId, chatModelId, embeddingProviderId, embeddingModelId),
-            ListProfileSelectableCapabilityAssignments(connection, loadedProfileId),
-            behaviorLoopId,
-            behaviorLoopSourceId,
-            behaviorLoopSettingsJson,
-            isInternal);
+        return ProjectProfile(
+            row,
+            ListProfileModelBindings(connection, row.ProfileId, row.ChatProviderId, row.ChatModelId,
+                row.EmbeddingProviderId, row.EmbeddingModelId),
+            ListProfileSelectableCapabilityAssignments(connection, row.ProfileId));
     }
 
     public AgentProfileModelBindingRecord? GetProfileModelBinding(string profileId, string capabilityKind)
@@ -185,37 +146,78 @@ public sealed partial class AgentLocalStore
         var items = new List<AgentProfileRecord>();
         while (reader.Read())
         {
-            var profileId = reader.GetString(0);
-            items.Add(new AgentProfileRecord(
-                reader.GetString(0),
-                reader.GetString(1),
-                reader.IsDBNull(2) ? null : reader.GetString(2),
-                reader.IsDBNull(3) ? null : reader.GetString(3),
-                reader.IsDBNull(4) ? null : reader.GetString(4),
-                reader.IsDBNull(5) ? null : reader.GetString(5),
-                reader.IsDBNull(6) ? null : reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetString(7),
-                DateTimeOffset.Parse(reader.GetString(8)),
-                DateTimeOffset.Parse(reader.GetString(9)),
-                modelBindings.TryGetValue(profileId, out var profileModelBindings)
+            var row = ReadProfileRow(reader);
+            items.Add(ProjectProfile(
+                row,
+                modelBindings.TryGetValue(row.ProfileId, out var profileModelBindings)
                     ? profileModelBindings
                     : BuildModelBindingsFromProfileFields(
-                        profileId,
-                        reader.IsDBNull(4) ? null : reader.GetString(4),
-                        reader.IsDBNull(5) ? null : reader.GetString(5),
-                        reader.IsDBNull(6) ? null : reader.GetString(6),
-                        reader.IsDBNull(7) ? null : reader.GetString(7),
-                        DateTimeOffset.Parse(reader.GetString(9))),
-                selectableAssignments.TryGetValue(profileId, out var profileSelectableAssignments) ? profileSelectableAssignments : [],
-                reader.IsDBNull(10) ? null : reader.GetString(10),
-                reader.IsDBNull(11) ? null : reader.GetString(11),
-                reader.IsDBNull(12) ? null : reader.GetString(12),
-                !reader.IsDBNull(13) && reader.GetInt64(13) != 0
-            ));
+                        row.ProfileId,
+                        row.ChatProviderId,
+                        row.ChatModelId,
+                        row.EmbeddingProviderId,
+                        row.EmbeddingModelId,
+                        row.UpdatedAtUtc),
+                selectableAssignments.GetValueOrDefault(row.ProfileId) ?? []));
         }
 
         return items;
     }
+
+    private static ProfileRow ReadProfileRow(SqliteDataReader reader)
+        => new(
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetString(3),
+            reader.IsDBNull(4) ? null : reader.GetString(4),
+            reader.IsDBNull(5) ? null : reader.GetString(5),
+            reader.IsDBNull(6) ? null : reader.GetString(6),
+            reader.IsDBNull(7) ? null : reader.GetString(7),
+            DateTimeOffset.Parse(reader.GetString(8)),
+            DateTimeOffset.Parse(reader.GetString(9)),
+            reader.IsDBNull(10) ? null : reader.GetString(10),
+            reader.IsDBNull(11) ? null : reader.GetString(11),
+            reader.IsDBNull(12) ? null : reader.GetString(12),
+            !reader.IsDBNull(13) && reader.GetInt64(13) != 0);
+
+    private static AgentProfileRecord ProjectProfile(
+        ProfileRow row,
+        IReadOnlyList<AgentProfileModelBindingRecord> modelBindings,
+        IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> selectableAssignments)
+        => new(
+            row.ProfileId,
+            row.DisplayName,
+            row.Description,
+            row.Instructions,
+            row.ChatProviderId,
+            row.ChatModelId,
+            row.EmbeddingProviderId,
+            row.EmbeddingModelId,
+            row.CreatedAtUtc,
+            row.UpdatedAtUtc,
+            modelBindings,
+            selectableAssignments,
+            row.BehaviorLoopId,
+            row.BehaviorLoopSourceId,
+            row.BehaviorLoopSettingsJson,
+            row.IsInternal);
+
+    private sealed record ProfileRow(
+        string ProfileId,
+        string DisplayName,
+        string? Description,
+        string? Instructions,
+        string? ChatProviderId,
+        string? ChatModelId,
+        string? EmbeddingProviderId,
+        string? EmbeddingModelId,
+        DateTimeOffset CreatedAtUtc,
+        DateTimeOffset UpdatedAtUtc,
+        string? BehaviorLoopId,
+        string? BehaviorLoopSourceId,
+        string? BehaviorLoopSettingsJson,
+        bool IsInternal);
 
     private static Dictionary<string, IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord>> ListAllProfileSelectableCapabilityAssignments(SqliteConnection connection)
     {

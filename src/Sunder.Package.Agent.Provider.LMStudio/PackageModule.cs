@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Provider.Shared;
+using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 
@@ -19,9 +20,6 @@ public sealed class PackageModule : ISunderRuntimePackageModule
             serviceProvider.GetRequiredService<ProviderCredentialAccessor>()));
         services.AddSingleton(serviceProvider => new LMStudioModelCatalogService(
             serviceProvider.GetRequiredService<LMStudioConnection>()));
-        services.AddTransient(serviceProvider => new LMStudioSettingsViewModel(
-            context,
-            serviceProvider.GetRequiredService<ProviderCredentialAccessor>()));
         services.AddSingleton(serviceProvider => new LMStudioAgentProvider(
             context,
             serviceProvider.GetRequiredService<LMStudioConnection>(),
@@ -30,12 +28,9 @@ public sealed class PackageModule : ISunderRuntimePackageModule
             context,
             serviceProvider.GetRequiredService<LMStudioConnection>(),
             serviceProvider.GetRequiredService<LMStudioModelCatalogService>()));
-        services.AddSingleton<IAgentChatProvider>(serviceProvider => serviceProvider.GetRequiredService<LMStudioAgentProvider>());
-        services.AddSingleton<IAgentEmbeddingProvider>(serviceProvider => serviceProvider.GetRequiredService<LMStudioEmbeddingProvider>());
+        services.AddSingletonAlias<IAgentChatProvider, LMStudioAgentProvider>();
+        services.AddSingletonAlias<IAgentEmbeddingProvider, LMStudioEmbeddingProvider>();
     }
-
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
-        => ConfigureRuntimeServices(services, context);
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
@@ -43,19 +38,13 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<LMStudioAgentProvider>());
         registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<LMStudioEmbeddingProvider>());
     }
-
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
-    {
-        registry.RegisterSettingsView<LMStudioSettingsView>();
-        registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<LMStudioAgentProvider>());
-        registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<LMStudioEmbeddingProvider>());
-    }
 }
 
 public sealed class AppPackageModule : ISunderAppPackageModule
 {
-    private readonly PackageModule _module = new();
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
+        => services.AddTransient(_ => new LMStudioSettingsViewModel(context));
 
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
+        => registry.RegisterSettingsView<LMStudioSettingsView>();
 }

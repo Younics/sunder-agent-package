@@ -25,6 +25,7 @@ using Sunder.Package.Agent.Subagents.PackageViews;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Runtime;
 using Xunit;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
@@ -157,7 +158,12 @@ public sealed class ViewLifecycleTests
         var embeddingProvider = new BlockingEmbeddingProvider();
         services.ExtensionCatalog.AddExtension(PackageExtensionPoints.EmbeddingProviders, embeddingProvider);
         var inspector = CreateMemoryInspector(scope.Context, services.ExtensionCatalog);
-        var viewModel = new MemoryInspectorViewModel(inspector);
+        var viewModel = (MemoryInspectorViewModel)Activator.CreateInstance(
+            typeof(MemoryInspectorViewModel),
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
+            binder: null,
+            [inspector],
+            culture: null)!;
         var view = new MemoryInspectorView(viewModel);
         await embeddingProvider.ReadinessStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -263,7 +269,7 @@ public sealed class ViewLifecycleTests
         using var scope = RegressionTestPackageScope.Create();
         var store = new SkillStore(scope.Context);
         await File.WriteAllTextAsync(
-            scope.Context.Storage.LocalWorkspace.GetLocalPath("skills/skills.json"),
+            scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("skills/skills.json"),
             "{ malformed");
         var viewModel = new SkillSettingsViewModel(
             store,
@@ -282,7 +288,7 @@ public sealed class ViewLifecycleTests
         using var scope = RegressionTestPackageScope.Create();
         var store = new SubagentStore(scope.Context);
         await File.WriteAllTextAsync(
-            scope.Context.Storage.LocalWorkspace.GetLocalPath("subagents/subagents.json"),
+            scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("subagents/subagents.json"),
             "{ malformed");
         var viewModel = new SubagentsViewModel(
             new SubagentService(store),
@@ -318,6 +324,36 @@ public sealed class ViewLifecycleTests
         window.Show();
         Assert.Equal('*', secretField.PasswordChar);
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void OpenAiSettingsView_HasBoundAuthorizeButton()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var viewModel = new OpenAiSettingsViewModel(scope.Context, NullPackageRuntimeClient.Instance);
+        using var view = new OpenAiSettingsView(viewModel);
+
+        var button = view.FindControl<Button>("AuthorizeButton");
+
+        Assert.NotNull(button);
+        Assert.Same(viewModel.AuthorizeCommand, button.Command);
+        Assert.Equal("Authorize with ChatGPT Plus/Pro", button.Content);
+    }
+
+    [AvaloniaFact]
+    public async Task OpenAiSettingsView_InitializesPersistedRuntimeAuthStatus()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var runtime = new ConnectedOpenAiRuntimeClient();
+        var viewModel = new OpenAiSettingsViewModel(scope.Context, runtime);
+        using var view = new OpenAiSettingsView(viewModel);
+
+        await WaitUntilAsync(() => viewModel.IsCodexConnected);
+
+        Assert.True(runtime.InvocationCount > 0);
+        Assert.Equal("Connected, active", viewModel.CodexStatusLabel);
+        Assert.True(viewModel.CanDisconnectAction);
+        Assert.Equal("Reauthorize with ChatGPT Plus/Pro", viewModel.AuthorizationButtonLabel);
     }
 
     private static AgentServices CreateAgentServices(RegressionTestPackageScope scope)
@@ -411,6 +447,48 @@ public sealed class ViewLifecycleTests
         AgentExecutionTargetService TargetService,
         AgentProfileService ProfileService);
 
+    private sealed class ConnectedOpenAiRuntimeClient : IPackageRuntimeClient
+    {
+        private readonly DateTimeOffset _expiresAtUtc = DateTimeOffset.UtcNow.AddHours(1);
+
+        public bool IsAvailable => true;
+
+        public int InvocationCount { get; private set; }
+
+        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            PackageRuntimeOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Assert.Equal("openai.auth.v1", operation.OperationId);
+            InvocationCount++;
+            var response = Activator.CreateInstance(
+                typeof(TResponse),
+                System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.NonPublic,
+                binder: null,
+                args: [true, true, _expiresAtUtc, null],
+                culture: null);
+            return ValueTask.FromResult(Assert.IsType<TResponse>(response));
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            PackageRuntimeStream<TRequest, TEvent> stream,
+            TRequest request,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
+
     private sealed class BlockingEmbeddingProvider : IAgentEmbeddingProvider
     {
         public AgentEmbeddingProviderDescriptor Descriptor { get; } = new(
@@ -492,6 +570,10 @@ public sealed class ViewLifecycleTests
     private sealed class ThrowingExtensionCatalog : IPackageExtensionCatalog
     {
         public IReadOnlyList<TContract> GetExtensions<TContract>(
+            PackageExtensionPoint<TContract> extensionPoint)
+            => throw new InvalidOperationException("Injected catalog failure.");
+
+        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(
             PackageExtensionPoint<TContract> extensionPoint)
             => throw new InvalidOperationException("Injected catalog failure.");
     }

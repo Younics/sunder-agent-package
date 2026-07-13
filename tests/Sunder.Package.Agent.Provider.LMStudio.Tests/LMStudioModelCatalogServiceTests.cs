@@ -161,10 +161,10 @@ public sealed class LMStudioModelCatalogServiceTests
 
         var firstA = catalog.GetCatalogAsync().AsTask();
         await firstAStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await context.Storage.State.SetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, "http://b.test/v1");
+        await context.Settings.SetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, "http://b.test/v1");
         var b = catalog.GetCatalogAsync().AsTask();
         await bStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await context.Storage.State.SetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, "http://a.test/v1");
+        await context.Settings.SetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, "http://a.test/v1");
         var secondA = catalog.GetCatalogAsync().AsTask();
 
         aResponse.SetResult(await LMStudioTestHttpHandler.Json("{\"data\":[{\"id\":\"model-a\"}]}"));

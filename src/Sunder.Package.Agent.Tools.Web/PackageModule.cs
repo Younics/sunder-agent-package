@@ -22,27 +22,10 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<WebSearchTool>();
     }
 
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
-        => ConfigureRuntimeServices(services, context);
-
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterConfigurationSchema(WebToolsConfiguration.Schema);
         registry.RegisterExtension(PackageExtensionPoints.Tools, services.GetRequiredService<WebFetchTool>());
         registry.RegisterExtension(PackageExtensionPoints.Tools, services.GetRequiredService<WebSearchTool>());
     }
-
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
-    {
-        registry.RegisterExtension(PackageExtensionPoints.Tools, services.GetRequiredService<WebFetchTool>());
-        registry.RegisterExtension(PackageExtensionPoints.Tools, services.GetRequiredService<WebSearchTool>());
-    }
-}
-
-public sealed class AppPackageModule : ISunderAppPackageModule
-{
-    private readonly PackageModule _module = new();
-
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
 }

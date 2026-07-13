@@ -2,11 +2,12 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Storage;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentWorkspaceService
+public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
 {
     public const string UnassignedSessionsWorkspaceId = AgentLocalStore.UnassignedSessionsWorkspaceId;
     public const string UnassignedSessionsWorkspaceDisplayName = AgentLocalStore.UnassignedSessionsWorkspaceDisplayName;
@@ -87,6 +88,55 @@ public sealed class AgentWorkspaceService
     public void SaveWorkspaceDocuments(string workspaceId, IReadOnlyList<AgentWorkspaceDocumentRecord> documents)
     {
         SaveWorkspaceDocumentsCore(workspaceId, documents);
+        WorkspacesChanged?.Invoke();
+    }
+
+    public void SaveWorkspaceAggregate(
+        string workspaceId,
+        string displayName,
+        string? description,
+        IReadOnlyList<AgentWorkspacePathRecord> paths,
+        IReadOnlyList<AgentWorkspaceDocumentRecord> documents,
+        string? executionTargetId)
+    {
+        var existing = _store.GetWorkspace(workspaceId)
+            ?? throw new InvalidOperationException($"Workspace '{workspaceId}' was not found.");
+        var now = DateTimeOffset.UtcNow;
+        var workspace = existing with
+        {
+            DisplayName = string.IsNullOrWhiteSpace(displayName) ? "Unnamed Workspace" : displayName.Trim(),
+            Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+            UpdatedAtUtc = now,
+        };
+        var existingBinding = _store.ListWorkspaceBindings(workspaceId)
+            .FirstOrDefault(binding => string.Equals(
+                binding.Role,
+                AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
+                StringComparison.OrdinalIgnoreCase));
+        var binding = string.IsNullOrWhiteSpace(executionTargetId)
+            ? null
+            : existingBinding is null
+                ? new AgentWorkspaceBindingRecord(
+                    BuildPrimaryBindingId(workspaceId),
+                    workspaceId,
+                    PackageExtensionPoints.ExecutionTargets.Id,
+                    executionTargetId,
+                    AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
+                    true,
+                    0,
+                    now,
+                    now)
+                : existingBinding with
+                {
+                    ContributionId = executionTargetId,
+                    IsEnabled = true,
+                    UpdatedAtUtc = now,
+                };
+        _store.SaveWorkspaceAggregate(
+            workspace,
+            NormalizePathRecords(workspaceId, paths),
+            NormalizeDocumentRecords(workspaceId, documents),
+            binding);
         WorkspacesChanged?.Invoke();
     }
 

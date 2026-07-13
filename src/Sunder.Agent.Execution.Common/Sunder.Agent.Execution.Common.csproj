@@ -1,1 +1,5 @@
-<Project Sdk="Microsoft.NET.Sdk" />
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+  </ItemGroup>
+</Project>

@@ -13,11 +13,8 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<LocalExecutionWorkspaceConfigService>();
         services.AddSingleton<LocalExecutionTarget>();
         services.AddSingleton<LocalExecutionWorkspaceEditorContributor>();
-        services.AddTransient<LocalExecutionSettingsViewModel>();
+        services.AddSingleton<LocalExecutionRuntimeOperationHandler>();
     }
-
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
-        => ConfigureRuntimeServices(services, context);
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
@@ -27,23 +24,26 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterExtension(PackageExtensionPoints.WorkspaceBindingContributors, target);
         registry.RegisterExtension(PackageExtensionPoints.WorkspacePathMigrationContributors, services.GetRequiredService<LocalExecutionWorkspaceConfigService>());
         registry.RegisterExtension(PackageExtensionPoints.WorkspaceEditorContributors, services.GetRequiredService<LocalExecutionWorkspaceEditorContributor>());
+        registry.RegisterRuntimeOperation(LocalExecutionRuntimeOperations.Execute, services.GetRequiredService<LocalExecutionRuntimeOperationHandler>());
+    }
+
+}
+
+public sealed class AppPackageModule : ISunderAppPackageModule
+{
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
+    {
+        services.AddSingleton<LocalExecutionAppRuntimeClient>();
+        services.AddSingleton<LocalExecutionWorkspaceEditorPresentationContributor>();
+        services.AddTransient(provider => new LocalExecutionSettingsViewModel(
+            provider.GetRequiredService<LocalExecutionAppRuntimeClient>()));
     }
 
     public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterSettingsView<LocalExecutionSettingsView>();
-        var target = services.GetRequiredService<LocalExecutionTarget>();
-        registry.RegisterExtension(PackageExtensionPoints.ExecutionTargets, target);
-        registry.RegisterExtension(PackageExtensionPoints.WorkspaceBindingContributors, target);
-        registry.RegisterExtension(PackageExtensionPoints.WorkspacePathMigrationContributors, services.GetRequiredService<LocalExecutionWorkspaceConfigService>());
-        registry.RegisterExtension(PackageExtensionPoints.WorkspaceEditorContributors, services.GetRequiredService<LocalExecutionWorkspaceEditorContributor>());
+        registry.RegisterExtension(
+            PackageExtensionPoints.WorkspaceEditorContributors,
+            services.GetRequiredService<LocalExecutionWorkspaceEditorPresentationContributor>());
     }
-}
-
-public sealed class AppPackageModule : ISunderAppPackageModule
-{
-    private readonly PackageModule _module = new();
-
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
 }

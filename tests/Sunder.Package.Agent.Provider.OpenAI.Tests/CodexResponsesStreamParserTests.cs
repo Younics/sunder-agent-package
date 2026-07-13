@@ -27,9 +27,13 @@ public sealed class CodexResponsesStreamParserTests
 
         var updates = await ReadUpdatesAsync(response);
 
-        Assert.Single(updates);
+        Assert.Equal(2, updates.Count);
         Assert.Equal("Hi", updates[0].Text);
         Assert.Equal("resp-1", updates[0].ResponseId);
+        var usage = Assert.IsType<UsageContent>(Assert.Single(updates[1].Contents)).Details;
+        Assert.Equal(1, usage.InputTokenCount);
+        Assert.Equal(1, usage.OutputTokenCount);
+        Assert.Equal(2, usage.TotalTokenCount);
     }
 
     [Fact]
@@ -81,7 +85,7 @@ public sealed class CodexResponsesStreamParserTests
     }
 
     [Fact]
-    public async Task ParseAsync_FunctionCallWithDuplicateArguments_UsesLastValue()
+    public async Task ParseAsync_FunctionCallWithDuplicateArguments_RejectsAmbiguity()
     {
         using var response = CreateSseResponse("""
             event: response.output_item.added
@@ -95,12 +99,18 @@ public sealed class CodexResponsesStreamParserTests
 
             """);
 
-        var updates = await ReadUpdatesAsync(response, toolAware: true);
-        var functionCall = Assert.IsType<FunctionCallContent>(Assert.Single(updates).Contents.Single());
+        var error = await Assert.ThrowsAsync<AgentChatProviderException>(() => ReadUpdatesAsync(response, toolAware: true));
+        Assert.Equal("openai-malformed-tool-call", error.ErrorCode);
+    }
 
-        Assert.Equal("stitch_generate_screen_from_text", functionCall.Name);
-        Assert.Equal("project-1", Assert.IsType<JsonElement>(functionCall.Arguments!["projectId"]).GetString());
-        Assert.Equal("GEMINI_3_FLASH", Assert.IsType<JsonElement>(functionCall.Arguments["modelId"]).GetString());
+    [Fact]
+    public async Task ParseAsync_OversizedSseLine_RejectsBeforeJsonParsing()
+    {
+        using var response = CreateSseResponse("data: " + new string('x', AgentPayloadLimits.MaxProviderSseLineBytes + 1));
+
+        var error = await Assert.ThrowsAsync<AgentChatProviderException>(() => ReadUpdatesAsync(response));
+
+        Assert.Equal("openai-stream-line-too-large", error.ErrorCode);
     }
 
     [Fact]
@@ -242,6 +252,36 @@ public sealed class CodexResponsesStreamParserTests
     }
 
     [Fact]
+    public async Task ParseAsync_UnknownEvent_IsReportedAndDoesNotHideLaterContent()
+    {
+        using var response = CreateSseResponse("""
+            data: {"type":"response.future_event","value":1}
+
+            data: {"type":"response.output_text.delta","delta":"still handled"}
+
+            data: {"type":"response.completed","response":{"id":"resp-1","status":"completed"}}
+
+            """);
+        var logger = new RecordingEventLogger();
+        var updates = new List<ChatResponseUpdate>();
+
+        await foreach (var update in CodexResponsesStreamParser.ParseAsync(
+                           response,
+                           new AgentChatClientContext("openai", "openai/gpt-5.5", logger),
+                           new ChatOptions(),
+                           "resp-1",
+                           "msg-1",
+                           toolAware: false,
+                           CancellationToken.None))
+        {
+            updates.Add(update);
+        }
+
+        Assert.Equal("still handled", Assert.Single(updates).Text);
+        Assert.Contains("provider.response.unsupported_content", logger.EventNames);
+    }
+
+    [Fact]
     public async Task ParseAsync_RejectsMissingToolNameAndMalformedArguments()
     {
         using var missingNameResponse = CreateSseResponse("""
@@ -320,4 +360,21 @@ public sealed class CodexResponsesStreamParserTests
 
     private static string NormalizeLines(string content)
         => string.Join("\n", content.Split('\n').Select(line => line.TrimStart())) + "\n";
+
+    private sealed class RecordingEventLogger : Sunder.Sdk.Logging.IPackageEventLogger
+    {
+        public List<string> EventNames { get; } = [];
+
+        public ValueTask WriteAsync(
+            Sunder.Sdk.Logging.PackageLogLevel level,
+            string eventName,
+            string message,
+            IReadOnlyDictionary<string, object?>? attributes = null,
+            Exception? exception = null,
+            CancellationToken cancellationToken = default)
+        {
+            EventNames.Add(eventName);
+            return ValueTask.CompletedTask;
+        }
+    }
 }

@@ -14,17 +14,8 @@ public sealed partial class AgentLocalStore
         EnsureSqliteNativeLibraryLoaded(packageContext.InstallPath);
         SQLitePCL.Batteries_V2.Init();
 
-        DatabasePath = packageContext.Storage.LocalWorkspace.GetLocalPath("agent/agent.db");
+        DatabasePath = packageContext.Storage.RoleLocalWorkspace.GetLocalPath("agent/agent.db");
         Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
-        EnsureSchema();
-        EnsureTurnItemPresentationMigration();
-        EnsureTraceTelemetryRemoved();
-        EnsureSessionHierarchyMigration();
-        EnsureSessionWorkspaceMigration();
-        EnsurePendingPermissionMigration();
-        EnsureProfileSchemaMigration();
-        EnsureProfileModelBindingMigration();
-        EnsureFailedSessionStateMigration();
         ApplySchemaMigrations();
         RecoverInterruptedPermissionClaims();
         RecoverAmbiguousParentContinuationWork();

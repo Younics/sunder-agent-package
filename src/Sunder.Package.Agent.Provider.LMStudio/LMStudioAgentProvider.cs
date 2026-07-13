@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
 using AIChatClient = Microsoft.Extensions.AI.IChatClient;
 
@@ -56,13 +57,11 @@ public sealed class LMStudioAgentProvider : IAgentChatProvider, IAgentUtilityMod
     public async ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var configuredModelId = (await _packageContext.Configuration
+        var configuredModelId = (await _packageContext.Settings
             .GetValueAsync(LMStudioProviderConfiguration.UtilityModelKey, cancellationToken))?.Trim();
         if (!string.IsNullOrWhiteSpace(configuredModelId))
         {
-            return configuredModelId.StartsWith("lmstudio/", StringComparison.OrdinalIgnoreCase)
-                ? configuredModelId
-                : $"lmstudio/{configuredModelId}";
+            return ProviderModelId.EnsurePrefix(configuredModelId, "lmstudio");
         }
 
         return (await GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault()?.ModelId;

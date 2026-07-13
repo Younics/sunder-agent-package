@@ -46,6 +46,11 @@ public sealed class SemanticModelRuntimeResolverTests
                 ? EmbeddingProviders.Cast<T>().ToArray()
                 : [];
         }
+
+        public IReadOnlyList<PackageExtensionContribution<T>> GetExtensionContributions<T>(PackageExtensionPoint<T> extensionPoint)
+            => GetExtensions(extensionPoint)
+                .Select(extension => new PackageExtensionContribution<T>("test.package", extension))
+                .ToArray();
     }
 
     private sealed class TestEmbeddingProvider(string instanceName) : IAgentEmbeddingProvider

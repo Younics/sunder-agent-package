@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Threading;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
@@ -13,6 +14,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
     private readonly Func<bool> _hasRows;
     private readonly Func<bool> _hasTranscriptSelection;
     private readonly TranscriptScrollCoordinator _scrollCoordinator;
+    private readonly PresentationTaskScope _tasks = new();
     private bool _changedBeforeScrollReady;
     private bool _initialPlacementPending = true;
     private bool _initialPlacementQueued;
@@ -27,9 +29,9 @@ internal sealed class TranscriptViewBehavior : IDisposable
         ItemsControl itemsControl,
         Button jumpToLatestButton,
         Func<bool> canLoadOlder,
-        Func<object?, Task<bool>> loadOlder,
+        Func<object?, CancellationToken, Task<bool>> loadOlder,
         Func<bool> canLoadNewer,
-        Func<object?, Task<bool>> loadNewer,
+        Func<object?, CancellationToken, Task<bool>> loadNewer,
         Func<bool> hasNewer,
         Func<bool> isInitialLoading,
         Func<bool> hasRows,
@@ -37,7 +39,8 @@ internal sealed class TranscriptViewBehavior : IDisposable
         Action detachFromLatest,
         Action reachedLatest,
         Action<bool>? jumpVisibilityChanged = null,
-        Action<TranscriptViewportAnchorData?>? viewportAnchorChanged = null)
+        Action<TranscriptViewportAnchorData?>? viewportAnchorChanged = null,
+        Action<Exception>? pagingFailed = null)
     {
         _owner = owner;
         _scrollViewer = scrollViewer;
@@ -62,7 +65,8 @@ internal sealed class TranscriptViewBehavior : IDisposable
             },
             detachFromLatest,
             reachedLatest,
-            viewportAnchorChanged);
+            viewportAnchorChanged,
+            pagingFailed);
         _owner.Loaded += OnLoaded;
     }
 
@@ -159,6 +163,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
 
         _disposed = true;
         _owner.Loaded -= OnLoaded;
+        _tasks.Dispose();
         _scrollCoordinator.Dispose();
     }
 
@@ -229,16 +234,19 @@ internal sealed class TranscriptViewBehavior : IDisposable
         }
 
         _initialVisibilityRetryQueued = true;
-        Dispatcher.UIThread.Post(() =>
+        _tasks.Run(async cancellationToken =>
         {
-            if (_disposed)
+            await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                return;
-            }
+                if (_disposed || cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
 
-            _initialVisibilityRetryQueued = false;
-            HandleTranscriptReady();
-        }, DispatcherPriority.Loaded);
+                _initialVisibilityRetryQueued = false;
+                HandleTranscriptReady();
+            }, DispatcherPriority.Loaded);
+        });
     }
 
     private void CompleteInitialPlacement(int version)

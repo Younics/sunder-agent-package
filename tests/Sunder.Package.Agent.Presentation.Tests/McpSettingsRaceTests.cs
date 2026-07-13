@@ -182,7 +182,7 @@ public sealed class McpSettingsRaceTests
         public string Version { get; } = "1.0.0";
         public string InstallPath => AppContext.BaseDirectory;
         public IPackageStorageContext Storage => _storage;
-        public IPackageConfiguration Configuration { get; } = new EmptyConfiguration();
+        public IPackageSettings Settings { get; } = new EmptySettings();
         public IPackageSecrets Secrets { get; } = new EmptySecrets();
         public ILoggerFactory LoggerFactory => NullLoggerFactory.Instance;
         public IPackageLogging Logging => NullPackageLogging.Instance;
@@ -192,7 +192,7 @@ public sealed class McpSettingsRaceTests
     {
         public IPackageFileStore Files { get; } = new EmptyFiles();
         public IPackageKeyValueStore State => state;
-        public IPackageLocalWorkspaceLease LocalWorkspace { get; } = new EmptyWorkspace();
+        public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; } = new EmptyWorkspace();
     }
 
     private sealed class ControlledKeyValueStore : IPackageKeyValueStore
@@ -285,9 +285,12 @@ public sealed class McpSettingsRaceTests
         public Task DeleteAsync(string relativePath, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
-    private sealed class EmptyConfiguration : IPackageConfiguration
+    private sealed class EmptySettings : IPackageSettings
     {
         public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
+        public Task<string?> GetStoredValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
+        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private sealed class EmptySecrets : IPackageSecrets
@@ -297,10 +300,9 @@ public sealed class McpSettingsRaceTests
         public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
-    private sealed class EmptyWorkspace : IPackageLocalWorkspaceLease
+    private sealed class EmptyWorkspace : IPackageRoleLocalWorkspace
     {
         public string WorkspaceRootPath => Path.GetTempPath();
         public string GetLocalPath(string relativePath) => Path.Combine(WorkspaceRootPath, relativePath);
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

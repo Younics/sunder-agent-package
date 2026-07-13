@@ -485,7 +485,7 @@ public sealed class SkillPackageTests
                 new Dictionary<string, string>(),
                 [action.ActionId]));
 
-            Assert.True(result.Success, string.Join(Environment.NewLine, result.Errors));
+            Assert.Equal(StackImportOutcome.Completed, result.Outcome);
             var importedSkill = targetStore.GetSkill("docs-skill");
             Assert.NotNull(importedSkill);
             Assert.Equal("github", importedSkill.SourceKind);
@@ -620,6 +620,11 @@ public sealed class SkillPackageTests
 
             return [];
         }
+
+        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
+            => GetExtensions(extensionPoint)
+                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
+                .ToArray();
     }
 
     private sealed class TestRuntimeCatalog(AgentProfileRecord profile) : IAgentRuntimeCatalog
@@ -698,24 +703,40 @@ public sealed class SkillPackageTests
             => Task.FromResult(_defaultBranches.GetValueOrDefault(RepoKey(owner, repo)));
 
         public Task<GitHubSkillFolder?> TryGetFolderAsync(GitHubSkillFolderRequest request, CancellationToken cancellationToken = default)
-            => Task.FromResult(_folders.GetValueOrDefault(Key(request.Owner, request.Repo, request.Ref, request.FolderPath))?.Folder);
+            => Task.FromResult(FindFolder(request)?.Folder);
 
         public Task<GitHubSkillFolder?> TryGetSkillFolderAsync(GitHubSkillFolderRequest request, CancellationToken cancellationToken = default)
         {
-            var folder = _folders.GetValueOrDefault(Key(request.Owner, request.Repo, request.Ref, request.FolderPath));
+            var folder = FindFolder(request);
             return Task.FromResult(folder?.Files.ContainsKey("SKILL.md") == true ? folder.Folder : null);
         }
 
         public Task<IReadOnlyList<GitHubSkillFile>> ListFilesAsync(GitHubSkillFolder folder, CancellationToken cancellationToken = default)
         {
-            var testFolder = _folders[Key(folder.Owner, folder.Repo, folder.Ref, folder.FolderPath)];
+            var testFolder = FindFolder(folder);
             return Task.FromResult<IReadOnlyList<GitHubSkillFile>>(testFolder.Files
                 .Select(pair => new GitHubSkillFile(pair.Key, CombineGitHubPath(folder.FolderPath, pair.Key), pair.Value.Length))
                 .ToArray());
         }
 
         public Task<byte[]> ReadFileAsync(GitHubSkillFolder folder, GitHubSkillFile file, CancellationToken cancellationToken = default)
-            => Task.FromResult(_folders[Key(folder.Owner, folder.Repo, folder.Ref, folder.FolderPath)].Files[file.RelativePath]);
+            => Task.FromResult(FindFolder(folder).Files[file.RelativePath]);
+
+        private TestGitHubFolder? FindFolder(GitHubSkillFolderRequest request)
+            => _folders.GetValueOrDefault(Key(request.Owner, request.Repo, request.Ref, request.FolderPath))
+               ?? _folders.Values.FirstOrDefault(folder =>
+                   string.Equals(folder.Folder.Owner, request.Owner, StringComparison.OrdinalIgnoreCase)
+                   && string.Equals(folder.Folder.Repo, request.Repo, StringComparison.OrdinalIgnoreCase)
+                   && string.Equals(folder.Folder.CommitSha, request.Ref, StringComparison.OrdinalIgnoreCase)
+                   && string.Equals(folder.Folder.FolderPath, request.FolderPath, StringComparison.Ordinal));
+
+        private TestGitHubFolder FindFolder(GitHubSkillFolder folder)
+            => _folders.GetValueOrDefault(Key(folder.Owner, folder.Repo, folder.Ref, folder.FolderPath))
+               ?? _folders.Values.Single(candidate =>
+                   string.Equals(candidate.Folder.Owner, folder.Owner, StringComparison.OrdinalIgnoreCase)
+                   && string.Equals(candidate.Folder.Repo, folder.Repo, StringComparison.OrdinalIgnoreCase)
+                   && string.Equals(candidate.Folder.CommitSha, folder.CommitSha, StringComparison.OrdinalIgnoreCase)
+                   && string.Equals(candidate.Folder.FolderPath, folder.FolderPath, StringComparison.Ordinal));
 
         private static string Key(string owner, string repo, string reference, string folderPath)
             => string.Join('|', owner, repo, reference, folderPath.Trim().Trim('/'));
@@ -739,7 +760,7 @@ public sealed class SkillPackageTests
 
         public IPackageStorageContext Storage { get; } = new TestStorageContext(rootPath);
 
-        public IPackageConfiguration Configuration { get; } = new TestConfiguration();
+        public IPackageSettings Settings { get; } = new TestSettings();
 
         public IPackageSecrets Secrets { get; } = new TestSecrets();
 
@@ -754,13 +775,13 @@ public sealed class SkillPackageTests
         {
             Directory.CreateDirectory(rootPath);
             Files = new TestFileStore(Path.Combine(rootPath, "files"));
-            LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
+            RoleLocalWorkspace = new TestPackageRoleLocalWorkspace(rootPath);
         }
 
         public IPackageFileStore Files { get; }
 
         public IPackageKeyValueStore State { get; } = new TestKeyValueStore();
-        public IPackageLocalWorkspaceLease LocalWorkspace { get; }
+        public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; }
     }
 
     private sealed class TestFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
@@ -789,7 +810,7 @@ public sealed class SkillPackageTests
             => Task.FromResult<IReadOnlyList<string>>(_values.Keys.Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray());
     }
 
-    private sealed class TestConfiguration : EmptyPackageConfiguration;
+    private sealed class TestSettings : EmptyPackageSettings;
 
     private sealed class TestSecrets : InMemoryPackageSecrets;
 }

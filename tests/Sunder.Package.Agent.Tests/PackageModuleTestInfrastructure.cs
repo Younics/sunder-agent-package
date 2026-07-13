@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 using Sunder.Sdk.Configuration;
+using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -46,6 +47,20 @@ internal sealed class RecordingPackageContributionRegistry : ISunderRuntimeContr
         ArgumentNullException.ThrowIfNull(schema);
         _registrations.Add($"configuration:{schema.PackageId}");
     }
+
+    public void RegisterRuntimeOperation<TRequest, TResponse>(
+        PackageRuntimeOperation<TRequest, TResponse> operation,
+        IPackageRuntimeOperationHandler<TRequest, TResponse> handler)
+        where TRequest : class
+        where TResponse : class
+        => Record($"runtime-operation:{operation.OperationId}", handler.GetType());
+
+    public void RegisterRuntimeStream<TRequest, TEvent>(
+        PackageRuntimeStream<TRequest, TEvent> stream,
+        IPackageRuntimeStreamHandler<TRequest, TEvent> handler)
+        where TRequest : class
+        where TEvent : class
+        => Record($"runtime-stream:{stream.StreamId}", handler.GetType());
 
     private void Record(string kind, Type implementationType)
         => _registrations.Add($"{kind}:{implementationType.FullName}");

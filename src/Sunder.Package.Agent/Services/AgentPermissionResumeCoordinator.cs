@@ -504,7 +504,23 @@ public sealed class AgentPermissionResumeCoordinator(
         {
             using (await _transitionGate.EnterAsync(sessionId, cancellationToken).ConfigureAwait(false))
             {
+                var currentProfile = ResolveProfile(pending.ProfileId);
+                var currentWorkspace = ResolveWorkspace(pending.WorkspaceId);
+                if (currentProfile is null || currentWorkspace is null)
+                {
+                    return false;
+                }
+                var currentProviderSelection = _providerResolver.ResolveChatProvider(currentProfile);
+                var currentBinding = ResolveExecutionBinding(currentWorkspace);
                 return !cancellationToken.IsCancellationRequested
+                       && AgentPermissionFingerprint.MatchesExecutionContext(
+                           pending.ExecutionSnapshotJson,
+                           pending,
+                           currentProfile,
+                           currentProviderSelection.Provider?.Descriptor.ProviderId,
+                           currentProviderSelection.ChatBinding?.ModelId,
+                           currentWorkspace,
+                           currentBinding)
                        && _activeRunRegistry.IsCurrent(
                            sessionId,
                            pending.RunId,

@@ -33,7 +33,7 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        _ = RefreshTranscriptAsync(displayedSession, ticket);
+        _backgroundTasks.Run(_ => RefreshTranscriptAsync(displayedSession, ticket));
     }
 
     private async Task RefreshTranscriptAsync(
@@ -86,16 +86,26 @@ public sealed partial class AgentChatViewModel
         StatusText = displayedSession.StatusText;
     }
 
-    public async Task<bool> LoadOlderTranscriptRowsAsync(object? protectedAnchorKey = null)
+    public async Task<bool> LoadOlderTranscriptRowsAsync(
+        object? protectedAnchorKey = null,
+        CancellationToken cancellationToken = default)
     {
         var loaded = await _timeline.LoadOlderAsync(
-            (sessionId, beforeCreatedAt, beforeTurnId, limit, cancellationToken) => Task.Run(
-                () => _sessionService.ListTurnsBefore(
-                    sessionId,
-                    beforeCreatedAt,
-                    beforeTurnId,
-                    limit),
-                cancellationToken),
+            async (sessionId, beforeCreatedAt, beforeTurnId, limit, pageCancellationToken) =>
+            {
+                using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    pageCancellationToken);
+                var turns = await Task.Run(
+                    () => _sessionService.ListTurnsBefore(
+                        sessionId,
+                        beforeCreatedAt,
+                        beforeTurnId,
+                        limit),
+                    linkedCancellation.Token);
+                linkedCancellation.Token.ThrowIfCancellationRequested();
+                return turns;
+            },
             protectedAnchorKey);
         if (loaded)
         {
@@ -105,16 +115,26 @@ public sealed partial class AgentChatViewModel
         return loaded;
     }
 
-    public async Task<bool> LoadNewerTranscriptRowsAsync(object? protectedAnchorKey = null)
+    public async Task<bool> LoadNewerTranscriptRowsAsync(
+        object? protectedAnchorKey = null,
+        CancellationToken cancellationToken = default)
     {
         var loaded = await _timeline.LoadNewerAsync(
-            (sessionId, afterCreatedAt, afterTurnId, limit, cancellationToken) => Task.Run(
-                () => _sessionService.ListTurnsAfter(
-                    sessionId,
-                    afterCreatedAt,
-                    afterTurnId,
-                    limit),
-                cancellationToken),
+            async (sessionId, afterCreatedAt, afterTurnId, limit, pageCancellationToken) =>
+            {
+                using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    pageCancellationToken);
+                var turns = await Task.Run(
+                    () => _sessionService.ListTurnsAfter(
+                        sessionId,
+                        afterCreatedAt,
+                        afterTurnId,
+                        limit),
+                    linkedCancellation.Token);
+                linkedCancellation.Token.ThrowIfCancellationRequested();
+                return turns;
+            },
             protectedAnchorKey);
         if (loaded)
         {
@@ -123,6 +143,14 @@ public sealed partial class AgentChatViewModel
         }
 
         return loaded;
+    }
+
+    internal void ReportTranscriptPagingFailure(Exception exception)
+    {
+        if (!_disposed)
+        {
+            StatusText = $"Unable to load transcript: {exception.Message}";
+        }
     }
 
     [RelayCommand]

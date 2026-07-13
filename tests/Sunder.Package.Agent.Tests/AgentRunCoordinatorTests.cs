@@ -1502,6 +1502,71 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task RollbackAndQueueUserMessageAsync_LateStalePreparationCannotRollbackNewerTranscript()
+    {
+        var stalePreparationEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseStalePreparation = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var readinessCallCount = 0;
+
+        async ValueTask<AgentProviderReadiness> CoordinateReadinessAsync(CancellationToken _)
+        {
+            if (Interlocked.Increment(ref readinessCallCount) == 1)
+            {
+                stalePreparationEntered.TrySetResult();
+                await releaseStalePreparation.Task;
+            }
+
+            return new AgentProviderReadiness(
+                "test-provider",
+                AgentProviderReadinessStatus.Ready,
+                "Ready.");
+        }
+
+        var provider = new ScriptedProvider(
+            (_, _) => Complete("newer response"),
+            readinessHandler: CoordinateReadinessAsync);
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        var anchor = runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.User,
+            "original user turn");
+        runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.Assistant,
+            "original response");
+
+        var staleRun = runtime.RunCoordinator.RollbackAndQueueUserMessageAsync(
+            sessionId,
+            anchor.TurnId,
+            runtime.CurrentProfileId,
+            "stale replacement",
+            runtime.CurrentWorkspaceId,
+            []);
+        await stalePreparationEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var newerCheckpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "newer user turn",
+            runtime.CurrentWorkspaceId);
+        releaseStalePreparation.TrySetResult();
+        var staleCheckpoint = await staleRun.WaitAsync(TimeSpan.FromSeconds(10));
+        var transcript = runtime.SessionService.ListTurns(sessionId)
+            .Select(RenderTurnText)
+            .ToArray();
+
+        Assert.Equal(AgentRunStatus.Completed, newerCheckpoint.Status);
+        Assert.Equal(AgentRunStatus.Interrupted, staleCheckpoint.Status);
+        Assert.Contains("original user turn", transcript);
+        Assert.Contains("original response", transcript);
+        Assert.Contains("newer user turn", transcript);
+        Assert.Contains("newer response", transcript);
+        Assert.DoesNotContain("stale replacement", transcript);
+    }
+
+    [Fact]
     public async Task StopAsync_CancelsRegisteredPreparationAndPreventsLateStartWithoutDisposingLiveOwner()
     {
         var readinessEntered = new TaskCompletionSource(
@@ -6360,7 +6425,7 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task AgentProfileService_OrdersChatModelsNewestFirstAndUsesNewestDefault()
+    public async Task AgentProfileService_OrdersChatModelsNewestFirstAndUsesNewestRecommendedDefault()
     {
         var provider = new ScriptedProvider(
             (_, _) => Complete("done"),
@@ -6374,7 +6439,7 @@ public sealed class AgentRunCoordinatorTests
                 {
                     ReleaseDate = new DateOnly(2026, 1, 1),
                 },
-                new AgentModelDescriptor("new-b", "New B", 128_000, 4_096)
+                new AgentModelDescriptor("new-b", "New B", 128_000, 4_096, IsRecommended: true)
                 {
                     ReleaseDate = new DateOnly(2026, 1, 1),
                 },
@@ -6386,7 +6451,7 @@ public sealed class AgentRunCoordinatorTests
         var profile = await runtime.ProfileService.CreateProfileAsync("Newest Model Profile");
 
         Assert.Equal(["new-a", "new-b", "old", "undated"], models.Select(model => model.ModelId));
-        Assert.Equal("new-a", profile.ChatModelId);
+        Assert.Equal("new-b", profile.ChatModelId);
     }
 
     [Fact]
@@ -10449,9 +10514,8 @@ public sealed class AgentRunCoordinatorTests
         {
             await Task.Delay(50);
             status = backgroundService.GetStatus();
-        } while (
-            string.IsNullOrWhiteSpace(status.LastFailureMessage) && DateTime.UtcNow < deadline
-        );
+        } while ((string.IsNullOrWhiteSpace(status.LastFailureMessage) || status.PendingItemCount != 0)
+                 && DateTime.UtcNow < deadline);
 
         await backgroundService.StopAsync();
 
@@ -12884,6 +12948,12 @@ public sealed class AgentRunCoordinatorTests
             !_extensions.TryGetValue(extensionPoint.Id, out var entries)
                 ? []
                 : entries.Cast<TContract>().ToArray();
+
+        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(
+            PackageExtensionPoint<TContract> extensionPoint
+        ) => GetExtensions(extensionPoint)
+            .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
+            .ToArray();
     }
 
     private sealed class MutableSelectableCapabilityProvider
@@ -13274,7 +13344,7 @@ public sealed class AgentRunCoordinatorTests
     ) : IPackageContext
     {
         private readonly TestPackageStorageContext _storage = new(rootPath);
-        private readonly InMemoryPackageConfiguration _configuration = new(configurationValues);
+        private readonly InMemoryPackageSettings _settings = new(configurationValues);
         private readonly InMemoryPackageSecrets _secrets = new(secretValues);
 
         public string PackageId => "test.package.agent";
@@ -13285,7 +13355,7 @@ public sealed class AgentRunCoordinatorTests
 
         public IPackageStorageContext Storage => _storage;
 
-        public IPackageConfiguration Configuration => _configuration;
+        public IPackageSettings Settings => _settings;
 
         public IPackageSecrets Secrets => _secrets;
 
@@ -13302,13 +13372,13 @@ public sealed class AgentRunCoordinatorTests
             Directory.CreateDirectory(rootPath);
             Files = new NullPackageFileStore(rootPath);
             State = new NullPackageKeyValueStore();
-            LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
+            RoleLocalWorkspace = new TestPackageRoleLocalWorkspace(rootPath);
         }
 
         public IPackageFileStore Files { get; }
 
         public IPackageKeyValueStore State { get; }
-        public IPackageLocalWorkspaceLease LocalWorkspace { get; }
+        public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; }
     }
 
     private sealed class NullPackageFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
@@ -13356,14 +13426,30 @@ public sealed class AgentRunCoordinatorTests
             );
     }
 
-    private sealed class InMemoryPackageConfiguration(IReadOnlyDictionary<string, string>? values)
-        : IPackageConfiguration
+    private sealed class InMemoryPackageSettings(IReadOnlyDictionary<string, string>? values)
+        : IPackageSettings
     {
-        private readonly IReadOnlyDictionary<string, string> _values =
-            values ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _values = new(
+            values ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            StringComparer.OrdinalIgnoreCase);
 
         public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) =>
             Task.FromResult(_values.TryGetValue(key, out var value) ? value : null);
+
+        public Task<string?> GetStoredValueAsync(string key, CancellationToken cancellationToken = default)
+            => GetValueAsync(key, cancellationToken);
+
+        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
+        {
+            _values[key] = value;
+            return Task.CompletedTask;
+        }
+
+        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
+        {
+            _values.Remove(key);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class InMemoryPackageSecrets(IReadOnlyDictionary<string, string>? values)

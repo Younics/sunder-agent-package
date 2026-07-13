@@ -17,11 +17,8 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<DockerContainerLifecycleService>();
         services.AddSingleton<DockerExecutionTarget>();
         services.AddSingleton<DockerExecutionWorkspaceEditorContributor>();
-        services.AddTransient<DockerExecutionSettingsViewModel>();
+        services.AddSingleton<DockerExecutionRuntimeOperationHandler>();
     }
-
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
-        => ConfigureRuntimeServices(services, context);
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
@@ -32,23 +29,27 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterExtension(PackageExtensionPoints.WorkspaceBindingContributors, target);
         registry.RegisterExtension(PackageExtensionPoints.WorkspacePathMigrationContributors, services.GetRequiredService<DockerExecutionWorkspaceConfigService>());
         registry.RegisterExtension(PackageExtensionPoints.WorkspaceEditorContributors, services.GetRequiredService<DockerExecutionWorkspaceEditorContributor>());
+        registry.RegisterRuntimeOperation(DockerExecutionRuntimeOperations.Execute, services.GetRequiredService<DockerExecutionRuntimeOperationHandler>());
+    }
+
+}
+
+public sealed class AppPackageModule : ISunderAppPackageModule
+{
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
+    {
+        services.AddSingleton<DockerExecutionAppRuntimeClient>();
+        services.AddSingleton<DockerExecutionWorkspaceEditorPresentationContributor>();
+        services.AddTransient(provider => new DockerExecutionSettingsViewModel(
+            provider.GetRequiredService<DockerExecutionAppRuntimeClient>(),
+            provider.GetRequiredService<IBackgroundProcessQueue>()));
     }
 
     public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterSettingsView<DockerExecutionSettingsView>();
-        var target = services.GetRequiredService<DockerExecutionTarget>();
-        registry.RegisterExtension(PackageExtensionPoints.ExecutionTargets, target);
-        registry.RegisterExtension(PackageExtensionPoints.WorkspaceBindingContributors, target);
-        registry.RegisterExtension(PackageExtensionPoints.WorkspacePathMigrationContributors, services.GetRequiredService<DockerExecutionWorkspaceConfigService>());
-        registry.RegisterExtension(PackageExtensionPoints.WorkspaceEditorContributors, services.GetRequiredService<DockerExecutionWorkspaceEditorContributor>());
+        registry.RegisterExtension(
+            PackageExtensionPoints.WorkspaceEditorContributors,
+            services.GetRequiredService<DockerExecutionWorkspaceEditorPresentationContributor>());
     }
-}
-
-public sealed class AppPackageModule : ISunderAppPackageModule
-{
-    private readonly PackageModule _module = new();
-
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
 }

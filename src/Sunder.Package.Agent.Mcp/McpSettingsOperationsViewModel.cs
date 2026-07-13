@@ -2,6 +2,7 @@ using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Mcp.Services;
+using Sunder.Package.Agent.Mcp.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Mcp;
@@ -10,10 +11,7 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
 {
     private static readonly TimeSpan StatusDisplayDuration = TimeSpan.FromSeconds(3);
     private readonly AgentMcpSettingsViewModel _host;
-    private readonly McpSettingsEditorService _editor;
-    private readonly McpConfigurationCoordinator _configuration;
-    private readonly McpServerConnectionService _connections;
-    private readonly McpOAuthCoordinator _oauth;
+    private readonly IMcpManagementGateway _gateway;
     private readonly IPresentationDispatcher _uiDispatcher;
     private readonly OperationState _operation = new();
     private readonly TimedStatusController _statusTimer;
@@ -24,17 +22,11 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
 
     public McpSettingsOperationsViewModel(
         AgentMcpSettingsViewModel host,
-        McpSettingsEditorService editor,
-        McpConfigurationCoordinator configuration,
-        McpServerConnectionService connections,
-        McpOAuthCoordinator oauth,
+        IMcpManagementGateway gateway,
         IPresentationDispatcher uiDispatcher)
     {
         _host = host;
-        _editor = editor;
-        _configuration = configuration;
-        _connections = connections;
-        _oauth = oauth;
+        _gateway = gateway;
         _uiDispatcher = uiDispatcher;
         _statusTimer = new TimedStatusController(dispatcher: uiDispatcher);
         _operation.PropertyChanged += OnOperationPropertyChanged;
@@ -60,7 +52,7 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
 
         try
         {
-            await _configuration.InitializeAsync(cancellation.Token);
+            await _gateway.InitializeAsync(cancellation.Token);
             await _host.ReloadServersAsync(null, cancellation.Token);
             await RunOnUiAsync(() =>
             {
@@ -97,13 +89,12 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
         {
             var snapshot = _host.CaptureEditorSnapshot();
             var existing = snapshot.ExistingServer;
-            var parsed = _editor.Parse(
+            var parsed = _gateway.Parse(
                 existing?.ServerId ?? Guid.NewGuid().ToString("N"),
                 snapshot.Name,
                 snapshot.EditorText,
                 existing);
-            await _host.WithSuppressedCatalogEventsAsync(() => _editor.SaveAsync(parsed, cancellation.Token));
-            await _connections.DisconnectAsync(parsed.Server.ServerId);
+            await _host.WithSuppressedCatalogEventsAsync(() => _gateway.SaveAsync(parsed, cancellation.Token));
             await _host.ReloadServersAsync(
                 parsed.Server.ServerId,
                 cancellation.Token,
@@ -160,8 +151,7 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
 
         try
         {
-            await _host.WithSuppressedCatalogEventsAsync(() => _editor.DeleteAsync(server.ServerId, cancellation.Token));
-            await _connections.DisconnectAsync(server.ServerId);
+            await _host.WithSuppressedCatalogEventsAsync(() => _gateway.DeleteAsync(server.ServerId, cancellation.Token));
             await _host.ReloadServersAsync(null, cancellation.Token);
             await RunOnUiAsync(() =>
             {
@@ -177,10 +167,10 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
 
     [RelayCommand(CanExecute = nameof(CanStart))]
     private Task ImportCommonConfigurationsAsync()
-        => RunImportAsync("Importing common MCP configurations...", token => _configuration.ImportCommonAsync(token));
+        => RunImportAsync("Importing common MCP configurations...", token => _gateway.ImportCommonAsync(token));
 
     public Task ImportFileAsync(string filePath)
-        => RunImportAsync("Importing MCP configuration file...", token => _configuration.ImportFileAsync(filePath, token));
+        => RunImportAsync("Importing MCP configuration file...", token => _gateway.ImportFileAsync(filePath, token));
 
     [RelayCommand(CanExecute = nameof(CanUseServer))]
     private Task DiscoverToolsAsync() => RunDiscoveryAsync(reconnect: false);
@@ -203,7 +193,7 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
 
         try
         {
-            await _connections.DisconnectAsync(server.ServerId);
+            await _gateway.DisconnectAsync(server.ServerId);
             await RunOnUiAsync(() =>
             {
                 _host.RefreshConnectionStatus(server);
@@ -322,8 +312,8 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
 
         try
         {
-            var tools = await _connections.DiscoverAsync(server, reconnect, cancellation.Token);
-            var presentation = await _connections.GetPresentationAsync(server, cancellation.Token);
+            var tools = await _gateway.DiscoverAsync(server, reconnect, cancellation.Token);
+            var presentation = await _gateway.GetPresentationAsync(server, cancellation.Token);
             await RunOnUiAsync(() =>
             {
                 _host.RefreshConnectionStatus(server);
@@ -367,11 +357,11 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
         {
             if (clear)
             {
-                await _oauth.ClearAsync(server, cancellation.Token);
+                await _gateway.ClearAuthorizationAsync(server, cancellation.Token);
             }
             else
             {
-                await _oauth.AuthorizeAsync(server, cancellation.Token);
+                await _gateway.AuthorizeAsync(server, cancellation.Token);
             }
 
             await RunOnUiAsync(() =>

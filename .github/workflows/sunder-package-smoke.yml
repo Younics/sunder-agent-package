@@ -1,0 +1,73 @@
+name: Sunder Agent Package Smoke
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: "10.0.100"
+
+jobs:
+  release-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Agent repository
+        uses: actions/checkout@v4
+        with:
+          path: sunder-agent-package
+
+      - name: Checkout coordinated Core repository
+        uses: actions/checkout@v4
+        with:
+          repository: Younics/sunder-core
+          path: sunder-core
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore and build coordinated sources
+        working-directory: sunder-agent-package
+        run: |
+          dotnet restore Sunder.AgentPackage.slnx --force-evaluate -p:SunderUseSourceSdk=true
+          dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 -p:SunderUseSourceSdk=true
+
+      - name: Build Core archive validator
+        working-directory: sunder-core
+        run: |
+          dotnet restore src/Host/Sunder.Cli/Sunder.Cli.csproj --locked-mode
+          dotnet build src/Host/Sunder.Cli/Sunder.Cli.csproj -c Release --no-restore
+
+      - name: Verify exact generated capability manifests
+        working-directory: sunder-agent-package
+        run: dotnet test tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj -c Release --no-build --no-restore --filter FullyQualifiedName~GeneratedPackageManifestTests
+
+      - name: Build and validate every inventory archive
+        working-directory: sunder-agent-package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/smoke
+          version="$(jq -er '.releaseVersion' packages.json)"
+          expected_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
+          while IFS=$'\t' read -r package_id project_path; do
+            output="$PWD/artifacts/smoke/$package_id.$version.sunderpkg"
+            dotnet msbuild "$project_path" -t:PackSunderPackage -m:1 -p:Configuration=Release -p:SunderUseSourceSdk=true -p:SunderPackageOutputPath="$output"
+            dotnet ../sunder-core/src/Host/Sunder.Cli/bin/Release/net10.0/sunder.dll package validate "$output"
+          done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, .projectPath] | @tsv' packages.json)
+          test "$(find artifacts/smoke -name '*.sunderpkg' -type f | wc -l)" -eq "$expected_count"
+
+      - name: Runtime clean lifecycle smoke for complete package family
+        working-directory: sunder-core
+        env:
+          SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/smoke
+        run: dotnet test tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-restore --filter FullyQualifiedName~AgentPackageReleaseSmokeTests
+
+      - name: App UI snapshot activation gate
+        working-directory: sunder-core
+        run: dotnet test tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-restore --filter FullyQualifiedName~ApplyPackageDeltaAsync_WhenPackageReloads_DeletesOldSnapshotAfterDetach

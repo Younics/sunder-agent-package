@@ -3,11 +3,12 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Contracts.Services;
 using Sunder.Package.Agent.Storage;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentProfileService : IDisposable
+public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
 {
     private readonly AgentLocalStore _store;
     private readonly AgentToolService _toolService;
@@ -40,11 +41,13 @@ public sealed class AgentProfileService : IDisposable
         var now = DateTimeOffset.UtcNow;
         var chatProviders = ListChatProviders();
         var chatProvider = chatProviders.FirstOrDefault();
-        var chatModel = chatProvider is null
-            ? null
+        var orderedChatModels = chatProvider is null
+            ? []
             : (await chatProvider.GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false))
                 .OrderNewestFirst()
-                .FirstOrDefault();
+                .ToArray();
+        var chatModel = orderedChatModels.FirstOrDefault(model => model.IsRecommended)
+                        ?? orderedChatModels.FirstOrDefault();
         var profileId = Guid.NewGuid().ToString("N");
 
         var record = new AgentProfileRecord(
@@ -130,6 +133,9 @@ public sealed class AgentProfileService : IDisposable
             .OrderBy(loop => loop.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+    public IReadOnlyList<AgentBehaviorLoopDescriptor> ListBehaviorLoopDescriptors()
+        => ListBehaviorLoops().Select(static loop => loop.Descriptor).ToArray();
+
     public AgentProfileModelBindingRecord? GetModelBinding(string profileId, string capabilityKind)
         => _store.GetProfileModelBinding(profileId, capabilityKind);
 
@@ -170,10 +176,16 @@ public sealed class AgentProfileService : IDisposable
             .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+    public IReadOnlyList<AgentProviderDescriptor> ListChatProviderDescriptors()
+        => ListChatProviders().Select(static provider => provider.Descriptor).ToArray();
+
     public IReadOnlyList<IAgentEmbeddingProvider> ListEmbeddingProviders()
         => _extensionCatalog.GetExtensions(PackageExtensionPoints.EmbeddingProviders)
             .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+
+    public IReadOnlyList<AgentEmbeddingProviderDescriptor> ListEmbeddingProviderDescriptors()
+        => ListEmbeddingProviders().Select(static provider => provider.Descriptor).ToArray();
 
     public bool HasProfileCapabilityConsumers(string capabilityKind)
         => !string.IsNullOrWhiteSpace(capabilityKind)

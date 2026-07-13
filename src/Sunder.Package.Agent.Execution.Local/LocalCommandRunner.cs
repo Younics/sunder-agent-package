@@ -28,28 +28,27 @@ internal static class LocalCommandRunner
                 WorkingDirectory: workingDirectory);
         }
 
-        var output = ProcessOutput.StripAnsiEscapeSequences(run.CombinedOutput);
-        var truncatedOutput = ProcessOutput.Truncate(output, MaxOutputLength, out var wasTruncated);
+        var output = ProcessOutput.Format(
+            run,
+            MaxOutputLength,
+            timeoutMessage: $"Command timed out after {timeoutSeconds} seconds.",
+            stripAnsiEscapeSequences: true);
         if (run.TimedOut)
         {
-            var timeoutMessage = $"Command timed out after {timeoutSeconds} seconds.";
-            var timeoutOutput = string.IsNullOrWhiteSpace(truncatedOutput)
-                ? timeoutMessage
-                : string.Concat(timeoutMessage, Environment.NewLine, truncatedOutput);
             return new AgentShellCommandResult(
                 124,
-                timeoutOutput,
+                output.Content,
                 TimedOut: true,
                 WorkingDirectory: workingDirectory,
-                WasTruncated: run.WasTruncated || wasTruncated);
+                WasTruncated: output.WasTruncated);
         }
 
         return new AgentShellCommandResult(
             run.ExitCode,
-            truncatedOutput,
+            output.Content,
             TimedOut: false,
             WorkingDirectory: workingDirectory,
-            WasTruncated: run.WasTruncated || wasTruncated);
+            WasTruncated: output.WasTruncated);
     }
 
     public static void ApplyPathEnvironment(ProcessStartInfo startInfo, IReadOnlyList<string> pathEntries)

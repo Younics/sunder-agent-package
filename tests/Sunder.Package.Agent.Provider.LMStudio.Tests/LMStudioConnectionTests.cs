@@ -30,9 +30,9 @@ public sealed class LMStudioConnectionTests
         Assert.Equal("Invalid", viewModel.ConnectionStatusLabel);
         Assert.Equal(
             LMStudioProviderConfiguration.DefaultBaseUrl,
-            await context.Storage.State.GetValueAsync(LMStudioProviderConfiguration.BaseUrlKey));
+            await context.Settings.GetStoredValueAsync(LMStudioProviderConfiguration.BaseUrlKey));
 
-        await context.Storage.State.SetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, invalidUrl);
+        await context.Settings.SetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, invalidUrl);
         using var provider = new LMStudioAgentProvider(context);
         var readiness = await provider.GetReadinessAsync();
 
@@ -58,7 +58,7 @@ public sealed class LMStudioConnectionTests
         var catalog = new LMStudioModelCatalogService(connection);
 
         Assert.True((await catalog.GetCatalogAsync()).IsSuccess);
-        await context.Storage.State.SetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, "https://second.test/api/v1/");
+        await context.Settings.SetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, "https://second.test/api/v1/");
         await context.Secrets.SetSecretAsync(LMStudioProviderConfiguration.ApiKeyKey, "second-key");
         Assert.True((await catalog.GetCatalogAsync()).IsSuccess);
 

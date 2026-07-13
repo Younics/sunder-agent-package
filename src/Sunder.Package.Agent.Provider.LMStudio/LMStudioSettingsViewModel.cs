@@ -40,11 +40,9 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject, IDispo
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        BaseUrl = await _packageContext.Storage.State.GetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, cancellationToken)
-            ?? await _packageContext.Configuration.GetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, cancellationToken)
+        BaseUrl = await _packageContext.Settings.GetValueAsync(LMStudioProviderConfiguration.BaseUrlKey, cancellationToken)
             ?? LMStudioProviderConfiguration.DefaultBaseUrl;
-        UtilityModelId = await _packageContext.Storage.State.GetValueAsync(LMStudioProviderConfiguration.UtilityModelKey, cancellationToken)
-            ?? await _packageContext.Configuration.GetValueAsync(LMStudioProviderConfiguration.UtilityModelKey, cancellationToken)
+        UtilityModelId = await _packageContext.Settings.GetValueAsync(LMStudioProviderConfiguration.UtilityModelKey, cancellationToken)
             ?? string.Empty;
         await ApiKeySettings.RefreshCredentialStatusAsync(cancellationToken);
         RefreshConnectionStatus();
@@ -86,26 +84,28 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject, IDispo
     partial void OnBaseUrlChanged(string value) => RefreshConnectionStatus();
 
     [RelayCommand]
-    private async Task SaveSettingsAsync()
+    private async Task SaveSettingsAsync(CancellationToken cancellationToken)
     {
-        if (!await SaveConnectionCoreAsync())
+        if (!await SaveConnectionCoreAsync(cancellationToken))
         {
             return;
         }
 
         await ApiKeySettings.SaveCredentialAsync();
-        await SaveUtilityModelCoreAsync();
+        await SaveUtilityModelCoreAsync(cancellationToken);
     }
 
     [RelayCommand]
-    private async Task SaveConnectionAsync() => await SaveConnectionCoreAsync();
+    private async Task SaveConnectionAsync(CancellationToken cancellationToken)
+        => await SaveConnectionCoreAsync(cancellationToken);
 
     [RelayCommand]
-    private async Task SaveUtilityModelAsync() => await SaveUtilityModelCoreAsync();
+    private async Task SaveUtilityModelAsync(CancellationToken cancellationToken)
+        => await SaveUtilityModelCoreAsync(cancellationToken);
 
     public void Dispose() => ApiKeySettings.Dispose();
 
-    private async Task<bool> SaveConnectionCoreAsync()
+    private async Task<bool> SaveConnectionCoreAsync(CancellationToken cancellationToken)
     {
         if (IsBusy)
         {
@@ -125,12 +125,17 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject, IDispo
                 return false;
             }
 
-            await _packageContext.Storage.State.SetValueAsync(
+            await _packageContext.Settings.SetValueAsync(
                 LMStudioProviderConfiguration.BaseUrlKey,
-                normalizedBaseUrl);
+                normalizedBaseUrl,
+                cancellationToken);
             BaseUrl = normalizedBaseUrl;
             RefreshConnectionStatus();
             return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -143,7 +148,7 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject, IDispo
         }
     }
 
-    private async Task SaveUtilityModelCoreAsync()
+    private async Task SaveUtilityModelCoreAsync(CancellationToken cancellationToken)
     {
         if (IsBusy)
         {
@@ -156,17 +161,18 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject, IDispo
             var utilityModelId = UtilityModelId.Trim();
             if (string.IsNullOrWhiteSpace(utilityModelId))
             {
-                await _packageContext.Storage.State.DeleteValueAsync(LMStudioProviderConfiguration.UtilityModelKey);
+                await _packageContext.Settings.DeleteValueAsync(
+                    LMStudioProviderConfiguration.UtilityModelKey,
+                    cancellationToken);
                 UtilityModelId = string.Empty;
                 return;
             }
 
-            var normalizedModelId = utilityModelId.StartsWith("lmstudio/", StringComparison.OrdinalIgnoreCase)
-                ? utilityModelId
-                : $"lmstudio/{utilityModelId}";
-            await _packageContext.Storage.State.SetValueAsync(
+            var normalizedModelId = ProviderModelId.EnsurePrefix(utilityModelId, "lmstudio");
+            await _packageContext.Settings.SetValueAsync(
                 LMStudioProviderConfiguration.UtilityModelKey,
-                normalizedModelId);
+                normalizedModelId,
+                cancellationToken);
             UtilityModelId = normalizedModelId;
         }
         finally

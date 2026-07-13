@@ -35,18 +35,15 @@ public sealed partial class SubagentsViewModel
         _disposed = true;
         _loadVersion++;
         _statusClear.Dispose();
+        _tasks.Dispose();
+        _operation.Dispose();
         ChatBinding.PropertyChanged -= OnModelBindingPropertyChanged;
         ChatBinding.Changed -= OnEditorSelectionChanged;
         Capabilities.Changed -= OnCapabilitiesChanged;
-        if (_subagentService is not null)
+        if (_gateway is not null)
         {
-            _subagentService.SubagentsChanged -= OnSubagentsChanged;
-        }
-
-        if (_capabilityCatalog is not null)
-        {
-            _capabilityCatalog.Changed -= OnSelectableCapabilitiesChanged;
-            _capabilityCatalog.Dispose();
+            _gateway.SubagentsChanged -= OnSubagentsChanged;
+            _gateway.CatalogChanged -= OnSelectableCapabilitiesChanged;
         }
 
         ChatBinding.Dispose();

@@ -11,21 +11,21 @@ public sealed class MemorySemanticSettingsService(IPackageContext packageContext
     internal int CachedMaxCanonicalTextChars { get; private set; } = DefaultMaxCanonicalTextChars;
 
     public async Task<bool> IsSemanticRetrievalEnabledAsync(CancellationToken cancellationToken = default)
-        => !bool.TryParse(await _packageContext.Configuration.GetValueAsync("semantic.enabled", cancellationToken), out var enabled) || enabled;
+        => !bool.TryParse(await _packageContext.Settings.GetValueAsync("semantic.enabled", cancellationToken), out var enabled) || enabled;
 
     public async Task<int> GetEmbeddingBatchSizeAsync(CancellationToken cancellationToken = default)
-        => ParsePositiveInt(await _packageContext.Configuration.GetValueAsync("semantic.batchSize", cancellationToken), DefaultEmbeddingBatchSize);
+        => ParsePositiveInt(await _packageContext.Settings.GetValueAsync("semantic.batchSize", cancellationToken), DefaultEmbeddingBatchSize);
 
     public async Task<int> GetMaxCanonicalTextCharsAsync(CancellationToken cancellationToken = default)
     {
         CachedMaxCanonicalTextChars = ParsePositiveInt(
-            await _packageContext.Configuration.GetValueAsync("semantic.maxCanonicalTextChars", cancellationToken),
+            await _packageContext.Settings.GetValueAsync("semantic.maxCanonicalTextChars", cancellationToken),
             DefaultMaxCanonicalTextChars);
         return CachedMaxCanonicalTextChars;
     }
 
     public async Task<SemanticReindexMode> GetReindexModeAsync(CancellationToken cancellationToken = default)
-        => string.Equals(await _packageContext.Configuration.GetValueAsync("semantic.reindex.mode", cancellationToken), "never", StringComparison.OrdinalIgnoreCase)
+        => string.Equals(await _packageContext.Settings.GetValueAsync("semantic.reindex.mode", cancellationToken), "never", StringComparison.OrdinalIgnoreCase)
             ? SemanticReindexMode.Never
             : SemanticReindexMode.Lazy;
 

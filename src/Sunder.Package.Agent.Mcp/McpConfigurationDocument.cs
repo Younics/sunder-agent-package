@@ -1,6 +1,7 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Sunder.Package.Agent.Mcp.Services;
 
 namespace Sunder.Package.Agent.Mcp;
 
@@ -15,6 +16,7 @@ internal static class McpConfigurationDocument
     {
         AllowTrailingCommas = true,
         CommentHandling = JsonCommentHandling.Skip,
+        MaxDepth = McpConfigurationSourceReader.MaxJsonDepth,
     };
 
     private static readonly JsonSerializerOptions JsonSerializerOptions = new()
@@ -68,7 +70,13 @@ internal static class McpConfigurationDocument
             throw new InvalidOperationException("Paste an MCP server object before saving.");
         }
 
+        if (rawJson.Length > McpConfigurationSourceReader.MaxDocumentBytes)
+        {
+            throw new InvalidOperationException($"MCP configuration exceeds the {McpConfigurationSourceReader.MaxDocumentBytes}-character limit.");
+        }
+
         using var document = JsonDocument.Parse(rawJson, JsonDocumentOptions);
+        McpJsonShapeValidator.RejectDuplicateProperties(document.RootElement);
         if (document.RootElement.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidOperationException("MCP configuration must be a JSON object.");

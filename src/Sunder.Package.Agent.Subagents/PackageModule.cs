@@ -2,6 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Subagents.PackageViews;
 using Sunder.Package.Agent.Subagents.Services;
+using Sunder.Package.Agent.Subagents.Runtime;
+using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 using Sunder.Sdk.Stacks;
@@ -17,12 +19,9 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<SubagentFeature>();
         services.AddSingleton<OrchestratedAgentBehaviorLoop>();
         services.AddSingleton<SubagentStackContributor>();
-        services.AddTransient<SubagentsViewModel>();
-        services.AddTransient<SubsessionsViewModel>();
+        services.AddSingleton<SubagentRuntimeHandler>();
+        services.AddSingleton<SubagentRuntimeChangeStream>();
     }
-
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
-        => ConfigureRuntimeServices(services, context);
 
     public void RegisterRuntimeContributions(
         ISunderRuntimeContributionRegistry registry,
@@ -42,11 +41,34 @@ public sealed class PackageModule : ISunderRuntimePackageModule
             services.GetRequiredService<OrchestratedAgentBehaviorLoop>()
         );
         registry.RegisterExtension(SunderStackExtensionPoints.StackContributors, services.GetRequiredService<SubagentStackContributor>());
+        registry.RegisterRuntimeOperation(SubagentRuntimeOperations.Query, services.GetRequiredService<SubagentRuntimeHandler>());
+        registry.RegisterRuntimeOperation(SubagentRuntimeOperations.Command, services.GetRequiredService<SubagentRuntimeHandler>());
+        registry.RegisterRuntimeStream(SubagentRuntimeOperations.Changes, services.GetRequiredService<SubagentRuntimeChangeStream>());
+    }
+}
+
+public sealed class AppPackageModule : ISunderAppPackageModule
+{
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
+    {
+        services.AddSingleton<SubagentAppRuntimeGateway>();
+        services.AddSingletonAlias<ISubagentManagementGateway, SubagentAppRuntimeGateway>();
+        services.AddSingletonAlias<ISubsessionSessionReader, SubagentAppRuntimeGateway>();
+        services.AddSingletonAlias<ISubsessionCheckpointReader, SubagentAppRuntimeGateway>();
+        services.AddSingletonAlias<ISubsessionTranscriptPageReader, SubagentAppRuntimeGateway>();
+        services.AddSingletonAlias<ISubsessionChangeNotifications, SubagentAppRuntimeGateway>();
+        services.AddTransient(provider => new SubagentsViewModel(
+            provider.GetRequiredService<ISubagentManagementGateway>(),
+            provider.GetService<IPackageSettingsNavigationService>()));
+        services.AddTransient(provider => new SubsessionsViewModel(
+            provider.GetRequiredService<ISubsessionSessionReader>(),
+            provider.GetRequiredService<ISubsessionCheckpointReader>(),
+            provider.GetRequiredService<ISubsessionTranscriptPageReader>(),
+            provider.GetRequiredService<ISubsessionChangeNotifications>()));
     }
 
     public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
     {
-        var feature = services.GetRequiredService<SubagentFeature>();
         registry.RegisterPackageView<SubsessionsView>(new PackageViewRegistration(
             SubagentConstants.SubsessionsViewId,
             "Subsessions",
@@ -57,17 +79,5 @@ public sealed class PackageModule : ISunderRuntimePackageModule
             "Subagents",
             "assets/sub-profile-icon.png",
             defaultPlacement: PackageViewPlacement.RightTop));
-        registry.RegisterExtension(PackageExtensionPoints.ProfileSelectableCapabilityProviders, feature);
-        registry.RegisterExtension(PackageExtensionPoints.ToolSources, feature);
-        registry.RegisterExtension(PackageExtensionPoints.SystemPromptContributors, feature);
-        registry.RegisterExtension(PackageExtensionPoints.BehaviorLoops, services.GetRequiredService<OrchestratedAgentBehaviorLoop>());
     }
-}
-
-public sealed class AppPackageModule : ISunderAppPackageModule
-{
-    private readonly PackageModule _module = new();
-
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
 }

@@ -93,6 +93,7 @@ internal sealed class SkillStackContributor(
         var warnings = new List<string>();
         foreach (var fragment in request.Fragments)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!TryReadPayload(fragment, warnings, out var payload) || payload is null)
             {
                 continue;
@@ -124,6 +125,7 @@ internal sealed class SkillStackContributor(
         var errors = new List<string>();
         foreach (var fragment in request.Fragments)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!selectedActionIds.Contains(BuildActionId(fragment.FragmentId)))
             {
                 continue;
@@ -145,7 +147,10 @@ internal sealed class SkillStackContributor(
             }
         }
 
-        return new StackImportResult(errors.Count == 0, imported, new Dictionary<string, string>(), warnings, errors);
+        var outcome = errors.Count == 0
+            ? StackImportOutcome.Completed
+            : imported.Count == 0 ? StackImportOutcome.Failed : StackImportOutcome.Partial;
+        return new StackImportResult(outcome, imported, new Dictionary<string, string>(), warnings, errors);
     }
 
     public ValueTask OnStackImportAppliedAsync(
@@ -176,7 +181,22 @@ internal sealed class SkillStackContributor(
         payload = null;
         try
         {
-            payload = JsonSerializer.Deserialize<GitHubSkillStackPayload>(fragment.JsonPayload, JsonOptions);
+            if (fragment.JsonPayload.Length > 64 * 1024)
+            {
+                warnings.Add($"Stack fragment '{fragment.FragmentId}' GitHub skill payload exceeds the size limit.");
+                return false;
+            }
+
+            using var document = JsonDocument.Parse(fragment.JsonPayload, new JsonDocumentOptions { MaxDepth = 8 });
+            var propertyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || document.RootElement.EnumerateObject().Any(property => !propertyNames.Add(property.Name)))
+            {
+                warnings.Add($"Stack fragment '{fragment.FragmentId}' GitHub skill payload contains duplicate or case-colliding properties.");
+                return false;
+            }
+
+            payload = document.RootElement.Deserialize<GitHubSkillStackPayload>(JsonOptions);
             if (payload is null || string.IsNullOrWhiteSpace(payload.GitHubUrl))
             {
                 warnings.Add($"Stack fragment '{fragment.FragmentId}' does not contain a valid GitHub skill URL.");

@@ -147,13 +147,13 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         var config = CreateConfig(workspace);
         var outsidePath = Path.Combine(outside, "new", "file.txt");
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await LocalFileSystemExecutor.WriteFileAsync(
-                config,
-                new AgentFileWriteRequest(Path.Combine("escape", "new", "file.txt"), "outside"),
-                allowOutsideConfiguredScope: false,
-                CancellationToken.None));
+        var result = await LocalFileSystemExecutor.WriteFileAsync(
+            config,
+            new AgentFileWriteRequest(Path.Combine("escape", "new", "file.txt"), "outside"),
+            allowOutsideConfiguredScope: false,
+            CancellationToken.None);
 
+        Assert.Equal(AgentFileReadErrorCodes.OutsideConfiguredScope, result.ErrorCode);
         Assert.False(File.Exists(outsidePath));
     }
 
@@ -165,13 +165,13 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         CreateFileSymlinkOrSkip(Path.Combine(workspace, "escape.txt"), outsidePath);
         var config = CreateConfig(workspace);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await LocalFileSystemExecutor.WriteFileAsync(
-                config,
-                new AgentFileWriteRequest("escape.txt", "outside"),
-                allowOutsideConfiguredScope: false,
-                CancellationToken.None));
+        var result = await LocalFileSystemExecutor.WriteFileAsync(
+            config,
+            new AgentFileWriteRequest("escape.txt", "outside"),
+            allowOutsideConfiguredScope: false,
+            CancellationToken.None);
 
+        Assert.Equal(AgentFileReadErrorCodes.OutsideConfiguredScope, result.ErrorCode);
         Assert.False(File.Exists(outsidePath));
     }
 
@@ -184,12 +184,12 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         CreateDirectorySymlinkOrSkip(Path.Combine(workspace, "escape"), outside);
         var config = CreateConfig(workspace);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await LocalFileSystemExecutor.DeleteFileAsync(
-                config,
-                new AgentFileDeleteRequest(Path.Combine("escape", "keep.txt")),
-                allowOutsideConfiguredScope: false));
+        var result = await LocalFileSystemExecutor.DeleteFileAsync(
+            config,
+            new AgentFileDeleteRequest(Path.Combine("escape", "keep.txt")),
+            allowOutsideConfiguredScope: false);
 
+        Assert.Equal(AgentFileReadErrorCodes.OutsideConfiguredScope, result.ErrorCode);
         Assert.True(File.Exists(outsidePath));
     }
 

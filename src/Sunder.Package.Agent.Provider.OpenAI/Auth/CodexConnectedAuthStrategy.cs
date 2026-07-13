@@ -48,9 +48,6 @@ public sealed class CodexConnectedAuthStrategy : IDisposable
     public Task<OpenAiCodexSession?> GetCachedSessionAsync(CancellationToken cancellationToken = default)
         => _sessionStore.GetAsync(cancellationToken);
 
-    public Task<OpenAiCodexSession> EnsureAuthenticatedAsync(CancellationToken cancellationToken = default)
-        => EnsureAuthenticatedAsync(allowInteractive: true, cancellationToken);
-
     public async Task<OpenAiCodexSession?> TryEnsureAuthenticatedSilentlyAsync(CancellationToken cancellationToken = default)
     {
         using var operation = BeginOperation(cancellationToken);
@@ -80,57 +77,6 @@ public sealed class CodexConnectedAuthStrategy : IDisposable
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && operation.Token.IsCancellationRequested)
         {
             return null;
-        }
-        finally
-        {
-            if (enteredGate)
-            {
-                _sessionGate.Release();
-            }
-        }
-    }
-
-    public async Task<OpenAiCodexSession> EnsureAuthenticatedAsync(
-        bool allowInteractive,
-        CancellationToken cancellationToken = default)
-    {
-        using var operation = BeginOperation(cancellationToken);
-        var enteredGate = false;
-        try
-        {
-            await _sessionGate.WaitAsync(operation.Token);
-            enteredGate = true;
-            var cached = await _sessionStore.GetAsync(operation.Token);
-            if (cached is not null && !RequiresRefresh(cached))
-            {
-                return cached;
-            }
-
-            if (cached is not null)
-            {
-                var refreshed = await RefreshAndSaveAsync(cached.RefreshToken, "refresh", operation.Generation, operation.Token);
-                if (refreshed is not null)
-                {
-                    return refreshed;
-                }
-            }
-
-            if (!allowInteractive)
-            {
-                throw new InvalidOperationException("OpenAI Codex session could not be refreshed silently.");
-            }
-
-            _telemetry.Write(
-                PackageLogLevel.Information,
-                "openai.codex.auth.interactive.start",
-                "Starting interactive Codex browser authorization.");
-            var session = await _browserAuthorization.SignInWithBrowserAsync(operation.Token);
-            if (!await TrySaveSessionAsync("interactive", session, operation.Generation, operation.Token))
-            {
-                throw new OperationCanceledException(operation.Token);
-            }
-
-            return session;
         }
         finally
         {

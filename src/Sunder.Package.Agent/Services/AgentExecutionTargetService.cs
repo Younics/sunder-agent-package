@@ -2,10 +2,11 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Runtime;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentExecutionTargetService(IPackageExtensionCatalog extensionCatalog)
+public sealed class AgentExecutionTargetService(IPackageExtensionCatalog extensionCatalog) : IAgentExecutionGateway
 {
     private readonly IPackageExtensionCatalog _extensionCatalog = extensionCatalog;
 
@@ -25,7 +26,13 @@ public sealed class AgentExecutionTargetService(IPackageExtensionCatalog extensi
         }
 
         return _extensionCatalog.GetExtensions(PackageExtensionPoints.ExecutionTargets)
-            .FirstOrDefault(target => string.Equals(target.Descriptor.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
-                                      || string.Equals(target.Descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase));
+             .FirstOrDefault(target => string.Equals(target.Descriptor.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
+                                       || string.Equals(target.Descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase));
     }
+
+    public Task<AgentExecutionTargetWarmupResult> WarmWorkspaceAsync(
+        AgentWorkspaceRecord workspace,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult(AgentExecutionTargetWarmupResult.Skipped(
+            "Warmup requires the Runtime workspace service."));
 }

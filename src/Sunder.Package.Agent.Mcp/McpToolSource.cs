@@ -1,6 +1,8 @@
 using System.Text.Json;
+using System.Text;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Mcp.Services;
@@ -215,13 +217,14 @@ public sealed class McpToolSource(
         try
         {
             var discoveryTimeoutMilliseconds = McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server);
-            var client = await _connectionManager.GetClientAsync(
+            await using var invocationLease = await _connectionManager.AcquireClientLeaseAsync(
                 server,
                 await _serverCatalogService.GetHeadersAsync(server, cancellationToken),
                 await _serverCatalogService.GetEnvironmentVariablesAsync(server, cancellationToken),
                 discoveryTimeoutMilliseconds,
                 McpConnectionScope.For(context.SessionId, context.Workspace?.WorkspaceId),
                 cancellationToken);
+            var client = invocationLease?.Client;
             if (client is null)
             {
                 return new AgentToolResult(
@@ -240,21 +243,18 @@ public sealed class McpToolSource(
                 options: null,
                 cancellationToken: toolTimeoutScope.Token);
 
-            var structuredPayloadJson = result.StructuredContent is JsonElement structured && structured.ValueKind != JsonValueKind.Undefined
-                ? structured.GetRawText()
-                : null;
-            var content = !string.IsNullOrWhiteSpace(structuredPayloadJson)
-                ? structuredPayloadJson
-                : result.Content is { Count: > 0 }
-                    ? JsonSerializer.Serialize(result.Content)
-                    : null;
+            var boundedResult = SerializeResult(result.StructuredContent, result.Content);
 
             return new AgentToolResult(
                 canonicalToolId,
-                result.IsError == true ? $"MCP tool '{canonicalToolId}' returned an error." : $"MCP tool '{canonicalToolId}' completed.",
-                Content: content,
-                StructuredPayloadJson: structuredPayloadJson,
-                WasTruncated: false,
+                result.IsError == true
+                    ? $"MCP tool '{canonicalToolId}' returned an error."
+                    : boundedResult.WasTruncated
+                        ? $"MCP tool '{canonicalToolId}' completed with a bounded, truncated result."
+                        : $"MCP tool '{canonicalToolId}' completed.",
+                Content: boundedResult.Content,
+                StructuredPayloadJson: boundedResult.StructuredPayloadJson,
+                WasTruncated: boundedResult.WasTruncated,
                 IsError: result.IsError == true,
                 ErrorCode: result.IsError == true ? "mcp-tool-error" : null,
                 BackendId: $"mcp:{server.ServerId}");
@@ -367,6 +367,51 @@ public sealed class McpToolSource(
         return true;
     }
 
+    private static BoundedMcpResult SerializeResult(JsonElement? structuredContent, IList<ContentBlock>? content)
+    {
+        if (structuredContent is { ValueKind: not JsonValueKind.Undefined } structured)
+        {
+            var structuredJson = TrySerializeBounded(structured, out var exceededLimit);
+            return exceededLimit
+                ? new BoundedMcpResult(
+                    $"MCP structured result exceeded the {AgentPayloadLimits.MaxMcpResultBytes}-byte limit and was omitted.",
+                    null,
+                    WasTruncated: true)
+                : new BoundedMcpResult(structuredJson, structuredJson, WasTruncated: false);
+        }
+
+        if (content is not { Count: > 0 })
+        {
+            return new BoundedMcpResult(null, null, WasTruncated: false);
+        }
+
+        var selected = content.Take(AgentPayloadLimits.MaxMcpContentItems).ToArray();
+        var contentJson = TrySerializeBounded(selected, out var exceededBytes);
+        var wasTruncated = content.Count > selected.Length || exceededBytes;
+        if (exceededBytes)
+        {
+            contentJson = $"MCP content exceeded the {AgentPayloadLimits.MaxMcpResultBytes}-byte limit and was omitted.";
+        }
+
+        return new BoundedMcpResult(contentJson, null, wasTruncated);
+    }
+
+    private static string? TrySerializeBounded<T>(T value, out bool exceededLimit)
+    {
+        using var stream = new BoundedWriteStream(AgentPayloadLimits.MaxMcpResultBytes);
+        try
+        {
+            JsonSerializer.Serialize(stream, value);
+            exceededLimit = false;
+            return Encoding.UTF8.GetString(stream.WrittenMemory.Span);
+        }
+        catch (McpResultLimitExceededException)
+        {
+            exceededLimit = true;
+            return null;
+        }
+    }
+
     private sealed class TimeoutScope(CancellationToken token, CancellationTokenSource? source) : IDisposable
     {
         public CancellationToken Token { get; } = token;
@@ -375,4 +420,46 @@ public sealed class McpToolSource(
     }
 
     private sealed record ResolvedMcpTool(ConfiguredMcpServerRecord Server, string ToolName, bool IsLegacyAlias);
+
+    private sealed record BoundedMcpResult(string? Content, string? StructuredPayloadJson, bool WasTruncated);
+
+    private sealed class BoundedWriteStream(int maxBytes) : Stream
+    {
+        private readonly MemoryStream _stream = new(Math.Min(maxBytes, 64 * 1024));
+
+        public ReadOnlyMemory<byte> WrittenMemory => _stream.GetBuffer().AsMemory(0, checked((int)_stream.Length));
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => _stream.Length;
+        public override long Position { get => _stream.Position; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            if (_stream.Length + buffer.Length > maxBytes)
+            {
+                throw new McpResultLimitExceededException();
+            }
+
+            _stream.Write(buffer);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _stream.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+    }
+
+    private sealed class McpResultLimitExceededException : Exception;
 }

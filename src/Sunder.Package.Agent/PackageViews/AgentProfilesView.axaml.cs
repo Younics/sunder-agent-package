@@ -5,6 +5,7 @@ using Avalonia.Threading;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Services;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
@@ -12,6 +13,7 @@ namespace Sunder.Package.Agent.PackageViews;
 public partial class AgentProfilesView : UserControl, IDisposable
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
+    private readonly PresentationTaskScope _tasks = new();
     private AgentProfilesViewModel? _viewModel;
     private bool _disposed;
 
@@ -34,7 +36,7 @@ public partial class AgentProfilesView : UserControl, IDisposable
     }
 
     public AgentProfilesView(
-        AgentProfileService profileService,
+        IAgentProfileGateway profileService,
         IPackageSettingsNavigationService? settingsNavigationService = null)
         : this()
     {
@@ -51,6 +53,7 @@ public partial class AgentProfilesView : UserControl, IDisposable
 
         _disposed = true;
         _adaptiveLayout.Dispose();
+        _tasks.Dispose();
         _viewModel?.Dispose();
         DataContext = null;
         _viewModel = null;
@@ -73,8 +76,15 @@ public partial class AgentProfilesView : UserControl, IDisposable
 
     private void FocusProfileDisplayName()
     {
-        Dispatcher.UIThread.Post(
-            () => ProfileDisplayNameTextBox.Focus(),
-            DispatcherPriority.Background);
+        _tasks.Run(async cancellationToken =>
+        {
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    ProfileDisplayNameTextBox.Focus();
+                }
+            }, DispatcherPriority.Background);
+        });
     }
 }

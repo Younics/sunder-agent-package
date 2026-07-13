@@ -8,12 +8,6 @@ public sealed class McpEcosystemConfigurationImporter(McpServerCatalogService se
 {
     public const string SunderConfigurationSourceKind = "sunder-config";
 
-    private static readonly JsonDocumentOptions DocumentOptions = new()
-    {
-        AllowTrailingCommas = true,
-        CommentHandling = JsonCommentHandling.Skip,
-    };
-
     public async Task<McpConfigurationImportResult> ImportCommonConfigurationsAsync(CancellationToken cancellationToken = default)
     {
         var result = new MutableImportResult();
@@ -45,29 +39,31 @@ public sealed class McpEcosystemConfigurationImporter(McpServerCatalogService se
             throw new InvalidOperationException("Select an existing MCP configuration file.");
         }
 
-        var servers = await serverCatalog.ListServersAsync(cancellationToken).ConfigureAwait(false);
-        var existingByName = servers.ToDictionary(server => server.Name, StringComparer.OrdinalIgnoreCase);
         var result = new MutableImportResult();
-
-        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(filePath, cancellationToken).ConfigureAwait(false), DocumentOptions);
+        using var document = await McpConfigurationSourceReader.ReadAsync(filePath, cancellationToken).ConfigureAwait(false);
         var parsedFile = McpConfigurationFileParser.Parse(document.RootElement, filePath, Path.GetFileNameWithoutExtension(filePath));
         result.Add(parsedFile);
-        var discoveredServers = parsedFile.Servers;
+        var servers = await serverCatalog.ListServersAsync(cancellationToken).ConfigureAwait(false);
+        var existingByName = servers.ToDictionary(server => server.Name, StringComparer.OrdinalIgnoreCase);
         var sourceNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var importedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var discovered in discoveredServers)
+        var writes = new List<McpServerCatalogWrite>();
+        var normalizedGroups = parsedFile.Servers
+            .Select(server => (Server: server, NormalizedName: serverCatalog.NormalizeServerName(server.Name)))
+            .GroupBy(item => item.NormalizedName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        foreach (var group in normalizedGroups)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (group.Count() > 1)
+            {
+                result.Skipped += group.Count();
+                result.Warnings.Add($"Skipped MCP servers from {Path.GetFileName(filePath)} because their names collide as normalized name '{group.Key}'.");
+                continue;
+            }
+
+            var (discovered, normalizedName) = group.Single();
             try
             {
-                var normalizedName = serverCatalog.NormalizeServerName(discovered.Name);
-                if (!importedNames.Add(normalizedName))
-                {
-                    result.Skipped++;
-                    result.Warnings.Add($"Skipped MCP server '{discovered.Name}' from {Path.GetFileName(filePath)} because normalized name '{normalizedName}' is duplicated in the file.");
-                    continue;
-                }
-
                 var sourceName = string.IsNullOrWhiteSpace(discovered.Name) ? normalizedName : discovered.Name.Trim();
                 sourceNames.Add(sourceName);
                 existingByName.TryGetValue(normalizedName, out var existing);
@@ -103,9 +99,8 @@ public sealed class McpEcosystemConfigurationImporter(McpServerCatalogService se
                         IsExternallyManaged = true,
                     }
                     : parsed.Server;
-                await serverCatalog.SaveServerAsync(server, parsed.Headers, parsed.EnvironmentVariables, cancellationToken).ConfigureAwait(false);
+                writes.Add(new McpServerCatalogWrite(server, parsed.Headers, parsed.EnvironmentVariables));
                 existingByName[normalizedName] = server;
-                result.Imported++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -114,23 +109,29 @@ public sealed class McpEcosystemConfigurationImporter(McpServerCatalogService se
             }
         }
 
-        if (options.DeleteMissingFromSource && options.SourceUri is not null)
+        var deletedServerIds = Array.Empty<string>();
+        if (options.DeleteMissingFromSource
+            && options.SourceUri is not null
+            && result.Skipped == 0)
         {
-            await DeleteMissingManagedServersAsync(options, sourceNames, cancellationToken).ConfigureAwait(false);
+            deletedServerIds = FindMissingManagedServerIds(servers, options, sourceNames);
         }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        await serverCatalog.ApplyBatchAsync(writes, deletedServerIds, cancellationToken).ConfigureAwait(false);
+        result.Imported += writes.Count;
 
         return result.ToResult();
     }
 
-    private async Task DeleteMissingManagedServersAsync(
+    private static string[] FindMissingManagedServerIds(
+        IReadOnlyList<ConfiguredMcpServerRecord> servers,
         McpConfigurationImportOptions options,
-        ISet<string> sourceNames,
-        CancellationToken cancellationToken)
+        ISet<string> sourceNames)
     {
-        var servers = await serverCatalog.ListServersAsync(cancellationToken).ConfigureAwait(false);
+        var deletedIds = new List<string>();
         foreach (var server in servers)
         {
-            cancellationToken.ThrowIfCancellationRequested();
             if (!server.IsExternallyManaged
                 || !string.Equals(server.SourceKind, options.SourceKind, StringComparison.OrdinalIgnoreCase)
                 || !SourceUriEquals(server.SourceUri, options.SourceUri))
@@ -141,9 +142,11 @@ public sealed class McpEcosystemConfigurationImporter(McpServerCatalogService se
             var sourceName = string.IsNullOrWhiteSpace(server.SourceName) ? server.Name : server.SourceName;
             if (!sourceNames.Contains(sourceName))
             {
-                await serverCatalog.DeleteServerAsync(server.ServerId, cancellationToken).ConfigureAwait(false);
+                deletedIds.Add(server.ServerId);
             }
         }
+
+        return [.. deletedIds];
     }
 
     private static string ComputeImportHash(string normalizedName, string json)

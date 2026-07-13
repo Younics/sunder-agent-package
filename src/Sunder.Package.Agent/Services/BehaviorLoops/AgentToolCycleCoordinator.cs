@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
@@ -50,7 +51,7 @@ internal sealed class AgentToolCycleCoordinator(AgentLoopTerminalHandler termina
                         ? AgentBehaviorLoopCompletionKind.WaitingForApproval
                         : AgentBehaviorLoopCompletionKind.Failed);
                 host.LogEvent(
-                    AgentLogLevel.Information,
+                    PackageLogLevel.Information,
                     "behavior.loop.suspended",
                     result.CompletionKind.ToString(),
                     loopStopwatch.ElapsedMilliseconds);
@@ -70,7 +71,7 @@ internal sealed class AgentToolCycleCoordinator(AgentLoopTerminalHandler termina
                 progressFailure.CheckpointSummary,
                 cancellationToken);
             host.LogEvent(
-                AgentLogLevel.Warning,
+                PackageLogLevel.Warning,
                 "behavior.loop.no_progress_detected",
                 progressFailure.CheckpointSummary,
                 loopStopwatch.ElapsedMilliseconds,

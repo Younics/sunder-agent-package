@@ -483,6 +483,11 @@ public sealed class MemoryEvaluationTests
             => !_extensions.TryGetValue(extensionPoint.Id, out var entries)
                 ? []
                 : entries.Cast<TContract>().ToArray();
+
+        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
+            => GetExtensions(extensionPoint)
+                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
+                .ToArray();
     }
 
     private sealed class EvaluationRuntimeCatalog(AgentProfileRecord profile, Guid sessionId, string profileId) : IAgentRuntimeCatalog
@@ -606,7 +611,7 @@ public sealed class MemoryEvaluationTests
 
         public IPackageStorageContext Storage => _storage;
 
-        public IPackageConfiguration Configuration { get; } = new EvaluationPackageConfiguration();
+        public IPackageSettings Settings { get; } = new EvaluationPackageSettings();
 
         public IPackageSecrets Secrets { get; } = new EvaluationPackageSecrets();
 
@@ -622,13 +627,13 @@ public sealed class MemoryEvaluationTests
             Directory.CreateDirectory(rootPath);
             Files = new EvaluationPackageFileStore(rootPath);
             State = new EvaluationPackageKeyValueStore();
-            LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
+            RoleLocalWorkspace = new TestPackageRoleLocalWorkspace(rootPath);
         }
 
         public IPackageFileStore Files { get; }
 
         public IPackageKeyValueStore State { get; }
-        public IPackageLocalWorkspaceLease LocalWorkspace { get; }
+        public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; }
     }
 
     private sealed class EvaluationPackageFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
@@ -647,7 +652,7 @@ public sealed class MemoryEvaluationTests
             => Task.FromResult<IReadOnlyList<string>>([]);
     }
 
-    private sealed class EvaluationPackageConfiguration : EmptyPackageConfiguration;
+    private sealed class EvaluationPackageSettings : EmptyPackageSettings;
 
     private sealed class EvaluationPackageSecrets : InMemoryPackageSecrets;
 }

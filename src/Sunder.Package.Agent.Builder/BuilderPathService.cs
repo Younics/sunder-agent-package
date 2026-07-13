@@ -1,5 +1,7 @@
 using Sunder.Package.Agent.Contracts.Models;
 
+using Sunder.Sdk.Packaging;
+
 namespace Sunder.Package.Agent.Builder;
 
 public sealed class BuilderPathService
@@ -169,10 +171,21 @@ public sealed class BuilderPathService
         var parts = displayName
             .ToLowerInvariant()
             .Split([' ', '-', '_', '.'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(part => new string(part.Where(char.IsLetterOrDigit).ToArray()))
+            .Select(part => new string(part.Where(static character => character is >= 'a' and <= 'z' or >= '0' and <= '9').ToArray()))
             .Where(part => part.Length > 0)
             .ToArray();
-        return parts.Length == 0 ? "local.sunder.package" : "local." + string.Join('.', parts);
+        if (parts.Length == 0)
+        {
+            return "local.sunder.package";
+        }
+
+        var packageId = "local." + string.Join('.', parts);
+        if (packageId.Length > PackageId.MaximumLength)
+        {
+            packageId = packageId[..PackageId.MaximumLength].TrimEnd('.');
+        }
+
+        return PackageId.TryParse(packageId, out _) ? packageId : "local.sunder.package";
     }
 
     public static bool IsContractsProjectFile(string path)

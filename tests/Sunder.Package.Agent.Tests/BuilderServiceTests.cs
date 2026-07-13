@@ -347,8 +347,7 @@ public sealed class BuilderServiceTests
             new BuilderSetupService(),
             new BuilderWorkspaceExecutionService(new TestExtensionCatalog(new TestWorkspaceExecutionResolver(workspace, target))),
             store,
-            pathService,
-            NullPackageSessionService.Instance);
+            pathService);
     }
 
     private static BuilderViewModel CreateViewModelForLoadTest(string root, IBuilderProjectStore store)
@@ -610,6 +609,11 @@ public sealed class BuilderServiceTests
                && string.Equals(extensionPoint.Id, PackageExtensionPoints.WorkspaceExecutionResolvers.Id, StringComparison.Ordinal)
                 ? [typedResolver]
                 : [];
+
+        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
+            => GetExtensions(extensionPoint)
+                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
+                .ToArray();
     }
 
     private sealed class TestWorkspaceExecutionResolver(AgentWorkspaceRecord workspace, TestExecutionTarget target)

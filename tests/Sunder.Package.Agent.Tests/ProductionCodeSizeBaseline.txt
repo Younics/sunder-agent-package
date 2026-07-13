@@ -1,8 +1,1 @@
 # Reviewed production files above the 800-line new-hotspot threshold.
-src/Sunder.Package.Agent/PackageViews/AgentProfilesViewModel.cs|1292
-src/Sunder.Package.Agent/PackageViews/AgentWorkspacesViewModel.cs|989
-src/Sunder.Package.Agent/Services/BehaviorLoops/AgentBehaviorLoopHost.cs|971
-src/Sunder.Package.Agent/Storage/AgentLocalStore.Permissions.cs|848
-src/Sunder.Package.Agent.Shared/PackageViews/TranscriptScrollCoordinator.cs|975
-src/Sunder.Package.Agent.Subagents/PackageViews/SubagentsViewModel.cs|994
-src/Sunder.Package.Agent.Subagents/PackageViews/SubsessionsViewModel.cs|839

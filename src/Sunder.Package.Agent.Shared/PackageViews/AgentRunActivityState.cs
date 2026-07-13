@@ -1,6 +1,6 @@
 using System.Globalization;
-using Avalonia.Threading;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
@@ -8,7 +8,8 @@ internal sealed class AgentRunActivityState : IDisposable
 {
     private static readonly TimeSpan DefaultQuietDelay = TimeSpan.FromMilliseconds(900);
 
-    private readonly DispatcherTimer _quietTimer;
+    private readonly TimedStatusController _quietTimer = new();
+    private readonly PresentationTaskScope _tasks = new();
     private readonly TimeSpan _quietDelay;
     private readonly Func<bool> _isRunActive;
     private readonly Func<bool> _isFollowingLatest;
@@ -24,13 +25,6 @@ internal sealed class AgentRunActivityState : IDisposable
         _isRunActive = isRunActive;
         _isFollowingLatest = isFollowingLatest;
         _quietDelay = quietDelay ?? DefaultQuietDelay;
-        _quietTimer = new DispatcherTimer
-        {
-            Interval = _quietDelay <= TimeSpan.Zero
-                ? TimeSpan.FromMilliseconds(1)
-                : _quietDelay,
-        };
-        _quietTimer.Tick += OnQuietTimerTick;
     }
 
     public event Action? Changed;
@@ -46,7 +40,7 @@ internal sealed class AgentRunActivityState : IDisposable
 
     public void Reset()
     {
-        _quietTimer.Stop();
+        _quietTimer.Cancel();
         Text = "Thinking";
         IsReasoning = false;
         _hasVisibleRunActivity = false;
@@ -82,7 +76,7 @@ internal sealed class AgentRunActivityState : IDisposable
     {
         if (checkpoint?.Status != AgentRunStatus.Running)
         {
-            _quietTimer.Stop();
+            _quietTimer.Cancel();
             _showAfterQuiet = false;
             Changed?.Invoke();
             return;
@@ -102,7 +96,7 @@ internal sealed class AgentRunActivityState : IDisposable
     {
         if (!_isRunActive())
         {
-            _quietTimer.Stop();
+            _quietTimer.Cancel();
             _showAfterQuiet = false;
         }
 
@@ -119,13 +113,13 @@ internal sealed class AgentRunActivityState : IDisposable
         }
 
         _disposed = true;
-        _quietTimer.Stop();
-        _quietTimer.Tick -= OnQuietTimerTick;
+        _quietTimer.Dispose();
+        _tasks.Dispose();
     }
 
     private void RestartQuietTimer()
     {
-        _quietTimer.Stop();
+        _quietTimer.Cancel();
         if (!_isRunActive())
         {
             return;
@@ -137,13 +131,7 @@ internal sealed class AgentRunActivityState : IDisposable
             return;
         }
 
-        _quietTimer.Start();
-    }
-
-    private void OnQuietTimerTick(object? sender, EventArgs e)
-    {
-        _quietTimer.Stop();
-        ShowAfterQuietPeriod();
+        _tasks.Run(_quietTimer.ScheduleAsync(_quietDelay, ShowAfterQuietPeriod));
     }
 
     private void ShowAfterQuietPeriod()

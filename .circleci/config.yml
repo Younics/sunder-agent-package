@@ -61,7 +61,8 @@ jobs:
             }
 
             $useSourceSdk = if ("<< parameters.sdk_mode >>" -eq "source") { "true" } else { "false" }
-            Invoke-Checked { dotnet restore ".\Sunder.AgentPackage.slnx" --force-evaluate "-p:SunderUseSourceSdk=$useSourceSdk" }
+            $lockArg = if ($useSourceSdk -eq "false") { "--locked-mode" } else { "--force-evaluate" }
+            Invoke-Checked { dotnet restore ".\Sunder.AgentPackage.slnx" $lockArg "-p:SunderUseSourceSdk=$useSourceSdk" }
             Invoke-Checked { dotnet build ".\Sunder.AgentPackage.slnx" -c Release --no-restore "-p:SunderUseSourceSdk=$useSourceSdk" }
 
             New-Item -ItemType Directory -Force -Path ".\test-results" | Out-Null

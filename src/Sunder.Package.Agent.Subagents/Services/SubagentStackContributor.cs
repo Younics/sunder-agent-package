@@ -10,7 +10,7 @@ namespace Sunder.Package.Agent.Subagents.Services;
 internal sealed class SubagentStackContributor(
     SubagentService subagentService,
     IPackageContext packageContext,
-    IPackageExtensionCatalog? extensionCatalog = null) : IPackageStackContributor, IPackageStackImportAppliedHandler
+    IPackageExtensionCatalog extensionCatalog) : IPackageStackContributor, IPackageStackImportAppliedHandler
 {
     private const string SchemaId = "sunder.package.agent.subagents/subagent";
     private const string DetailDescription = "description";
@@ -126,7 +126,7 @@ internal sealed class SubagentStackContributor(
 
         if (errors.Count > 0)
         {
-            return ValueTask.FromResult(new StackImportResult(false, [], new Dictionary<string, string>(), warnings, errors));
+            return ValueTask.FromResult(new StackImportResult(StackImportOutcome.Failed, [], new Dictionary<string, string>(), warnings, errors));
         }
 
         var duplicateId = selectedPayloads
@@ -135,7 +135,7 @@ internal sealed class SubagentStackContributor(
         if (duplicateId is not null)
         {
             errors.Add($"The selected stack fragments contain duplicate subagent id '{duplicateId}'. No subagents were imported.");
-            return ValueTask.FromResult(new StackImportResult(false, [], new Dictionary<string, string>(), warnings, errors));
+            return ValueTask.FromResult(new StackImportResult(StackImportOutcome.Failed, [], new Dictionary<string, string>(), warnings, errors));
         }
 
         try
@@ -144,12 +144,12 @@ internal sealed class SubagentStackContributor(
             var imported = saved
                 .Select(subagent => new StackImportedItem(subagent.SubagentId, subagent.DisplayName, "subagent"))
                 .ToArray();
-            return ValueTask.FromResult(new StackImportResult(true, imported, new Dictionary<string, string>(), warnings, []));
+            return ValueTask.FromResult(new StackImportResult(StackImportOutcome.Completed, imported, new Dictionary<string, string>(), warnings, []));
         }
         catch (Exception ex)
         {
             errors.Add($"Subagent import failed before the atomic store update completed: {ex.Message}");
-            return ValueTask.FromResult(new StackImportResult(false, [], new Dictionary<string, string>(), warnings, errors));
+            return ValueTask.FromResult(new StackImportResult(StackImportOutcome.Failed, [], new Dictionary<string, string>(), warnings, errors));
         }
     }
 
@@ -172,38 +172,35 @@ internal sealed class SubagentStackContributor(
     private IReadOnlyList<StackPackageRequirement> BuildPackageRequirements(IReadOnlyList<SubagentStackPayload> payloads)
     {
         var packageIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { SubagentConstants.PackageId };
-        if (extensionCatalog is not null)
+        var providerIds = payloads
+            .Select(payload => payload.ChatProviderId)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (providerIds.Count > 0)
         {
-            var providerIds = payloads
-                .Select(payload => payload.ChatProviderId)
-                .Where(value => !string.IsNullOrWhiteSpace(value))
-                .Select(value => value!)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (providerIds.Count > 0)
+            foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ChatProviders))
             {
-                foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ChatProviders))
+                if (providerIds.Contains(contribution.Contribution.Descriptor.ProviderId))
                 {
-                    if (providerIds.Contains(contribution.Contribution.Descriptor.ProviderId))
-                    {
-                        AddPackageId(packageIds, contribution.PackageId);
-                    }
+                    AddPackageId(packageIds, contribution.PackageId);
                 }
             }
+        }
 
-            var sourceIds = payloads
-                .SelectMany(payload => payload.SelectableCapabilityAssignments ?? [])
-                .Select(assignment => assignment.SourceId)
-                .Where(value => !string.IsNullOrWhiteSpace(value))
-                .Select(value => value!)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (sourceIds.Count > 0)
+        var sourceIds = payloads
+            .SelectMany(payload => payload.SelectableCapabilityAssignments ?? [])
+            .Select(assignment => assignment.SourceId)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (sourceIds.Count > 0)
+        {
+            foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ProfileSelectableCapabilityProviders))
             {
-                foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ProfileSelectableCapabilityProviders))
+                if (sourceIds.Contains(contribution.Contribution.ProviderId))
                 {
-                    if (sourceIds.Contains(contribution.Contribution.ProviderId))
-                    {
-                        AddPackageId(packageIds, contribution.PackageId);
-                    }
+                    AddPackageId(packageIds, contribution.PackageId);
                 }
             }
         }

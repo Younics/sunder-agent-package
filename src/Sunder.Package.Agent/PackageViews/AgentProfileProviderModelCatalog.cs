@@ -1,18 +1,19 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Services;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.PackageViews;
 
 internal static class AgentProfileProviderModelCatalog
 {
-    public static IProviderModelCatalog CreateChat(AgentProfileService service)
+    public static IProviderModelCatalog CreateChat(IAgentProfileGateway service)
         => new ProviderModelCatalogAdapter(
-            () => service.ListChatProviders()
+            () => service.ListChatProviderDescriptors()
                 .Select(provider => new ProviderCatalogOption(
-                    provider.Descriptor.ProviderId,
-                    provider.Descriptor.DisplayName,
-                    provider.Descriptor.PackageId))
+                    provider.ProviderId,
+                    provider.DisplayName,
+                    provider.PackageId))
                 .ToArray(),
             async (providerId, cancellationToken) =>
             {
@@ -30,13 +31,13 @@ internal static class AgentProfileProviderModelCatalog
                         : readiness.Message);
             });
 
-    public static IProviderModelCatalog CreateEmbedding(AgentProfileService service)
+    public static IProviderModelCatalog CreateEmbedding(IAgentProfileGateway service)
         => new ProviderModelCatalogAdapter(
-            () => service.ListEmbeddingProviders()
+            () => service.ListEmbeddingProviderDescriptors()
                 .Select(provider => new ProviderCatalogOption(
-                    provider.Descriptor.ProviderId,
-                    provider.Descriptor.DisplayName,
-                    provider.Descriptor.PackageId))
+                    provider.ProviderId,
+                    provider.DisplayName,
+                    provider.PackageId))
                 .ToArray(),
             async (providerId, cancellationToken) =>
             {

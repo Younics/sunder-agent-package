@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
@@ -45,36 +44,15 @@ internal sealed class OpenAiCodexChatClient(
         var responseId = Guid.NewGuid().ToString("N");
         var messageId = responseId;
         var toolCount = options?.ToolMode == ChatToolMode.None ? 0 : options?.Tools?.Count ?? 0;
+        var telemetry = new ProviderStreamTelemetry(_context);
 
-        await LogAsync(
-            AgentLogLevel.Debug,
-            "provider.request.start",
-            "Provider request started.",
-            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["model.id"] = modelId,
-                ["prompt.turn_count"] = messageList.Length,
-                ["tool.available_count"] = toolCount,
-                ["system_prompt.length"] = options?.Instructions?.Length ?? 0,
-            },
-            cancellationToken: cancellationToken);
+        await telemetry.RequestStartedAsync(
+            modelId,
+            messageList.Length,
+            toolCount,
+            options?.Instructions?.Length ?? 0,
+            cancellationToken);
 
-        var streamStopwatch = Stopwatch.StartNew();
-        await LogAsync(
-            AgentLogLevel.Debug,
-            "provider.stream.start",
-            "Provider stream started.",
-            attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["provider.id"] = _context.ProviderId,
-                ["model.id"] = modelId,
-                ["tool.count"] = toolCount,
-                ["message.count"] = messageList.Length,
-                ["system_prompt.length"] = options?.Instructions?.Length ?? 0,
-            },
-            cancellationToken: cancellationToken);
-
-        var firstEventRecorded = false;
         await using var enumerator = _transport.StreamResponseAsync(
             _session,
             _context,
@@ -96,42 +74,38 @@ internal sealed class OpenAiCodexChatClient(
 
                 current = enumerator.Current;
             }
-            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
-            {
-                var timeout = new AgentChatProviderException(
-                    "The OpenAI Codex request timed out.",
-                    "### OpenAI Codex request timed out\n\nThe provider canceled the request before the caller requested cancellation.",
-                    "codex-timeout",
-                    ex);
-                await LogAsync(AgentLogLevel.Error, "provider.stream.failed", timeout.Message, streamStopwatch.ElapsedMilliseconds, exception: timeout, cancellationToken: CancellationToken.None);
-                throw timeout;
-            }
-            catch (OperationCanceledException)
-            {
-                await LogAsync(AgentLogLevel.Warning, "provider.stream.canceled", "Provider stream was canceled.", streamStopwatch.ElapsedMilliseconds, cancellationToken: CancellationToken.None);
-                throw;
-            }
             catch (Exception ex)
             {
-                await LogAsync(AgentLogLevel.Error, "provider.stream.failed", ex.Message, streamStopwatch.ElapsedMilliseconds, exception: ex, cancellationToken: CancellationToken.None);
-                throw;
+                switch (ProviderStreamFailureClassifier.Classify(ex, cancellationToken))
+                {
+                    case ProviderStreamFailureKind.CallerCancellation:
+                        await telemetry.CanceledAsync();
+                        throw;
+                    case ProviderStreamFailureKind.ProviderCancellation:
+                        var timeout = new AgentChatProviderException(
+                            "The OpenAI Codex request timed out.",
+                            "### OpenAI Codex request timed out\n\nThe provider canceled the request before the caller requested cancellation.",
+                            "codex-timeout",
+                            ex);
+                        await telemetry.FailedAsync(timeout);
+                        throw timeout;
+                    default:
+                        await telemetry.FailedAsync(ex);
+                        throw;
+                }
             }
 
-            if (!firstEventRecorded)
+            if (current.Contents.Any(content => content is not UsageContent))
             {
-                firstEventRecorded = true;
-                await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", DescribeUpdate(current), streamStopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
+                await telemetry.RecordFirstEventAsync(
+                    ProviderResponseUpdates.Describe(current),
+                    cancellationToken);
             }
 
             yield return current;
         }
 
-        await LogAsync(
-            AgentLogLevel.Debug,
-            "provider.stream.completed",
-            firstEventRecorded ? null : "Provider stream ended without events.",
-            streamStopwatch.ElapsedMilliseconds,
-            cancellationToken: cancellationToken);
+        await telemetry.CompletedAsync("Provider stream ended without events.", cancellationToken);
     }
 
     public object? GetService(Type serviceType, object? serviceKey = null)
@@ -145,25 +119,4 @@ internal sealed class OpenAiCodexChatClient(
     {
     }
 
-    private ValueTask LogAsync(
-        AgentLogLevel level,
-        string eventName,
-        string? message = null,
-        long? elapsedMilliseconds = null,
-        IReadOnlyDictionary<string, object?>? attributes = null,
-        Exception? exception = null,
-        CancellationToken cancellationToken = default)
-        => _context.LogProviderEventAsync(level, eventName, message ?? eventName, elapsedMilliseconds, attributes, exception, cancellationToken);
-
-    private static string DescribeUpdate(ChatResponseUpdate update)
-    {
-        if (!string.IsNullOrEmpty(update.Text))
-        {
-            return "TextDelta";
-        }
-
-        return update.Contents.Any(content => content is FunctionCallContent)
-            ? "ToolCallRequested"
-            : "Update";
-    }
 }

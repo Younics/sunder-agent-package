@@ -3,10 +3,11 @@ using System.Text;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Runtime;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentAttachmentService : IAgentAttachmentContentStore, IAgentSessionDataCleaner
+public sealed class AgentAttachmentService : IAgentAttachmentContentStore, IAgentSessionDataCleaner, IAgentAttachmentGateway
 {
     public const int MaxAttachmentsPerMessage = 10;
     public const long MaxAttachmentBytes = 25 * 1024 * 1024;
@@ -75,7 +76,7 @@ public sealed class AgentAttachmentService : IAgentAttachmentContentStore, IAgen
 
     public AgentAttachmentService(IPackageContext packageContext)
     {
-        _attachmentRootPath = packageContext.Storage.LocalWorkspace.GetLocalPath("agent/attachments");
+        _attachmentRootPath = packageContext.Storage.RoleLocalWorkspace.GetLocalPath("agent/attachments");
         Directory.CreateDirectory(_attachmentRootPath);
     }
 
@@ -91,6 +92,11 @@ public sealed class AgentAttachmentService : IAgentAttachmentContentStore, IAgen
     }
 
     public async Task<AgentAttachmentUploadRequest> LoadUploadRequestFromFileAsync(string path, CancellationToken cancellationToken = default)
+        => await LoadLocalUploadRequestFromFileAsync(path, cancellationToken).ConfigureAwait(false);
+
+    internal static async Task<AgentAttachmentUploadRequest> LoadLocalUploadRequestFromFileAsync(
+        string path,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -114,6 +120,9 @@ public sealed class AgentAttachmentService : IAgentAttachmentContentStore, IAgen
     }
 
     public AgentAttachmentInfo InspectUpload(AgentAttachmentUploadRequest upload)
+        => InspectUploadContent(upload);
+
+    internal static AgentAttachmentInfo InspectUploadContent(AgentAttachmentUploadRequest upload)
     {
         var fileName = NormalizeFileName(upload.FileName);
         ValidateContentSize(fileName, upload.Content.Length);

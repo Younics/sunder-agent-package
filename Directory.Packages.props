@@ -2,13 +2,14 @@
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+    <CentralPackageVersionOverrideEnabled>false</CentralPackageVersionOverrideEnabled>
   </PropertyGroup>
   <ItemGroup>
     <!-- Sunder package development -->
-    <PackageVersion Include="Sunder.Sdk" Version="1.0.0" />
-    <PackageVersion Include="Sunder.Sdk.Avalonia" Version="1.0.0" />
-    <PackageVersion Include="Sunder.Sdk.Stacks" Version="1.0.0" />
-    <PackageVersion Include="Sunder.Package.Build" Version="1.0.0" />
+    <PackageVersion Include="Sunder.Sdk" Version="1.1.0" />
+    <PackageVersion Include="Sunder.Sdk.Avalonia" Version="1.1.0" />
+    <PackageVersion Include="Sunder.Sdk.Stacks" Version="1.1.0" />
+    <PackageVersion Include="Sunder.Package.Build" Version="1.1.0" />
     <!-- UI -->
     <PackageVersion Include="Avalonia" Version="12.0.3" />
     <PackageVersion Include="Avalonia.AvaloniaEdit" Version="12.0.0" />
@@ -21,6 +22,7 @@
     <PackageVersion Include="Microsoft.Extensions.AI" Version="10.5.2" />
     <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.5.2" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.2" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.8" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.5.0" />
     <PackageVersion Include="ModelContextProtocol" Version="1.3.0" />
     <PackageVersion Include="Octokit" Version="14.0.0" />

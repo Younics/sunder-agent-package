@@ -1,14 +1,16 @@
-using System.Collections.Concurrent;
-using System.Security.Cryptography;
 using System.Text;
+using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.Threading;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
 internal static class LocalFileSystemExecutor
 {
-    private static readonly ConcurrentDictionary<string, SemaphoreSlim> MutationGates = new(
+    private static readonly ReferenceCountedKeyedLock<string> MutationGates = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
+    internal static int MutationGateCount => MutationGates.Count;
 
     public static async ValueTask<AgentFileReadResult> ReadFileAsync(
         LocalExecutionRuntimeConfig config,
@@ -16,7 +18,7 @@ internal static class LocalFileSystemExecutor
         bool allowOutsideConfiguredScope,
         CancellationToken cancellationToken)
     {
-        if (!TryValidateRange(request, out var rangeError))
+        if (!FileOperation.TryValidateRange(request.Offset, request.Limit, out var rangeError))
         {
             return AgentFileReadResult.Failure(request.Path, AgentFileReadErrorCodes.InvalidRange, rangeError!);
         }
@@ -37,11 +39,24 @@ internal static class LocalFileSystemExecutor
 
         if (Directory.Exists(path))
         {
-            RevalidateMutationPath(config, request.Path, path, allowOutsideConfiguredScope);
-            var entries = Directory.EnumerateFileSystemEntries(path)
-                .Select(entry => Directory.Exists(entry) ? Path.GetFileName(entry) + Path.DirectorySeparatorChar : Path.GetFileName(entry))
-                .OrderBy(entry => entry, StringComparer.OrdinalIgnoreCase);
-            return new AgentFileReadResult(path, string.Join(Environment.NewLine, entries), IsDirectory: true);
+            try
+            {
+                RevalidateMutationPath(config, request.Path, path, allowOutsideConfiguredScope);
+                var entries = Directory.EnumerateFileSystemEntries(path)
+                    .Take(AgentPayloadLimits.MaxLocalDirectoryEntries + 1)
+                    .Select(entry => Directory.Exists(entry) ? Path.GetFileName(entry) + Path.DirectorySeparatorChar : Path.GetFileName(entry))
+                    .ToArray();
+                var wasTruncated = entries.Length > AgentPayloadLimits.MaxLocalDirectoryEntries;
+                return new AgentFileReadResult(
+                    path,
+                    string.Join(Environment.NewLine, entries.Take(AgentPayloadLimits.MaxLocalDirectoryEntries).OrderBy(entry => entry, StringComparer.OrdinalIgnoreCase)),
+                    IsDirectory: true,
+                    WasTruncated: wasTruncated);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return AgentFileReadResult.Failure(path, AgentFileReadErrorCodes.ReadFailed, $"Unable to list directory '{path}': {ex.Message}");
+            }
         }
 
         if (!File.Exists(path))
@@ -62,8 +77,15 @@ internal static class LocalFileSystemExecutor
                 return await ReadRangeAsync(path, request, cancellationToken);
             }
 
-            var content = await File.ReadAllTextAsync(path, cancellationToken);
-            var totalLines = CountLines(content);
+            var content = await ReadBoundedTextAsync(path, cancellationToken).ConfigureAwait(false);
+            if (content is null)
+            {
+                return AgentFileReadResult.Failure(
+                    path,
+                    AgentFileReadErrorCodes.TooLarge,
+                    $"File exceeds the {AgentPayloadLimits.MaxLocalFullFileReadBytes}-byte full-read limit; use offset and limit.");
+            }
+            var totalLines = FileOperation.CountLines(content);
             return new AgentFileReadResult(path, content)
             {
                 StartLine = 1,
@@ -84,9 +106,12 @@ internal static class LocalFileSystemExecutor
         CancellationToken cancellationToken,
         ILocalFileWriteFaultInjector? faultInjector = null)
     {
-        var path = LocalPathResolver.ResolveFileSystemPath(config, request.Path, allowOutsideConfiguredScope);
-        var gate = MutationGates.GetOrAdd(path, static _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (!TryResolveMutationPath(config, request.Path, allowOutsideConfiguredScope, out var path, out var pathError))
+        {
+            return pathError!;
+        }
+
+        using var gate = await MutationGates.EnterAsync(path, cancellationToken).ConfigureAwait(false);
         string? temporaryPath = null;
         try
         {
@@ -96,7 +121,7 @@ internal static class LocalFileSystemExecutor
 
             if (Directory.Exists(path))
             {
-                return new AgentFileMutationResult(path, "The write target is not a regular file.", IsError: true, ErrorCode: AgentFileReadErrorCodes.NotAFile);
+                return FileOperation.Failure(path, "The write target is not a regular file.", AgentFileReadErrorCodes.NotAFile);
             }
 
             temporaryPath = Path.Combine(parent, $".{Path.GetFileName(path)}.sunder-{Guid.NewGuid():N}.tmp");
@@ -123,27 +148,33 @@ internal static class LocalFileSystemExecutor
             RevalidateMutationPath(config, request.Path, path, allowOutsideConfiguredScope);
             if (!request.Overwrite && (File.Exists(path) || Directory.Exists(path)))
             {
-                return new AgentFileMutationResult(path, "File already exists.", IsError: true, ErrorCode: "file-exists");
+                return FileOperation.Failure(path, "File already exists.", FileOperation.FileExistsErrorCode);
             }
 
             faultInjector?.OnFaultPoint(LocalFileWriteFaultPoint.BeforeAtomicReplace);
             if (!await ExpectedContentMatchesAsync(path, request.ExpectedContentHash, cancellationToken).ConfigureAwait(false))
             {
-                return ContentChanged(path);
+                return FileOperation.ContentChanged(path);
             }
 
+            RevalidateMutationPath(config, request.Path, path, allowOutsideConfiguredScope);
             File.Move(temporaryPath, path, request.Overwrite);
             temporaryPath = null;
-            return new AgentFileMutationResult(path, $"Wrote {request.Content.Length} character(s).");
+            return FileOperation.Written(path, request.Content.Length);
         }
         finally
         {
             if (temporaryPath is not null)
             {
-                File.Delete(temporaryPath);
+                try
+                {
+                    File.Delete(temporaryPath);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                }
             }
 
-            gate.Release();
         }
     }
 
@@ -153,41 +184,38 @@ internal static class LocalFileSystemExecutor
         bool allowOutsideConfiguredScope,
         CancellationToken cancellationToken = default)
     {
-        var path = LocalPathResolver.ResolveFileSystemPath(config, request.Path, allowOutsideConfiguredScope);
-        var gate = MutationGates.GetOrAdd(path, static _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        if (!TryResolveMutationPath(config, request.Path, allowOutsideConfiguredScope, out var path, out var pathError))
         {
-            if (File.Exists(path))
-            {
-                RevalidateMutationPath(config, request.Path, path, allowOutsideConfiguredScope);
-                if (!await ExpectedContentMatchesAsync(path, request.ExpectedContentHash, cancellationToken).ConfigureAwait(false))
-                {
-                    return ContentChanged(path);
-                }
+            return pathError!;
+        }
 
-                File.Delete(path);
-                return new AgentFileMutationResult(path, "File deleted.");
+        using var gate = await MutationGates.EnterAsync(path, cancellationToken).ConfigureAwait(false);
+        if (File.Exists(path))
+        {
+            RevalidateMutationPath(config, request.Path, path, allowOutsideConfiguredScope);
+            if (!await ExpectedContentMatchesAsync(path, request.ExpectedContentHash, cancellationToken).ConfigureAwait(false))
+            {
+                return FileOperation.ContentChanged(path);
             }
 
-            if (Directory.Exists(path))
-            {
-                if (request.ExpectedContentHash is not null)
-                {
-                    return ContentChanged(path);
-                }
+            RevalidateMutationPath(config, request.Path, path, allowOutsideConfiguredScope);
+            File.Delete(path);
+            return FileOperation.FileDeleted(path);
+        }
 
-                RevalidateMutationPath(config, request.Path, path, allowOutsideConfiguredScope);
-                Directory.Delete(path, request.Recursive);
-                return new AgentFileMutationResult(path, "Directory deleted.");
+        if (Directory.Exists(path))
+        {
+            if (request.ExpectedContentHash is not null)
+            {
+                return FileOperation.ContentChanged(path);
             }
 
-            return new AgentFileMutationResult(path, "Path does not exist.", IsError: true, ErrorCode: "path-not-found");
+            RevalidateMutationPath(config, request.Path, path, allowOutsideConfiguredScope);
+            Directory.Delete(path, request.Recursive);
+            return FileOperation.DirectoryDeleted(path);
         }
-        finally
-        {
-            gate.Release();
-        }
+
+        return FileOperation.Failure(path, "Path does not exist.", FileOperation.PathNotFoundErrorCode);
     }
 
     private static void RevalidateMutationPath(
@@ -219,13 +247,42 @@ internal static class LocalFileSystemExecutor
             return false;
         }
 
-        var content = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
-        var actual = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
+        var content = await ReadBoundedTextAsync(path, cancellationToken).ConfigureAwait(false);
+        if (content is null)
+        {
+            return false;
+        }
+
+        var actual = FileOperation.ComputeContentHash(content);
         return string.Equals(actual, expectedContentHash, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static AgentFileMutationResult ContentChanged(string path)
-        => new(path, "The file changed after patch preflight; no mutation was applied.", IsError: true, ErrorCode: "file-content-changed");
+    private static bool TryResolveMutationPath(
+        LocalExecutionRuntimeConfig config,
+        string requestedPath,
+        bool allowOutsideConfiguredScope,
+        out string path,
+        out AgentFileMutationResult? error)
+    {
+        try
+        {
+            path = LocalPathResolver.ResolveFileSystemPath(config, requestedPath, allowOutsideConfiguredScope);
+            error = null;
+            return true;
+        }
+        catch (InvalidOperationException ex)
+        {
+            path = requestedPath;
+            error = FileOperation.Failure(requestedPath, ex.Message, AgentFileReadErrorCodes.OutsideConfiguredScope);
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            path = requestedPath;
+            error = FileOperation.Failure(requestedPath, ex.Message, AgentFileReadErrorCodes.PathCanonicalizationFailed);
+            return false;
+        }
+    }
 
     private static async Task<bool> IsBinaryFileAsync(string path, CancellationToken cancellationToken)
     {
@@ -240,13 +297,53 @@ internal static class LocalFileSystemExecutor
         return buffer.Take(read).Any(value => value == 0);
     }
 
+    private static async Task<string?> ReadBoundedTextAsync(string path, CancellationToken cancellationToken)
+    {
+        var maxBytes = AgentPayloadLimits.MaxLocalFullFileReadBytes;
+        if (new FileInfo(path).Length > maxBytes)
+        {
+            return null;
+        }
+
+        var bytes = new byte[maxBytes + 1];
+        var totalRead = 0;
+        await using (var stream = new FileStream(
+                         path,
+                         FileMode.Open,
+                         FileAccess.Read,
+                         FileShare.ReadWrite,
+                         64 * 1024,
+                         FileOptions.Asynchronous | FileOptions.SequentialScan))
+        {
+            while (totalRead < bytes.Length)
+            {
+                var read = await stream.ReadAsync(bytes.AsMemory(totalRead), cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                totalRead += read;
+            }
+        }
+
+        if (totalRead > maxBytes)
+        {
+            return null;
+        }
+
+        using var memory = new MemoryStream(bytes, 0, totalRead, writable: false);
+        using var reader = new StreamReader(memory, detectEncodingFromByteOrderMarks: true);
+        return await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     private static async Task<AgentFileReadResult> ReadRangeAsync(
         string path,
         AgentFileReadRequest request,
         CancellationToken cancellationToken)
     {
         var offset = request.Offset ?? 1;
-        var limit = request.Limit ?? 2000;
+        var limit = request.Limit ?? FileOperation.DefaultReadLimit;
         using var reader = new StreamReader(path, detectEncodingFromByteOrderMarks: true);
         var lines = new List<string>(limit);
         var totalLines = 0;
@@ -279,50 +376,6 @@ internal static class LocalFileSystemExecutor
         };
     }
 
-    private static bool TryValidateRange(AgentFileReadRequest request, out string? error)
-    {
-        if (request.Offset is <= 0)
-        {
-            error = "File read offset must be greater than or equal to 1.";
-            return false;
-        }
-
-        if (request.Limit is <= 0 or > 2000)
-        {
-            error = "File read limit must be between 1 and 2000.";
-            return false;
-        }
-
-        error = null;
-        return true;
-    }
-
-    private static int CountLines(string content)
-    {
-        if (content.Length == 0)
-        {
-            return 0;
-        }
-
-        var count = 0;
-        for (var index = 0; index < content.Length; index++)
-        {
-            if (content[index] == '\r')
-            {
-                count++;
-                if (index + 1 < content.Length && content[index + 1] == '\n')
-                {
-                    index++;
-                }
-            }
-            else if (content[index] == '\n')
-            {
-                count++;
-            }
-        }
-
-        return content[^1] is '\r' or '\n' ? count : count + 1;
-    }
 }
 
 internal interface ILocalFileWriteFaultInjector

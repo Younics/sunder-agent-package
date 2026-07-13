@@ -22,7 +22,7 @@ public sealed class McpServerConnectionService(
     {
         if (reconnect)
         {
-            await connections.DisconnectServerAsync(server.ServerId).ConfigureAwait(false);
+            await connections.ReconnectServerAsync(server.ServerId).ConfigureAwait(false);
         }
 
         return await connections.GetToolsAsync(

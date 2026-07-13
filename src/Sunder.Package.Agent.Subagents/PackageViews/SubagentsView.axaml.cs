@@ -10,6 +10,7 @@ namespace Sunder.Package.Agent.Subagents.PackageViews;
 public partial class SubagentsView : UserControl, IDisposable
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
+    private readonly PresentationTaskScope _tasks = new();
     private SubagentsViewModel? _viewModel;
     private bool _disposed;
 
@@ -47,6 +48,7 @@ public partial class SubagentsView : UserControl, IDisposable
 
         _disposed = true;
         _adaptiveLayout.Dispose();
+        _tasks.Dispose();
         _viewModel?.Dispose();
         DataContext = null;
         _viewModel = null;
@@ -69,8 +71,15 @@ public partial class SubagentsView : UserControl, IDisposable
 
     private void FocusSubagentDisplayName()
     {
-        Dispatcher.UIThread.Post(
-            () => SubagentDisplayNameTextBox.Focus(),
-            DispatcherPriority.Background);
+        _tasks.Run(async cancellationToken =>
+        {
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    SubagentDisplayNameTextBox.Focus();
+                }
+            }, DispatcherPriority.Background);
+        });
     }
 }

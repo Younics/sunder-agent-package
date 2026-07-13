@@ -16,10 +16,10 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        _ = _selectionState?.SaveSelectedWorkspaceIdAsync(value?.WorkspaceId);
+        TrackBackgroundTask(_selectionState?.SaveSelectedWorkspaceIdAsync(value?.WorkspaceId));
         _globalStatusText = string.Empty;
         RefreshWorkspacePathChips();
-        _ = ReloadStoredSessionsAsync(value?.WorkspaceId);
+        _backgroundTasks.Run(_ => ReloadStoredSessionsAsync(value?.WorkspaceId));
         CreateSessionCommand.NotifyCanExecuteChanged();
         RefreshSetupState();
         ScheduleSelectedWorkspaceWarmup();
@@ -55,10 +55,10 @@ public sealed partial class AgentChatViewModel
             SelectedWorkspace?.WorkspaceId,
             StringComparison.OrdinalIgnoreCase
         );
-        _ = _selectionState?.SaveSelectedWorkspaceIdAsync(SelectedWorkspace?.WorkspaceId);
+        TrackBackgroundTask(_selectionState?.SaveSelectedWorkspaceIdAsync(SelectedWorkspace?.WorkspaceId));
         RefreshWorkspacePathChips();
         NotifyWorkspaceStateChanged();
-        _ = ReloadStoredSessionsAsync(SelectedWorkspace?.WorkspaceId);
+        _backgroundTasks.Run(_ => ReloadStoredSessionsAsync(SelectedWorkspace?.WorkspaceId));
         CreateSessionCommand.NotifyCanExecuteChanged();
         RefreshSetupState();
         return selectedWorkspaceChanged;

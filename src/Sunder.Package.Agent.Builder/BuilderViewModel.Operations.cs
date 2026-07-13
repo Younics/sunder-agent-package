@@ -345,7 +345,7 @@ public sealed partial class BuilderViewModel
                     ApplyProjectRecord(project, result.Project);
                     if (ReferenceEquals(project, SelectedProject))
                     {
-                        IsSelectedProjectLoaded = result.Status.ActiveSourceKind == PackageSessionSourceKind.Dev;
+                        IsSelectedProjectLoaded = result.Status.IsLoaded;
                         StatusText = FormatStatus(result.Status);
                     }
 
@@ -389,7 +389,7 @@ public sealed partial class BuilderViewModel
                     return;
                 }
 
-                IsSelectedProjectLoaded = status?.ActiveSourceKind == PackageSessionSourceKind.Dev;
+                IsSelectedProjectLoaded = status?.IsLoaded == true;
                 if (updateStatusText)
                 {
                     StatusText = status is null

@@ -57,7 +57,7 @@
           <Border Classes="settings-detail-card">
             <StackPanel Spacing="6">
               <TextBlock Classes="caption"
-                         Text="Authorize this provider with your ChatGPT Plus or Pro account. This remains vendor-specific and is used only by Codex-connected chat mode."
+                         Text="Select ChatGPT Plus/Pro above, click Authorize, then finish sign-in in the browser. You can return here while Sunder waits for the callback."
                          TextWrapping="Wrap" />
               <TextBlock Classes="muted"
                          Text="{Binding CodexStatusDetail}"
@@ -66,19 +66,15 @@
           </Border>
           <StackPanel Orientation="Horizontal"
                       Spacing="10">
-            <Button Classes="primary-action"
-                    Content="Authorize"
+            <Button x:Name="AuthorizeButton"
+                    Classes="primary-action"
+                    Content="{Binding AuthorizationButtonLabel}"
                     Command="{Binding AuthorizeCommand}"
                     IsEnabled="{Binding CanAuthorize}" />
             <Button Classes="secondary-action"
-                    Content="Cancel Authorization"
-                    Command="{Binding CancelAuthorizationCommand}"
-                    IsEnabled="{Binding CanCancelAuthorization}"
-                    IsVisible="{Binding IsAuthorizing}" />
-            <Button Classes="secondary-action"
                     Content="Disconnect"
                     Command="{Binding DisconnectCommand}"
-                    IsEnabled="{Binding CanDisconnect}" />
+                    IsEnabled="{Binding CanDisconnectAction}" />
           </StackPanel>
         </StackPanel>
       </Border>

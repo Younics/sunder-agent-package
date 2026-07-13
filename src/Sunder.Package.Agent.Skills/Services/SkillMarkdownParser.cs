@@ -99,6 +99,11 @@ internal static class SkillMarkdownParser
             {
                 FlushCurrent();
                 currentKey = trimmedStart[..colonIndex].Trim();
+                if (pairs.ContainsKey(currentKey))
+                {
+                    throw new InvalidDataException($"SKILL.md frontmatter contains duplicate or case-colliding key '{currentKey}'.");
+                }
+
                 currentValue.Append(trimmedStart[(colonIndex + 1)..].Trim());
                 continue;
             }

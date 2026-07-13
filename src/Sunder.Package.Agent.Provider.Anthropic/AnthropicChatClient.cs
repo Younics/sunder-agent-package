@@ -57,7 +57,12 @@ internal sealed class AnthropicChatClient : IChatClient
         var translatedMessages = AnthropicMessageTranslator.TranslateMessages(messages);
         var request = AnthropicOptionsTranslator.Translate(translatedMessages, options, modelId);
 
-        await LogRequestAsync(request, modelId, options, cancellationToken);
+        await new ProviderStreamTelemetry(_context).RequestStartedAsync(
+            modelId,
+            request.Parameters.Messages.Count,
+            request.IncludeTools ? request.Parameters.Tools?.Count ?? 0 : 0,
+            options?.Instructions?.Length ?? 0,
+            cancellationToken);
 
         var transport = _transportFactory(apiKey, request.UseFastMode, _context);
         await foreach (var update in transport.SendAsync(request, modelId, cancellationToken))
@@ -75,37 +80,6 @@ internal sealed class AnthropicChatClient : IChatClient
 
     public void Dispose()
     {
-    }
-
-    private async ValueTask LogRequestAsync(
-        AnthropicRequest request,
-        string modelId,
-        ChatOptions? options,
-        CancellationToken cancellationToken)
-    {
-        var attributes = new Dictionary<string, object?>(StringComparer.Ordinal)
-        {
-            ["model.id"] = modelId,
-            ["prompt.turn_count"] = request.Parameters.Messages.Count,
-            ["tool.available_count"] = request.IncludeTools ? request.Parameters.Tools?.Count ?? 0 : 0,
-            ["system_prompt.length"] = options?.Instructions?.Length ?? 0,
-        };
-        await _context.LogProviderEventAsync(
-            AgentLogLevel.Debug,
-            "provider.request.start",
-            "Provider request started.",
-            attributes: attributes,
-            cancellationToken: cancellationToken);
-
-        attributes["provider.id"] = _context.ProviderId;
-        attributes["tool.count"] = attributes["tool.available_count"];
-        attributes["message.count"] = attributes["prompt.turn_count"];
-        await _context.LogProviderEventAsync(
-            AgentLogLevel.Debug,
-            "provider.stream.start",
-            "Provider stream started.",
-            attributes: attributes,
-            cancellationToken: cancellationToken);
     }
 
     private static IAnthropicTransport CreateTransport(

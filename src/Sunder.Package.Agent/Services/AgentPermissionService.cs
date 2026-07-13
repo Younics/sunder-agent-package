@@ -2,13 +2,14 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Storage;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
 
 public sealed class AgentPermissionService(
     AgentLocalStore store,
-    IPackageExtensionCatalog extensionCatalog)
+    IPackageExtensionCatalog extensionCatalog) : IAgentPermissionGateway
 {
     internal const string GenericMutationActionId = "agent.tool.mutate";
     internal const string GenericMutationBoundaryId = "provider-requested-mutation";

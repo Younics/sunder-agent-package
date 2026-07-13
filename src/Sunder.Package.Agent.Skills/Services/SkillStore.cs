@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using Sunder.Sdk.Abstractions;
 
@@ -7,6 +8,8 @@ namespace Sunder.Package.Agent.Skills.Services;
 public sealed class SkillStore
 {
     private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(30);
+    private const int MaxIndexBytes = 4 * 1024 * 1024;
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private static readonly ConcurrentDictionary<string, object> SharedLocks = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
@@ -19,12 +22,14 @@ public sealed class SkillStore
     {
         _packageContext = packageContext;
         Directory.CreateDirectory(SkillsRootPath);
-        _indexPath = packageContext.Storage.LocalWorkspace.GetLocalPath("skills/skills.json");
+        _indexPath = packageContext.Storage.RoleLocalWorkspace.GetLocalPath("skills/skills.json");
         _lockPath = _indexPath + ".lock";
         _syncRoot = SharedLocks.GetOrAdd(_indexPath, static _ => new object());
+        using var transaction = EnterTransaction();
+        SkillBatchReplacementCommitter.RecoverInterruptedBatch(this);
     }
 
-    public string SkillsRootPath => _packageContext.Storage.LocalWorkspace.GetLocalPath(SkillConstants.SkillsRelativeRoot);
+    public string SkillsRootPath => _packageContext.Storage.RoleLocalWorkspace.GetLocalPath(SkillConstants.SkillsRelativeRoot);
 
     public event Action? SkillsChanged;
 
@@ -49,7 +54,17 @@ public sealed class SkillStore
     }
 
     public string GetSkillRootPath(InstalledSkillRecord skill)
-        => _packageContext.Storage.LocalWorkspace.GetLocalPath(skill.RelativeRootPath);
+    {
+        ValidateRecord(skill);
+        var root = Path.GetFullPath(_packageContext.Storage.RoleLocalWorkspace.GetLocalPath(skill.RelativeRootPath));
+        var skillsRoot = Path.GetFullPath(SkillsRootPath) + Path.DirectorySeparatorChar;
+        if (!root.StartsWith(skillsRoot, PathComparison))
+        {
+            throw new InvalidDataException($"Skill '{skill.SkillId}' has a storage path outside the skill root.");
+        }
+
+        return root;
+    }
 
     public string GetSkillMarkdownPath(InstalledSkillRecord skill)
         => Path.Combine(GetSkillRootPath(skill), "SKILL.md");
@@ -81,6 +96,12 @@ public sealed class SkillStore
     internal IDisposable EnterImportTransaction()
         => EnterTransaction();
 
+    internal string IndexPath => _indexPath;
+
+    internal string ImportJournalPath => _indexPath + ".import-journal";
+
+    internal string ImportStagingRootPath => _packageContext.Storage.RoleLocalWorkspace.GetLocalPath("skill-import");
+
     internal void RestoreIndexSnapshot(byte[]? snapshot)
     {
         using (EnterTransaction())
@@ -92,6 +113,20 @@ public sealed class SkillStore
             }
 
             WriteIndex(snapshot);
+        }
+    }
+
+    internal void SaveSkills(IReadOnlyList<InstalledSkillRecord> records)
+    {
+        using (EnterTransaction())
+        {
+            var replacedIds = records.Select(record => record.SkillId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var skills = LoadIndex()
+                .Where(skill => !replacedIds.Contains(skill.SkillId))
+                .Concat(records)
+                .OrderBy(skill => ResolveDisplayName(skill), StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            SaveIndex(skills);
         }
     }
 
@@ -107,12 +142,29 @@ public sealed class SkillStore
             }
 
             var root = GetSkillRootPath(skill);
-            if (Directory.Exists(root))
+            var backupRoot = root + ".delete-" + Guid.NewGuid().ToString("N");
+            var moved = false;
+            try
             {
-                Directory.Delete(root, recursive: true);
+                if (Directory.Exists(root))
+                {
+                    Directory.Move(root, backupRoot);
+                    moved = true;
+                }
+
+                SaveIndex(skills.Where(item => !string.Equals(item.SkillId, skill.SkillId, StringComparison.OrdinalIgnoreCase)).ToArray());
+            }
+            catch
+            {
+                if (moved && Directory.Exists(backupRoot) && !Directory.Exists(root))
+                {
+                    Directory.Move(backupRoot, root);
+                }
+
+                throw;
             }
 
-            SaveIndex(skills.Where(item => !string.Equals(item.SkillId, skill.SkillId, StringComparison.OrdinalIgnoreCase)).ToArray());
+            SkillImportFileSystem.TryDeleteDirectory(backupRoot);
         }
 
         SkillsChanged?.Invoke();
@@ -139,8 +191,41 @@ public sealed class SkillStore
 
         try
         {
-            return JsonSerializer.Deserialize<IReadOnlyList<InstalledSkillRecord>>(File.ReadAllText(_indexPath), JsonOptions)
-                   ?? throw new InvalidDataException($"The skill index '{_indexPath}' is empty.");
+            var info = new FileInfo(_indexPath);
+            if (info.Length > MaxIndexBytes)
+            {
+                throw new InvalidDataException($"The skill index '{_indexPath}' exceeds the {MaxIndexBytes}-byte limit.");
+            }
+
+            IReadOnlyList<InstalledSkillRecord> records;
+            try
+            {
+                var bytes = File.ReadAllBytes(_indexPath);
+                if (bytes.Length > MaxIndexBytes)
+                {
+                    throw new InvalidDataException($"The skill index '{_indexPath}' grew beyond the {MaxIndexBytes}-byte limit while it was being read.");
+                }
+
+                records = JsonSerializer.Deserialize<IReadOnlyList<InstalledSkillRecord>>(
+                              StrictUtf8.GetString(bytes), JsonOptions)
+                          ?? throw new InvalidDataException($"The skill index '{_indexPath}' is empty.");
+            }
+            catch (DecoderFallbackException ex)
+            {
+                throw new InvalidDataException($"The skill index '{_indexPath}' is not valid UTF-8.", ex);
+            }
+
+            var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var record in records)
+            {
+                ValidateRecord(record);
+                if (!ids.Add(record.SkillId))
+                {
+                    throw new InvalidDataException($"The skill index contains duplicate or case-colliding id '{record.SkillId}'.");
+                }
+            }
+
+            return records;
         }
         catch (JsonException ex)
         {
@@ -149,7 +234,37 @@ public sealed class SkillStore
     }
 
     private void SaveIndex(IReadOnlyList<InstalledSkillRecord> skills)
-        => WriteIndex(JsonSerializer.SerializeToUtf8Bytes(skills, JsonOptions));
+    {
+        foreach (var skill in skills)
+        {
+            ValidateRecord(skill);
+        }
+
+        WriteIndex(JsonSerializer.SerializeToUtf8Bytes(skills, JsonOptions));
+    }
+
+    private static void ValidateRecord(InstalledSkillRecord skill)
+    {
+        if (string.IsNullOrWhiteSpace(skill.SkillId)
+            || skill.SkillId.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || skill.SkillId is "." or ".."
+            || skill.SkillId.Contains(Path.DirectorySeparatorChar)
+            || skill.SkillId.Contains(Path.AltDirectorySeparatorChar))
+        {
+            throw new InvalidDataException("The skill index contains an invalid skill id.");
+        }
+
+        var expectedRoot = SkillConstants.SkillsRelativeRoot + "/" + skill.SkillId;
+        if (!string.Equals(skill.RelativeRootPath.Replace('\\', '/'), expectedRoot, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException($"Skill '{skill.SkillId}' has an invalid storage path.");
+        }
+    }
+
+    private static StringComparison PathComparison
+        => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
 
     private void WriteIndex(byte[] content)
     {

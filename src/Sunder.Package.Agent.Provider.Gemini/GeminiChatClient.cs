@@ -14,9 +14,6 @@ internal sealed class GeminiChatClient : IChatClient
     private readonly Func<string, Client> _clientFactory;
     private readonly GeminiContentTranslator _contentTranslator = new();
     private readonly GeminiOptionsTranslator _optionsTranslator = new();
-    private readonly GeminiCompletionTransport _completionTransport;
-    private readonly GeminiStreamingTransport _streamingTransport;
-    private readonly GeminiTelemetry _telemetry;
 
     public GeminiChatClient(AgentChatClientContext context, ProviderCredentialAccessor credentials)
         : this(context, credentials, static apiKey => new Client(apiKey: apiKey))
@@ -31,10 +28,6 @@ internal sealed class GeminiChatClient : IChatClient
         _context = context;
         _credentials = credentials;
         _clientFactory = clientFactory;
-        _telemetry = new GeminiTelemetry(context);
-        var responseTranslator = new GeminiResponseTranslator();
-        _completionTransport = new GeminiCompletionTransport(responseTranslator, _telemetry);
-        _streamingTransport = new GeminiStreamingTransport(responseTranslator, _telemetry);
     }
 
     public ChatClientMetadata Metadata { get; } = new("Google Gemini");
@@ -68,7 +61,8 @@ internal sealed class GeminiChatClient : IChatClient
         var translation = _contentTranslator.Translate(messages);
         var config = _optionsTranslator.Translate(options, includeTools, translation.SystemInstruction, modelId);
 
-        await _telemetry.RequestStartedAsync(
+        var telemetry = new ProviderStreamTelemetry(_context);
+        await telemetry.RequestStartedAsync(
             modelId,
             translation.Contents.Count,
             includeTools ? options?.Tools?.Count ?? 0 : 0,
@@ -87,15 +81,16 @@ internal sealed class GeminiChatClient : IChatClient
 
         using (client)
         {
+            var responseTranslator = new GeminiResponseTranslator();
             var transport = includeTools
-                ? _completionTransport.StreamAsync(
+                ? new GeminiCompletionTransport(responseTranslator, telemetry).StreamAsync(
                     client,
                     translation.Contents,
                     config,
                     modelId,
                     options?.AllowMultipleToolCalls == true,
                     cancellationToken)
-                : _streamingTransport.StreamAsync(
+                : new GeminiStreamingTransport(responseTranslator, telemetry).StreamAsync(
                     client,
                     translation.Contents,
                     config,

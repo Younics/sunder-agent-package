@@ -1,10 +1,11 @@
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Runtime;
 
 namespace Sunder.Package.Agent.Services;
 
 public sealed class AgentExecutionTargetWarmupService(
     AgentWorkspaceService workspaceService,
-    AgentExecutionTargetService executionTargetService)
+    AgentExecutionTargetService executionTargetService) : IAgentExecutionGateway
 {
     public async Task<AgentExecutionTargetWarmupResult> WarmWorkspaceAsync(
         AgentWorkspaceRecord workspace,
@@ -44,6 +45,9 @@ public sealed class AgentExecutionTargetWarmupService(
             return AgentExecutionTargetWarmupResult.Failed(ex.Message);
         }
     }
+
+    public IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets()
+        => executionTargetService.ListTargets();
 }
 
 public sealed record AgentExecutionTargetWarmupResult(

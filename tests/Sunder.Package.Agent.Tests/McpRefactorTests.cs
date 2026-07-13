@@ -7,12 +7,34 @@ using Sunder.Package.Agent.Mcp;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
+using Sunder.Sdk.Callbacks;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed class McpRefactorTests
 {
+    [Fact]
+    public async Task OAuthCallbackHandler_RejectsUnknownServerBeforeStartingProviderFlow()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await using var oauth = new McpOAuthService(context);
+        var handler = new McpOAuthCallbackHandler(catalog, oauth, context);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => handler.StartCallbackAsync(
+            new PackageCallbackStartContext(
+                "session",
+                new Uri("http://localhost:1455/callbacks/session"),
+                McpOAuthCallbackHandler.HandlerId,
+                new Dictionary<string, string>
+                {
+                    [McpOAuthCallbackHandler.ServerIdParameter] = "missing",
+                })));
+
+        Assert.Contains("not found", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void ToolIdentity_UsesStableServerIdAndRoundTripsUnambiguousSegments()
     {
@@ -103,14 +125,91 @@ public sealed class McpRefactorTests
         var firstSession = Guid.NewGuid();
         var secondSession = Guid.NewGuid();
 
-        await manager.GetClientAsync(server, Empty, Empty, null, McpConnectionScope.For(firstSession, "workspace-a"));
-        await manager.GetClientAsync(server, Empty, Empty, null, McpConnectionScope.For(firstSession, "workspace-a"));
-        await manager.GetClientAsync(server, Empty, Empty, null, McpConnectionScope.For(secondSession, "workspace-a"));
-        await manager.GetClientAsync(server, Empty, Empty, null, McpConnectionScope.For(firstSession, "workspace-b"));
+        await AcquireAndReleaseAsync(manager, server, McpConnectionScope.For(firstSession, "workspace-a"));
+        await AcquireAndReleaseAsync(manager, server, McpConnectionScope.For(firstSession, "workspace-a"));
+        await AcquireAndReleaseAsync(manager, server, McpConnectionScope.For(secondSession, "workspace-a"));
+        await AcquireAndReleaseAsync(manager, server, McpConnectionScope.For(firstSession, "workspace-b"));
 
         Assert.Equal(3, factory.ConnectCount);
         Assert.NotNull(manager.GetCachedTools(server));
         Assert.Equal(3, manager.GetStatus(server).ActiveConnectionCount);
+    }
+
+    [Fact]
+    public async Task ConnectionPool_DisconnectRetiresConnectionUntilInvocationLeaseDrains()
+    {
+        var factory = new FakeConnectionFactory();
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var server = CreateServer("one", "one");
+        await using var lease = await manager.AcquireClientLeaseAsync(server, Empty, Empty, null, McpConnectionScope.For(Guid.NewGuid(), "workspace"));
+        Assert.NotNull(lease);
+        Assert.Equal(1, manager.GetStatus(server).ActiveConnectionCount);
+
+        var disconnect = manager.DisconnectServerAsync(server.ServerId);
+        await WaitUntilAsync(() => manager.GetStatus(server).ActiveConnectionCount == 0);
+
+        Assert.False(disconnect.IsCompleted);
+        Assert.Equal(0, factory.Connections[0].DisposeCount);
+
+        await lease.DisposeAsync();
+        await disconnect.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(1, factory.Connections[0].DisposeCount);
+    }
+
+    [Fact]
+    public async Task ConnectionPool_ForceReconnectInvalidatesMetadataAndCreatesNewConnection()
+    {
+        var factory = new FakeConnectionFactory();
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var server = CreateServer("one", "one");
+        await manager.GetToolsAsync(server, Empty, Empty, null);
+        Assert.NotNull(manager.GetCachedTools(server));
+
+        await manager.ReconnectServerAsync(server.ServerId);
+
+        Assert.Null(manager.GetCachedTools(server));
+        await manager.GetToolsAsync(server, Empty, Empty, null);
+        Assert.Equal(2, factory.ConnectCount);
+        Assert.Equal(1, factory.Connections[0].DisposeCount);
+        Assert.Equal(0, manager.KeyedLockCount);
+    }
+
+    [Fact]
+    public async Task ConnectionPool_LeakedInvocationLeaseDoesNotBlockDisconnectForever()
+    {
+        var factory = new FakeConnectionFactory();
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var server = CreateServer("one", "one");
+        var lease = await manager.AcquireClientLeaseAsync(server, Empty, Empty, null, McpConnectionScope.Shared);
+        Assert.NotNull(lease);
+
+        await manager.DisconnectServerAsync(server.ServerId).WaitAsync(TimeSpan.FromSeconds(3));
+
+        Assert.Equal(1, factory.Connections[0].DisposeCount);
+        Assert.Equal(0, manager.KeyedLockCount);
+        await lease.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task ConnectionPool_ReconfigurationWaitsForInvocationLeaseBeforeReplacingConnection()
+    {
+        var factory = new FakeConnectionFactory();
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var server = CreateServer("one", "one") with { PersistenceVersion = 1 };
+        await using var lease = await manager.AcquireClientLeaseAsync(server, Empty, Empty, null, McpConnectionScope.Shared);
+        Assert.NotNull(lease);
+
+        var reconfigure = manager.GetToolsAsync(server with { PersistenceVersion = 2 }, Empty, Empty, null);
+        await WaitUntilAsync(() => manager.GetStatus(server).ActiveConnectionCount == 0);
+
+        Assert.False(reconfigure.IsCompleted);
+        Assert.Equal(0, factory.Connections[0].DisposeCount);
+        Assert.Equal(1, factory.ConnectCount);
+
+        await lease.DisposeAsync();
+        await reconfigure.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(1, factory.Connections[0].DisposeCount);
+        Assert.Equal(2, factory.ConnectCount);
     }
 
     [Fact]
@@ -370,6 +469,15 @@ public sealed class McpRefactorTests
         }
     }
 
+    private static async Task AcquireAndReleaseAsync(
+        McpClientConnectionManager manager,
+        ConfiguredMcpServerRecord server,
+        McpConnectionScope scope)
+    {
+        await using var lease = await manager.AcquireClientLeaseAsync(server, Empty, Empty, null, scope);
+        Assert.NotNull(lease);
+    }
+
     private sealed class FakeConnectionFactory : IMcpClientConnectionFactory
     {
         public int ConnectCount { get; private set; }
@@ -433,7 +541,7 @@ public sealed class McpRefactorTests
         public string Version { get; } = "1.0.0";
         public string InstallPath => AppContext.BaseDirectory;
         public IPackageStorageContext Storage => _storage;
-        public IPackageConfiguration Configuration { get; } = new EmptyConfiguration();
+        public IPackageSettings Settings { get; } = new EmptySettings();
         IPackageSecrets IPackageContext.Secrets => Secrets;
         public ILoggerFactory LoggerFactory => NullLoggerFactory.Instance;
         public IPackageLogging Logging { get; } = NullPackageLogging.Instance;
@@ -443,7 +551,7 @@ public sealed class McpRefactorTests
     {
         public IPackageFileStore Files { get; } = new TestFiles();
         public IPackageKeyValueStore State { get; } = state;
-        public IPackageLocalWorkspaceLease LocalWorkspace { get; } = new TestPackageWorkspaceLease(Path.GetTempPath());
+        public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; } = new TestPackageRoleLocalWorkspace(Path.GetTempPath());
     }
 
     private sealed class TestFiles : TestPackageFileStoreBase
@@ -522,5 +630,5 @@ public sealed class McpRefactorTests
         }
     }
 
-    private sealed class EmptyConfiguration : EmptyPackageConfiguration;
+    private sealed class EmptySettings : EmptyPackageSettings;
 }

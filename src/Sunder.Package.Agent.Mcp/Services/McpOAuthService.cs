@@ -1,6 +1,3 @@
-using System.Diagnostics;
-using System.Net;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Authentication;
@@ -9,67 +6,145 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
-public sealed class McpOAuthService(IPackageContext packageContext)
+public sealed class McpOAuthService : IAsyncDisposable
 {
-    internal const int PreferredCallbackPort = 1465;
-    private const string CallbackPath = "/mcp/oauth/callback";
-    private static readonly TimeSpan BrowserAuthorizationTimeout = TimeSpan.FromMinutes(5);
+    private static readonly Uri NonInteractiveRedirectUri = new("https://sunder.invalid/mcp/oauth/callback");
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly IPackageContext _packageContext;
+    private readonly ILoggerFactory _loggerFactory;
+    private readonly object _syncRoot = new();
+    private readonly Dictionary<string, McpOAuthFlow> _flowsBySession = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, McpOAuthFlow> _flowsByServer = new(StringComparer.OrdinalIgnoreCase);
+    private readonly CancellationTokenSource _shutdown = new();
+    private bool _disposed;
 
-    private readonly IPackageContext _packageContext = packageContext;
-    private readonly ILoggerFactory _loggerFactory = packageContext.LoggerFactory;
-    private readonly ILogger<McpOAuthService> _logger = packageContext.LoggerFactory.CreateLogger<McpOAuthService>();
-    private readonly SemaphoreSlim _authorizationGate = new(1, 1);
+    public McpOAuthService(IPackageContext packageContext)
+    {
+        _packageContext = packageContext;
+        _loggerFactory = packageContext.LoggerFactory;
+    }
 
-    public Task<ClientOAuthOptions?> CreateClientOptionsAsync(
+    public async Task<ClientOAuthOptions?> CreateClientOptionsAsync(
         ConfiguredMcpServerRecord server,
         bool allowInteractive,
         CancellationToken cancellationToken = default)
-        => CreateClientOptionsAsync(
+    {
+        if (allowInteractive)
+        {
+            throw new InvalidOperationException("Interactive MCP OAuth must be started by the registered host callback handler.");
+        }
+        if (!server.OAuthEnabled || string.IsNullOrWhiteSpace(server.EndpointUrl)) return null;
+        var registration = await ReadClientRegistrationAsync(server.ServerId, cancellationToken);
+        var redirectUri = TryReadRedirectUri(registration) ?? NonInteractiveRedirectUri;
+        return await CreateClientOptionsCoreAsync(
             server,
-            allowInteractive,
-            BuildRedirectUri(PreferredCallbackPort),
-            callbackListener: null,
+            redirectUri,
+            static (_, _, _) => Task.FromResult<string?>(null),
             cancellationToken);
+    }
 
-    private async Task<ClientOAuthOptions?> CreateClientOptionsAsync(
+    internal async Task<Uri> StartAuthorizationAsync(
         ConfiguredMcpServerRecord server,
-        bool allowInteractive,
+        string callbackSessionId,
         Uri redirectUri,
-        OAuthCallbackListener? callbackListener,
         CancellationToken cancellationToken)
     {
-        if (!server.OAuthEnabled || string.IsNullOrWhiteSpace(server.EndpointUrl))
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!server.OAuthEnabled) throw new InvalidOperationException($"MCP server '{server.DisplayName}' is not configured for OAuth.");
+        if (string.IsNullOrWhiteSpace(server.EndpointUrl)) throw new InvalidOperationException($"MCP server '{server.DisplayName}' is missing an endpoint URL.");
+
+        McpOAuthFlow flow;
+        lock (_syncRoot)
         {
-            return null;
+            if (_flowsByServer.ContainsKey(server.ServerId))
+            {
+                throw new InvalidOperationException($"OAuth authorization is already in progress for MCP server '{server.DisplayName}'.");
+            }
+            var lifetime = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+            flow = new McpOAuthFlow(callbackSessionId, server.ServerId, redirectUri, lifetime);
+            _flowsBySession.Add(callbackSessionId, flow);
+            _flowsByServer.Add(server.ServerId, flow);
         }
 
-        var registration = allowInteractive
-            ? await ReadClientRegistrationAsync(server.ServerId, redirectUri, cancellationToken)
-            : await ReadClientRegistrationAsync(server.ServerId, cancellationToken);
-        var explicitClientSecret = await _packageContext.Secrets.GetSecretAsync(
-            McpOAuthSecretKeys.ClientSecret(server.ServerId), cancellationToken);
-        return new ClientOAuthOptions
+        try
         {
-            RedirectUri = redirectUri,
-            ClientId = string.IsNullOrWhiteSpace(server.OAuthClientId) ? registration?.ClientId : server.OAuthClientId,
-            ClientSecret = string.IsNullOrWhiteSpace(explicitClientSecret) ? registration?.ClientSecret : explicitClientSecret,
-            Scopes = server.OAuthScopes.Length == 0 ? null : server.OAuthScopes,
-            TokenCache = new SecretTokenCache(_packageContext, server.ServerId),
-            AuthorizationRedirectDelegate = allowInteractive
-                ? (authorizationUri, actualRedirectUri, cancellationToken) => StartBrowserAuthorizationAsync(authorizationUri, actualRedirectUri, callbackListener, cancellationToken)
-                : static (_, _, _) => Task.FromResult<string?>(null),
-            DynamicClientRegistration = string.IsNullOrWhiteSpace(server.OAuthClientId)
-                ? new DynamicClientRegistrationOptions
-                {
-                    ClientName = "Sunder",
-                    ResponseDelegate = async (response, cancellationToken) =>
-                    {
-                        await SaveClientRegistrationAsync(response, server.ServerId, redirectUri, cancellationToken);
-                    },
-                }
-                : null,
-        };
+            await _packageContext.Secrets.DeleteSecretAsync(McpOAuthSecretKeys.TokenCache(server.ServerId), cancellationToken);
+            flow.RunTask = RunAuthorizationAsync(server, flow);
+            var completed = await Task.WhenAny(flow.AuthorizationUri.Task, flow.RunTask).WaitAsync(cancellationToken);
+            if (ReferenceEquals(completed, flow.RunTask))
+            {
+                await flow.RunTask;
+                throw new InvalidOperationException("The MCP server did not request interactive authorization.");
+            }
+            return await flow.AuthorizationUri.Task;
+        }
+        catch
+        {
+            await CancelAsync(callbackSessionId);
+            throw;
+        }
+    }
+
+    internal async Task<McpOAuthCompletion> CompleteAsync(
+        string callbackSessionId,
+        IReadOnlyDictionary<string, string?> queryValues,
+        CancellationToken cancellationToken)
+    {
+        var flow = GetFlow(callbackSessionId);
+        var error = GetValue(queryValues, "error_description") ?? GetValue(queryValues, "error");
+        var code = GetValue(queryValues, "code");
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            flow.AuthorizationCode.TrySetException(new InvalidOperationException(error));
+        }
+        else if (string.IsNullOrWhiteSpace(code))
+        {
+            flow.AuthorizationCode.TrySetException(new InvalidOperationException("The MCP OAuth callback did not include an authorization code."));
+        }
+        else if (!flow.AuthorizationCode.TrySetResult(code))
+        {
+            return new McpOAuthCompletion(false, "The MCP OAuth callback was already completed.");
+        }
+
+        try
+        {
+            await flow.RunTask.WaitAsync(cancellationToken);
+            return new McpOAuthCompletion(true, "MCP OAuth authorization completed.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await flow.Lifetime.CancelAsync();
+            try { await flow.RunTask; } catch { }
+            throw;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return new McpOAuthCompletion(false, exception.Message);
+        }
+        finally
+        {
+            if (RemoveFlow(flow)) flow.Lifetime.Dispose();
+        }
+    }
+
+    internal async Task CancelAsync(string callbackSessionId)
+    {
+        McpOAuthFlow? flow;
+        lock (_syncRoot)
+        {
+            _flowsBySession.TryGetValue(callbackSessionId, out flow);
+        }
+        if (flow is null) return;
+        if (!RemoveFlow(flow)) return;
+        try
+        {
+            await flow.Lifetime.CancelAsync();
+            try { await flow.RunTask; } catch (OperationCanceledException) { } catch { }
+        }
+        finally
+        {
+            flow.Lifetime.Dispose();
+        }
     }
 
     public async Task<bool> HasCachedAuthorizationAsync(string serverId, CancellationToken cancellationToken = default)
@@ -83,139 +158,85 @@ public sealed class McpOAuthService(IPackageContext packageContext)
         await _packageContext.Secrets.DeleteSecretAsync(McpOAuthSecretKeys.ClientSecret(serverId), cancellationToken);
     }
 
-    public async Task AuthorizeAsync(
-        ConfiguredMcpServerRecord server,
-        int? discoveryTimeoutMilliseconds,
-        CancellationToken cancellationToken = default)
+    public async ValueTask DisposeAsync()
     {
-        if (!server.OAuthEnabled)
-        {
-            throw new InvalidOperationException($"MCP server '{server.DisplayName}' is not configured for OAuth.");
-        }
-
-        if (string.IsNullOrWhiteSpace(server.EndpointUrl))
-        {
-            throw new InvalidOperationException($"MCP server '{server.DisplayName}' is missing an endpoint URL.");
-        }
-
-        await _authorizationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            using var callbackListener = StartCallbackListener(PreferredCallbackPort);
-            var options = new HttpClientTransportOptions
-            {
-                Name = server.DisplayName,
-                Endpoint = new Uri(server.EndpointUrl),
-                TransportMode = HttpTransportMode.AutoDetect,
-                ConnectionTimeout = ToSdkTimeout(discoveryTimeoutMilliseconds),
-                OAuth = await CreateClientOptionsAsync(
-                    server,
-                    allowInteractive: true,
-                    callbackListener.RedirectUri,
-                    callbackListener,
-                    cancellationToken),
-            };
-            using var httpClient = new HttpClient
-            {
-                Timeout = ToSdkTimeout(discoveryTimeoutMilliseconds),
-            };
-            var transport = new HttpClientTransport(options, httpClient, _loggerFactory);
-            await using var client = await McpClient.CreateAsync(
-                transport,
-                new McpClientOptions { InitializationTimeout = ToSdkTimeout(discoveryTimeoutMilliseconds) },
-                _loggerFactory,
-                cancellationToken).ConfigureAwait(false);
-            await client.ListToolsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _authorizationGate.Release();
-        }
+        if (_disposed) return;
+        _disposed = true;
+        await _shutdown.CancelAsync();
+        McpOAuthFlow[] flows;
+        lock (_syncRoot) flows = _flowsBySession.Values.ToArray();
+        foreach (var flow in flows) await CancelAsync(flow.CallbackSessionId);
+        _shutdown.Dispose();
     }
 
-    private Task<string?> StartBrowserAuthorizationAsync(
+    private async Task RunAuthorizationAsync(ConfiguredMcpServerRecord server, McpOAuthFlow flow)
+    {
+        var options = new HttpClientTransportOptions
+        {
+            Name = server.DisplayName,
+            Endpoint = new Uri(server.EndpointUrl!),
+            TransportMode = HttpTransportMode.AutoDetect,
+            ConnectionTimeout = Timeout.InfiniteTimeSpan,
+            OAuth = await CreateClientOptionsCoreAsync(
+                server,
+                flow.RedirectUri,
+                (authorizationUri, actualRedirectUri, cancellationToken) =>
+                    HandleAuthorizationRedirectAsync(flow, authorizationUri, actualRedirectUri, cancellationToken),
+                flow.Lifetime.Token),
+        };
+        using var httpClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        var transport = new HttpClientTransport(options, httpClient, _loggerFactory);
+        await using var client = await McpClient.CreateAsync(
+            transport,
+            new McpClientOptions { InitializationTimeout = Timeout.InfiniteTimeSpan },
+            _loggerFactory,
+            flow.Lifetime.Token).ConfigureAwait(false);
+        await client.ListToolsAsync(cancellationToken: flow.Lifetime.Token).ConfigureAwait(false);
+    }
+
+    private static async Task<string?> HandleAuthorizationRedirectAsync(
+        McpOAuthFlow flow,
         Uri authorizationUri,
-        Uri redirectUri,
-        OAuthCallbackListener? callbackListener,
+        Uri actualRedirectUri,
         CancellationToken cancellationToken)
     {
-        if (callbackListener is null)
+        if (!Uri.Equals(flow.RedirectUri, actualRedirectUri))
         {
-            throw new InvalidOperationException("Sunder could not prepare an MCP OAuth callback listener.");
+            throw new InvalidOperationException("The MCP SDK returned a callback redirect URI that did not match the host-owned URI.");
         }
-
-        if (!Uri.Equals(callbackListener.RedirectUri, redirectUri))
+        if (!flow.AuthorizationUri.TrySetResult(authorizationUri))
         {
-            throw new InvalidOperationException($"MCP OAuth callback redirect mismatch. Expected {callbackListener.RedirectUri}, received {redirectUri}.");
+            throw new InvalidOperationException("The MCP OAuth flow requested more than one authorization redirect.");
         }
-
-        var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        source.CancelAfter(BrowserAuthorizationTimeout);
-        return StartBrowserAuthorizationCoreAsync(authorizationUri, callbackListener, source);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, flow.Lifetime.Token);
+        return await flow.AuthorizationCode.Task.WaitAsync(linked.Token).ConfigureAwait(false);
     }
 
-    private async Task<string?> StartBrowserAuthorizationCoreAsync(Uri authorizationUri, OAuthCallbackListener callbackListener, CancellationTokenSource cancellation)
+    private async Task<ClientOAuthOptions> CreateClientOptionsCoreAsync(
+        ConfiguredMcpServerRecord server,
+        Uri redirectUri,
+        AuthorizationRedirectDelegate redirect,
+        CancellationToken cancellationToken)
     {
-        using (cancellation)
+        var registration = await ReadClientRegistrationAsync(server.ServerId, redirectUri, cancellationToken);
+        var explicitClientSecret = await _packageContext.Secrets.GetSecretAsync(
+            McpOAuthSecretKeys.ClientSecret(server.ServerId), cancellationToken);
+        return new ClientOAuthOptions
         {
-            using var stopRegistration = cancellation.Token.Register(() =>
-            {
-                try
+            RedirectUri = redirectUri,
+            ClientId = string.IsNullOrWhiteSpace(server.OAuthClientId) ? registration?.ClientId : server.OAuthClientId,
+            ClientSecret = string.IsNullOrWhiteSpace(explicitClientSecret) ? registration?.ClientSecret : explicitClientSecret,
+            Scopes = server.OAuthScopes.Length == 0 ? null : server.OAuthScopes,
+            TokenCache = new SecretTokenCache(_packageContext, server.ServerId),
+            AuthorizationRedirectDelegate = redirect,
+            DynamicClientRegistration = string.IsNullOrWhiteSpace(server.OAuthClientId)
+                ? new DynamicClientRegistrationOptions
                 {
-                    callbackListener.Stop();
+                    ClientName = "Sunder",
+                    ResponseDelegate = (response, token) => SaveClientRegistrationAsync(response, server.ServerId, redirectUri, token),
                 }
-                catch
-                {
-                }
-            });
-
-            OpenBrowser(authorizationUri);
-            try
-            {
-                var context = await callbackListener.GetContextAsync().ConfigureAwait(false);
-                var code = context.Request.QueryString["code"];
-                var error = context.Request.QueryString["error_description"] ?? context.Request.QueryString["error"];
-                var success = !string.IsNullOrWhiteSpace(code) && string.IsNullOrWhiteSpace(error);
-                await WriteCallbackResponseAsync(
-                    context.Response,
-                    success,
-                    success
-                        ? "Authorization complete. You can close this window and return to Sunder."
-                        : string.IsNullOrWhiteSpace(error) ? "Authorization failed." : error).ConfigureAwait(false);
-
-                if (!string.IsNullOrWhiteSpace(error))
-                {
-                    throw new InvalidOperationException(error);
-                }
-
-                return string.IsNullOrWhiteSpace(code) ? null : code;
-            }
-            catch (HttpListenerException) when (cancellation.IsCancellationRequested)
-            {
-                return null;
-            }
-            catch (ObjectDisposedException) when (cancellation.IsCancellationRequested)
-            {
-                return null;
-            }
-        }
-    }
-
-    private void OpenBrowser(Uri authorizationUri)
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = authorizationUri.ToString(),
-                UseShellExecute = true,
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to open browser for MCP OAuth authorization.");
-            throw new InvalidOperationException($"Open this URL to authorize the MCP server: {authorizationUri}", ex);
-        }
+                : null,
+        };
     }
 
     private Task SaveClientRegistrationAsync(
@@ -223,33 +244,17 @@ public sealed class McpOAuthService(IPackageContext packageContext)
         string serverId,
         Uri redirectUri,
         CancellationToken cancellationToken)
-    {
-        var registration = new StoredOAuthClientRegistration(response.ClientId, response.ClientSecret, redirectUri.ToString());
-        return _packageContext.Secrets.SetSecretAsync(
+        => _packageContext.Secrets.SetSecretAsync(
             McpOAuthSecretKeys.ClientRegistration(serverId),
-            JsonSerializer.Serialize(registration, JsonOptions),
+            JsonSerializer.Serialize(new StoredOAuthClientRegistration(response.ClientId, response.ClientSecret, redirectUri.ToString()), JsonOptions),
             cancellationToken);
-    }
 
-    private async Task<StoredOAuthClientRegistration?> ReadClientRegistrationAsync(
-        string serverId,
-        CancellationToken cancellationToken)
+    private async Task<StoredOAuthClientRegistration?> ReadClientRegistrationAsync(string serverId, CancellationToken cancellationToken)
     {
-        var payload = await _packageContext.Secrets.GetSecretAsync(
-            McpOAuthSecretKeys.ClientRegistration(serverId), cancellationToken);
-        if (string.IsNullOrWhiteSpace(payload))
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<StoredOAuthClientRegistration>(payload, JsonOptions);
-        }
-        catch
-        {
-            return null;
-        }
+        var payload = await _packageContext.Secrets.GetSecretAsync(McpOAuthSecretKeys.ClientRegistration(serverId), cancellationToken);
+        if (string.IsNullOrWhiteSpace(payload)) return null;
+        try { return JsonSerializer.Deserialize<StoredOAuthClientRegistration>(payload, JsonOptions); }
+        catch { return null; }
     }
 
     private async Task<StoredOAuthClientRegistration?> ReadClientRegistrationAsync(
@@ -258,131 +263,75 @@ public sealed class McpOAuthService(IPackageContext packageContext)
         CancellationToken cancellationToken)
     {
         var registration = await ReadClientRegistrationAsync(serverId, cancellationToken);
-        if (registration is null)
-        {
-            return null;
-        }
-
-        return string.IsNullOrWhiteSpace(registration.RedirectUri)
-               || string.Equals(registration.RedirectUri, redirectUri.ToString(), StringComparison.OrdinalIgnoreCase)
+        return registration is not null
+               && string.Equals(registration.RedirectUri, redirectUri.AbsoluteUri, StringComparison.OrdinalIgnoreCase)
             ? registration
             : null;
     }
 
-    internal static OAuthCallbackListener StartCallbackListener(int preferredPort)
+    private McpOAuthFlow GetFlow(string callbackSessionId)
     {
-        for (var port = preferredPort; port <= IPEndPoint.MaxPort; port++)
+        lock (_syncRoot)
         {
-            var listener = new HttpListener();
-            var redirectUri = BuildRedirectUri(port);
-            listener.Prefixes.Add(BuildListenerPrefix(redirectUri));
-            try
-            {
-                listener.Start();
-                return new OAuthCallbackListener(listener, redirectUri);
-            }
-            catch
-            {
-                listener.Close();
-            }
+            return _flowsBySession.TryGetValue(callbackSessionId, out var flow)
+                ? flow
+                : throw new InvalidOperationException("The MCP OAuth callback session is no longer active.");
         }
-
-        throw new InvalidOperationException($"Sunder could not allocate a local MCP OAuth callback port at or above {preferredPort}.");
     }
 
-    private static Uri BuildRedirectUri(int port)
-        => new($"http://localhost:{port}{CallbackPath}");
-
-    private static string BuildListenerPrefix(Uri redirectUri)
+    private bool RemoveFlow(McpOAuthFlow flow)
     {
-        var builder = new UriBuilder(redirectUri)
+        lock (_syncRoot)
         {
-            Query = string.Empty,
-            Fragment = string.Empty,
-        };
-        var prefix = builder.Uri.ToString();
-        return prefix.EndsWith("/", StringComparison.Ordinal) ? prefix : prefix + "/";
+            if (_flowsBySession.TryGetValue(flow.CallbackSessionId, out var current) && ReferenceEquals(current, flow))
+            {
+                _flowsBySession.Remove(flow.CallbackSessionId);
+                _flowsByServer.Remove(flow.ServerId);
+                return true;
+            }
+            return false;
+        }
     }
 
-    private static async Task WriteCallbackResponseAsync(HttpListenerResponse response, bool success, string message)
-    {
-        var title = WebUtility.HtmlEncode(success ? "Authorization complete" : "Authorization failed");
-        var subtitle = WebUtility.HtmlEncode(message);
-        var html = $$"""
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="utf-8" />
-                <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-                <title>{{title}}</title>
-                <style>
-                    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #15171a; color: #dedad3; font-family: system-ui, sans-serif; }
-                    main { padding: 32px; border: 1px solid rgba(231,183,101,.36); border-radius: 18px; background: #1d2025; max-width: 520px; }
-                    h1 { margin: 0 0 8px; font-size: 22px; }
-                    p { margin: 0; color: #ccc7be; }
-                </style>
-            </head>
-            <body><main><h1>{{title}}</h1><p>{{subtitle}}</p></main></body>
-            </html>
-            """;
-        var bytes = Encoding.UTF8.GetBytes(html);
-        response.ContentType = "text/html; charset=utf-8";
-        response.ContentLength64 = bytes.Length;
-        await response.OutputStream.WriteAsync(bytes).ConfigureAwait(false);
-        response.OutputStream.Close();
-    }
+    private static Uri? TryReadRedirectUri(StoredOAuthClientRegistration? registration)
+        => Uri.TryCreate(registration?.RedirectUri, UriKind.Absolute, out var redirectUri) ? redirectUri : null;
 
-    private static TimeSpan ToSdkTimeout(int? timeoutMilliseconds)
-        => timeoutMilliseconds is > 0
-            ? TimeSpan.FromMilliseconds(timeoutMilliseconds.Value)
-            : Timeout.InfiniteTimeSpan;
+    private static string? GetValue(IReadOnlyDictionary<string, string?> values, string key)
+        => values.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;
 
-    internal sealed class OAuthCallbackListener(HttpListener listener, Uri redirectUri) : IDisposable
+    private sealed class McpOAuthFlow(
+        string callbackSessionId,
+        string serverId,
+        Uri redirectUri,
+        CancellationTokenSource lifetime)
     {
+        public string CallbackSessionId { get; } = callbackSessionId;
+        public string ServerId { get; } = serverId;
         public Uri RedirectUri { get; } = redirectUri;
-
-        public Task<HttpListenerContext> GetContextAsync() => listener.GetContextAsync();
-
-        public void Stop() => listener.Stop();
-
-        public void Dispose()
-        {
-            listener.Stop();
-            listener.Close();
-        }
+        public CancellationTokenSource Lifetime { get; } = lifetime;
+        public TaskCompletionSource<Uri> AuthorizationUri { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<string?> AuthorizationCode { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task RunTask { get; set; } = Task.CompletedTask;
     }
 
-    private sealed record StoredOAuthClientRegistration(string? ClientId, string? ClientSecret, string? RedirectUri = null);
+    private sealed record StoredOAuthClientRegistration(string? ClientId, string? ClientSecret, string? RedirectUri);
 
     private sealed class SecretTokenCache(IPackageContext packageContext, string serverId) : ITokenCache
     {
         public async ValueTask StoreTokensAsync(TokenContainer tokens, CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            await packageContext.Secrets.SetSecretAsync(
+            => await packageContext.Secrets.SetSecretAsync(
                 McpOAuthSecretKeys.TokenCache(serverId),
                 JsonSerializer.Serialize(tokens, JsonOptions),
                 cancellationToken);
-        }
 
         public async ValueTask<TokenContainer?> GetTokensAsync(CancellationToken cancellationToken)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var payload = await packageContext.Secrets.GetSecretAsync(
-                McpOAuthSecretKeys.TokenCache(serverId), cancellationToken);
-            if (string.IsNullOrWhiteSpace(payload))
-            {
-                return null;
-            }
-
-            try
-            {
-                return JsonSerializer.Deserialize<TokenContainer>(payload, JsonOptions);
-            }
-            catch
-            {
-                return null;
-            }
+            var payload = await packageContext.Secrets.GetSecretAsync(McpOAuthSecretKeys.TokenCache(serverId), cancellationToken);
+            if (string.IsNullOrWhiteSpace(payload)) return null;
+            try { return JsonSerializer.Deserialize<TokenContainer>(payload, JsonOptions); }
+            catch { return null; }
         }
     }
 }
+
+internal sealed record McpOAuthCompletion(bool Success, string Message);

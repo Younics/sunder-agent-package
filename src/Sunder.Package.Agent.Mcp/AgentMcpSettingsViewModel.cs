@@ -3,14 +3,14 @@ using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Mcp.Services;
+using Sunder.Package.Agent.Mcp.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Mcp;
 
 public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDisposable
 {
-    private readonly McpSettingsEditorService _editor;
-    private readonly McpServerConnectionService _connections;
+    private readonly IMcpManagementGateway _gateway;
     private readonly McpSettingsOperationsViewModel _operations;
     private readonly IPresentationDispatcher _uiDispatcher;
     private readonly Task _initialization;
@@ -33,29 +33,22 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         McpConfigurationCoordinator configuration,
         McpServerConnectionService connections,
         McpOAuthCoordinator oauth)
-        : this(editor, configuration, connections, oauth, PresentationDispatcher.Capture())
+        : this(new McpLocalManagementGateway(editor, configuration, connections, oauth), PresentationDispatcher.Capture())
     {
     }
 
     internal AgentMcpSettingsViewModel(
-        McpSettingsEditorService editor,
-        McpConfigurationCoordinator configuration,
-        McpServerConnectionService connections,
-        McpOAuthCoordinator oauth,
+        IMcpManagementGateway gateway,
         IPresentationDispatcher uiDispatcher)
     {
-        _editor = editor;
-        _connections = connections;
+        _gateway = gateway;
         _uiDispatcher = uiDispatcher;
         _operations = new McpSettingsOperationsViewModel(
             this,
-            editor,
-            configuration,
-            connections,
-            oauth,
+            gateway,
             uiDispatcher);
-        _editor.ServersChanged += OnServersChanged;
-        _connections.StatusChanged += OnConnectionStatusChanged;
+        _gateway.ServersChanged += OnServersChanged;
+        _gateway.StatusChanged += OnConnectionStatusChanged;
         _operations.PropertyChanged += OnOperationsPropertyChanged;
         _initialization = _operations.InitializeAsync();
     }
@@ -77,7 +70,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
 
     public ObservableCollection<ConfiguredMcpServerRecord> Servers { get; } = [];
 
-    internal IReadOnlyList<McpCatalogDiagnostic> CatalogDiagnostics => _editor.Diagnostics;
+    internal IReadOnlyList<McpCatalogDiagnostic> CatalogDiagnostics => _gateway.Diagnostics;
 
     internal Task Initialization => _initialization;
 
@@ -243,8 +236,8 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
     {
         try
         {
-            Name = _editor.NormalizeName(Name);
-            EditorText = _editor.Format(SelectedServer?.ServerId ?? Guid.NewGuid().ToString("N"), Name, EditorText, SelectedServer);
+            Name = _gateway.NormalizeName(Name);
+            EditorText = _gateway.Format(SelectedServer?.ServerId ?? Guid.NewGuid().ToString("N"), Name, EditorText, SelectedServer);
             _operations.PresentStatus("MCP configuration formatted.", McpStatusKind.Success, autoClear: true);
         }
         catch (Exception ex)
@@ -283,8 +276,8 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         _serverLoadCancellation?.Cancel();
         _serverLoadCancellation?.Dispose();
         _serverLoadCancellation = null;
-        _editor.ServersChanged -= OnServersChanged;
-        _connections.StatusChanged -= OnConnectionStatusChanged;
+        _gateway.ServersChanged -= OnServersChanged;
+        _gateway.StatusChanged -= OnConnectionStatusChanged;
         _operations.PropertyChanged -= OnOperationsPropertyChanged;
         _operations.Dispose();
     }
@@ -294,7 +287,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         CancellationToken cancellationToken,
         bool loadSelectedDocument = true)
     {
-        var servers = await _editor.ListAsync(cancellationToken);
+        var servers = await _gateway.ListAsync(cancellationToken);
         Task documentLoad = Task.CompletedTask;
         await _uiDispatcher.InvokeAsync(() =>
         {
@@ -373,7 +366,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
 
     private async Task RefreshConnectionStatusAsync(ConfiguredMcpServerRecord server)
     {
-        var presentation = await _connections.GetPresentationAsync(server);
+        var presentation = await _gateway.GetPresentationAsync(server);
         ConnectionStatusKind = presentation.Status.Kind;
         ConnectionStatusText = presentation.Status.Message;
         ConnectionStatusDetail = presentation.Detail;
@@ -413,70 +406,6 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
             action();
         }
     });
-
-    private Task LoadSelectedServerAsync(
-        ConfiguredMcpServerRecord server,
-        CancellationToken cancellationToken)
-    {
-        _serverLoadCancellation?.Cancel();
-        _serverLoadCancellation?.Dispose();
-        var loadCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _serverLoadCancellation = loadCancellation;
-        var version = ++_serverLoadVersion;
-        var editRevision = _editorRevision;
-        SetDocumentLoadState(isLoading: true, isReady: false);
-        return LoadSelectedServerCoreAsync(server, version, editRevision, loadCancellation);
-    }
-
-    private async Task LoadSelectedServerCoreAsync(
-        ConfiguredMcpServerRecord server,
-        int version,
-        long editRevision,
-        CancellationTokenSource loadCancellation)
-    {
-        var documentApplied = false;
-        try
-        {
-            var text = await _editor.LoadDocumentAsync(server.ServerId, loadCancellation.Token)
-                .ConfigureAwait(false)
-                ?? McpConfigurationDocument.CreateLocalTemplate();
-            await _uiDispatcher.InvokeAsync(() =>
-            {
-                if (IsCurrentDocumentLoad(server.ServerId, version, loadCancellation)
-                    && _editorRevision == editRevision)
-                {
-                    ApplyEditorDocument(server.Name, text);
-                    RefreshConnectionStatus(server);
-                    documentApplied = true;
-                }
-            }).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (loadCancellation.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
-        {
-            await _uiDispatcher.InvokeAsync(() =>
-            {
-                if (IsCurrentDocumentLoad(server.ServerId, version, loadCancellation))
-                {
-                    _operations.PresentStatus(ex.Message, McpStatusKind.Error);
-                }
-            }).ConfigureAwait(false);
-        }
-        finally
-        {
-            await _uiDispatcher.InvokeAsync(() =>
-            {
-                if (IsMatchingDocumentLoad(server.ServerId, version, loadCancellation))
-                {
-                    _serverLoadCancellation = null;
-                    SetDocumentLoadState(isLoading: false, isReady: documentApplied);
-                }
-            }).ConfigureAwait(false);
-            loadCancellation.Dispose();
-        }
-    }
 
     private void ClearEditor()
     {
@@ -518,56 +447,6 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         {
             _suppressEditorTracking = false;
         }
-    }
-
-    private bool IsCurrentDocumentLoad(
-        string serverId,
-        int version,
-        CancellationTokenSource cancellation)
-        => !_disposed
-            && !cancellation.IsCancellationRequested
-            && IsMatchingDocumentLoad(serverId, version, cancellation);
-
-    private bool IsMatchingDocumentLoad(
-        string serverId,
-        int version,
-        CancellationTokenSource cancellation)
-        => !_disposed
-            && version == _serverLoadVersion
-            && ReferenceEquals(_serverLoadCancellation, cancellation)
-            && string.Equals(SelectedServer?.ServerId, serverId, StringComparison.OrdinalIgnoreCase);
-
-    private void CancelDocumentLoad(bool documentReady)
-    {
-        _serverLoadVersion++;
-        _serverLoadCancellation?.Cancel();
-        _serverLoadCancellation?.Dispose();
-        _serverLoadCancellation = null;
-        SetDocumentLoadState(isLoading: false, isReady: documentReady);
-    }
-
-    private void SetDocumentLoadState(bool isLoading, bool isReady)
-    {
-        if (_disposed || (_isDocumentLoading == isLoading && _isDocumentReady == isReady))
-        {
-            return;
-        }
-
-        _isDocumentLoading = isLoading;
-        _isDocumentReady = isReady;
-        OnPropertyChanged(nameof(IsDocumentLoading));
-        OnPropertyChanged(nameof(IsDocumentReady));
-        OnPropertyChanged(nameof(IsEditorReadOnly));
-        OnPropertyChanged(nameof(IsBusy));
-        OnPropertyChanged(nameof(CanStartOperation));
-        OnPropertyChanged(nameof(CanNavigateServers));
-        CreateServerCommand.NotifyCanExecuteChanged();
-        BackToServerListCommand.NotifyCanExecuteChanged();
-        LoadLocalTemplateCommand.NotifyCanExecuteChanged();
-        LoadRemoteTemplateCommand.NotifyCanExecuteChanged();
-        FormatCommand.NotifyCanExecuteChanged();
-        _operations.NotifyContextChanged();
-        TryReloadPendingServers();
     }
 
     private void OnServersChanged() => RunOnUiThread(() =>

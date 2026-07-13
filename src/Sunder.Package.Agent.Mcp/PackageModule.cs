@@ -2,6 +2,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Mcp.Services;
+using Sunder.Package.Agent.Mcp.Runtime;
+using Sunder.Package.Agent.Shared.Composition;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 using Sunder.Sdk.Stacks;
@@ -14,6 +17,8 @@ public sealed class PackageModule : ISunderRuntimePackageModule
     {
         services.AddSingleton<McpServerCatalogService>();
         services.AddSingleton<McpOAuthService>();
+        services.AddSingleton<McpOAuthCallbackHandler>();
+        services.AddSingleton<IPackageCallbackHandler>(provider => provider.GetRequiredService<McpOAuthCallbackHandler>());
         services.AddSingleton(serviceProvider => new McpClientConnectionManager(
             context.LoggerFactory,
             serviceProvider.GetRequiredService<McpOAuthService>()));
@@ -27,11 +32,9 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<McpOAuthCoordinator>();
         services.AddSingleton<McpToolSource>();
         services.AddSingleton<McpServerStackContributor>();
-        services.AddTransient<AgentMcpSettingsViewModel>();
+        services.AddSingleton<McpRuntimeHandler>();
+        services.AddSingleton<McpRuntimeChangeStream>();
     }
-
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
-        => ConfigureRuntimeServices(services, context);
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
@@ -40,20 +43,24 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, services.GetRequiredService<McpToolSource>());
         registry.RegisterExtension(PackageExtensionPoints.ProfileSelectableCapabilityProviders, services.GetRequiredService<McpToolSource>());
         registry.RegisterExtension(SunderStackExtensionPoints.StackContributors, services.GetRequiredService<McpServerStackContributor>());
-    }
-
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
-    {
-        registry.RegisterSettingsView<AgentMcpSettingsView>();
-        registry.RegisterExtension(PackageExtensionPoints.ToolSources, services.GetRequiredService<McpToolSource>());
-        registry.RegisterExtension(PackageExtensionPoints.ProfileSelectableCapabilityProviders, services.GetRequiredService<McpToolSource>());
+        registry.RegisterRuntimeOperation(McpRuntimeOperations.Query, services.GetRequiredService<McpRuntimeHandler>());
+        registry.RegisterRuntimeOperation(McpRuntimeOperations.Command, services.GetRequiredService<McpRuntimeHandler>());
+        registry.RegisterRuntimeStream(McpRuntimeOperations.Changes, services.GetRequiredService<McpRuntimeChangeStream>());
     }
 }
 
 public sealed class AppPackageModule : ISunderAppPackageModule
 {
-    private readonly PackageModule _module = new();
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
+    {
+        services.AddSingleton(context.Callbacks);
+        services.AddSingleton<McpAppRuntimeGateway>();
+        services.AddSingletonAlias<IMcpManagementGateway, McpAppRuntimeGateway>();
+        services.AddTransient(provider => new AgentMcpSettingsViewModel(
+            provider.GetRequiredService<IMcpManagementGateway>(),
+            PresentationDispatcher.Capture()));
+    }
 
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
+        => registry.RegisterSettingsView<AgentMcpSettingsView>();
 }

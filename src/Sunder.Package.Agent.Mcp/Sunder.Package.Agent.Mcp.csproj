@@ -6,6 +6,7 @@
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <SunderAgentSharedCallbackFlow>true</SunderAgentSharedCallbackFlow>
   </PropertyGroup>
 
   <ItemGroup>

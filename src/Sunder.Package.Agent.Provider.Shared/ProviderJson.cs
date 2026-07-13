@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Provider.Shared;
 
@@ -14,27 +15,13 @@ internal static class ProviderJson
             return true;
         }
 
-        try
-        {
-            using var document = JsonDocument.Parse(argumentsJson);
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                arguments = null!;
-                return false;
-            }
-
-            arguments = new Dictionary<string, object?>(StringComparer.Ordinal);
-            foreach (var property in document.RootElement.EnumerateObject())
-            {
-                arguments[property.Name] = property.Value.Clone();
-            }
-
-            return true;
-        }
-        catch (JsonException)
+        if (!AgentToolArgumentObject.TryParse(argumentsJson, out var parsed, out _))
         {
             arguments = null!;
             return false;
         }
+
+        arguments = new Dictionary<string, object?>(parsed!.ToDictionary(), StringComparer.Ordinal);
+        return true;
     }
 }

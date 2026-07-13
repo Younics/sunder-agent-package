@@ -48,7 +48,7 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        _ = _selectionState?.SaveSelectedSessionIdAsync(SelectedWorkspace?.WorkspaceId, value?.SessionId);
+        TrackBackgroundTask(_selectionState?.SaveSelectedSessionIdAsync(SelectedWorkspace?.WorkspaceId, value?.SessionId));
 
         if (value is not null)
         {
@@ -113,8 +113,8 @@ public sealed partial class AgentChatViewModel
             throw new InvalidOperationException("Created session workspace did not match the selected workspace.");
         }
 
-        _ = _selectionState?.SaveSelectedWorkspaceIdAsync(workspaceId);
-        _ = _selectionState?.SaveSelectedSessionIdAsync(workspaceId, session.SessionId);
+        TrackBackgroundTask(_selectionState?.SaveSelectedWorkspaceIdAsync(workspaceId));
+        TrackBackgroundTask(_selectionState?.SaveSelectedSessionIdAsync(workspaceId, session.SessionId));
         ReloadSessions(session.SessionId);
     }
 
@@ -229,7 +229,7 @@ public sealed partial class AgentChatViewModel
             ReconcileSessions([]);
             SelectedSession = null;
             SetDisplayedSession(null);
-            _ = _selectionState?.SaveSelectedSessionIdAsync((string?)null, null);
+            TrackBackgroundTask(_selectionState?.SaveSelectedSessionIdAsync((string?)null, null));
             RefreshSetupState();
             return;
         }
@@ -249,7 +249,7 @@ public sealed partial class AgentChatViewModel
         if (nextSession is null)
         {
             SetDisplayedSession(null);
-            _ = _selectionState?.SaveSelectedSessionIdAsync(SelectedWorkspace?.WorkspaceId, null);
+            TrackBackgroundTask(_selectionState?.SaveSelectedSessionIdAsync(SelectedWorkspace?.WorkspaceId, null));
             RefreshSetupState();
         }
     }

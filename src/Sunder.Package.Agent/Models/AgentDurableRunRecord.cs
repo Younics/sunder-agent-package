@@ -42,6 +42,16 @@ internal sealed record AgentRunTransitionResult(
     AgentDurableRunRecord Run,
     AgentRunCheckpointRecord Checkpoint);
 
+internal sealed record AgentRunStartPersistenceResult(
+    AgentRunTransitionResult Transition,
+    AgentTurnRecord UserTurn,
+    AgentTranscriptRollbackResult? Rollback);
+
+internal sealed class AgentRunStartCleanupException(IReadOnlyList<Exception> failures)
+    : AggregateException(
+        "Run started, but one or more external rollback cleanup steps failed.",
+        failures);
+
 internal sealed class AgentRunTranscriptWriteRejectedException()
     : InvalidOperationException("The durable run changed before its transcript mutation could be committed.");
 

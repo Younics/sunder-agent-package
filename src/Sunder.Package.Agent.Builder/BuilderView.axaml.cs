@@ -10,6 +10,7 @@ namespace Sunder.Package.Agent.Builder;
 public partial class BuilderView : UserControl, IDisposable
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
+    private readonly PresentationTaskScope _tasks = new();
     private BuilderViewModel? _viewModel;
 
     public BuilderView()
@@ -35,11 +36,14 @@ public partial class BuilderView : UserControl, IDisposable
     {
         _viewModel = viewModel;
         DataContext = viewModel;
-        _ = viewModel.InitializeAsync();
+        _tasks.Run(viewModel.InitializeAsync());
     }
 
     public void Dispose()
-        => _adaptiveLayout.Dispose();
+    {
+        _tasks.Dispose();
+        _adaptiveLayout.Dispose();
+    }
 
     private async void OnRefreshSetupClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
@@ -166,8 +170,9 @@ public partial class BuilderView : UserControl, IDisposable
 
     private void FocusPackageDisplayName()
     {
-        Dispatcher.UIThread.Post(
-            () => PackageDisplayNameTextBox.Focus(),
-            DispatcherPriority.Background);
+        _tasks.Run(async _ =>
+            await Dispatcher.UIThread.InvokeAsync(
+                () => PackageDisplayNameTextBox.Focus(),
+                DispatcherPriority.Background));
     }
 }

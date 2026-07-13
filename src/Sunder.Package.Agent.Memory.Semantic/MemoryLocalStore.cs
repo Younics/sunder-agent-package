@@ -17,12 +17,13 @@ public sealed class MemoryLocalStore
     public MemoryLocalStore(IPackageContext packageContext)
     {
         MemoryDatabase.Initialize(packageContext.InstallPath);
-        DatabasePath = packageContext.Storage.LocalWorkspace.GetLocalPath("memory/agent-memory.db");
+        DatabasePath = packageContext.Storage.RoleLocalWorkspace.GetLocalPath("memory/agent-memory.db");
         Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
         new MemorySchemaMigrator(DatabasePath).Migrate();
         _evidence = new EvidenceRepository(DatabasePath);
         _embeddings = new EmbeddingRepository(DatabasePath);
         _memories = new MemoryRepository(DatabasePath, _evidence);
+        _embeddings.CleanupStagingGenerations();
     }
 
     public string DatabasePath { get; }
@@ -111,6 +112,8 @@ public sealed class MemoryLocalStore
     internal void CompleteEmbeddingGeneration(string generationId) => _embeddings.CompleteGeneration(generationId);
 
     internal void AbortEmbeddingGeneration(string generationId) => _embeddings.AbortGeneration(generationId);
+
+    internal int CleanupStagingEmbeddingGenerations() => _embeddings.CleanupStagingGenerations();
 
     public void DeleteEmbeddings(Guid sessionId) => _embeddings.DeleteSession(sessionId);
 

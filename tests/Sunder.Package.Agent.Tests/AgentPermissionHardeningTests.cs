@@ -12,6 +12,47 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class AgentPermissionHardeningTests
 {
+    [Theory]
+    [InlineData("{\"path\":\"one\",\"path\":\"two\"}")]
+    [InlineData("{\"path\":\"one\",\"PATH\":\"two\"}")]
+    public void ToolArguments_RejectDuplicateAndCaseCollidingProperties(string json)
+    {
+        Assert.False(AgentToolArgumentObject.TryParse(json, out _, out var error));
+        Assert.Contains("colliding", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ToolArguments_RejectByteDepthAndPropertyBounds()
+    {
+        Assert.False(AgentToolArgumentObject.TryParse(
+            "{\"value\":\"" + new string('x', AgentPayloadLimits.MaxToolArgumentBytes) + "\"}",
+            out _,
+            out var byteError));
+        Assert.Contains("byte limit", byteError, StringComparison.OrdinalIgnoreCase);
+
+        var nested = string.Concat(Enumerable.Repeat("{\"v\":", AgentPayloadLimits.MaxToolArgumentJsonDepth + 1))
+                     + "null"
+                     + new string('}', AgentPayloadLimits.MaxToolArgumentJsonDepth + 1);
+        Assert.False(AgentToolArgumentObject.TryParse(nested, out _, out var depthError));
+        Assert.Contains("valid JSON", depthError, StringComparison.OrdinalIgnoreCase);
+
+        var properties = "{" + string.Join(',', Enumerable.Range(0, AgentPayloadLimits.MaxToolArgumentProperties + 1).Select(index => $"\"p{index}\":0")) + "}";
+        Assert.False(AgentToolArgumentObject.TryParse(properties, out _, out var propertyError));
+        Assert.Contains("property limit", propertyError, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SessionTransitionGates_AreEvictedAfterUse()
+    {
+        var gates = new AgentSessionTransitionGate();
+        for (var index = 0; index < 100; index++)
+        {
+            using var lease = await gates.EnterAsync(Guid.NewGuid());
+        }
+
+        Assert.Equal(0, gates.GateCount);
+    }
+
     [Fact]
     public void AgentToolService_DoesNotExposeRawExecutionPublicly()
     {
@@ -117,6 +158,29 @@ public sealed class AgentPermissionHardeningTests
         Assert.Equal(AgentPendingPermissionStatus.Expired, persisted?.Status);
         Assert.Equal(0, source.ExecutionCount);
         Assert.Contains("context changed", persisted?.DecisionSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task WorkspaceMutationDuringPermissionRevalidationExpiresWithoutExecution()
+    {
+        var source = new PermissionAwareMutationToolSource("mutate");
+        await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
+        var pending = await runtime.CreatePendingRequestAsync();
+        source.BlockPermissionResolution();
+
+        var approval = runtime.ResumeCoordinator.ApproveAsync(runtime.Session.SessionId, pending.RequestId);
+        await source.PermissionResolutionStarted.WaitAsync(TimeSpan.FromSeconds(10));
+        runtime.WorkspaceService.SaveWorkspace(
+            runtime.Workspace.WorkspaceId,
+            "mutated during revalidation",
+            runtime.Workspace.Description);
+        source.ReleasePermissionResolution();
+        await approval.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(0, source.ExecutionCount);
+        Assert.Equal(
+            AgentPendingPermissionStatus.Expired,
+            runtime.Store.GetPermissionRequest(runtime.Session.SessionId, pending.RequestId)?.Status);
     }
 
     [Fact]

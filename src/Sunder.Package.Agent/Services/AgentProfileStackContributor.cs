@@ -8,8 +8,8 @@ namespace Sunder.Package.Agent.Services;
 
 public sealed class AgentProfileStackContributor(
     AgentProfileService profileService,
-    IPackageContext? packageContext = null,
-    IPackageExtensionCatalog? extensionCatalog = null) : IPackageStackContributor, IPackageStackImportAppliedHandler
+    IPackageContext packageContext,
+    IPackageExtensionCatalog extensionCatalog) : IPackageStackContributor, IPackageStackImportAppliedHandler
 {
     private const string PackageId = "sunder.package.agent";
     private const string SchemaId = "sunder.package.agent/profile";
@@ -136,7 +136,10 @@ public sealed class AgentProfileStackContributor(
             }
         }
 
-        return ValueTask.FromResult(new StackImportResult(errors.Count == 0, imported, idRemaps, warnings, errors));
+        var outcome = errors.Count == 0
+            ? StackImportOutcome.Completed
+            : imported.Count == 0 ? StackImportOutcome.Failed : StackImportOutcome.Partial;
+        return ValueTask.FromResult(new StackImportResult(outcome, imported, idRemaps, warnings, errors));
     }
 
     public ValueTask OnStackImportAppliedAsync(
@@ -180,55 +183,51 @@ public sealed class AgentProfileStackContributor(
     private IReadOnlyList<StackPackageRequirement> BuildPackageRequirements(IReadOnlyList<AgentProfileStackPayload> payloads)
     {
         var packageIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { PackageId };
-        if (extensionCatalog is not null)
-        {
-            var providerIds = payloads
-                .SelectMany(payload => new[]
-                    {
-                        payload.ChatProviderId,
-                        payload.EmbeddingProviderId,
-                    }
-                    .Concat(payload.ModelBindings?.Select(binding => binding.ProviderId) ?? []))
-                .Where(value => !string.IsNullOrWhiteSpace(value))
-                .Select(value => value!)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            AddProviderPackages(packageIds, providerIds);
-
-            var behaviorLoopIds = payloads
-                .Select(payload => payload.BehaviorLoopId)
-                .Where(value => !string.IsNullOrWhiteSpace(value))
-                .Select(value => value!)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var behaviorLoopSourceIds = payloads
-                .Select(payload => payload.BehaviorLoopSourceId)
-                .Where(value => !string.IsNullOrWhiteSpace(value))
-                .Select(value => value!)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.BehaviorLoops))
+        var providerIds = payloads
+            .SelectMany(payload => new[]
             {
-                var descriptor = contribution.Contribution.Descriptor;
-                if (behaviorLoopIds.Contains(descriptor.LoopId)
-                    || (!string.IsNullOrWhiteSpace(descriptor.SourceId) && behaviorLoopSourceIds.Contains(descriptor.SourceId)))
-                {
-                    AddPackageId(packageIds, contribution.PackageId);
-                }
-            }
+                payload.ChatProviderId,
+                payload.EmbeddingProviderId,
+            }.Concat(payload.ModelBindings?.Select(binding => binding.ProviderId) ?? []))
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        AddProviderPackages(packageIds, providerIds);
 
-            AddSelectableCapabilityPackages(packageIds, payloads.SelectMany(payload => payload.SelectableCapabilityAssignments ?? []));
+        var behaviorLoopIds = payloads
+            .Select(payload => payload.BehaviorLoopId)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var behaviorLoopSourceIds = payloads
+            .Select(payload => payload.BehaviorLoopSourceId)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.BehaviorLoops))
+        {
+            var descriptor = contribution.Contribution.Descriptor;
+            if (behaviorLoopIds.Contains(descriptor.LoopId)
+                || (!string.IsNullOrWhiteSpace(descriptor.SourceId) && behaviorLoopSourceIds.Contains(descriptor.SourceId)))
+            {
+                AddPackageId(packageIds, contribution.PackageId);
+            }
         }
+
+        AddSelectableCapabilityPackages(packageIds, payloads.SelectMany(payload => payload.SelectableCapabilityAssignments ?? []));
 
         return packageIds
             .OrderBy(packageId => string.Equals(packageId, PackageId, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .ThenBy(packageId => packageId, StringComparer.OrdinalIgnoreCase)
             .Select(packageId => string.Equals(packageId, PackageId, StringComparison.OrdinalIgnoreCase)
-                ? new StackPackageRequirement(PackageId, CreatedWithVersion: packageContext?.Version.ToString(), MinimumVersion: "1.0.0")
+                ? new StackPackageRequirement(PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.0.0")
                 : new StackPackageRequirement(packageId))
             .ToArray();
     }
 
     private void AddProviderPackages(ISet<string> packageIds, ISet<string> providerIds)
     {
-        if (providerIds.Count == 0 || extensionCatalog is null)
+        if (providerIds.Count == 0)
         {
             return;
         }
@@ -254,11 +253,6 @@ public sealed class AgentProfileStackContributor(
         ISet<string> packageIds,
         IEnumerable<AgentProfileSelectableCapabilityAssignmentRecord> assignments)
     {
-        if (extensionCatalog is null)
-        {
-            return;
-        }
-
         var sourceIds = assignments
             .Select(assignment => assignment.SourceId)
             .Where(value => !string.IsNullOrWhiteSpace(value))

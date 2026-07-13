@@ -2,6 +2,8 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.Shared;
+using Sunder.Package.Agent.Provider.TestSupport;
+using Sunder.Sdk.Configuration;
 using Xunit;
 
 namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
@@ -20,13 +22,14 @@ public sealed class ProviderSharedUtilitiesTests
     public void JsonObjectArguments_AcceptObjectsAndRejectMalformedOrNonObjectValues()
     {
         Assert.True(ProviderJson.TryParseObjectArguments(
-            "{\"path\":\"old\",\"path\":\"README.md\",\"count\":2}",
+            "{\"path\":\"README.md\",\"count\":2}",
             out var parsed));
 
         Assert.Equal("README.md", Assert.IsType<JsonElement>(parsed["path"]).GetString());
         Assert.Equal(2, Assert.IsType<JsonElement>(parsed["count"]).GetInt32());
         Assert.False(ProviderJson.TryParseObjectArguments("[1,2]", out _));
         Assert.False(ProviderJson.TryParseObjectArguments("not-json", out _));
+        Assert.False(ProviderJson.TryParseObjectArguments("{\"path\":\"old\",\"PATH\":\"new\"}", out _));
     }
 
     [Fact]
@@ -216,6 +219,89 @@ public sealed class ProviderSharedUtilitiesTests
             [model],
             "vendor/model",
             static _ => false));
+    }
+
+    [Fact]
+    public async Task UtilityModelSelection_NormalizesKnownValuesAndFallsBackForUnknownValues()
+    {
+        var selection = new ProviderUtilityModelSelection(
+            "utility.modelId",
+            "vendor/default",
+            [
+                new PackageConfigurationOption("vendor/default", "Default"),
+                new PackageConfigurationOption("vendor/other", "Other"),
+            ],
+            value => string.Equals(value?.Trim(), "vendor/legacy", StringComparison.OrdinalIgnoreCase)
+                ? "vendor/other"
+                : value);
+        var normalizedContext = new ProviderTestPackageContext(
+            "vendor.package",
+            new Dictionary<string, string> { ["utility.modelId"] = " vendor/legacy " });
+        var unknownContext = new ProviderTestPackageContext(
+            "vendor.package",
+            new Dictionary<string, string> { ["utility.modelId"] = "vendor/unknown" });
+
+        Assert.Equal("vendor/other", await selection.ResolveAsync(normalizedContext.Settings));
+        Assert.Equal("vendor/default", await selection.ResolveAsync(unknownContext.Settings));
+    }
+
+    [Fact]
+    public void UsageAccumulator_MergesPartialSnapshotsWithoutDoubleCounting()
+    {
+        var usage = new ProviderUsageAccumulator();
+        usage.SetLatest(new ProviderUsageSnapshot(InputTokenCount: 12, OutputTokenCount: 0, CachedInputTokenCount: 4));
+        usage.SetLatest(new ProviderUsageSnapshot(InputTokenCount: null, OutputTokenCount: 7, ReasoningTokenCount: 3));
+
+        var content = usage.CreateContent();
+        Assert.NotNull(content);
+        var details = content!.Details;
+
+        Assert.Equal(12, details.InputTokenCount);
+        Assert.Equal(7, details.OutputTokenCount);
+        Assert.Equal(19, details.TotalTokenCount);
+        Assert.Equal(4, details.CachedInputTokenCount);
+        Assert.Equal(3, details.ReasoningTokenCount);
+    }
+
+    [Theory]
+    [InlineData(false, false, "ProviderCancellation")]
+    [InlineData(true, false, "CallerCancellation")]
+    [InlineData(false, true, "ProviderCancellation")]
+    public void StreamFailureClassification_DistinguishesCallerProviderAndNestedCancellation(
+        bool callerCanceled,
+        bool nested,
+        string expected)
+    {
+        using var cancellation = new CancellationTokenSource();
+        if (callerCanceled)
+        {
+            cancellation.Cancel();
+        }
+
+        Exception exception = nested
+            ? new InvalidOperationException("wrapper", new TimeoutException("provider timeout"))
+            : new OperationCanceledException("canceled");
+
+        Assert.Equal(expected, ProviderStreamFailureClassifier.Classify(
+            exception,
+            cancellation.Token,
+            inspectInnerExceptions: nested,
+            includeTimeouts: nested).ToString());
+    }
+
+    [Fact]
+    public void ResponseUpdateFactory_AssignsIdentityAndDescribesSemanticContent()
+    {
+        var update = ProviderResponseUpdates.Create(
+            "vendor/model",
+            "response-1",
+            "message-1",
+            new FunctionCallContent("call-1", "read", new Dictionary<string, object?>()));
+
+        Assert.Equal("response-1", update.ResponseId);
+        Assert.Equal("message-1", update.MessageId);
+        Assert.Equal("vendor/model", update.ModelId);
+        Assert.Equal("ToolCallRequested", ProviderResponseUpdates.Describe(update));
     }
 
     private static AgentEmbeddingGenerationResult Embedding(float value)

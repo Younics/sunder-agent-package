@@ -1,13 +1,14 @@
 using System.Collections.ObjectModel;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.PackageViews;
 
 namespace Sunder.Package.Agent.PackageViews;
 
 internal sealed class AgentPermissionPanelState(
-    AgentPermissionService permissionService,
-    AgentRunCoordinator runCoordinator)
+    IAgentPermissionGateway permissionService,
+    IAgentRunGateway runCoordinator)
 {
     private Guid? _sessionId;
 

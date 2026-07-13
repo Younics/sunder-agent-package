@@ -1,3 +1,4 @@
+using Sunder.Agent.Execution.Common;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -137,23 +138,12 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
     }
 
     internal static bool IsSameOrChildPath(string candidatePath, string rootPath)
-    {
-        var candidate = Path.GetFullPath(candidatePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var comparison = PathStringComparison;
-        return string.Equals(candidate, root, comparison)
-               || candidate.StartsWith(root + Path.DirectorySeparatorChar, comparison);
-    }
+        => HostPath.IsSameOrChild(candidatePath, rootPath, caseInsensitive: OperatingSystem.IsWindows());
 
     internal static StringComparer PathStringComparer
         => OperatingSystem.IsWindows()
             ? StringComparer.OrdinalIgnoreCase
             : StringComparer.Ordinal;
-
-    private static StringComparison PathStringComparison
-        => OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
 
     private static string BuildKey(string bindingId) => $"workspace-bindings:{bindingId}:config";
 

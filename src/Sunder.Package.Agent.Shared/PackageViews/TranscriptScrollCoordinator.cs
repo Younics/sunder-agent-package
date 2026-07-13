@@ -5,7 +5,7 @@ using Avalonia.VisualTree;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
-internal sealed class TranscriptScrollCoordinator : IDisposable
+internal sealed partial class TranscriptScrollCoordinator : IDisposable
 {
     private const double DefaultAutoScrollThreshold = 24;
     private const double DefaultLoadOlderThreshold = 96;
@@ -18,14 +18,16 @@ internal sealed class TranscriptScrollCoordinator : IDisposable
     private readonly ScrollViewer _scrollViewer;
     private readonly ItemsControl? _itemsControl;
     private readonly Func<bool> _canLoadOlderRows;
-    private readonly Func<object?, Task<bool>> _loadOlderRowsAsync;
+    private readonly Func<object?, CancellationToken, Task<bool>> _loadOlderRowsAsync;
     private readonly Func<bool> _canLoadNewerRows;
-    private readonly Func<object?, Task<bool>> _loadNewerRowsAsync;
+    private readonly Func<object?, CancellationToken, Task<bool>> _loadNewerRowsAsync;
     private readonly Func<bool> _hasNewerRows;
     private readonly Action<bool>? _setJumpToLatestVisible;
     private readonly Action? _onDetachedFromLatest;
     private readonly Action? _onReachedLatest;
     private readonly Action<TranscriptViewportAnchorData?>? _setViewportAnchor;
+    private readonly Action<Exception>? _pagingFailed;
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly double _autoScrollThreshold;
     private readonly double _loadOlderThreshold;
     private readonly double _loadNewerThreshold;
@@ -48,20 +50,27 @@ internal sealed class TranscriptScrollCoordinator : IDisposable
     private Action? _pendingSettledScrollCompleted;
     private Action? _pendingBottomPlacementReleaseCompleted;
     private ScrollAnchor? _pendingAnchor;
+    private Task _loadOlderOperation = Task.CompletedTask;
+    private Task _loadNewerOperation = Task.CompletedTask;
+    private Task _settledScrollOperation = Task.CompletedTask;
+    private Task _bottomPlacementReleaseOperation = Task.CompletedTask;
+    private Task _restoreAnchorOperation = Task.CompletedTask;
+    private Task _scrollToBottomOperation = Task.CompletedTask;
     private bool _disposed;
 
     public TranscriptScrollCoordinator(
         ScrollViewer scrollViewer,
         ItemsControl? itemsControl,
         Func<bool> canLoadOlderRows,
-        Func<object?, Task<bool>> loadOlderRowsAsync,
+        Func<object?, CancellationToken, Task<bool>> loadOlderRowsAsync,
         Func<bool> canLoadNewerRows,
-        Func<object?, Task<bool>> loadNewerRowsAsync,
+        Func<object?, CancellationToken, Task<bool>> loadNewerRowsAsync,
         Func<bool> hasNewerRows,
         Action<bool>? setJumpToLatestVisible = null,
         Action? onDetachedFromLatest = null,
         Action? onReachedLatest = null,
         Action<TranscriptViewportAnchorData?>? setViewportAnchor = null,
+        Action<Exception>? pagingFailed = null,
         double autoScrollThreshold = DefaultAutoScrollThreshold,
         double loadOlderThreshold = DefaultLoadOlderThreshold,
         double loadNewerThreshold = DefaultLoadNewerThreshold)
@@ -77,6 +86,7 @@ internal sealed class TranscriptScrollCoordinator : IDisposable
         _onDetachedFromLatest = onDetachedFromLatest;
         _onReachedLatest = onReachedLatest;
         _setViewportAnchor = setViewportAnchor;
+        _pagingFailed = pagingFailed;
         _autoScrollThreshold = autoScrollThreshold;
         _loadOlderThreshold = loadOlderThreshold;
         _loadNewerThreshold = loadNewerThreshold;
@@ -87,14 +97,15 @@ internal sealed class TranscriptScrollCoordinator : IDisposable
     public TranscriptScrollCoordinator(
         ScrollViewer scrollViewer,
         Func<bool> canLoadOlderRows,
-        Func<object?, Task<bool>> loadOlderRowsAsync,
+        Func<object?, CancellationToken, Task<bool>> loadOlderRowsAsync,
         Func<bool> canLoadNewerRows,
-        Func<object?, Task<bool>> loadNewerRowsAsync,
+        Func<object?, CancellationToken, Task<bool>> loadNewerRowsAsync,
         Func<bool> hasNewerRows,
         Action<bool>? setJumpToLatestVisible = null,
         Action? onDetachedFromLatest = null,
         Action? onReachedLatest = null,
         Action<TranscriptViewportAnchorData?>? setViewportAnchor = null,
+        Action<Exception>? pagingFailed = null,
         double autoScrollThreshold = DefaultAutoScrollThreshold,
         double loadOlderThreshold = DefaultLoadOlderThreshold,
         double loadNewerThreshold = DefaultLoadNewerThreshold)
@@ -110,6 +121,7 @@ internal sealed class TranscriptScrollCoordinator : IDisposable
             onDetachedFromLatest,
             onReachedLatest,
             setViewportAnchor,
+            pagingFailed,
             autoScrollThreshold,
             loadOlderThreshold,
             loadNewerThreshold)
@@ -204,12 +216,16 @@ internal sealed class TranscriptScrollCoordinator : IDisposable
         }
 
         _scrollToBottomPending = true;
-        Dispatcher.UIThread.Post(() =>
+        var operation = InvokeOnDispatcherAsync(() =>
         {
             _scrollToBottomPending = false;
             ScrollToBottom();
         }, DispatcherPriority.Render);
+        _scrollToBottomOperation = ObservePagingOperationAsync(operation);
     }
+
+    private static async Task InvokeOnDispatcherAsync(Action action, DispatcherPriority priority)
+        => await Dispatcher.UIThread.InvokeAsync(action, priority);
 
     public void QueueScrollToBottomAfterLayoutSettles(Action? completed = null)
     {
@@ -221,20 +237,10 @@ internal sealed class TranscriptScrollCoordinator : IDisposable
         }
 
         _settledScrollToBottomPending = true;
-        Dispatcher.UIThread.Post(async () =>
-        {
-            try
-            {
-                await ScrollToBottomAfterLayoutSettlesAsync();
-            }
-            finally
-            {
-                _settledScrollToBottomPending = false;
-                var callback = _pendingSettledScrollCompleted;
-                _pendingSettledScrollCompleted = null;
-                QueueReleaseBottomPlacementLock(callback);
-            }
-        }, DispatcherPriority.Loaded);
+        var operation = Dispatcher.UIThread.InvokeAsync(
+            () => CompleteSettledScrollAsync(_lifetimeCancellation.Token),
+            DispatcherPriority.Loaded);
+        _settledScrollOperation = ObservePagingOperationAsync(operation);
     }
 
     private void OnScrollViewerPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs change)
@@ -350,8 +356,13 @@ internal sealed class TranscriptScrollCoordinator : IDisposable
         UpdateJumpToLatestVisibility();
     }
 
-    private bool QueueLoadOlderRows()
+    internal bool QueueLoadOlderRows()
     {
+        if (_disposed)
+        {
+            return false;
+        }
+
         if (_loadOlderPending)
         {
             return true;
@@ -372,52 +383,21 @@ internal sealed class TranscriptScrollCoordinator : IDisposable
         var offsetYWhenQueued = _scrollViewer.Offset.Y;
         _loadOlderPending = true;
 
-        Dispatcher.UIThread.Post(async () =>
-        {
-            var loaded = false;
-            try
-            {
-                _pendingAnchor = null;
-                var protectedAnchorKey = CaptureCurrentScrollAnchorKey();
-                loaded = await _loadOlderRowsAsync(protectedAnchorKey);
-                if (!loaded)
-                {
-                    return;
-                }
-
-                _shouldAutoScroll = false;
-                UpdateJumpToLatestVisibility();
-            }
-            finally
-            {
-                try
-                {
-                    if (loaded && Math.Abs(_scrollViewer.Offset.Y - offsetYWhenQueued) < 1)
-                    {
-                        await RestoreScrollAnchorAfterRenderedContentAsync(anchor);
-                    }
-                    else
-                    {
-                        await WaitForRenderedContentAsync();
-                    }
-                }
-                finally
-                {
-                    if (loaded)
-                    {
-                        _suppressEdgeLoadsUntilNextScroll = true;
-                    }
-
-                    _loadOlderPending = false;
-                }
-            }
-        }, DispatcherPriority.Background);
+        var operation = Dispatcher.UIThread.InvokeAsync(
+            () => LoadOlderRowsAsync(anchor, offsetYWhenQueued, _lifetimeCancellation.Token),
+            DispatcherPriority.Background);
+        _loadOlderOperation = ObservePagingOperationAsync(operation);
 
         return true;
     }
 
-    private bool QueueLoadNewerRows()
+    internal bool QueueLoadNewerRows()
     {
+        if (_disposed)
+        {
+            return false;
+        }
+
         if (_loadNewerPending)
         {
             return true;
@@ -438,60 +418,14 @@ internal sealed class TranscriptScrollCoordinator : IDisposable
         var wasAtBottom = IsNearBottom();
         var offsetYWhenQueued = _scrollViewer.Offset.Y;
         _loadNewerPending = true;
-        Dispatcher.UIThread.Post(async () =>
-        {
-            var loaded = false;
-            try
-            {
-                _pendingAnchor = null;
-                var protectedAnchorKey = CaptureCurrentScrollAnchorKey();
-                loaded = await _loadNewerRowsAsync(protectedAnchorKey);
-                if (loaded)
-                {
-                    UpdateJumpToLatestVisibility();
-                    if (!_hasNewerRows() || !IsNearLoadBottom())
-                    {
-                        NotifyReachedLatestIfCaughtUp();
-                    }
-
-                    return;
-                }
-
-                UpdateJumpToLatestVisibility();
-                NotifyReachedLatestIfCaughtUp();
-            }
-            finally
-            {
-                try
-                {
-                    if (loaded && Math.Abs(_scrollViewer.Offset.Y - offsetYWhenQueued) < 1)
-                    {
-                        if (wasAtBottom)
-                        {
-                            await WaitForRenderedContentAsync();
-                            ScrollToBottom();
-                        }
-                        else
-                        {
-                            await RestoreScrollAnchorAfterRenderedContentAsync(anchor);
-                        }
-                    }
-                    else
-                    {
-                        await WaitForRenderedContentAsync();
-                    }
-                }
-                finally
-                {
-                    if (loaded)
-                    {
-                        _suppressEdgeLoadsUntilNextScroll = true;
-                    }
-
-                    _loadNewerPending = false;
-                }
-            }
-        }, DispatcherPriority.Background);
+        var operation = Dispatcher.UIThread.InvokeAsync(
+            () => LoadNewerRowsAsync(
+                anchor,
+                wasAtBottom,
+                offsetYWhenQueued,
+                _lifetimeCancellation.Token),
+            DispatcherPriority.Background);
+        _loadNewerOperation = ObservePagingOperationAsync(operation);
 
         return true;
     }
@@ -557,8 +491,31 @@ internal sealed class TranscriptScrollCoordinator : IDisposable
         }
     }
 
-    private async Task ScrollToBottomAfterLayoutSettlesAsync()
+    private async Task CompleteSettledScrollAsync(CancellationToken cancellationToken)
     {
+        try
+        {
+            await ScrollToBottomAfterLayoutSettlesAsync(cancellationToken);
+        }
+        finally
+        {
+            _settledScrollToBottomPending = false;
+            if (cancellationToken.IsCancellationRequested || _disposed)
+            {
+                _pendingSettledScrollCompleted = null;
+            }
+            else
+            {
+                var callback = _pendingSettledScrollCompleted;
+                _pendingSettledScrollCompleted = null;
+                QueueReleaseBottomPlacementLock(callback);
+            }
+        }
+    }
+
+    private async Task ScrollToBottomAfterLayoutSettlesAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         _pendingAnchor = null;
         _shouldAutoScroll = true;
 
@@ -567,7 +524,12 @@ internal sealed class TranscriptScrollCoordinator : IDisposable
         var stablePasses = 0;
         for (var pass = 0; pass < BottomPlacementMaxPasses; pass++)
         {
-            await WaitForRenderedContentAsync();
+            await WaitForRenderedContentAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_disposed)
+            {
+                return;
+            }
             PinToBottom(updateLayout: false);
 
             var extentHeight = _scrollViewer.Extent.Height;
@@ -615,40 +577,54 @@ internal sealed class TranscriptScrollCoordinator : IDisposable
 
         _bottomPlacementReleasePending = true;
         var version = _bottomPlacementLockVersion;
-        Dispatcher.UIThread.Post(async () =>
-        {
-            try
-            {
-                for (var pass = 0; pass < BottomPlacementPostRevealPasses; pass++)
-                {
-                    await WaitForRenderedContentAsync();
-                    PinToBottom(updateLayout: false);
-                }
-            }
-            finally
-            {
-                _bottomPlacementReleasePending = false;
-                if (version == _bottomPlacementLockVersion)
-                {
-                    PinToBottom(updateLayout: true);
-                    _bottomPlacementLockActive = false;
-                    _shouldAutoScroll = !_hasNewerRows();
-                    if (!_hasNewerRows())
-                    {
-                        _onReachedLatest?.Invoke();
-                    }
+        var operation = Dispatcher.UIThread.InvokeAsync(
+            () => ReleaseBottomPlacementLockAsync(version, _lifetimeCancellation.Token),
+            DispatcherPriority.Background);
+        _bottomPlacementReleaseOperation = ObservePagingOperationAsync(operation);
+    }
 
-                    UpdateJumpToLatestVisibility();
-                    var callback = _pendingBottomPlacementReleaseCompleted;
-                    _pendingBottomPlacementReleaseCompleted = null;
-                    callback?.Invoke();
-                }
-                else if (_bottomPlacementLockActive)
+    private async Task ReleaseBottomPlacementLockAsync(int version, CancellationToken cancellationToken)
+    {
+        try
+        {
+            for (var pass = 0; pass < BottomPlacementPostRevealPasses; pass++)
+            {
+                await WaitForRenderedContentAsync(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_disposed)
                 {
-                    QueueReleaseBottomPlacementLock();
+                    return;
                 }
+                PinToBottom(updateLayout: false);
             }
-        }, DispatcherPriority.Background);
+        }
+        finally
+        {
+            _bottomPlacementReleasePending = false;
+            if (cancellationToken.IsCancellationRequested || _disposed)
+            {
+                _pendingBottomPlacementReleaseCompleted = null;
+            }
+            else if (version == _bottomPlacementLockVersion)
+            {
+                PinToBottom(updateLayout: true);
+                _bottomPlacementLockActive = false;
+                _shouldAutoScroll = !_hasNewerRows();
+                if (!_hasNewerRows())
+                {
+                    _onReachedLatest?.Invoke();
+                }
+
+                UpdateJumpToLatestVisibility();
+                var callback = _pendingBottomPlacementReleaseCompleted;
+                _pendingBottomPlacementReleaseCompleted = null;
+                callback?.Invoke();
+            }
+            else if (_bottomPlacementLockActive)
+            {
+                QueueReleaseBottomPlacementLock();
+            }
+        }
     }
 
     private void PinToBottom(bool updateLayout)
@@ -662,262 +638,17 @@ internal sealed class TranscriptScrollCoordinator : IDisposable
         SetProgrammaticOffset(maxOffsetY);
     }
 
-    private void QueueRestoreScrollAnchor()
+    private async Task WaitForRenderedContentAsync(CancellationToken cancellationToken = default)
     {
-        if (_restoreAnchorPending)
-        {
-            return;
-        }
-
-        _restoreAnchorPending = true;
-        Dispatcher.UIThread.Post(async () =>
-        {
-            _restoreAnchorPending = false;
-            await RestorePendingScrollAnchorAfterRenderedContentAsync();
-        }, DispatcherPriority.Render);
-    }
-
-    private async Task RestoreScrollAnchorAfterRenderedContentAsync(ScrollAnchor anchor)
-    {
-        _isRestoringAnchor = true;
-        try
-        {
-            var previousExtentHeight = -1d;
-            for (var pass = 0; pass < 4; pass++)
-            {
-                await WaitForRenderedContentAsync();
-                RestoreScrollAnchor(anchor);
-
-                var extentHeight = _scrollViewer.Extent.Height;
-                if (pass > 0 && Math.Abs(extentHeight - previousExtentHeight) < 0.5)
-                {
-                    break;
-                }
-
-                previousExtentHeight = extentHeight;
-            }
-        }
-        finally
-        {
-            _isRestoringAnchor = false;
-        }
-    }
-
-    private async Task RestorePendingScrollAnchorAfterRenderedContentAsync()
-    {
-        var anchor = _pendingAnchor;
-        if (anchor is null)
-        {
-            return;
-        }
-
-        await RestoreScrollAnchorAfterRenderedContentAsync(anchor);
-
-        if (ReferenceEquals(_pendingAnchor, anchor))
-        {
-            _pendingAnchor = null;
-        }
-    }
-
-    private async Task WaitForRenderedContentAsync()
-    {
+        cancellationToken.ThrowIfCancellationRequested();
         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Render);
-        _scrollViewer.UpdateLayout();
-    }
-
-    private void RestoreScrollAnchor(ScrollAnchor anchor)
-    {
-        if (anchor.Mode == ScrollAnchorMode.LiveTranscriptMutation && anchor.WasNearBottom)
-        {
-            ScrollToBottom();
-            return;
-        }
-
-        foreach (var itemAnchor in anchor.Items)
-        {
-            if (TryGetItemTop(itemAnchor.Item, out var currentTop))
-            {
-                SetProgrammaticOffset(anchor.OffsetY + currentTop - itemAnchor.Top);
-                _shouldAutoScroll = IsNearBottom() && !_hasNewerRows();
-                UpdateJumpToLatestVisibility();
-                return;
-            }
-        }
-
-        RestoreScrollAnchorFallback(anchor);
-    }
-
-    private void RestoreScrollAnchorFallback(ScrollAnchor anchor)
-    {
-        switch (anchor.Mode)
-        {
-            case ScrollAnchorMode.LiveTranscriptMutation:
-                SetProgrammaticOffset(MaxOffsetY() - anchor.DistanceFromBottom);
-                break;
-            default:
-                SetProgrammaticOffset(anchor.OffsetY);
-                break;
-        }
-
-        _shouldAutoScroll = IsNearBottom() && !_hasNewerRows();
-        UpdateJumpToLatestVisibility();
-    }
-
-    private ScrollAnchor CaptureScrollAnchor(ScrollAnchorMode mode)
-    {
-        var distanceFromBottom = DistanceFromBottom();
-        var itemAnchors = CaptureItemAnchors();
-        var anchorKey = CaptureCurrentScrollAnchorKey();
-        _setViewportAnchor?.Invoke(new TranscriptViewportAnchorData(
-            anchorKey,
-            _scrollViewer.Offset.Y,
-            distanceFromBottom));
-        return new ScrollAnchor(
-            mode,
-            mode == ScrollAnchorMode.LiveTranscriptMutation && IsNearBottom(),
-            distanceFromBottom,
-            _scrollViewer.Offset.Y,
-            itemAnchors);
-    }
-
-    public void Dispose()
-    {
+        cancellationToken.ThrowIfCancellationRequested();
         if (_disposed)
         {
             return;
         }
 
-        _disposed = true;
-        _scrollViewer.PropertyChanged -= OnScrollViewerPropertyChanged;
-        _pendingAnchor = null;
-        _pendingSettledScrollCompleted = null;
-        _pendingBottomPlacementReleaseCompleted = null;
-        _setViewportAnchor?.Invoke(null);
-    }
-
-    private object? CaptureCurrentScrollAnchorKey()
-    {
-        if (_scrollViewer.CurrentAnchor is Visual currentAnchor)
-        {
-            var rowPresenter = currentAnchor as TranscriptRowPresenter
-                               ?? currentAnchor.GetVisualAncestors().OfType<TranscriptRowPresenter>().FirstOrDefault();
-            if (rowPresenter?.AnchorKey is { } currentAnchorKey)
-            {
-                return currentAnchorKey;
-            }
-        }
-
-        return CaptureItemAnchors().FirstOrDefault()?.Item;
-    }
-
-    private IReadOnlyList<ItemAnchor> CaptureItemAnchors()
-    {
-        if (_itemsControl is null)
-        {
-            return [];
-        }
-
-        var viewportHeight = _scrollViewer.Viewport.Height;
-        var anchors = new List<ItemAnchor>();
-        foreach (var (item, visual) in EnumerateRowAnchorVisuals())
-        {
-            if (!TryGetTop(visual, out var top))
-            {
-                continue;
-            }
-
-            var bottom = top + visual.Bounds.Height;
-            if (bottom <= 0 || top >= viewportHeight)
-            {
-                continue;
-            }
-
-            anchors.Add(new ItemAnchor(item, top, bottom));
-        }
-
-        return anchors
-            .OrderBy(anchor => anchor.Top <= 0 && anchor.Bottom > 0 ? 0 : 1)
-            .ThenBy(anchor => anchor.Top <= 0 ? Math.Abs(anchor.Top) : anchor.Top)
-            .ToArray();
-    }
-
-    private bool TryGetItemTop(object item, out double top)
-    {
-        top = 0;
-        if (_itemsControl is null)
-        {
-            return false;
-        }
-
-        foreach (var (candidateItem, visual) in EnumerateRowAnchorVisuals())
-        {
-            if (Equals(candidateItem, item) && TryGetTop(visual, out top))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private IEnumerable<(object Item, Control Visual)> EnumerateRowAnchorVisuals()
-    {
-        if (_itemsControl is null)
-        {
-            yield break;
-        }
-
-        var visualsByItem = new Dictionary<object, Control>();
-        foreach (var visual in _itemsControl.GetVisualDescendants().OfType<TranscriptRowPresenter>())
-        {
-            var item = visual.AnchorKey;
-            if (item is null)
-            {
-                continue;
-            }
-
-            if (!visualsByItem.TryGetValue(item, out var current) || IsBetterItemAnchorVisual(visual, current))
-            {
-                visualsByItem[item] = visual;
-            }
-        }
-
-        foreach (var (item, visual) in visualsByItem)
-        {
-            yield return (item, visual);
-        }
-    }
-
-    private static bool IsBetterItemAnchorVisual(Control candidate, Control current)
-    {
-        var candidateArea = candidate.Bounds.Width * candidate.Bounds.Height;
-        var currentArea = current.Bounds.Width * current.Bounds.Height;
-        if (Math.Abs(candidateArea - currentArea) > 0.5)
-        {
-            return candidateArea > currentArea;
-        }
-
-        return candidate.Bounds.Height > current.Bounds.Height;
-    }
-
-    private bool TryGetTop(Visual visual, out double top)
-    {
-        var point = visual.TranslatePoint(new Point(0, 0), _scrollViewer);
-        top = point?.Y ?? 0;
-        return point is not null;
-    }
-
-    private void SetProgrammaticOffset(double offsetY)
-    {
-        _isProgrammaticScroll = true;
-        try
-        {
-            _scrollViewer.Offset = new Vector(_scrollViewer.Offset.X, Math.Clamp(offsetY, 0, MaxOffsetY()));
-        }
-        finally
-        {
-            _isProgrammaticScroll = false;
-        }
+        _scrollViewer.UpdateLayout();
     }
 
     private void UpdateJumpToLatestVisibility()

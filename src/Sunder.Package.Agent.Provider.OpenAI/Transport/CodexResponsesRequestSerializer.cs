@@ -28,13 +28,14 @@ internal static class CodexResponsesRequestSerializer
             normalized.ServiceTier,
             normalized.MaxOutputTokens,
             normalized.Reasoning,
-            normalized.Text));
+            normalized.Text,
+            normalized.UsesResponsesLite));
         var previousResponseId = TryBuildContinuationInput(
             continuationState,
             shapeFingerprint,
             conversationItemFingerprints,
             normalized.Input,
-            disableContinuation,
+            disableContinuation || normalized.UsesResponsesLite,
             out var requestInput)
             ? continuationState!.ResponseId
             : null;
@@ -43,7 +44,7 @@ internal static class CodexResponsesRequestSerializer
             Model = normalized.Model,
             Input = requestInput,
             Instructions = normalized.Instructions,
-            Tools = normalized.ToolChoice is null ? null : normalized.Tools,
+            Tools = normalized.UsesResponsesLite || normalized.ToolChoice is null ? null : normalized.Tools,
             ToolChoice = normalized.ToolChoice,
             ParallelToolCalls = normalized.ParallelToolCalls,
             Stream = true,
@@ -64,7 +65,7 @@ internal static class CodexResponsesRequestSerializer
             normalized.Tools.Count,
             JsonSerializer.Serialize(body, JsonOptions),
             normalized.UsesDeveloperInstructionInput,
-            normalized.Instructions is not null,
+            !string.IsNullOrEmpty(normalized.Instructions),
             normalized.ServiceTier,
             normalized.MaxOutputTokens,
             !string.IsNullOrWhiteSpace(normalized.PromptCacheKey),
@@ -74,6 +75,7 @@ internal static class CodexResponsesRequestSerializer
             DescribeToolChoice(normalized.ToolChoice),
             normalized.ParallelToolCalls,
             previousResponseId is not null,
+            normalized.UsesResponsesLite,
             shapeFingerprint,
             conversationItemFingerprints);
     }
@@ -174,7 +176,8 @@ internal static class CodexResponsesRequestSerializer
         string? ServiceTier,
         int? MaxOutputTokens,
         CodexReasoningOptions? Reasoning,
-        CodexTextOptions? Text);
+        CodexTextOptions? Text,
+        bool UsesResponsesLite);
 
     private static string? DescribeToolChoice(object? toolChoice)
         => toolChoice switch

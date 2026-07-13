@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
@@ -61,7 +62,7 @@ internal sealed class AgentProviderCycleRunner(AgentStreamingTurnWriter streamin
                 {
                     _streamingTurnWriter.ResetForRetry(streamState);
                     host.LogEvent(
-                        AgentLogLevel.Debug,
+                        PackageLogLevel.Debug,
                         "behavior.loop.retry.start",
                         "Retrying provider execution from persisted transcript.",
                         loopStopwatch.ElapsedMilliseconds,
@@ -97,7 +98,7 @@ internal sealed class AgentProviderCycleRunner(AgentStreamingTurnWriter streamin
         Stopwatch loopStopwatch,
         AgentProviderRetryNotification notification)
         => host.LogEvent(
-            AgentLogLevel.Warning,
+            PackageLogLevel.Warning,
             "provider.stream.retrying",
             $"Transient provider stream interruption. Retrying in {notification.Delay.TotalSeconds:0.#}s (attempt {notification.AttemptNumber}/{notification.MaxRetryAttempts}).",
             loopStopwatch.ElapsedMilliseconds,

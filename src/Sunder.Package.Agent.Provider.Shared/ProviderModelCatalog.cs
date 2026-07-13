@@ -9,6 +9,29 @@ internal sealed record ProviderModelCatalogSnapshot(
 
 internal static class ProviderModelCatalog
 {
+    public static IReadOnlyList<AgentModelDescriptor> ApplyReleaseDates(
+        IEnumerable<AgentModelDescriptor> models,
+        IReadOnlyDictionary<string, DateOnly> releaseDates,
+        bool requireEveryModel = false)
+        => models.Select(model => releaseDates.TryGetValue(model.ModelId, out var releaseDate)
+                ? model with { ReleaseDate = releaseDate }
+                : requireEveryModel
+                    ? throw new InvalidOperationException($"Provider model '{model.ModelId}' has no release date.")
+                    : model)
+            .ToArray();
+
+    public static AgentModelDescriptor? FindByNormalizedId(
+        IEnumerable<AgentModelDescriptor> models,
+        string modelId,
+        Func<string, string> normalizeModelId)
+    {
+        var normalizedModelId = normalizeModelId(modelId);
+        return models.FirstOrDefault(model => string.Equals(
+            normalizeModelId(model.ModelId),
+            normalizedModelId,
+            StringComparison.OrdinalIgnoreCase));
+    }
+
     public static ProviderModelCatalogSnapshot ValidateAndOrder(
         IEnumerable<AgentModelDescriptor> models,
         string defaultUtilityModelId,

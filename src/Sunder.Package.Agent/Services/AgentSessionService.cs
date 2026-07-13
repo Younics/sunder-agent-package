@@ -3,11 +3,13 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Storage;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentSessionService(AgentLocalStore store, IPackageExtensionCatalog? extensionCatalog = null)
+public sealed partial class AgentSessionService(AgentLocalStore store, IPackageExtensionCatalog? extensionCatalog = null)
+    : IAgentSessionGateway
 {
     private readonly AgentLocalStore _store = store;
     private readonly IPackageExtensionCatalog? _extensionCatalog = extensionCatalog;
@@ -19,11 +21,6 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
     public event Action<Guid>? TranscriptReset;
 
     public event Action<Guid, AgentRunActivityUpdate>? RunActivityChanged;
-
-    public IReadOnlyList<AgentSessionRecord> ListSessions() => _store.ListSessions();
-
-    public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId)
-        => _store.ListSessionsForWorkspace(workspaceId);
 
     public AgentSessionRecord CreateSession(
         string title,
@@ -43,8 +40,6 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
         NotifySessionChanged(session.SessionId);
         return session;
     }
-
-    public AgentSessionRecord? GetSession(Guid sessionId) => _store.GetSession(sessionId);
 
     public void UpdateSession(AgentSessionRecord session)
     {
@@ -183,32 +178,6 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
         return failures;
     }
 
-    public IReadOnlyList<AgentTurnRecord> ListTurns(Guid sessionId) => _store.ListTurns(sessionId);
-
-    public IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit) => _store.ListRecentTurns(sessionId, limit);
-
-    public IReadOnlyList<AgentTurnRecord> ListTurnsBefore(Guid sessionId, DateTimeOffset beforeCreatedAtUtc, Guid beforeTurnId, int limit)
-        => _store.ListTurnsBefore(sessionId, beforeCreatedAtUtc, beforeTurnId, limit);
-
-    public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(Guid sessionId, DateTimeOffset afterCreatedAtUtc, Guid afterTurnId, int limit)
-        => _store.ListTurnsAfter(sessionId, afterCreatedAtUtc, afterTurnId, limit);
-
-    public AgentTurnRecord? GetTurn(Guid turnId) => _store.GetTurn(turnId);
-
-    public IReadOnlyList<AgentTranscriptMessageRecord> ListMessages(Guid sessionId) => _store.ListMessages(sessionId);
-
-    public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => _store.GetLatestCheckpoint(sessionId);
-
-    internal AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId, long runRevision)
-        => _store.GetLatestCheckpoint(sessionId, runRevision);
-
-    internal AgentDurableRunRecord? GetRun(Guid runId) => _store.GetRun(runId);
-
-    internal AgentDurableRunRecord? GetLatestRun(Guid sessionId) => _store.GetLatestRun(sessionId);
-
-    internal AgentDurableRunLease? GetRunLease(Guid runId)
-        => _store.GetRun(runId) is { } run ? new AgentDurableRunLease(run) : null;
-
     internal AgentRunTransitionResult? TryTransitionRun(
         AgentDurableRunLease lease,
         AgentRunStatus status,
@@ -226,6 +195,51 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
             NotifySessionChanged(lease.Key.SessionId);
             return transition;
         }
+    }
+
+    internal AgentRunStartPersistenceResult? TryStartRun(
+        AgentDurableRunLease lease,
+        string userMessage,
+        IReadOnlyList<AgentStoredAttachment> attachments,
+        Guid? rollbackAnchorTurnId,
+        string runningSummary)
+    {
+        AgentRunStartPersistenceResult? result;
+        lock (lease.SyncRoot)
+        {
+            result = _store.TryStartRun(
+                lease.Key,
+                lease.Epoch,
+                userMessage,
+                attachments,
+                rollbackAnchorTurnId,
+                runningSummary);
+            if (result is null)
+            {
+                return null;
+            }
+
+            lease.AdvanceTo(result.Transition.Run.Epoch);
+        }
+
+        var cleanupFailures = DeleteExternalSessionData(result.Rollback?.DeletedSessionIds ?? []);
+        if (result.Rollback is not null)
+        {
+            NotifyTranscriptReset(lease.Key.SessionId);
+            foreach (var deletedSessionId in result.Rollback.DeletedSessionIds)
+            {
+                NotifySessionChanged(deletedSessionId);
+            }
+        }
+
+        NotifyTurnChanged(lease.Key.SessionId, result.UserTurn);
+        NotifySessionChanged(lease.Key.SessionId);
+        if (cleanupFailures.Count > 0)
+        {
+            throw new AgentRunStartCleanupException(cleanupFailures);
+        }
+
+        return result;
     }
 
     internal AgentRunTransitionResult? TryStopRun(
@@ -305,9 +319,6 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
         AgentChildJoinTaskResult completedTask)
         => _store.CompleteChildJoinTask(key, continuationToken, completedTask);
 
-    internal IReadOnlyList<AgentParentContinuationWorkRecord> ListDispatchableParentContinuationWork()
-        => _store.ListDispatchableParentContinuationWork();
-
     internal AgentParentContinuationDispatchResult? TryClaimParentContinuationWork(
         string workId,
         AgentDurableRunLease lease,
@@ -346,98 +357,6 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
         NotifyRunActivityChanged(
             sessionId,
             new AgentRunActivityUpdate(runRevision, kind, text.Trim(), DateTimeOffset.UtcNow));
-    }
-
-    public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId)
-    {
-        var contextCheckpoint = _store.GetLatestSessionContextCheckpoint(sessionId);
-        if (contextCheckpoint is not null)
-        {
-            return new AgentWorkingSummaryRecord(
-                sessionId,
-                contextCheckpoint.SummaryText,
-                contextCheckpoint.CreatedAtUtc);
-        }
-
-        return _store.GetWorkingSummary(sessionId);
-    }
-
-    public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId)
-        => _store.GetLatestSessionContextCheckpoint(sessionId);
-
-    public AgentTranscriptMessageRecord AppendMessage(Guid sessionId, AgentMessageRole role, string content)
-    {
-        var message = _store.AppendMessage(sessionId, role, content);
-        NotifySessionChanged(sessionId);
-        return message;
-    }
-
-    public AgentTurnRecord AppendTextTurn(Guid sessionId, AgentMessageRole role, string content)
-    {
-        var turn = _store.AppendTextTurn(sessionId, role, content);
-        NotifyTurnChanged(sessionId, turn);
-        NotifySessionChanged(sessionId);
-        return turn;
-    }
-
-    internal AgentTurnRecord AppendTextTurn(
-        AgentDurableRunLease lease,
-        AgentMessageRole role,
-        string content)
-    {
-        AgentTurnRecord? turn;
-        lock (lease.SyncRoot)
-        {
-            turn = _store.TryAppendTextTurn(
-                lease.Key,
-                lease.Epoch,
-                role,
-                content);
-        }
-
-        if (turn is null)
-        {
-            throw new AgentRunTranscriptWriteRejectedException();
-        }
-
-        NotifyTurnChanged(lease.Key.SessionId, turn);
-        NotifySessionChanged(lease.Key.SessionId);
-        return turn;
-    }
-
-    public AgentTurnRecord AppendUserTurn(Guid sessionId, AgentMessageRole role, string content, IReadOnlyList<AgentStoredAttachment> attachments)
-    {
-        var turn = _store.AppendUserTurn(sessionId, role, content, attachments);
-        NotifyTurnChanged(sessionId, turn);
-        NotifySessionChanged(sessionId);
-        return turn;
-    }
-
-    public AgentTranscriptMessageRecord UpdateMessageContent(Guid messageId, string content)
-    {
-        var message = _store.UpdateMessageContent(messageId, content);
-        NotifySessionChanged(message.SessionId);
-        return message;
-    }
-
-    public AgentTranscriptRollbackResult RollbackTranscript(Guid sessionId, Guid anchorTurnId)
-    {
-        var result = _store.RollbackTranscript(sessionId, anchorTurnId);
-        var cleanupFailures = DeleteExternalSessionData(result.DeletedSessionIds);
-
-        NotifyTranscriptReset(sessionId);
-        NotifySessionChanged(sessionId);
-        foreach (var deletedSessionId in result.DeletedSessionIds)
-        {
-            NotifySessionChanged(deletedSessionId);
-        }
-
-        if (cleanupFailures.Count > 0)
-        {
-            throw new AggregateException("Transcript was rolled back, but one or more external cleanup steps failed.", cleanupFailures);
-        }
-
-        return result;
     }
 
     public AgentTurnRecord UpdateTextTurn(Guid turnId, string content)
@@ -623,8 +542,6 @@ public sealed class AgentSessionService(AgentLocalStore store, IPackageExtension
         NotifySessionChanged(sessionId);
         return checkpoint;
     }
-
-    public long GetNextRunRevision(Guid sessionId) => _store.GetNextRunRevision(sessionId);
 
     private void NotifySessionChanged(Guid sessionId)
     {

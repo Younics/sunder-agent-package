@@ -45,8 +45,7 @@ internal sealed partial class UtilityModelSettingsState : ObservableObject, IDis
 
     internal async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        var configured = await _packageContext.Storage.State.GetValueAsync(_configurationKey, cancellationToken)
-            ?? await _packageContext.Configuration.GetValueAsync(_configurationKey, cancellationToken);
+        var configured = await _packageContext.Settings.GetValueAsync(_configurationKey, cancellationToken);
         SelectedUtilityModel = ResolveOption(configured);
     }
 
@@ -85,7 +84,7 @@ internal sealed partial class UtilityModelSettingsState : ObservableObject, IDis
                 SelectedUtilityModel?.ModelId,
                 _defaultModelId,
                 UtilityModels.Select(option => option.ModelId));
-            await _packageContext.Storage.State.SetValueAsync(
+            await _packageContext.Settings.SetValueAsync(
                 _configurationKey,
                 modelId,
                 operation.CancellationToken);

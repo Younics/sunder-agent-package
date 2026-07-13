@@ -31,6 +31,42 @@ public sealed partial class AgentLocalStore
         InsertOrReplaceWorkspace(connection, workspace);
     }
 
+    internal Action<string>? WorkspaceAggregateStageCompleted { get; set; }
+
+    public void SaveWorkspaceAggregate(
+        AgentWorkspaceRecord workspace,
+        IReadOnlyList<AgentWorkspacePathRecord> paths,
+        IReadOnlyList<AgentWorkspaceDocumentRecord> documents,
+        AgentWorkspaceBindingRecord? primaryExecutionBinding)
+    {
+        if (string.IsNullOrWhiteSpace(workspace.WorkspaceId))
+        {
+            throw new InvalidOperationException("Workspace id cannot be empty.");
+        }
+
+        using var connection = CreateConnection();
+        connection.Open();
+        using var transaction = connection.BeginTransaction(deferred: false);
+
+        InsertOrReplaceWorkspace(connection, workspace, transaction);
+        WorkspaceAggregateStageCompleted?.Invoke("workspace");
+
+        ReplaceWorkspacePaths(connection, transaction, workspace.WorkspaceId, paths);
+        WorkspaceAggregateStageCompleted?.Invoke("paths");
+
+        ReplaceWorkspaceDocuments(connection, transaction, workspace.WorkspaceId, documents);
+        WorkspaceAggregateStageCompleted?.Invoke("documents");
+
+        DeletePrimaryExecutionBindings(connection, transaction, workspace.WorkspaceId);
+        if (primaryExecutionBinding is not null)
+        {
+            InsertOrReplaceWorkspaceBinding(connection, primaryExecutionBinding, transaction);
+        }
+        WorkspaceAggregateStageCompleted?.Invoke("bindings");
+
+        transaction.Commit();
+    }
+
     public void DeleteWorkspace(string workspaceId)
     {
         using var connection = CreateConnection();
@@ -87,18 +123,7 @@ public sealed partial class AgentLocalStore
         connection.Open();
         using var transaction = connection.BeginTransaction();
 
-        using (var deleteCommand = connection.CreateCommand())
-        {
-            deleteCommand.Transaction = transaction;
-            deleteCommand.CommandText = "DELETE FROM AgentWorkspacePaths WHERE WorkspaceId = $workspaceId;";
-            deleteCommand.Parameters.AddWithValue("$workspaceId", workspaceId);
-            deleteCommand.ExecuteNonQuery();
-        }
-
-        foreach (var path in paths)
-        {
-            InsertWorkspacePath(connection, path, transaction);
-        }
+        ReplaceWorkspacePaths(connection, transaction, workspaceId, paths);
 
         transaction.Commit();
     }
@@ -116,18 +141,7 @@ public sealed partial class AgentLocalStore
         connection.Open();
         using var transaction = connection.BeginTransaction();
 
-        using (var deleteCommand = connection.CreateCommand())
-        {
-            deleteCommand.Transaction = transaction;
-            deleteCommand.CommandText = "DELETE FROM AgentWorkspaceDocuments WHERE WorkspaceId = $workspaceId;";
-            deleteCommand.Parameters.AddWithValue("$workspaceId", workspaceId);
-            deleteCommand.ExecuteNonQuery();
-        }
-
-        foreach (var document in documents)
-        {
-            InsertWorkspaceDocument(connection, document, transaction);
-        }
+        ReplaceWorkspaceDocuments(connection, transaction, workspaceId, documents);
 
         transaction.Commit();
     }
@@ -295,6 +309,25 @@ public sealed partial class AgentLocalStore
         command.ExecuteNonQuery();
     }
 
+    private static void ReplaceWorkspacePaths(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string workspaceId,
+        IReadOnlyList<AgentWorkspacePathRecord> paths)
+    {
+        using (var deleteCommand = connection.CreateCommand())
+        {
+            deleteCommand.Transaction = transaction;
+            deleteCommand.CommandText = "DELETE FROM AgentWorkspacePaths WHERE WorkspaceId = $workspaceId;";
+            deleteCommand.Parameters.AddWithValue("$workspaceId", workspaceId);
+            deleteCommand.ExecuteNonQuery();
+        }
+        foreach (var path in paths)
+        {
+            InsertWorkspacePath(connection, path, transaction);
+        }
+    }
+
     private static IReadOnlyList<AgentWorkspaceDocumentRecord> ListWorkspaceDocuments(
         SqliteConnection connection,
         string workspaceId,
@@ -339,6 +372,25 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$createdAtUtc", document.CreatedAtUtc.ToString("O"));
         command.Parameters.AddWithValue("$updatedAtUtc", document.UpdatedAtUtc.ToString("O"));
         command.ExecuteNonQuery();
+    }
+
+    private static void ReplaceWorkspaceDocuments(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string workspaceId,
+        IReadOnlyList<AgentWorkspaceDocumentRecord> documents)
+    {
+        using (var deleteCommand = connection.CreateCommand())
+        {
+            deleteCommand.Transaction = transaction;
+            deleteCommand.CommandText = "DELETE FROM AgentWorkspaceDocuments WHERE WorkspaceId = $workspaceId;";
+            deleteCommand.Parameters.AddWithValue("$workspaceId", workspaceId);
+            deleteCommand.ExecuteNonQuery();
+        }
+        foreach (var document in documents)
+        {
+            InsertWorkspaceDocument(connection, document, transaction);
+        }
     }
 
     private static IReadOnlyList<AgentWorkspaceBindingRecord> ListWorkspaceBindings(
@@ -411,6 +463,19 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$sortOrder", binding.SortOrder);
         command.Parameters.AddWithValue("$createdAtUtc", binding.CreatedAtUtc.ToString("O"));
         command.Parameters.AddWithValue("$updatedAtUtc", binding.UpdatedAtUtc.ToString("O"));
+        command.ExecuteNonQuery();
+    }
+
+    private static void DeletePrimaryExecutionBindings(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string workspaceId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "DELETE FROM AgentWorkspaceBindings WHERE WorkspaceId = $workspaceId AND Role = $role COLLATE NOCASE;";
+        command.Parameters.AddWithValue("$workspaceId", workspaceId);
+        command.Parameters.AddWithValue("$role", Services.AgentWorkspaceBindingRoles.PrimaryExecutionTarget);
         command.ExecuteNonQuery();
     }
 }

@@ -11,9 +11,6 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<FilesToolSource>();
     }
 
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
-        => ConfigureRuntimeServices(services, context);
-
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
         var source = services.GetRequiredService<FilesToolSource>();
@@ -21,20 +18,4 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterExtension(PackageExtensionPoints.PermissionSurfaces, source);
         registry.RegisterExtension(PackageExtensionPoints.SystemPromptContributors, source);
     }
-
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
-    {
-        var source = services.GetRequiredService<FilesToolSource>();
-        registry.RegisterExtension(PackageExtensionPoints.ToolSources, source);
-        registry.RegisterExtension(PackageExtensionPoints.PermissionSurfaces, source);
-        registry.RegisterExtension(PackageExtensionPoints.SystemPromptContributors, source);
-    }
-}
-
-public sealed class AppPackageModule : ISunderAppPackageModule
-{
-    private readonly PackageModule _module = new();
-
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
 }

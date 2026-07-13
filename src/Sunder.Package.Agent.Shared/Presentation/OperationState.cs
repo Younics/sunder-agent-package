@@ -111,6 +111,14 @@ internal sealed class OperationState : INotifyPropertyChanged, IDisposable
         return true;
     }
 
+    public bool IsCurrent(OperationGeneration generation)
+    {
+        lock (_syncRoot)
+        {
+            return IsCurrentGeneration(generation);
+        }
+    }
+
     public bool TryComplete(
         OperationGeneration generation,
         string message = "",
@@ -239,5 +247,85 @@ internal sealed class OperationState : INotifyPropertyChanged, IDisposable
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+internal sealed class OperationState<TOperation> : INotifyPropertyChanged, IDisposable
+    where TOperation : struct, Enum
+{
+    private readonly OperationState _state = new();
+    private TOperation? _current;
+
+    public OperationState()
+    {
+        _state.PropertyChanged += OnStatePropertyChanged;
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public TOperation? Current => _current;
+
+    public bool IsBusy => _state.IsBusy;
+
+    public bool CanCancel => _state.CanCancel;
+
+    public string Message => _state.Message;
+
+    public OperationSeverity Severity => _state.Severity;
+
+    public double? Progress => _state.Progress;
+
+    public OperationGeneration Begin(
+        TOperation operation,
+        string message = "",
+        bool canCancel = true,
+        double? progress = null)
+    {
+        _current = operation;
+        OnPropertyChanged(nameof(Current));
+        return _state.Begin(message, OperationSeverity.Info, canCancel, progress);
+    }
+
+    public bool TryComplete(
+        OperationGeneration generation,
+        string message = "",
+        OperationSeverity severity = OperationSeverity.Success)
+    {
+        if (!_state.TryComplete(generation, message, severity))
+        {
+            return false;
+        }
+
+        _current = null;
+        OnPropertyChanged(nameof(Current));
+        return true;
+    }
+
+    public bool CancelCurrent(string message = "")
+    {
+        if (!_state.CancelCurrent(message))
+        {
+            return false;
+        }
+
+        _current = null;
+        OnPropertyChanged(nameof(Current));
+        return true;
+    }
+
+    public void ClearStatus() => _state.ClearStatus();
+
+    public bool IsCurrent(OperationGeneration generation) => _state.IsCurrent(generation);
+
+    public void Dispose()
+    {
+        _state.PropertyChanged -= OnStatePropertyChanged;
+        _state.Dispose();
+    }
+
+    private void OnStatePropertyChanged(object? sender, PropertyChangedEventArgs e)
+        => PropertyChanged?.Invoke(this, e);
+
+    private void OnPropertyChanged(string propertyName)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }

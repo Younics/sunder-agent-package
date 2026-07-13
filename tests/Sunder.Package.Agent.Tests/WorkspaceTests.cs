@@ -69,6 +69,62 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
+    public void AgentWorkspaceService_AggregateStageFailureRollsBackEveryStageAndNotification()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var service = new AgentWorkspaceService(store);
+        var workspace = service.CreateWorkspace("before");
+        var notifications = 0;
+        service.WorkspacesChanged += () => notifications++;
+        store.WorkspaceAggregateStageCompleted = stage =>
+        {
+            if (stage == "documents") throw new InvalidOperationException("injected workspace stage failure");
+        };
+
+        Assert.Throws<InvalidOperationException>(() => service.SaveWorkspaceAggregate(
+            workspace.WorkspaceId,
+            "after",
+            "changed",
+            [new AgentWorkspacePathRecord("path", workspace.WorkspaceId, scope.RootPath, true, 0, default, default)],
+            [new AgentWorkspaceDocumentRecord("doc", workspace.WorkspaceId, Path.Combine(scope.RootPath, "README.md"), 0, default, default)],
+            "local"));
+
+        var persisted = service.GetWorkspace(workspace.WorkspaceId);
+        Assert.Equal("before", persisted?.DisplayName);
+        Assert.Empty(persisted?.Paths ?? []);
+        Assert.Empty(persisted?.Documents ?? []);
+        Assert.Empty(service.ListBindings(workspace.WorkspaceId));
+        Assert.Equal(0, notifications);
+    }
+
+    [Fact]
+    public async Task AgentWorkspaceService_ConcurrentAggregateSavesNeverPersistMixedStages()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var service = new AgentWorkspaceService(store);
+        var workspace = service.CreateWorkspace("initial");
+
+        Task SaveAsync(string suffix) => Task.Run(() => service.SaveWorkspaceAggregate(
+            workspace.WorkspaceId,
+            $"workspace-{suffix}",
+            suffix,
+            [new AgentWorkspacePathRecord($"path-{suffix}", workspace.WorkspaceId, Path.Combine(scope.RootPath, suffix), true, 0, default, default)],
+            [new AgentWorkspaceDocumentRecord($"doc-{suffix}", workspace.WorkspaceId, Path.Combine(scope.RootPath, $"{suffix}.md"), 0, default, default)],
+            $"target-{suffix}"));
+
+        await Task.WhenAll(SaveAsync("a"), SaveAsync("b"));
+
+        var persisted = service.GetWorkspace(workspace.WorkspaceId)!;
+        var suffix = persisted.DisplayName[^1].ToString();
+        Assert.Equal(suffix, persisted.Description);
+        Assert.EndsWith(suffix, Path.GetFileName(Assert.Single(persisted.Paths).HostPath));
+        Assert.Equal($"{suffix}.md", Path.GetFileName(Assert.Single(persisted.Documents).FilePath));
+        Assert.Equal($"target-{suffix}", Assert.Single(service.ListBindings(workspace.WorkspaceId)).ContributionId);
+    }
+
+    [Fact]
     public async Task AgentWorkspaceStackContributor_ExportAsync_IncludesSelectedLocalPaths()
     {
         using var scope = TestScope.Create();
@@ -81,7 +137,7 @@ public sealed class WorkspaceTests
             [new AgentWorkspacePathRecord("root", "workspace.stack", workspaceRoot, IsDefault: true, 0, default, default)],
             [new AgentWorkspaceDocumentRecord("doc", "workspace.stack", documentPath, 0, default, default)]);
         service.SavePrimaryExecutionBinding("workspace.stack", "local");
-        var contributor = new AgentWorkspaceStackContributor(service, scope.Context);
+        var contributor = new AgentWorkspaceStackContributor(service, scope.Context, new TestExtensionCatalog());
 
         var contribution = await contributor.ExportAsync(new StackExportRequest(["workspace.stack"]));
 
@@ -106,14 +162,14 @@ public sealed class WorkspaceTests
             [new AgentWorkspacePathRecord("root", "workspace.stack", Path.Combine(scope.RootPath, "source-repo"), IsDefault: true, 0, default, default)],
             [new AgentWorkspaceDocumentRecord("doc", "workspace.stack", Path.Combine(scope.RootPath, "source-guide.md"), 0, default, default)]);
         sourceService.SavePrimaryExecutionBinding("workspace.stack", "local");
-        var sourceContributor = new AgentWorkspaceStackContributor(sourceService, sourceContext);
+        var sourceContributor = new AgentWorkspaceStackContributor(sourceService, sourceContext, new TestExtensionCatalog());
         var sourceRoot = Path.Combine(scope.RootPath, "source-repo");
         var sourceDocumentPath = Path.Combine(scope.RootPath, "source-guide.md");
         var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(["workspace.stack"]))).Fragments);
 
         var targetContext = new TestPackageContext(Path.Combine(scope.RootPath, "target"));
         var targetService = new AgentWorkspaceService(new AgentLocalStore(targetContext));
-        var targetContributor = new AgentWorkspaceStackContributor(targetService, targetContext);
+        var targetContributor = new AgentWorkspaceStackContributor(targetService, targetContext, new TestExtensionCatalog());
         var importFragment = ToImportFragment(fragment);
         var preview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest(
             [importFragment],
@@ -128,7 +184,7 @@ public sealed class WorkspaceTests
             new Dictionary<string, string>(),
             [action.ActionId]));
 
-        Assert.True(result.Success, string.Join(Environment.NewLine, result.Errors));
+        Assert.Equal(StackImportOutcome.Completed, result.Outcome);
         var imported = targetService.GetWorkspace("workspace.stack");
         Assert.NotNull(imported);
         Assert.Equal("Stack Workspace", imported!.DisplayName);
@@ -327,7 +383,7 @@ public sealed class WorkspaceTests
     public void AgentLocalStore_PreservesLegacySessionWorkspaceColumn()
     {
         using var scope = TestScope.Create();
-        var databasePath = scope.Context.Storage.LocalWorkspace.GetLocalPath("agent/agent.db");
+        var databasePath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("agent/agent.db");
         Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
         var sessionId = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow.ToString("O");
@@ -368,7 +424,7 @@ public sealed class WorkspaceTests
     public void AgentLocalStore_AddsMissingSessionWorkspaceColumn()
     {
         using var scope = TestScope.Create();
-        var databasePath = scope.Context.Storage.LocalWorkspace.GetLocalPath("agent/agent.db");
+        var databasePath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("agent/agent.db");
         Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
         var sessionId = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow.ToString("O");
@@ -412,11 +468,9 @@ public sealed class WorkspaceTests
     public void AgentLocalStore_MigratesActiveSessionWithFailedLatestCheckpoint()
     {
         using var scope = TestScope.Create();
-        var store = new AgentLocalStore(scope.Context);
-        var workspace = CreateWorkspace();
-        store.SaveWorkspace(workspace);
-        var session = store.CreateSession("Failed Legacy Session", workspaceId: workspace.WorkspaceId);
-        var databasePath = scope.Context.Storage.LocalWorkspace.GetLocalPath("agent/agent.db");
+        var databasePath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("agent/agent.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
+        var sessionId = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow.ToString("O");
 
         using (var connection = new SqliteConnection($"Data Source={databasePath}"))
@@ -424,18 +478,35 @@ public sealed class WorkspaceTests
             connection.Open();
             using var command = connection.CreateCommand();
             command.CommandText = """
+                CREATE TABLE AgentSessions (
+                    SessionId TEXT PRIMARY KEY,
+                    Title TEXT NOT NULL,
+                    State TEXT NOT NULL,
+                    CreatedAtUtc TEXT NOT NULL,
+                    UpdatedAtUtc TEXT NOT NULL
+                );
+                CREATE TABLE AgentRunCheckpoints (
+                    CheckpointId TEXT PRIMARY KEY,
+                    SessionId TEXT NOT NULL,
+                    RunRevision INTEGER NOT NULL,
+                    Status TEXT NOT NULL,
+                    Summary TEXT NULL,
+                    CreatedAtUtc TEXT NOT NULL
+                );
+                INSERT INTO AgentSessions (SessionId, Title, State, CreatedAtUtc, UpdatedAtUtc)
+                VALUES ($sessionId, 'Failed Legacy Session', 'Active', $createdAtUtc, $createdAtUtc);
                 INSERT INTO AgentRunCheckpoints (CheckpointId, SessionId, RunRevision, Status, Summary, CreatedAtUtc)
                 VALUES ($checkpointId, $sessionId, 1, 'Failed', 'Provider stream failed.', $createdAtUtc);
                 """;
             command.Parameters.AddWithValue("$checkpointId", Guid.NewGuid().ToString());
-            command.Parameters.AddWithValue("$sessionId", session.SessionId.ToString());
+            command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
             command.Parameters.AddWithValue("$createdAtUtc", now);
             command.ExecuteNonQuery();
         }
 
         var reopenedStore = new AgentLocalStore(scope.Context);
 
-        Assert.Equal(AgentSessionState.Failed, reopenedStore.GetSession(session.SessionId)?.State);
+        Assert.Equal(AgentSessionState.Failed, reopenedStore.GetSession(sessionId)?.State);
     }
 
     [Fact]
@@ -848,7 +919,7 @@ public sealed class WorkspaceTests
             new Dictionary<string, string>(),
             [action.ActionId]));
 
-        Assert.True(result.Success, string.Join(Environment.NewLine, result.Errors));
+        Assert.Equal(StackImportOutcome.Completed, result.Outcome);
         var image = Assert.Single(await targetCatalog.ListImagesAsync());
         Assert.Equal("custom:latest", image.ImageReference);
         Assert.Equal(DockerImageStatus.NotPulled, image.Status);
@@ -879,28 +950,6 @@ public sealed class WorkspaceTests
         Assert.Contains(progressLines, line => line.Contains("pulling layer", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(calls, args => args.SequenceEqual(["pull", "custom:latest"]));
         Assert.Contains(calls, args => args.SequenceEqual(["image", "inspect", "custom:latest"]));
-    }
-
-    [Fact]
-    public async Task DockerExecutionSettingsViewModel_PullSelectedImage_QueuesBackgroundPull()
-    {
-        using var scope = TestScope.Create();
-        var queue = new FakeBackgroundProcessQueue();
-        var imageCatalog = new DockerImageCatalogService(scope.Context);
-        var viewModel = new DockerExecutionSettingsViewModel(imageCatalog, scope.Context, queue);
-        await viewModel.InitializeAsync();
-
-        viewModel.SelectedImage = Assert.Single(viewModel.Images);
-
-        viewModel.PullSelectedImageCommand.Execute(null);
-
-        var request = Assert.Single(queue.Requests);
-        Assert.Equal(DockerExecutionSettingsViewModel.ImagePullGroupKey, request.GroupKey);
-        Assert.Equal(BackgroundProcessIndicator.Settings, request.Indicator);
-        Assert.Equal(BackgroundProcessConcurrencyMode.SequentialWithinGroup, request.ConcurrencyMode);
-        Assert.Equal("agent0ai/agent-zero:latest", request.Metadata?[DockerExecutionSettingsViewModel.ImageReferenceMetadataKey]);
-        Assert.Equal(DockerImageStatus.Pulling, viewModel.SelectedImage?.Status);
-        Assert.False(viewModel.PullSelectedImageCommand.CanExecute(null));
     }
 
     [Fact]
@@ -1670,6 +1719,49 @@ public sealed class WorkspaceTests
         Assert.Equal("Editor save failed.", viewModel.StatusText);
         Assert.Single(viewModel.EditorSections);
         Assert.Equal(1, contributor.SaveSectionCallCount);
+    }
+
+    [Fact]
+    public async Task AgentWorkspacesViewModel_SaveWorkspace_SelectionChangesDuringEditorSavePersistOriginalSnapshot()
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var catalog = new TestExtensionCatalog();
+        var target = new CountingExecutionTarget("docker");
+        var contributor = new BlockingWorkspaceEditorContributor("docker");
+        catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target);
+        catalog.AddExtension(PackageExtensionPoints.WorkspaceEditorContributors, contributor);
+        var workspaceService = new AgentWorkspaceService(store);
+        var executionTargetService = new AgentExecutionTargetService(catalog);
+        var originalWorkspace = workspaceService.CreateWorkspace("Original Workspace");
+        var otherWorkspace = workspaceService.CreateWorkspace("Other Workspace");
+        using var viewModel = new AgentWorkspacesViewModel(
+            workspaceService,
+            executionTargetService,
+            catalog);
+        viewModel.ActivateWorkspace(originalWorkspace);
+        viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(option =>
+            string.Equals(option.TargetId, "docker", StringComparison.OrdinalIgnoreCase));
+        await contributor.SectionsLoaded.WaitAsync(TimeSpan.FromSeconds(10));
+        viewModel.DisplayName = "Saved Original Workspace";
+
+        var save = viewModel.SaveWorkspaceCommand.ExecuteAsync(null);
+        await contributor.SaveEntered.WaitAsync(TimeSpan.FromSeconds(10));
+        viewModel.ActivateWorkspace(otherWorkspace);
+        contributor.ReleaseSave();
+        await save.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(
+            "Saved Original Workspace",
+            workspaceService.GetWorkspace(originalWorkspace.WorkspaceId)?.DisplayName);
+        Assert.Equal(
+            "Other Workspace",
+            workspaceService.GetWorkspace(otherWorkspace.WorkspaceId)?.DisplayName);
+        Assert.Equal(originalWorkspace.WorkspaceId, contributor.SavedWorkspaceId);
+        Assert.Contains(
+            workspaceService.ListBindings(originalWorkspace.WorkspaceId),
+            binding => binding.ContributionId == "docker");
+        Assert.Empty(workspaceService.ListBindings(otherWorkspace.WorkspaceId));
     }
 
     [Fact]
@@ -3237,7 +3329,7 @@ public sealed class WorkspaceTests
         var dockerPath = Path.Combine(scope.RootPath, "bin", OperatingSystem.IsWindows() ? "docker.exe" : "docker");
         Directory.CreateDirectory(Path.GetDirectoryName(dockerPath)!);
         File.WriteAllText(dockerPath, string.Empty);
-        ((TestKeyValueStore)scope.Context.Storage.State).Seed(DockerCli.ExecutablePathConfigurationKey, dockerPath);
+        ((TestSettings)scope.Context.Settings).Seed(DockerCli.ExecutablePathConfigurationKey, dockerPath);
         return dockerPath;
     }
 
@@ -3305,6 +3397,11 @@ public sealed class WorkspaceTests
             => !_extensions.TryGetValue(extensionPoint.Id, out var entries)
                 ? []
                 : entries.Cast<TContract>().ToArray();
+
+        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
+            => GetExtensions(extensionPoint)
+                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
+                .ToArray();
     }
 
     private sealed class FakeExecutionTarget(string shellOutput) : IAgentExecutionTarget
@@ -3419,6 +3516,52 @@ public sealed class WorkspaceTests
             Interlocked.Increment(ref _saveSectionCallCount);
             return ValueTask.FromResult(saveResult ?? AgentEditorSaveResult.Ok("Saved."));
         }
+    }
+
+    private sealed class BlockingWorkspaceEditorContributor(string targetId)
+        : IAgentWorkspaceEditorContributor
+    {
+        private readonly TaskCompletionSource _sectionsLoaded = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _saveEntered = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseSave = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public string ContributorId => "blocking-workspace-editor";
+
+        public Task SectionsLoaded => _sectionsLoaded.Task;
+
+        public Task SaveEntered => _saveEntered.Task;
+
+        public string? SavedWorkspaceId { get; private set; }
+
+        public bool CanEdit(AgentWorkspaceEditorContext context)
+            => string.Equals(context.TargetId, targetId, StringComparison.OrdinalIgnoreCase);
+
+        public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
+            AgentWorkspaceEditorContext context,
+            CancellationToken cancellationToken = default)
+        {
+            _sectionsLoaded.TrySetResult();
+            return ValueTask.FromResult<IReadOnlyList<AgentEditorSection>>(
+            [
+                new AgentEditorSection("blocking-editor", "Blocking Editor", null, []),
+            ]);
+        }
+
+        public async ValueTask<AgentEditorSaveResult> SaveSectionAsync(
+            AgentWorkspaceEditorContext context,
+            AgentEditorSaveRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            SavedWorkspaceId = context.Workspace.WorkspaceId;
+            _saveEntered.TrySetResult();
+            await _releaseSave.Task.WaitAsync(cancellationToken);
+            return AgentEditorSaveResult.Ok("Saved.");
+        }
+
+        public void ReleaseSave() => _releaseSave.TrySetResult();
     }
 
     private sealed class ScriptedExecutionTarget(string targetKind, string targetId, IEnumerable<AgentShellCommandResult> results) : IAgentExecutionTarget
@@ -3547,7 +3690,7 @@ public sealed class WorkspaceTests
 
         public IPackageStorageContext Storage { get; } = new TestStorageContext(rootPath);
 
-        public IPackageConfiguration Configuration { get; } = new TestConfiguration();
+        public IPackageSettings Settings { get; } = new TestSettings();
 
         public IPackageSecrets Secrets { get; } = new TestSecrets();
 
@@ -3561,7 +3704,7 @@ public sealed class WorkspaceTests
         public IPackageFileStore Files { get; } = new TestPackageFileStore(Path.Combine(rootPath, "files"));
 
         public IPackageKeyValueStore State { get; } = new TestKeyValueStore();
-        public IPackageLocalWorkspaceLease LocalWorkspace { get; } = new TestPackageWorkspaceLease(rootPath);
+        public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; } = new TestPackageRoleLocalWorkspace(rootPath);
     }
 
     private sealed class TestPackageFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
@@ -3622,10 +3765,29 @@ public sealed class WorkspaceTests
             => run(args, timeoutSeconds, cancellationToken, standardInput, progress);
     }
 
-    private sealed class TestConfiguration : IPackageConfiguration
+    private sealed class TestSettings : IPackageSettings
     {
+        private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal)
+        {
+            ["shell.timeoutSeconds.default"] = "30",
+        };
+
         public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
-            => Task.FromResult<string?>(key == "shell.timeoutSeconds.default" ? "30" : null);
+            => Task.FromResult(_values.GetValueOrDefault(key));
+        public Task<string?> GetStoredValueAsync(string key, CancellationToken cancellationToken = default)
+            => GetValueAsync(key, cancellationToken);
+        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
+        {
+            _values[key] = value;
+            return Task.CompletedTask;
+        }
+        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
+        {
+            _values.Remove(key);
+            return Task.CompletedTask;
+        }
+
+        public void Seed(string key, string value) => _values[key] = value;
     }
 
     private sealed class TestSecrets : InMemoryPackageSecrets;

@@ -49,6 +49,7 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
     private readonly ProviderModelLoader _loader;
     private readonly ModelBindingEditorOptions _options;
     private readonly IPresentationDispatcher _dispatcher;
+    private readonly PresentationTaskScope _tasks = new();
     private ProviderCatalogOption? _selectedProvider;
     private ProviderModelCatalogOption? _selectedModel;
     private ModelReasoningOption? _selectedReasoningOption;
@@ -106,7 +107,11 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
             }
 
             Changed?.Invoke();
-            _ = LoadProviderAsync(value?.Id, selectedModelId: null, settingsJson: null, notifyChanged: true);
+            _tasks.Run(_ => LoadProviderAsync(
+                value?.Id,
+                selectedModelId: null,
+                settingsJson: null,
+                notifyChanged: true));
         }
     }
 
@@ -724,6 +729,7 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
 
         _disposed = true;
         _loadGeneration++;
+        _tasks.Dispose();
         _loader.Dispose();
     }
 

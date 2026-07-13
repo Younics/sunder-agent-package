@@ -106,13 +106,30 @@
             <TextBlock Classes="caption"
                        Text="Optional Docker CLI path. Leave empty to auto-detect Docker Desktop, Homebrew, or system Docker installs."
                        TextWrapping="Wrap" />
-            <TextBox Text="{Binding DockerCliPath, Mode=TwoWay}"
-                     PlaceholderText="Auto-detect" />
+            <Grid ColumnDefinitions="*,Auto,Auto"
+                  ColumnSpacing="8">
+              <TextBox Text="{Binding DockerCliPath}"
+                       IsReadOnly="True"
+                       PlaceholderText="Auto-detect" />
+              <Button Grid.Column="1"
+                      Classes="secondary-action compact-action"
+                      Content="Choose..."
+                      Click="OnChooseDockerCliClicked" />
+              <Button Grid.Column="2"
+                      Classes="secondary-action compact-action"
+                      Content="Auto-detect"
+                      Command="{Binding ClearDockerCliPathCommand}" />
+            </Grid>
           </StackPanel>
-          <Button Classes="primary-action"
-                  Content="Save Settings"
-                  HorizontalAlignment="Left"
-                  Command="{Binding SaveSettingsCommand}" />
+          <WrapPanel Orientation="Horizontal">
+            <Button Classes="primary-action"
+                    Content="Save Settings"
+                    Margin="0,0,8,0"
+                    Command="{Binding SaveSettingsCommand}" />
+            <Button Classes="secondary-action"
+                    Content="Test Docker"
+                    Command="{Binding TestDockerCommand}" />
+          </WrapPanel>
         </StackPanel>
       </Border>
     </StackPanel>

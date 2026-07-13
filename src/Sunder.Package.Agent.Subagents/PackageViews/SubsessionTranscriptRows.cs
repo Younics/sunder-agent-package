@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using Avalonia.Media;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using LiveMarkdown.Avalonia;
@@ -100,21 +99,19 @@ public sealed class SubsessionTextTranscriptRowViewModel : SubsessionTranscriptR
 
 public sealed partial class SubsessionActivityTranscriptRowViewModel : SubsessionTranscriptRowViewModel, IDisposable
 {
-    private readonly DispatcherTimer _timer;
+    private readonly IActivityTicker _ticker;
     private string _activityTextBase;
     private int _tick = 3;
 
-    public SubsessionActivityTranscriptRowViewModel(string activityTextBase = "Thinking")
+    internal SubsessionActivityTranscriptRowViewModel(
+        IActivityTicker ticker,
+        string activityTextBase = "Thinking")
         : base(Guid.Empty, DateTimeOffset.UtcNow, TranscriptRowAnchorKey.Activity())
     {
+        _ticker = ticker;
         _activityTextBase = string.IsNullOrWhiteSpace(activityTextBase) ? "Processing" : activityTextBase.Trim();
         _thinkingText = FormatThinkingText(_activityTextBase, _tick);
-        _timer = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromMilliseconds(420),
-        };
-        _timer.Tick += OnTimerTick;
-        _timer.Start();
+        _ticker.Tick += OnTick;
     }
 
     public string RoleGlyph => "A";
@@ -134,7 +131,7 @@ public sealed partial class SubsessionActivityTranscriptRowViewModel : Subsessio
         ThinkingText = FormatThinkingText(_activityTextBase, _tick);
     }
 
-    private void OnTimerTick(object? sender, EventArgs e)
+    private void OnTick()
     {
         _tick++;
         ThinkingText = FormatThinkingText(_activityTextBase, _tick);
@@ -145,8 +142,7 @@ public sealed partial class SubsessionActivityTranscriptRowViewModel : Subsessio
 
     public void Dispose()
     {
-        _timer.Stop();
-        _timer.Tick -= OnTimerTick;
+        _ticker.Tick -= OnTick;
     }
 }
 

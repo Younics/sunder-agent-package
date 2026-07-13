@@ -35,7 +35,8 @@ public sealed record AgentPendingPermissionRequestRecord(
     string? ContinuationToken = null,
     DateTimeOffset? ClaimLeaseExpiresAtUtc = null,
     DateTimeOffset? ContinuationConsumedAtUtc = null,
-    DateTimeOffset? ExecutionStartedAtUtc = null);
+    DateTimeOffset? ExecutionStartedAtUtc = null,
+    string ExecutionSnapshotJson = "");
 
 public enum AgentPendingPermissionStatus
 {

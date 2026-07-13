@@ -1,3 +1,4 @@
+using Sunder.Agent.Execution.Common;
 using System.Text;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -211,7 +212,7 @@ internal static class FilePatchHandler
                     context,
                     operation.Path,
                     cancellationToken,
-                    FilePatchPlanner.ComputeContentHash(operation.NextContent!));
+                    FileOperation.ComputeContentHash(operation.NextContent!));
 
             case FilePatchOperationKind.Update:
                 return await FileWriteHandler.WriteAsync(
@@ -221,7 +222,7 @@ internal static class FilePatchHandler
                     operation.OriginalContent!,
                     overwrite: true,
                     cancellationToken,
-                    FilePatchPlanner.ComputeContentHash(operation.NextContent!));
+                    FileOperation.ComputeContentHash(operation.NextContent!));
 
             case FilePatchOperationKind.Delete:
                 return await FileWriteHandler.WriteAsync(target, context, operation.Path, operation.OriginalContent!, overwrite: false, cancellationToken);

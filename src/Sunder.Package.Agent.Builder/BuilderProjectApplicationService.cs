@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Packaging;
 
 namespace Sunder.Package.Agent.Builder;
 
@@ -16,7 +17,7 @@ public sealed record BuilderProjectOperationResult(BuilderProjectRecord Project,
 
 public sealed record BuilderProjectLoadResult(
     BuilderProjectRecord Project,
-    PackageSessionStatus? Status,
+    PackageDevelopmentSessionStatus? Status,
     string? Message);
 
 public sealed class BuilderProjectApplicationService(
@@ -24,8 +25,15 @@ public sealed class BuilderProjectApplicationService(
     BuilderWorkspaceExecutionService executionService,
     IBuilderProjectStore projectStore,
     BuilderPathService pathService,
-    IPackageSessionService packageSessionService)
+    IPackageDevelopmentSessionControl? developmentSessions = null)
 {
+    private static readonly PackageDevelopmentSessionAvailability MissingDevelopmentSessions = new(
+        false,
+        "This host does not provide development package session control. Build and publish remain available, but Load and Live reload are disabled.");
+
+    public PackageDevelopmentSessionAvailability DevelopmentSessionAvailability
+        => developmentSessions?.Availability ?? MissingDevelopmentSessions;
+
     public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces()
         => executionService.ListWorkspaces();
 
@@ -67,9 +75,9 @@ public sealed class BuilderProjectApplicationService(
             return Invalid("Package name is required.");
         }
 
-        if (string.IsNullOrWhiteSpace(project.PackageId))
+        if (!PackageId.TryParse(project.PackageId, out _))
         {
-            return Invalid("Package id is required.");
+            return Invalid($"Package id must be a lowercase dot-separated ASCII id of at most {PackageId.MaximumLength} characters.");
         }
 
         if (string.IsNullOrWhiteSpace(project.WorkspaceId))
@@ -257,21 +265,37 @@ public sealed class BuilderProjectApplicationService(
                 "Build the project before loading; the sunder-dev folder does not exist.");
         }
 
-        var status = await packageSessionService.LoadPackageAsync(new PackageSessionLoadRequest(
-            PackageSessionSourceKind.Dev,
-            project.DevPackageFolder,
-            project.Watch), cancellationToken);
+        if (developmentSessions is null || !developmentSessions.Availability.IsAvailable)
+        {
+            return new BuilderProjectLoadResult(project, null, DevelopmentSessionAvailability.UnavailableReason);
+        }
+
+        var operation = await developmentSessions.LoadDevelopmentPackageAsync(
+            new PackageDevelopmentSessionLoadRequest(project.DevPackageFolder, project.Watch),
+            cancellationToken);
+        if (!operation.IsSuccess || operation.Status is null)
+        {
+            return new BuilderProjectLoadResult(project, operation.Status, operation.Message);
+        }
+
+        var status = operation.Status;
         return new BuilderProjectLoadResult(
             project with { PackageId = status.PackageId, UpdatedAtUtc = DateTimeOffset.UtcNow },
             status,
             null);
     }
 
-    public Task<bool> UnloadProjectAsync(string packageId, CancellationToken cancellationToken = default)
-        => packageSessionService.UnloadPackageAsync(packageId, PackageSessionSourceKind.Dev, cancellationToken);
+    public Task<PackageDevelopmentSessionOperationResult> UnloadProjectAsync(string packageId, CancellationToken cancellationToken = default)
+        => developmentSessions is null
+            ? Task.FromResult(new PackageDevelopmentSessionOperationResult(
+                PackageDevelopmentSessionOperationOutcome.Unsupported,
+                MissingDevelopmentSessions.UnavailableReason!))
+            : developmentSessions.UnloadDevelopmentPackageAsync(packageId, cancellationToken);
 
-    public Task<PackageSessionStatus?> GetProjectStatusAsync(string packageId, CancellationToken cancellationToken = default)
-        => packageSessionService.GetPackageStatusAsync(packageId, cancellationToken);
+    public Task<PackageDevelopmentSessionStatus?> GetProjectStatusAsync(string packageId, CancellationToken cancellationToken = default)
+        => developmentSessions is null || !developmentSessions.Availability.IsAvailable
+            ? Task.FromResult<PackageDevelopmentSessionStatus?>(null)
+            : developmentSessions.GetDevelopmentPackageStatusAsync(packageId, cancellationToken);
 
     public async Task<IReadOnlyList<BuilderPrerequisiteStatus>> EnsurePrerequisitesInstalledAsync(
         string workspaceId,

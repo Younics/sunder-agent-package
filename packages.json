@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "releaseVersion": "1.1.0",
+  "packages": [
+    {
+      "key": "agent",
+      "packageId": "sunder.package.agent",
+      "projectPath": "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj",
+      "releaseTitle": "Sunder Agent",
+      "artifactName": "sunder-agent-package",
+      "artifactType": "sunderpkg"
+    },
+    {
+      "key": "agent-builder",
+      "packageId": "sunder.package.agent.builder",
+      "projectPath": "src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj",
+      "releaseTitle": "Sunder Agent Builder",
+      "artifactName": "sunder-agent-builder-package",
+      "artifactType": "sunderpkg"
+    },
+    {
+      "key": "agent-contracts",
+      "packageId": "Sunder.Package.Agent.Contracts",
+      "projectPath": "src/Sunder.Package.Agent.Contracts/Sunder.Package.Agent.Contracts.csproj",
+      "releaseTitle": "Sunder Agent Contracts",
+      "artifactName": "sunder-agent-contracts",
+      "artifactType": "nuget"
+    },
+    {
+      "key": "agent-execution-docker",
+      "packageId": "sunder.package.agent.execution.docker",
+      "projectPath": "src/Sunder.Package.Agent.Execution.Docker/Sunder.Package.Agent.Execution.Docker.csproj",
+      "releaseTitle": "Sunder Agent Execution Docker",
+      "artifactName": "sunder-agent-execution-docker-package",
+      "artifactType": "sunderpkg"
+    },
+    {
+      "key": "agent-execution-local",
+      "packageId": "sunder.package.agent.execution.local",
+      "projectPath": "src/Sunder.Package.Agent.Execution.Local/Sunder.Package.Agent.Execution.Local.csproj",
+      "releaseTitle": "Sunder Agent Execution Local",
+      "artifactName": "sunder-agent-execution-local-package",
+      "artifactType": "sunderpkg"
+    },
+    {
+      "key": "agent-mcp",
+      "packageId": "sunder.package.agent.mcp",
+      "projectPath": "src/Sunder.Package.Agent.Mcp/Sunder.Package.Agent.Mcp.csproj",
+      "releaseTitle": "Sunder Agent MCP",
+      "artifactName": "sunder-agent-mcp-package",
+      "artifactType": "sunderpkg"
+    },
+    {
+      "key": "agent-memory-semantic",
+      "packageId": "sunder.package.agent.memory.semantic",
+      "projectPath": "src/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj",
+      "releaseTitle": "Sunder Agent Memory Semantic",
+      "artifactName": "sunder-agent-memory-semantic-package",
+      "artifactType": "sunderpkg"
+    },
+    {
+      "key": "agent-provider-anthropic",
+      "packageId": "sunder.package.agent.provider.anthropic",
+      "projectPath": "src/Sunder.Package.Agent.Provider.Anthropic/Sunder.Package.Agent.Provider.Anthropic.csproj",
+      "releaseTitle": "Sunder Agent Provider Anthropic",
+      "artifactName": "sunder-agent-provider-anthropic-package",
+      "artifactType": "sunderpkg"
+    },
+    {
+      "key": "agent-provider-gemini",
+      "packageId": "sunder.package.agent.provider.gemini",
+      "projectPath": "src/Sunder.Package.Agent.Provider.Gemini/Sunder.Package.Agent.Provider.Gemini.csproj",
+      "releaseTitle": "Sunder Agent Provider Gemini",
+      "artifactName": "sunder-agent-provider-gemini-package",
+      "artifactType": "sunderpkg"
+    },
+    {
+      "key": "agent-provider-lmstudio",
+      "packageId": "sunder.package.agent.provider.lmstudio",
+      "projectPath": "src/Sunder.Package.Agent.Provider.LMStudio/Sunder.Package.Agent.Provider.LMStudio.csproj",
+      "releaseTitle": "Sunder Agent Provider LM Studio",
+      "artifactName": "sunder-agent-provider-lmstudio-package",
+      "artifactType": "sunderpkg"
+    },
+    {
+      "key": "agent-provider-openai",
+      "packageId": "sunder.package.agent.provider.openai",
+      "projectPath": "src/Sunder.Package.Agent.Provider.OpenAI/Sunder.Package.Agent.Provider.OpenAI.csproj",
+      "releaseTitle": "Sunder Agent Provider OpenAI",
+      "artifactName": "sunder-agent-provider-openai-package",
+      "artifactType": "sunderpkg"
+    },
+    {
+      "key": "agent-skills",
+      "packageId": "sunder.package.agent.skills",
+      "projectPath": "src/Sunder.Package.Agent.Skills/Sunder.Package.Agent.Skills.csproj",
+      "releaseTitle": "Sunder Agent Skills",
+      "artifactName": "sunder-agent-skills-package",
+      "artifactType": "sunderpkg"
+    },
+    {
+      "key": "agent-subagents",
+      "packageId": "sunder.package.agent.subagents",
+      "projectPath": "src/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj",
+      "releaseTitle": "Sunder Agent Subagents",
+      "artifactName": "sunder-agent-subagents-package",
+      "artifactType": "sunderpkg"
+    },
+    {
+      "key": "agent-tools-files",
+      "packageId": "sunder.package.agent.tools.files",
+      "projectPath": "src/Sunder.Package.Agent.Tools.Files/Sunder.Package.Agent.Tools.Files.csproj",
+      "releaseTitle": "Sunder Agent Tools Files",
+      "artifactName": "sunder-agent-tools-files-package",
+      "artifactType": "sunderpkg"
+    },
+    {
+      "key": "agent-tools-shell",
+      "packageId": "sunder.package.agent.tools.shell",
+      "projectPath": "src/Sunder.Package.Agent.Tools.Shell/Sunder.Package.Agent.Tools.Shell.csproj",
+      "releaseTitle": "Sunder Agent Tools Shell",
+      "artifactName": "sunder-agent-tools-shell-package",
+      "artifactType": "sunderpkg"
+    },
+    {
+      "key": "agent-tools-web",
+      "packageId": "sunder.package.agent.tools.web",
+      "projectPath": "src/Sunder.Package.Agent.Tools.Web/Sunder.Package.Agent.Tools.Web.csproj",
+      "releaseTitle": "Sunder Agent Tools Web",
+      "artifactName": "sunder-agent-tools-web-package",
+      "artifactType": "sunderpkg"
+    }
+  ],
+  "capabilities": {
+    "sunder.package.agent": [
+      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.v1", "logging.v1",
+      "notifications.v1", "packaging.v1", "role-local-workspace.v1", "runtime-operations.v1",
+      "sdk-baseline-1-1.v1", "settings-navigation.v1", "settings-views.v1", "shell-view.v1",
+      "stacks.contributions.v1", "stacks.v1", "storage.v1", "views.v1"
+    ],
+    "sunder.package.agent.builder": [
+      "background-processes.v1", "contributions.v1", "core.v1", "development-package-sessions.v1",
+      "extensions.v1", "packaging.v1", "sdk-baseline-1-1.v1", "storage.v1", "views.v1"
+    ],
+    "sunder.package.agent.execution.docker": [
+      "background-processes.v1", "configuration.schema.v1", "contributions.v1", "core.v1",
+      "extensions.v1", "packaging.v1", "role-local-workspace.v1", "runtime-operations.v1",
+      "sdk-baseline-1-1.v1", "settings-views.v1", "settings.v1", "stacks.contributions.v1",
+      "stacks.v1", "storage.v1"
+    ],
+    "sunder.package.agent.execution.local": [
+      "configuration.schema.v1", "contributions.v1", "core.v1", "extensions.v1", "packaging.v1",
+      "runtime-operations.v1", "sdk-baseline-1-1.v1", "settings-views.v1", "settings.v1", "storage.v1"
+    ],
+    "sunder.package.agent.mcp": [
+      "callbacks.v1", "configuration.schema.v1", "contributions.v1", "core.v1", "extensions.v1",
+      "packaging.v1", "role-local-workspace.v1", "runtime-operations.v1", "sdk-baseline-1-1.v1",
+      "secrets.v1", "settings-views.v1", "stacks.contributions.v1", "stacks.v1", "storage.v1"
+    ],
+    "sunder.package.agent.memory.semantic": [
+      "background-services.v1", "configuration.schema.v1", "contributions.v1", "core.v1",
+      "extensions.v1", "packaging.v1", "role-local-workspace.v1", "runtime-operations.v1",
+      "sdk-baseline-1-1.v1", "settings.v1", "storage.v1", "views.v1"
+    ],
+    "sunder.package.agent.provider.anthropic": [
+      "configuration.schema.v1", "contributions.v1", "core.v1", "extensions.v1", "logging.v1",
+      "packaging.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1", "settings.v1"
+    ],
+    "sunder.package.agent.provider.gemini": [
+      "configuration.schema.v1", "contributions.v1", "core.v1", "extensions.v1", "logging.v1",
+      "packaging.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1", "settings.v1"
+    ],
+    "sunder.package.agent.provider.lmstudio": [
+      "configuration.schema.v1", "contributions.v1", "core.v1", "extensions.v1", "logging.v1",
+      "packaging.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1", "settings.v1"
+    ],
+    "sunder.package.agent.provider.openai": [
+      "auth.v1", "callbacks.v1", "configuration.schema.v1", "contributions.v1", "core.v1",
+      "extensions.v1", "logging.v1", "packaging.v1", "runtime-operations.v1",
+      "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1", "settings.v1"
+    ],
+    "sunder.package.agent.skills": [
+      "contributions.v1", "core.v1", "extensions.v1", "packaging.v1", "role-local-workspace.v1",
+      "runtime-operations.v1", "sdk-baseline-1-1.v1", "settings-views.v1",
+      "stacks.contributions.v1", "stacks.v1", "storage.v1"
+    ],
+    "sunder.package.agent.subagents": [
+      "contributions.v1", "core.v1", "extensions.v1", "packaging.v1", "role-local-workspace.v1",
+      "runtime-operations.v1", "sdk-baseline-1-1.v1", "settings-navigation.v1", "shell-view.v1",
+      "stacks.contributions.v1", "stacks.v1", "storage.v1", "views.v1"
+    ],
+    "sunder.package.agent.tools.files": [
+      "contributions.v1", "core.v1", "extensions.v1", "packaging.v1", "sdk-baseline-1-1.v1"
+    ],
+    "sunder.package.agent.tools.shell": [
+      "contributions.v1", "core.v1", "extensions.v1", "packaging.v1", "sdk-baseline-1-1.v1"
+    ],
+    "sunder.package.agent.tools.web": [
+      "configuration.schema.v1", "contributions.v1", "core.v1", "extensions.v1", "packaging.v1",
+      "sdk-baseline-1-1.v1", "secrets.v1", "settings.v1"
+    ]
+  }
+}

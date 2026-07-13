@@ -4,6 +4,7 @@ using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Services.BehaviorLoops;
+using Sunder.Sdk.Logging;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -195,7 +196,7 @@ public sealed class AgentStreamingTurnWriterTests
             => throw new NotSupportedException();
 
         public void LogEvent(
-            AgentLogLevel level,
+            PackageLogLevel level,
             string eventName,
             string message,
             long? elapsedMilliseconds = null,

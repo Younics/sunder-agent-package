@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using Sunder.Sdk.Logging;
@@ -36,6 +35,7 @@ internal sealed class CodexBrowserAuthorizationCoordinator : IDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(authSessionId);
         ArgumentNullException.ThrowIfNull(callbackUri);
+        ValidateCallbackUri(callbackUri);
         RemoveExpiredPendingFlows();
         var verifier = CreatePkceVerifier();
         var pending = new PendingBrowserAuthorization(
@@ -75,41 +75,6 @@ internal sealed class CodexBrowserAuthorizationCoordinator : IDisposable
                 code,
                 pending.Verifier,
                 pending.RedirectUri,
-                cancellationToken);
-        }
-        finally
-        {
-            _interactiveGate.Release();
-        }
-    }
-
-    public async Task<OpenAiCodexSession> SignInWithBrowserAsync(CancellationToken cancellationToken)
-    {
-        await _interactiveGate.WaitAsync(cancellationToken);
-        try
-        {
-            var state = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
-            var verifier = CreatePkceVerifier();
-            using var callbackServer = CodexAuthCallbackServer.Start();
-            var authorizationUrl = BuildAuthorizationUrl(state, CreatePkceChallenge(verifier), callbackServer.RedirectUri);
-            Process.Start(new ProcessStartInfo(authorizationUrl) { UseShellExecute = true });
-            var callback = await callbackServer.WaitAsync(state, cancellationToken);
-            if (!string.IsNullOrWhiteSpace(callback.Error))
-            {
-                throw new InvalidOperationException(string.IsNullOrWhiteSpace(callback.ErrorDescription)
-                    ? callback.Error
-                    : callback.ErrorDescription);
-            }
-
-            if (!callback.StateMatches || string.IsNullOrWhiteSpace(callback.Code))
-            {
-                throw new InvalidOperationException("OpenAI Codex browser sign-in failed or returned an invalid state.");
-            }
-
-            return await _oauthClient.ExchangeAuthorizationCodeAsync(
-                callback.Code,
-                verifier,
-                callbackServer.RedirectUri,
                 cancellationToken);
         }
         finally
@@ -196,6 +161,20 @@ internal sealed class CodexBrowserAuthorizationCoordinator : IDisposable
         }
 
         code = codeValue;
+    }
+
+    private static void ValidateCallbackUri(Uri callbackUri)
+    {
+        if (!string.Equals(callbackUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(callbackUri.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+            || callbackUri.Port is not (1455 or 1457)
+            || !string.Equals(callbackUri.AbsolutePath, "/auth/callback", StringComparison.Ordinal)
+            || !string.IsNullOrEmpty(callbackUri.Query)
+            || !string.IsNullOrEmpty(callbackUri.Fragment))
+        {
+            throw new InvalidOperationException(
+                "OpenAI Codex authorization requires the host callback URI http://localhost:1455/auth/callback or http://localhost:1457/auth/callback.");
+        }
     }
 
     private static string BuildAuthorizationUrl(string state, string challenge, string redirectUri)

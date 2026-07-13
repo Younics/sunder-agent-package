@@ -44,7 +44,7 @@ internal static class AnthropicModelCatalog
         };
 
     private static readonly IReadOnlyList<AgentModelDescriptor> VendorModels =
-        ApplyReleaseDates([
+        ProviderModelCatalog.ApplyReleaseDates([
         new("anthropic/claude-fable-5", "Claude Fable 5", 1000000, 128000, IsRecommended: true, Variants: OpusReasoningVariants),
         new("anthropic/claude-opus-4-8", "Claude Opus 4.8", 1000000, 128000, IsRecommended: true, Variants: OpusReasoningVariants, SpeedOptions: FastSpeedOptions),
         new("anthropic/claude-opus-4-7", "Claude Opus 4.7", 1000000, 128000, Variants: OpusReasoningVariants, SpeedOptions: FastSpeedOptions),
@@ -57,7 +57,7 @@ internal static class AnthropicModelCatalog
         new("anthropic/claude-opus-4-5-20251101", "Claude Opus 4.5 (2025-11-01)", 200000, 64000, Variants: StandardReasoningVariants),
         new("anthropic/claude-haiku-4-5", "Claude Haiku 4.5", 200000, 64000),
         new("anthropic/claude-haiku-4-5-20251001", "Claude Haiku 4.5 (2025-10-01)", 200000, 64000),
-    ]);
+    ], ReleaseDates, requireEveryModel: true);
 
     private static readonly ProviderModelCatalogSnapshot Catalog = ProviderModelCatalog.ValidateAndOrder(
         VendorModels,
@@ -71,15 +71,10 @@ internal static class AnthropicModelCatalog
 
     internal static int? GetMaxOutputTokens(string modelId)
     {
-        var normalizedModelId = ProviderModelId.RemovePrefix(modelId, "anthropic");
-        return Models.FirstOrDefault(model => string.Equals(
-                ProviderModelId.RemovePrefix(model.ModelId, "anthropic"),
-                normalizedModelId,
-                StringComparison.OrdinalIgnoreCase))
+        return ProviderModelCatalog.FindByNormalizedId(
+                Models,
+                modelId,
+                static id => ProviderModelId.RemovePrefix(id, "anthropic"))
             ?.MaxOutputTokens;
     }
-
-    private static IReadOnlyList<AgentModelDescriptor> ApplyReleaseDates(
-        IEnumerable<AgentModelDescriptor> models)
-        => models.Select(model => model with { ReleaseDate = ReleaseDates[model.ModelId] }).ToArray();
 }

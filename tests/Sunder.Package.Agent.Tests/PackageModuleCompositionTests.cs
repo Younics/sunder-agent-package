@@ -22,6 +22,17 @@ public sealed class PackageModuleCompositionTests
                 Extension("sunder.package.agent:system-prompt-contributors", "Sunder.Package.Agent.Services.WorkspaceDocumentationContextService"),
                 Extension("sunder:stack-contributors", "Sunder.Package.Agent.Services.AgentProfileStackContributor"),
                 Extension("sunder:stack-contributors", "Sunder.Package.Agent.Services.AgentWorkspaceStackContributor"),
+                RuntimeOperation("agent.dashboard.v1", "Sunder.Package.Agent.Runtime.AgentDashboardHandler"),
+                RuntimeOperation("agent.sessions.page.v1", "Sunder.Package.Agent.Runtime.AgentSessionPageHandler"),
+                RuntimeOperation("agent.transcript.page.v1", "Sunder.Package.Agent.Runtime.AgentTranscriptPageHandler"),
+                RuntimeOperation("agent.catalog.v1", "Sunder.Package.Agent.Runtime.AgentCatalogHandler"),
+                RuntimeOperation("agent.profiles.command.v1", "Sunder.Package.Agent.Runtime.AgentProfileCommandHandler"),
+                RuntimeOperation("agent.workspaces.command.v1", "Sunder.Package.Agent.Runtime.AgentWorkspaceCommandHandler"),
+                RuntimeOperation("agent.sessions.command.v1", "Sunder.Package.Agent.Runtime.AgentSessionCommandHandler"),
+                RuntimeOperation("agent.runs.command.v1", "Sunder.Package.Agent.Runtime.AgentRunCommandHandler"),
+                RuntimeOperation("agent.permissions.command.v1", "Sunder.Package.Agent.Runtime.AgentPermissionCommandHandler"),
+                RuntimeOperation("agent.attachments.read.v1", "Sunder.Package.Agent.Runtime.AgentAttachmentReadHandler"),
+                RuntimeStream("agent.changes.v1", "Sunder.Package.Agent.Runtime.AgentRuntimeChangeHub"),
                 PackageView("sunder.package.agent.chat", "Sunder.Package.Agent.PackageViews.AgentChatView"),
                 PackageView("sunder.package.agent.workspaces", "Sunder.Package.Agent.PackageViews.AgentWorkspacesView"),
                 PackageView("sunder.package.agent.profiles", "Sunder.Package.Agent.PackageViews.AgentProfilesView"),
@@ -40,6 +51,8 @@ public sealed class PackageModuleCompositionTests
                 Extension("sunder.package.agent:workspace-binding-contributors", "Sunder.Package.Agent.Execution.Docker.DockerExecutionTarget"),
                 Extension("sunder.package.agent:workspace-path-migration-contributors", "Sunder.Package.Agent.Execution.Docker.DockerExecutionWorkspaceConfigService"),
                 Extension("sunder.package.agent:workspace-editor-contributors", "Sunder.Package.Agent.Execution.Docker.DockerExecutionWorkspaceEditorContributor"),
+                Extension("sunder.package.agent:workspace-editor-contributors", "Sunder.Package.Agent.Execution.Docker.DockerExecutionWorkspaceEditorPresentationContributor"),
+                RuntimeOperation("docker-execution.presentation.v1", "Sunder.Package.Agent.Execution.Docker.DockerExecutionRuntimeOperationHandler"),
             ],
             ["Sunder.Package.Agent.Execution.Local"] =
             [
@@ -49,6 +62,8 @@ public sealed class PackageModuleCompositionTests
                 Extension("sunder.package.agent:workspace-binding-contributors", "Sunder.Package.Agent.Execution.Local.LocalExecutionTarget"),
                 Extension("sunder.package.agent:workspace-path-migration-contributors", "Sunder.Package.Agent.Execution.Local.LocalExecutionWorkspaceConfigService"),
                 Extension("sunder.package.agent:workspace-editor-contributors", "Sunder.Package.Agent.Execution.Local.LocalExecutionWorkspaceEditorContributor"),
+                Extension("sunder.package.agent:workspace-editor-contributors", "Sunder.Package.Agent.Execution.Local.LocalExecutionWorkspaceEditorPresentationContributor"),
+                RuntimeOperation("local-execution.presentation.v1", "Sunder.Package.Agent.Execution.Local.LocalExecutionRuntimeOperationHandler"),
             ],
             ["Sunder.Package.Agent.Mcp"] =
             [
@@ -57,6 +72,9 @@ public sealed class PackageModuleCompositionTests
                 Extension("sunder.package.agent:tool-sources", "Sunder.Package.Agent.Mcp.McpToolSource"),
                 Extension("sunder.package.agent:profile-selectable-capability-providers", "Sunder.Package.Agent.Mcp.McpToolSource"),
                 Extension("sunder:stack-contributors", "Sunder.Package.Agent.Mcp.Services.McpServerStackContributor"),
+                RuntimeOperation("mcp.query.v1", "Sunder.Package.Agent.Mcp.Runtime.McpRuntimeHandler"),
+                RuntimeOperation("mcp.command.v1", "Sunder.Package.Agent.Mcp.Runtime.McpRuntimeHandler"),
+                RuntimeStream("mcp.changes.v1", "Sunder.Package.Agent.Mcp.Runtime.McpRuntimeChangeStream"),
             ],
             ["Sunder.Package.Agent.Memory.Semantic"] =
             [
@@ -67,6 +85,9 @@ public sealed class PackageModuleCompositionTests
                 Extension("sunder.package.agent:profile-capability-consumers", "Sunder.Package.Agent.Memory.Semantic.MemorySemanticFeature"),
                 Extension("sunder.package.agent:session-data-cleaners", "Sunder.Package.Agent.Memory.Semantic.MemorySemanticFeature"),
                 PackageView("sunder.package.agent.memory.semantic.inspector", "Sunder.Package.Agent.Memory.Semantic.PackageViews.MemoryInspectorView"),
+                RuntimeOperation("semantic-memory.query.v1", "Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryRuntimeHandler"),
+                RuntimeOperation("semantic-memory.command.v1", "Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryRuntimeHandler"),
+                RuntimeStream("semantic-memory.changes.v1", "Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryRuntimeChangeStream"),
             ],
             ["Sunder.Package.Agent.Provider.Anthropic"] =
             [
@@ -95,6 +116,7 @@ public sealed class PackageModuleCompositionTests
                 Extension("sunder.package.agent:chat-providers", "Sunder.Package.Agent.Provider.OpenAI.OpenAiAgentProvider"),
                 Extension("sunder.package.agent:embedding-providers", "Sunder.Package.Agent.Provider.OpenAI.OpenAiEmbeddingProvider"),
                 Extension("sunder.package.agent:session-data-cleaners", "Sunder.Package.Agent.Provider.OpenAI.Transport.CodexResponseContinuationStore"),
+                RuntimeOperation("openai.auth.v1", "Sunder.Package.Agent.Provider.OpenAI.OpenAiAuthOperationHandler"),
             ],
             ["Sunder.Package.Agent.Skills"] =
             [
@@ -104,6 +126,9 @@ public sealed class PackageModuleCompositionTests
                 Extension("sunder.package.agent:system-prompt-contributors", "Sunder.Package.Agent.Skills.Services.SkillsFeature"),
                 Extension("sunder.package.agent:execution-resource-providers", "Sunder.Package.Agent.Skills.Services.SkillsFeature"),
                 Extension("sunder:stack-contributors", "Sunder.Package.Agent.Skills.Services.SkillStackContributor"),
+                RuntimeOperation("skills.query.v1", "Sunder.Package.Agent.Skills.Runtime.SkillRuntimeHandler"),
+                RuntimeOperation("skills.command.v1", "Sunder.Package.Agent.Skills.Runtime.SkillRuntimeHandler"),
+                RuntimeStream("skills.changes.v1", "Sunder.Package.Agent.Skills.Runtime.SkillRuntimeChangeStream"),
             ],
             ["Sunder.Package.Agent.Subagents"] =
             [
@@ -114,6 +139,9 @@ public sealed class PackageModuleCompositionTests
                 Extension("sunder.package.agent:system-prompt-contributors", "Sunder.Package.Agent.Subagents.Services.SubagentFeature"),
                 Extension("sunder.package.agent:behavior-loops", "Sunder.Package.Agent.Subagents.Services.OrchestratedAgentBehaviorLoop"),
                 Extension("sunder:stack-contributors", "Sunder.Package.Agent.Subagents.Services.SubagentStackContributor"),
+                RuntimeOperation("subagents.query.v1", "Sunder.Package.Agent.Subagents.Runtime.SubagentRuntimeHandler"),
+                RuntimeOperation("subagents.command.v1", "Sunder.Package.Agent.Subagents.Runtime.SubagentRuntimeHandler"),
+                RuntimeStream("subagents.changes.v1", "Sunder.Package.Agent.Subagents.Runtime.SubagentRuntimeChangeStream"),
             ],
             ["Sunder.Package.Agent.Tools.Files"] =
             [
@@ -147,13 +175,14 @@ public sealed class PackageModuleCompositionTests
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(packageScope.Context);
         services.AddSingleton<IPackageExtensionCatalog>(extensionCatalog);
-        services.AddSingleton<IPackageSessionService>(NullPackageSessionService.Instance);
+        services.AddSingleton<Sunder.Sdk.Runtime.IPackageRuntimeClient>(Sunder.Sdk.Runtime.NullPackageRuntimeClient.Instance);
         services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
 
         var (runtimeModule, appModule) = CreatePackageModules(packageName);
         if (runtimeModule is not null)
         {
             runtimeModule.ConfigureRuntimeServices(services, packageScope.Context);
+            appModule?.ConfigureAppServices(services, packageScope.Context);
         }
         else
         {
@@ -231,6 +260,12 @@ public sealed class PackageModuleCompositionTests
 
     private static string BackgroundService(string implementationType)
         => $"background-service:{implementationType}";
+
+    private static string RuntimeOperation(string id, string implementationType)
+        => $"runtime-operation:{id}:{implementationType}";
+
+    private static string RuntimeStream(string id, string implementationType)
+        => $"runtime-stream:{id}:{implementationType}";
 
     private static string Configuration(string packageId)
         => $"configuration:{packageId}";

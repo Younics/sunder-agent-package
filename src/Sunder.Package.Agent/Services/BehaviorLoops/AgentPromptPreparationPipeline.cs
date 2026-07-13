@@ -5,6 +5,7 @@ using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Services;
+using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
@@ -32,7 +33,7 @@ internal sealed class AgentPromptPreparationPipeline(
         var availableTools = runtimeTools.Select(tool => tool.Descriptor).ToArray();
         var promptRequest = CreatePromptRequest(context, availableTools, projection.PromptTurns);
         var promptStopwatch = Stopwatch.StartNew();
-        host.LogEvent(AgentLogLevel.Debug, "system_prompt.compose.start", "Composing system prompt.");
+        host.LogEvent(PackageLogLevel.Debug, "system_prompt.compose.start", "Composing system prompt.");
         var systemInstructions = await _promptComposer.ComposeAsync(
             promptRequest,
             instructionContext.SystemInstructions,
@@ -140,7 +141,7 @@ internal sealed class AgentPromptPreparationPipeline(
         int availableToolCount,
         long elapsedMilliseconds)
         => host.LogEvent(
-            AgentLogLevel.Debug,
+            PackageLogLevel.Debug,
             "system_prompt.compose.completed",
             $"{systemInstructions?.Length ?? 0} characters",
             elapsedMilliseconds,
@@ -176,7 +177,7 @@ internal sealed class AgentPromptPreparationPipeline(
         if (projection.SummaryUpdated)
         {
             host.LogEvent(
-                AgentLogLevel.Debug,
+                PackageLogLevel.Debug,
                 "session.context.summary.updated",
                 "Updated core session continuity summary.",
                 attributes: new Dictionary<string, object?>(StringComparer.Ordinal)

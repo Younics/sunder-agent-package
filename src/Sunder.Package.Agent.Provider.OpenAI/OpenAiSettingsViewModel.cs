@@ -1,18 +1,22 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.Shared;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Callbacks;
+using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
 public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposable
 {
-    private static readonly TimeSpan AuthorizationTimeout = TimeSpan.FromMinutes(5);
     private readonly IPackageContext _packageContext;
-    private readonly CodexConnectedAuthStrategy _codexConnectedAuthStrategy;
-    private CancellationTokenSource? _authorizationCts;
+    private readonly OpenAiAuthPresentationService _authPresentation;
+    private readonly PackageCallbackFlowRunner _callbackFlow;
+    private readonly PresentationTaskScope _tasks = new();
+    private int _authorizationActive;
+    private bool _disposed;
     private long _statusGeneration;
 
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
@@ -20,21 +24,35 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
 
     public OpenAiSettingsViewModel(
         IPackageContext packageContext,
-        CodexConnectedAuthStrategy codexConnectedAuthStrategy)
+        IPackageRuntimeClient runtimeClient)
         : this(
             packageContext,
-            codexConnectedAuthStrategy,
+            new OpenAiAuthPresentationService(runtimeClient),
+            new PackageCallbackFlowRunner(packageContext.Callbacks),
             new ProviderCredentialAccessor(packageContext.Secrets, OpenAiProviderConfiguration.ApiKeySecretKey))
     {
     }
 
     internal OpenAiSettingsViewModel(
         IPackageContext packageContext,
-        CodexConnectedAuthStrategy codexConnectedAuthStrategy,
+        OpenAiAuthPresentationService authPresentation)
+        : this(
+            packageContext,
+            authPresentation,
+            new PackageCallbackFlowRunner(packageContext.Callbacks),
+            new ProviderCredentialAccessor(packageContext.Secrets, OpenAiProviderConfiguration.ApiKeySecretKey))
+    {
+    }
+
+    internal OpenAiSettingsViewModel(
+        IPackageContext packageContext,
+        OpenAiAuthPresentationService authPresentation,
+        PackageCallbackFlowRunner callbackFlow,
         ProviderCredentialAccessor credentials)
     {
         _packageContext = packageContext;
-        _codexConnectedAuthStrategy = codexConnectedAuthStrategy;
+        _authPresentation = authPresentation;
+        _callbackFlow = callbackFlow;
         _selectedAuthMode = ResolveAuthModeOption(OpenAiAuthMode.CodexConnected);
         ApiKeySettings = new ApiKeySettingsState(
             credentials,
@@ -43,20 +61,20 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
             ResolveApiKeyStatus);
         UtilityModelSettings = new UtilityModelSettingsState(
             packageContext,
-            OpenAiProviderConfiguration.UtilityModelKey,
-            OpenAiProviderConfiguration.DefaultUtilityModelId,
-            OpenAiProviderConfiguration.UtilityModelOptions.Select(option => (option.Value, option.Label)),
-            NormalizeLegacyUtilityModelId);
+            OpenAiProviderConfiguration.UtilityModelSelection.ConfigurationKey,
+            OpenAiProviderConfiguration.UtilityModelSelection.DefaultModelId,
+            OpenAiProviderConfiguration.UtilityModelSelection.Options.Select(option => (option.Value, option.Label)),
+            OpenAiProviderConfiguration.UtilityModelSelection.Normalize);
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        var configuredMode = await _packageContext.Storage.State.GetValueAsync(OpenAiAuthMode.ConfigurationKey, cancellationToken)
-            ?? await _packageContext.Configuration.GetValueAsync(OpenAiAuthMode.ConfigurationKey, cancellationToken);
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _tasks.CancellationToken);
+        var configuredMode = await _packageContext.Settings.GetValueAsync(OpenAiAuthMode.ConfigurationKey, lifetime.Token);
         SelectedAuthMode = ResolveAuthModeOption(configuredMode);
-        await ApiKeySettings.RefreshCredentialStatusAsync(cancellationToken);
-        await UtilityModelSettings.InitializeAsync(cancellationToken);
-        await RefreshStatusAsync(cancellationToken);
+        await ApiKeySettings.RefreshCredentialStatusAsync(lifetime.Token);
+        await UtilityModelSettings.InitializeAsync(lifetime.Token);
+        await RefreshStatusAsync(lifetime.Token);
     }
 
     public ObservableCollection<OpenAiAuthModeOption> AuthModes { get; } =
@@ -69,13 +87,22 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
 
     internal UtilityModelSettingsState UtilityModelSettings { get; }
 
-    public bool CanAuthorize => !IsBusy;
-
-    public bool CanCancelAuthorization => IsAuthorizing;
-
     public bool CanSaveAuthMode => !IsBusy;
 
-    public bool IsCodexStatusWarning => IsAuthorizing || (!IsCodexConnected && !IsCodexStatusError);
+    public bool CanAuthorize => !_disposed
+        && !IsBusy
+        && _callbackFlow.IsAvailable
+        && SelectedAuthMode?.ModeId == OpenAiAuthMode.CodexConnected;
+
+    public bool CanDisconnectAction => CanDisconnect && !IsBusy;
+
+    public string AuthorizationButtonLabel => IsAuthorizing
+        ? "Authorizing..."
+        : IsCodexConnected
+            ? "Reauthorize with ChatGPT Plus/Pro"
+            : "Authorize with ChatGPT Plus/Pro";
+
+    public bool IsCodexStatusWarning => !IsCodexConnected && !IsCodexStatusError;
 
     [ObservableProperty]
     private OpenAiAuthModeOption? _selectedAuthMode;
@@ -103,23 +130,29 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
 
     partial void OnIsBusyChanged(bool value)
     {
-        OnPropertyChanged(nameof(CanAuthorize));
         OnPropertyChanged(nameof(CanSaveAuthMode));
+        OnPropertyChanged(nameof(CanAuthorize));
+        OnPropertyChanged(nameof(CanDisconnectAction));
+        AuthorizeCommand.NotifyCanExecuteChanged();
     }
 
-    partial void OnIsAuthorizingChanged(bool value)
+    partial void OnIsAuthorizingChanged(bool value) => OnPropertyChanged(nameof(AuthorizationButtonLabel));
+
+    partial void OnCanDisconnectChanged(bool value) => OnPropertyChanged(nameof(CanDisconnectAction));
+
+    partial void OnIsCodexConnectedChanged(bool value)
     {
-        OnPropertyChanged(nameof(CanCancelAuthorization));
         OnPropertyChanged(nameof(IsCodexStatusWarning));
+        OnPropertyChanged(nameof(AuthorizationButtonLabel));
     }
-
-    partial void OnIsCodexConnectedChanged(bool value) => OnPropertyChanged(nameof(IsCodexStatusWarning));
 
     partial void OnIsCodexStatusErrorChanged(bool value) => OnPropertyChanged(nameof(IsCodexStatusWarning));
 
     partial void OnSelectedAuthModeChanged(OpenAiAuthModeOption? value)
     {
-        _ = RefreshStatusAsync();
+        OnPropertyChanged(nameof(CanAuthorize));
+        AuthorizeCommand.NotifyCanExecuteChanged();
+        _tasks.Run(RefreshStatusAsync);
     }
 
     [RelayCommand]
@@ -151,78 +184,67 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
         }
     }
 
-    [RelayCommand]
-    private async Task AuthorizeAsync()
+    [RelayCommand(CanExecute = nameof(CanAuthorize), AllowConcurrentExecutions = false)]
+    private async Task AuthorizeAsync(CancellationToken cancellationToken)
     {
-        if (IsBusy)
+        if (!CanAuthorize || Interlocked.CompareExchange(ref _authorizationActive, 1, 0) != 0)
         {
             return;
         }
 
-        var authorizationCts = new CancellationTokenSource(AuthorizationTimeout);
-        var authorizationGeneration = Interlocked.Increment(ref _statusGeneration);
-        _authorizationCts = authorizationCts;
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _tasks.CancellationToken);
+        Interlocked.Increment(ref _statusGeneration);
         IsBusy = true;
         IsAuthorizing = true;
-        IsCodexStatusError = false;
         IsCodexConnected = false;
-        CodexStatusLabel = "Authorizing...";
-        CodexStatusDetail = "Opened auth.openai.com in your browser. Complete sign-in there; Sunder will finish authorization after the callback.";
+        IsCodexStatusError = false;
+        CodexStatusLabel = "Waiting for authorization";
+        CodexStatusDetail = "Complete ChatGPT sign-in in the browser window. Sunder will detect the callback automatically.";
         try
         {
-            await SaveAuthModeValueAsync(authorizationCts.Token);
-            await _codexConnectedAuthStrategy.EnsureAuthenticatedAsync(authorizationCts.Token);
-            await RefreshStatusAsync(authorizationCts.Token);
+            await _packageContext.Settings.SetValueAsync(
+                OpenAiAuthMode.ConfigurationKey,
+                OpenAiAuthMode.CodexConnected,
+                lifetime.Token);
+            await _callbackFlow.RunAsync(
+                PackageCallbackHandlerIds.Authentication,
+                null,
+                "OpenAI ChatGPT authorization",
+                lifetime.Token);
+            await RefreshStatusAsync(lifetime.Token);
         }
-        catch (OperationCanceledException) when (authorizationCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
         {
-            if (authorizationGeneration == Volatile.Read(ref _statusGeneration))
+            if (!_disposed)
             {
-                IsCodexStatusError = true;
+                Interlocked.Increment(ref _statusGeneration);
                 IsCodexConnected = false;
+                IsCodexStatusError = true;
                 CodexStatusLabel = "Authorization canceled";
-                CodexStatusDetail = "Authorization was canceled or timed out. Click Authorize to try again.";
+                CodexStatusDetail = "Authorization was canceled before it completed. Click Authorize to try again.";
             }
         }
         catch (Exception ex)
         {
-            if (authorizationGeneration == Volatile.Read(ref _statusGeneration))
+            if (!_disposed)
             {
-                IsCodexStatusError = true;
+                Interlocked.Increment(ref _statusGeneration);
                 IsCodexConnected = false;
+                IsCodexStatusError = true;
                 CodexStatusLabel = "Authorization failed";
                 CodexStatusDetail = ex.Message;
             }
         }
         finally
         {
-            if (ReferenceEquals(_authorizationCts, authorizationCts))
+            Interlocked.Exchange(ref _authorizationActive, 0);
+            if (!_disposed)
             {
-                _authorizationCts = null;
+                IsAuthorizing = false;
+                IsBusy = false;
             }
-
-            authorizationCts.Dispose();
-            IsAuthorizing = false;
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private void CancelAuthorization()
-    {
-        if (!IsAuthorizing)
-        {
-            return;
-        }
-
-        CodexStatusLabel = "Canceling...";
-        CodexStatusDetail = "Canceling browser authorization.";
-        try
-        {
-            _authorizationCts?.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
         }
     }
 
@@ -230,15 +252,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
     private async Task DisconnectAsync()
     {
         var disconnectGeneration = Interlocked.Increment(ref _statusGeneration);
-        try
-        {
-            _authorizationCts?.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-
-        await _codexConnectedAuthStrategy.ClearSessionAsync();
+        await _authPresentation.DisconnectAsync();
         if (disconnectGeneration != Volatile.Read(ref _statusGeneration))
         {
             return;
@@ -247,21 +261,22 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
         IsCodexConnected = false;
         IsCodexStatusError = false;
         CodexStatusLabel = "Not connected";
-        CodexStatusDetail = "ChatGPT Plus/Pro session removed. Click Authorize to sign in again.";
+        CodexStatusDetail = "ChatGPT Plus/Pro session removed. Click Authorize with ChatGPT Plus/Pro to sign in again.";
         CanDisconnect = false;
     }
 
     [RelayCommand]
     private async Task RefreshStatusAsync(CancellationToken cancellationToken = default)
     {
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _tasks.CancellationToken);
+        cancellationToken = lifetime.Token;
         var statusGeneration = Interlocked.Increment(ref _statusGeneration);
         var authMode = SelectedAuthMode?.ModeId
-            ?? await OpenAiAuthMode.GetSelectedAsync(_packageContext.Configuration, cancellationToken);
-        OpenAiCodexSession? activeSession = null;
-        Exception? refreshError = null;
+            ?? await OpenAiAuthMode.GetSelectedAsync(_packageContext.Settings, cancellationToken);
+        OpenAiAuthOperationResult status;
         try
         {
-            activeSession = await _codexConnectedAuthStrategy.TryEnsureAuthenticatedSilentlyAsync(cancellationToken);
+            status = await _authPresentation.GetStatusAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -269,7 +284,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
         }
         catch (Exception ex)
         {
-            refreshError = ex;
+            status = new OpenAiAuthOperationResult(false, false, null, ex.Message);
         }
 
         if (statusGeneration != Volatile.Read(ref _statusGeneration))
@@ -277,31 +292,32 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
             return;
         }
 
-        var cachedSession = await _codexConnectedAuthStrategy.GetCachedSessionAsync(cancellationToken);
-        CanDisconnect = cachedSession is not null;
-        IsCodexConnected = activeSession is not null;
-        IsCodexStatusError = refreshError is not null || (cachedSession is not null && activeSession is null);
-        if (activeSession is not null && authMode == OpenAiAuthMode.CodexConnected)
+        CanDisconnect = status.HasCachedSession;
+        IsCodexConnected = status.IsConnected;
+        IsCodexStatusError = status.ErrorMessage is not null || (status.HasCachedSession && !status.IsConnected);
+        if (status.IsConnected && authMode == OpenAiAuthMode.CodexConnected)
         {
             CodexStatusLabel = "Connected, active";
-            CodexStatusDetail = $"Authorized until {activeSession.ExpiresAtUtc:O}. Codex-connected chat mode is active.";
+            CodexStatusDetail = $"Authorized until {status.ExpiresAtUtc:O}. Codex-connected chat mode is active.";
         }
-        else if (activeSession is not null)
+        else if (status.IsConnected)
         {
             CodexStatusLabel = "Connected";
-            CodexStatusDetail = $"Authorized until {activeSession.ExpiresAtUtc:O}. Inactive for chat while API-key mode is selected.";
+            CodexStatusDetail = $"Authorized until {status.ExpiresAtUtc:O}. Inactive for chat while API-key mode is selected.";
         }
-        else if (cachedSession is not null)
+        else if (status.HasCachedSession)
         {
             CodexStatusLabel = "Session expired";
-            CodexStatusDetail = refreshError is null
+            CodexStatusDetail = status.ErrorMessage is null
                 ? "The cached ChatGPT session is expired or near expiry and could not be refreshed. Authorize again to reconnect."
-                : $"The cached ChatGPT session could not be refreshed: {refreshError.Message}";
+                : $"The cached ChatGPT session could not be refreshed: {status.ErrorMessage}";
         }
         else
         {
             CodexStatusLabel = "Not connected";
-            CodexStatusDetail = "Authorize with ChatGPT Plus/Pro to use Codex-connected chat mode.";
+            CodexStatusDetail = _callbackFlow.IsAvailable
+                ? "Select ChatGPT Plus/Pro mode, then click Authorize with ChatGPT Plus/Pro to connect."
+                : "Authorization is unavailable in this host context. Open these settings in the Sunder App to connect ChatGPT Plus/Pro.";
         }
 
         await ApiKeySettings.RefreshCredentialStatusAsync(cancellationToken);
@@ -309,20 +325,20 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
 
     public void Dispose()
     {
-        try
+        if (_disposed)
         {
-            _authorizationCts?.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
+            return;
         }
 
+        _disposed = true;
+        Interlocked.Increment(ref _statusGeneration);
+        _tasks.Dispose();
         ApiKeySettings.Dispose();
         UtilityModelSettings.Dispose();
     }
 
     private Task SaveAuthModeValueAsync(CancellationToken cancellationToken = default)
-        => _packageContext.Storage.State.SetValueAsync(
+        => _packageContext.Settings.SetValueAsync(
             OpenAiAuthMode.ConfigurationKey,
             SelectedAuthMode?.ModeId ?? OpenAiAuthMode.CodexConnected,
             cancellationToken);

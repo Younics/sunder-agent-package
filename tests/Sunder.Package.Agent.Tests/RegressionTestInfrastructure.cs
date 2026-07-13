@@ -60,6 +60,11 @@ internal sealed class RegressionTestExtensionCatalog : IPackageExtensionCatalog
         => !_extensions.TryGetValue(extensionPoint.Id, out var entries)
             ? []
             : entries.Cast<TContract>().ToArray();
+
+    public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
+        => GetExtensions(extensionPoint)
+            .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
+            .ToArray();
 }
 
 internal sealed class RegressionTestPackageContext(string rootPath) : IPackageContext
@@ -72,7 +77,7 @@ internal sealed class RegressionTestPackageContext(string rootPath) : IPackageCo
 
     public IPackageStorageContext Storage { get; } = new RegressionTestStorageContext(rootPath);
 
-    public IPackageConfiguration Configuration { get; } = new RegressionTestConfiguration();
+    public IPackageSettings Settings { get; } = new RegressionTestSettings();
 
     public IPackageSecrets Secrets { get; } = new RegressionTestSecrets();
 
@@ -88,14 +93,14 @@ internal sealed class RegressionTestStorageContext : IPackageStorageContext
     {
         Directory.CreateDirectory(rootPath);
         Files = new RegressionTestFileStore(Path.Combine(rootPath, "files"));
-        LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
+        RoleLocalWorkspace = new TestPackageRoleLocalWorkspace(rootPath);
     }
 
     public IPackageFileStore Files { get; }
 
     public IPackageKeyValueStore State { get; } = new RegressionTestKeyValueStore();
 
-    public IPackageLocalWorkspaceLease LocalWorkspace { get; }
+    public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; }
 }
 
 internal sealed class RegressionTestFileStore(string rootPath) : IPackageFileStore
@@ -157,10 +162,8 @@ internal sealed class RegressionTestKeyValueStore : IPackageKeyValueStore
                 .ToArray());
 }
 
-internal sealed class RegressionTestConfiguration : IPackageConfiguration
+internal sealed class RegressionTestSettings : EmptyPackageSettings
 {
-    public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
-        => Task.FromResult<string?>(null);
 }
 
 internal sealed class RegressionTestSecrets : IPackageSecrets

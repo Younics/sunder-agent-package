@@ -7,6 +7,7 @@ public sealed class CodexResponseContinuationStore : IAgentSessionDataCleaner
 {
     private const string KeySeparator = ":";
     private readonly ConcurrentDictionary<string, CodexResponseContinuationState> _states = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _responsesLiteSessionIds = new(StringComparer.Ordinal);
 
     public string CleanerId { get; } = "sunder.package.agent.provider.openai:codex-response-continuation";
 
@@ -35,12 +36,25 @@ public sealed class CodexResponseContinuationStore : IAgentSessionDataCleaner
         }
     }
 
+    internal string GetOrCreateResponsesLiteSessionId(string conversationId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
+        return _responsesLiteSessionIds.GetOrAdd(
+            BuildKey(conversationId),
+            static _ => Guid.CreateVersion7().ToString("D"));
+    }
+
     public void DeleteSessionData(Guid sessionId)
     {
         var prefix = sessionId.ToString("N") + KeySeparator;
         foreach (var key in _states.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
         {
             _states.TryRemove(key, out _);
+        }
+
+        foreach (var key in _responsesLiteSessionIds.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
+        {
+            _responsesLiteSessionIds.TryRemove(key, out _);
         }
     }
 

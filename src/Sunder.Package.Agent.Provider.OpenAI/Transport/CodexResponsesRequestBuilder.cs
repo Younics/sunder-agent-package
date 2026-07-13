@@ -12,9 +12,10 @@ internal static class CodexResponsesRequestBuilder
         ChatOptions? options,
         bool toolAware,
         CodexResponseContinuationState? continuationState = null,
-        bool disableContinuation = false)
+        bool disableContinuation = false,
+        string? promptCacheKeyOverride = null)
         => CodexResponsesRequestSerializer.Serialize(
-            CodexResponsesRequestNormalizer.Normalize(context, messages, options, toolAware),
+            CodexResponsesRequestNormalizer.Normalize(context, messages, options, toolAware, promptCacheKeyOverride),
             continuationState,
             disableContinuation);
 
@@ -42,5 +43,6 @@ internal sealed record CodexResponsesRequest(
     string? ToolChoice,
     bool? ParallelToolCalls,
     bool HasPreviousResponseId,
+    bool UsesResponsesLite,
     string ShapeFingerprint,
     IReadOnlyList<string> ConversationItemFingerprints);

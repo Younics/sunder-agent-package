@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text.RegularExpressions;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using LiveMarkdown.Avalonia;
 using Sunder.Package.Agent.Contracts.Models;
@@ -163,24 +162,30 @@ public sealed class AgentTextTranscriptRowViewModel : AgentTranscriptRowViewMode
 
 public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscriptRowViewModel, IDisposable
 {
-    private readonly DispatcherTimer _timer;
+    private readonly IActivityTicker _ticker;
     private string _activityTextBase;
     private bool _isReasoningActivity;
     private bool _animateActivityText = true;
     private int _tick = 3;
 
-    public AgentActivityTranscriptRowViewModel(string activityTextBase = "Thinking", bool isReasoningActivity = false)
+    public AgentActivityTranscriptRowViewModel(
+        string activityTextBase = "Thinking",
+        bool isReasoningActivity = false)
+        : this(NullActivityTicker.Instance, activityTextBase, isReasoningActivity)
+    {
+    }
+
+    internal AgentActivityTranscriptRowViewModel(
+        IActivityTicker ticker,
+        string activityTextBase = "Thinking",
+        bool isReasoningActivity = false)
         : base(Guid.Empty, DateTimeOffset.UtcNow, TranscriptRowAnchorKey.Activity())
     {
+        _ticker = ticker;
         _activityTextBase = string.IsNullOrWhiteSpace(activityTextBase) ? "Processing" : activityTextBase.Trim();
         _isReasoningActivity = isReasoningActivity;
         ApplyActivityTextBase(_activityTextBase, isReasoningActivity);
-        _timer = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromMilliseconds(420),
-        };
-        _timer.Tick += OnTimerTick;
-        _timer.Start();
+        _ticker.Tick += OnTick;
     }
 
     public string RoleGlyph => "A";
@@ -202,7 +207,7 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
         ApplyActivityTextBase(_activityTextBase, isReasoningActivity);
     }
 
-    private void OnTimerTick(object? sender, EventArgs e)
+    private void OnTick()
     {
         if (!_animateActivityText)
         {
@@ -312,7 +317,6 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
 
     public void Dispose()
     {
-        _timer.Stop();
-        _timer.Tick -= OnTimerTick;
+        _ticker.Tick -= OnTick;
     }
 }

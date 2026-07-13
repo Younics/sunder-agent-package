@@ -65,7 +65,7 @@ For local development, build package archives from source or load generated `sun
 | Semantic Memory | `sunder.package.agent.memory.semantic` | Semantic memory indexing, recall, and prompt context |
 | Skills | `sunder.package.agent.skills` | Reusable skill support for profiles and runs |
 | Subagents | `sunder.package.agent.subagents` | Child agent sessions, subagent profiles, and run coordination |
-| Builder | `sunder.package.agent.builder` | Sunder package development session controls |
+| Builder | `sunder.package.agent.builder` | Package creation/build/publish plus optional host-provided development session controls |
 
 ## Recommended Starting Sets
 
@@ -76,6 +76,8 @@ For local development, build package archives from source or load generated `sun
 | Research agent | Agent, one provider, web tools, semantic memory |
 | Local model setup | Agent, LM Studio provider, local execution |
 | Extensible agent workspace | Agent, MCP, skills, subagents, provider of choice |
+
+Local execution runs commands and file operations with the current host user's privileges. It is a trusted host-user execution target, not an operating-system sandbox. Workspace bindings, canonical path checks, and tool permission contracts constrain requested paths, but they do not isolate a malicious process from the host; use the Docker execution target when isolation is required.
 
 ## How It Fits Together
 
@@ -93,6 +95,10 @@ sunder.package.agent
 
 Extension packages use `Sunder.Package.Agent.Contracts` to register capabilities with the core Agent package. That keeps providers, tools, execution targets, and memory features independently installable.
 
+Extension ownership is mandatory. Stack exporters use owned catalog contributions to include provider, execution-target, behavior-loop, skill, and subagent package dependencies; an ownerless catalog result is rejected by the SDK.
+
+Builder always supports project creation, build, and publish. Load, auto-load, and Live reload require an available `IPackageDevelopmentSessionControl`; when the App/Runtime topology cannot share a development output path, those controls remain disabled and Builder displays the host-provided reason.
+
 Core session continuity is owned by `sunder.package.agent`: the default behavior loop projects long transcripts into the provider prompt, stores session context checkpoints for omitted turns, and preserves active tool call/result pairs. Semantic memory remains durable, recallable knowledge and should not own active working summaries.
 
 ## Safety Model
@@ -102,9 +108,20 @@ Agent capabilities are split into explicit packages so users can choose what is 
 | Area | Boundary |
 | --- | --- |
 | File and shell access | Provided by separate tool packages with Agent permission surfaces. |
-| Provider secrets | Stored through Sunder package configuration and secrets abstractions. |
+| Provider secrets | Stored only through the Sunder package secrets capability. |
+| Package preferences | Schema-declared settings use `IPackageSettings`; operational catalogs, workspace bindings, and session data remain on opaque `Storage.State`. |
 | Execution | Local and Docker execution are separate packages. |
 | Package activation | Runtime dependencies require `sunder.package.agent`; extension packages are not standalone. |
+
+Browser callbacks are host-owned; packages never bind callback ports. OpenAI Codex authorization uses the auth projection, while MCP registers the distinct `mcp.oauth.v1` callback handler and starts server-scoped OAuth with the host-provided redirect URI. The MCP App gateway opens the SDK authorization URI, polls the generic callback session through completion, and leaves clear-authorization as a Runtime command. Dynamic client registrations and token caches remain server-scoped package secrets.
+
+## 1.x Compatibility Policy
+
+Version `1.1.0` is an intentional clean break from the unused public `1.0.0` line. Every Agent package and `Sunder.Package.Agent.Contracts` ships at `1.1.0`; extension package dependencies require `>=1.1.0 <1.2.0`. Rebuild the complete family together. There are no 1.0 compatibility shims, and the Runtime rejects mixed SDK/package baselines before assembly load. The new immutable contract ledger is `src/Sunder.Package.Agent.Contracts/PublicAPI.Shipped.txt`.
+
+Agent data upgrades are forward-only through one ordered SQLite migration ledger. Each applied migration records its number, immutable name, and SHA-256 checksum in the same transaction as its schema change. Startup refuses unknown, newer, renamed, or checksum-mismatched entries. If validation fails, back up `agent/agent.db` and use an Agent build that recognizes the ledger; do not edit or delete ledger rows.
+
+App package modules own presentation and async Runtime gateways only. Runtime stores and authorities stay in Runtime composition, and Subsessions reads sessions, checkpoints, transcript pages, and change notifications through separate narrow async ports.
 
 ## Build From Source
 
@@ -133,10 +150,10 @@ Package releases are tag-driven. Examples:
 
 | Tag | Package |
 | --- | --- |
-| `agent/v1.0.0` | `sunder.package.agent` |
-| `agent-provider-openai/v1.0.0` | `sunder.package.agent.provider.openai` |
-| `agent-tools-files/v1.0.0` | `sunder.package.agent.tools.files` |
-| `agent-execution-local/v1.0.0` | `sunder.package.agent.execution.local` |
+| `agent/v1.1.0` | `sunder.package.agent` |
+| `agent-provider-openai/v1.1.0` | `sunder.package.agent.provider.openai` |
+| `agent-tools-files/v1.1.0` | `sunder.package.agent.tools.files` |
+| `agent-execution-local/v1.1.0` | `sunder.package.agent.execution.local` |
 
 The release workflow builds, tests, packs a `.sunderpkg`, and uploads it to the GitHub release.
 

@@ -1,4 +1,5 @@
 using Sunder.Sdk.Configuration;
+using Sunder.Package.Agent.Provider.Shared;
 
 namespace Sunder.Package.Agent.Provider.LMStudio;
 
@@ -37,20 +38,11 @@ public static class LMStudioProviderConfiguration
                     )
                 ]
             ),
-            new PackageConfigurationSection(
-                "utility",
-                "Utility model",
+            ProviderConfigurationSections.UtilityModelText(
+                UtilityModelKey,
                 "Choose the local model used for background utility work such as session title generation.",
-                [
-                    new PackageConfigurationField(
-                        UtilityModelKey,
-                        "Utility model ID",
-                        PackageConfigurationFieldKind.Text,
-                        Description: "Optional. Use a full model id like lmstudio/model-name. Leave blank to use the first model returned by LM Studio.",
-                        Placeholder: "lmstudio/model-name"
-                    )
-                ]
-            )
+                "Optional. Use a full model id like lmstudio/model-name. Leave blank to use the first model returned by LM Studio.",
+                "lmstudio/model-name")
         ]
     );
 }

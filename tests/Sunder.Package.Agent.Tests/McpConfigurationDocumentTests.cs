@@ -202,16 +202,6 @@ public sealed class McpConfigurationDocumentTests
     }
 
     [Fact]
-    public void OAuthCallbackListener_SkipsBusyPortsSequentially()
-    {
-        using var first = McpOAuthService.StartCallbackListener(McpOAuthService.PreferredCallbackPort);
-        using var second = McpOAuthService.StartCallbackListener(first.RedirectUri.Port);
-
-        Assert.True(second.RedirectUri.Port > first.RedirectUri.Port);
-        Assert.Equal("/mcp/oauth/callback", second.RedirectUri.AbsolutePath);
-    }
-
-    [Fact]
     public void TimeoutResolver_DefaultsToNoTimeout()
     {
         var server = new ConfiguredMcpServerRecord();

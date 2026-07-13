@@ -95,7 +95,7 @@ public sealed class McpServerStackContributorTests
                 new Dictionary<string, string>(),
                 [action.ActionId]));
 
-            Assert.True(result.Success, string.Join(Environment.NewLine, result.Errors));
+            Assert.Equal(StackImportOutcome.Completed, result.Outcome);
             var importedServer = await targetCatalog.GetServerAsync("server-1");
             Assert.NotNull(importedServer);
             Assert.True(importedServer.IsEnabled);
@@ -430,6 +430,123 @@ public sealed class McpServerStackContributorTests
         }
     }
 
+    [Theory]
+    [InlineData("duplicate-property")]
+    [InlineData("normalized-name-collision")]
+    [InlineData("invalid-utf8")]
+    [InlineData("symlink")]
+    [InlineData("oversized")]
+    public async Task ConfigurationImport_RejectsAdversarialDocumentBeforeMutation(string adversary)
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var context = new TestPackageContext(root);
+            var catalog = new McpServerCatalogService(context);
+            var existing = McpConfigurationDocument.Parse(
+                "existing-id",
+                "existing",
+                """{ "type": "remote", "url": "https://old.example.com/mcp" }""");
+            await catalog.SaveServerAsync(existing.Server, existing.Headers, existing.EnvironmentVariables);
+            var configPath = Path.Combine(root, "adversarial.json");
+            switch (adversary)
+            {
+                case "duplicate-property":
+                    await File.WriteAllTextAsync(configPath, """{ "mcp": { "new": { "type": "remote", "url": "https://one.example.com", "URL": "https://two.example.com" } } }""");
+                    break;
+                case "normalized-name-collision":
+                    await File.WriteAllTextAsync(configPath, """{ "mcp": { "Foo-Bar": { "type": "remote", "url": "https://one.example.com" }, "foo_bar": { "type": "remote", "url": "https://two.example.com" } } }""");
+                    break;
+                case "invalid-utf8":
+                    await File.WriteAllBytesAsync(configPath, [0xff, 0xfe, 0xfd]);
+                    break;
+                case "symlink":
+                    var targetPath = Path.Combine(root, "target.json");
+                    await File.WriteAllTextAsync(targetPath, """{ "mcp": {} }""");
+                    File.CreateSymbolicLink(configPath, targetPath);
+                    break;
+                case "oversized":
+                    await File.WriteAllTextAsync(configPath, new string(' ', McpConfigurationSourceReader.MaxDocumentBytes + 1));
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(adversary));
+            }
+
+            var importer = new McpEcosystemConfigurationImporter(catalog);
+            if (adversary == "normalized-name-collision")
+            {
+                var result = await importer.ImportFileAsync(configPath);
+                Assert.Equal(0, result.ImportedCount);
+                Assert.Equal(2, result.SkippedCount);
+            }
+            else
+            {
+                await Assert.ThrowsAnyAsync<Exception>(() => importer.ImportFileAsync(configPath));
+            }
+
+            var servers = await catalog.ListServersAsync();
+            var preserved = Assert.Single(servers);
+            Assert.Equal("existing-id", preserved.ServerId);
+            Assert.Equal("https://old.example.com/mcp", preserved.EndpointUrl);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task CatalogBatch_FailedReplacementRestoresAllPriorMetadataAndSecrets()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var context = new TestPackageContext(root);
+            var catalog = new McpServerCatalogService(context);
+            var original = McpConfigurationDocument.Parse(
+                "server-1",
+                "one",
+                """{ "type": "local", "command": ["old"], "env": { "TOKEN": "old-secret" } }""");
+            await catalog.SaveServerAsync(original.Server, original.Headers, original.EnvironmentVariables);
+            var replacement = McpConfigurationDocument.Parse(
+                "SERVER-1",
+                "one",
+                """{ "type": "local", "command": ["new"], "env": { "TOKEN": "new-secret" } }""",
+                original.Server);
+            var added = McpConfigurationDocument.Parse(
+                "server-2",
+                "two",
+                """{ "type": "remote", "url": "https://two.example.com/mcp" }""");
+            var state = Assert.IsType<TestKeyValueStore>(context.Storage.State);
+            state.FailAfterMutationOnSetCall = state.SetCallCount + 2;
+
+            await Assert.ThrowsAsync<IOException>(() => catalog.ApplyBatchAsync(
+                [
+                    new McpServerCatalogWrite(replacement.Server, replacement.Headers, replacement.EnvironmentVariables),
+                    new McpServerCatalogWrite(added.Server, added.Headers, added.EnvironmentVariables),
+                ],
+                [],
+                CancellationToken.None));
+
+            var preserved = Assert.Single(await catalog.ListServersAsync());
+            Assert.Equal("server-1", preserved.ServerId);
+            Assert.Equal(["old"], preserved.CommandParts);
+            Assert.Equal("old-secret", (await catalog.GetEnvironmentVariablesAsync(preserved))["TOKEN"]);
+            Assert.Null(await catalog.GetServerAsync("server-2"));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public void McpDocumentLimits_AreSecurityRatchets()
+    {
+        Assert.Equal(2 * 1024 * 1024, McpConfigurationSourceReader.MaxDocumentBytes);
+        Assert.Equal(32, McpConfigurationSourceReader.MaxJsonDepth);
+    }
+
     private static string ReadFirstSecretName(string jsonPayload, string propertyName)
     {
         using var document = JsonDocument.Parse(jsonPayload);
@@ -483,6 +600,11 @@ public sealed class McpServerStackContributorTests
             => typeof(TContract) == typeof(IAgentRuntimeCatalog)
                 ? runtimeCatalogs.Cast<TContract>().ToArray()
                 : [];
+
+        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
+            => GetExtensions(extensionPoint)
+                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
+                .ToArray();
     }
 
     private sealed class TestRuntimeCatalog(IReadOnlyList<AgentWorkspaceRecord> workspaces) : IAgentRuntimeCatalog
@@ -546,7 +668,7 @@ public sealed class McpServerStackContributorTests
 
         public IPackageStorageContext Storage { get; } = new TestStorageContext(rootPath);
 
-        public IPackageConfiguration Configuration { get; } = new TestConfiguration();
+        public IPackageSettings Settings { get; } = new TestSettings();
 
         public IPackageSecrets Secrets { get; } = new TestSecrets();
 
@@ -562,13 +684,13 @@ public sealed class McpServerStackContributorTests
             Directory.CreateDirectory(rootPath);
             Files = new TestFileStore(Path.Combine(rootPath, "files"));
             State = new TestKeyValueStore();
-            LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
+            RoleLocalWorkspace = new TestPackageRoleLocalWorkspace(rootPath);
         }
 
         public IPackageFileStore Files { get; }
 
         public IPackageKeyValueStore State { get; }
-        public IPackageLocalWorkspaceLease LocalWorkspace { get; }
+        public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; }
     }
 
     private sealed class TestFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
@@ -577,11 +699,22 @@ public sealed class McpServerStackContributorTests
     {
         private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
 
+        public int SetCallCount { get; private set; }
+
+        public int? FailAfterMutationOnSetCall { get; set; }
+
         public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(_values.GetValueOrDefault(key));
 
         public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
         {
+            SetCallCount++;
             _values[key] = value;
+            if (FailAfterMutationOnSetCall == SetCallCount)
+            {
+                FailAfterMutationOnSetCall = null;
+                throw new IOException("Injected state write failure after mutation.");
+            }
+
             return Task.CompletedTask;
         }
 
@@ -597,7 +730,7 @@ public sealed class McpServerStackContributorTests
             => Task.FromResult<IReadOnlyList<string>>(_values.Keys.Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray());
     }
 
-    private sealed class TestConfiguration : EmptyPackageConfiguration;
+    private sealed class TestSettings : EmptyPackageSettings;
 
     private sealed class TestSecrets : InMemoryPackageSecrets
     {

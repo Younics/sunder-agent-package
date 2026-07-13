@@ -13,6 +13,18 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class BuilderViewModelTests
 {
     [Fact]
+    public async Task DevelopmentActions_WhenCapabilityIsUnavailable_AreDisabledWithReason()
+    {
+        var viewModel = CreateViewModel();
+        viewModel.SelectedProject = CreateProject("unavailable", "Unavailable");
+
+        Assert.False(viewModel.CanUseDevelopmentSessions);
+        Assert.Contains("Load and Live reload are disabled", viewModel.DevelopmentSessionUnavailableReason, StringComparison.Ordinal);
+
+        await viewModel.DisposeAsync();
+    }
+
+    [Fact]
     public async Task InitializeAsync_ConcurrentCallsShareOneLoad()
     {
         var store = new BlockingBuilderProjectStore();
@@ -257,8 +269,7 @@ public sealed class BuilderViewModelTests
                 new BuilderSetupService(),
                 executionService,
                 store,
-                pathService,
-                NullPackageSessionService.Instance),
+                pathService),
             new BuilderOperationQueue(backgroundProcesses),
             new BuilderProjectPersistence(store),
             pathService,
@@ -319,6 +330,11 @@ public sealed class BuilderViewModelTests
 
             return [];
         }
+
+        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
+            => GetExtensions(extensionPoint)
+                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
+                .ToArray();
     }
 
     private sealed class TestWorkspaceExecutionResolver(AgentWorkspaceRecord workspace) : IAgentWorkspaceExecutionResolver
@@ -440,7 +456,7 @@ public sealed class BuilderViewModelTests
 
         public IPackageStorageContext Storage { get; } = new TestStorageContext();
 
-        public IPackageConfiguration Configuration { get; } = new TestConfiguration();
+        public IPackageSettings Settings { get; } = new TestSettings();
 
         public IPackageSecrets Secrets { get; } = new TestSecrets();
 
@@ -454,7 +470,7 @@ public sealed class BuilderViewModelTests
         public IPackageFileStore Files { get; } = new TestFileStore();
 
         public IPackageKeyValueStore State { get; } = new TestKeyValueStore();
-        public IPackageLocalWorkspaceLease LocalWorkspace { get; } = new TestPackageWorkspaceLease(AppContext.BaseDirectory);
+        public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; } = new TestPackageRoleLocalWorkspace(AppContext.BaseDirectory);
     }
 
     private sealed class TestFileStore : TestPackageFileStoreBase
@@ -488,7 +504,7 @@ public sealed class BuilderViewModelTests
             => Task.FromResult<IReadOnlyList<string>>(_values.Keys.Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray());
     }
 
-    private sealed class TestConfiguration : EmptyPackageConfiguration;
+    private sealed class TestSettings : EmptyPackageSettings;
 
     private sealed class TestSecrets : InMemoryPackageSecrets;
 

@@ -7,14 +7,10 @@ namespace Sunder.Package.Agent.Provider.Gemini;
 
 internal sealed record GeminiResponseTranslation(
     IReadOnlyList<AIContent> Contents,
-    IReadOnlyList<string> UnsupportedPartKinds)
+    IReadOnlyList<string> UnsupportedPartKinds,
+    ProviderUsageSnapshot Usage)
 {
-    public string FirstEventKind => Contents.FirstOrDefault() switch
-    {
-        TextReasoningContent => "ReasoningDelta",
-        FunctionCallContent => "ToolCallRequested",
-        _ => "TextDelta",
-    };
+    public string FirstEventKind => ProviderResponseUpdates.Describe(Contents);
 }
 
 internal sealed class GeminiResponseTranslator
@@ -28,7 +24,7 @@ internal sealed class GeminiResponseTranslator
         var parts = response.Candidates?.FirstOrDefault()?.Content?.Parts;
         if (parts is null)
         {
-            return new GeminiResponseTranslation(contents, unsupportedPartKinds);
+            return new GeminiResponseTranslation(contents, unsupportedPartKinds, GetUsage(response));
         }
 
         var functionCallCount = parts.Count(part => part.FunctionCall is not null);
@@ -96,7 +92,7 @@ internal sealed class GeminiResponseTranslator
             }
         }
 
-        return new GeminiResponseTranslation(contents, unsupportedPartKinds);
+        return new GeminiResponseTranslation(contents, unsupportedPartKinds, GetUsage(response));
     }
 
     internal static IDictionary<string, object?> ParseArgumentsJson(string? argumentsJson)
@@ -139,6 +135,16 @@ internal sealed class GeminiResponseTranslator
         if (part.ToolResponse is not null) return nameof(part.ToolResponse);
         return "UnknownPart";
     }
+
+    private static ProviderUsageSnapshot GetUsage(GenerateContentResponse response)
+        => response.UsageMetadata is { } usage
+            ? new ProviderUsageSnapshot(
+                usage.PromptTokenCount,
+                usage.CandidatesTokenCount,
+                usage.TotalTokenCount,
+                usage.CachedContentTokenCount,
+                usage.ThoughtsTokenCount)
+            : default;
 }
 
 internal readonly record struct GeminiTerminalStatus(bool IsTerminal, bool IsSuccess, string? Detail)

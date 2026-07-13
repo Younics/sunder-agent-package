@@ -9,6 +9,78 @@ namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
 
 public sealed class CodexConnectedAuthStrategyTests
 {
+    private static readonly Uri RegisteredCallbackUri = new("http://localhost:1455/auth/callback");
+
+    [Fact]
+    public void CreateAuthorizationUrl_EmitsCompleteCodexAuthorizeRequest()
+    {
+        var context = CreateContext();
+        using var strategy = CreateStrategy(
+            context,
+            new StubHttpMessageHandler((_, _) => Task.FromResult(CreateTokenResponse("unused"))));
+
+        var authorizationUri = new Uri(strategy.CreateAuthorizationUrl("auth-session", RegisteredCallbackUri));
+        var query = ParseFormValues(authorizationUri.Query);
+
+        Assert.Equal("https", authorizationUri.Scheme);
+        Assert.Equal("auth.openai.com", authorizationUri.Host);
+        Assert.Equal("/oauth/authorize", authorizationUri.AbsolutePath);
+        Assert.Equal("code", query["response_type"]);
+        Assert.Equal(CodexOAuthClient.ClientId, query["client_id"]);
+        Assert.Equal(RegisteredCallbackUri.AbsoluteUri, query["redirect_uri"]);
+        Assert.Equal("openid profile email offline_access api.connectors.read api.connectors.invoke", query["scope"]);
+        Assert.Equal("S256", query["code_challenge_method"]);
+        Assert.Equal("auth-session", query["state"]);
+        Assert.Equal("true", query["id_token_add_organizations"]);
+        Assert.Equal("true", query["codex_cli_simplified_flow"]);
+        Assert.Equal("sunder", query["originator"]);
+        Assert.False(string.IsNullOrWhiteSpace(query["code_challenge"]));
+        Assert.Equal(10, query.Count);
+    }
+
+    [Theory]
+    [InlineData("http://localhost:1455/callbacks/session")]
+    [InlineData("http://127.0.0.1:1455/auth/callback")]
+    [InlineData("http://localhost:1456/auth/callback")]
+    public void CreateAuthorizationUrl_RejectsUnregisteredCodexCallback(string callbackUri)
+    {
+        var context = CreateContext();
+        using var strategy = CreateStrategy(
+            context,
+            new StubHttpMessageHandler((_, _) => Task.FromResult(CreateTokenResponse("unused"))));
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            strategy.CreateAuthorizationUrl("auth-session", new Uri(callbackUri)));
+
+        Assert.Contains("http://localhost:1455/auth/callback", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CompleteAuthorizationAsync_ReusesAuthorizeRedirectForTokenExchange()
+    {
+        string? tokenRequestBody = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            tokenRequestBody = await request.Content!.ReadAsStringAsync(cancellationToken);
+            return CreateTokenResponse("access-token", "refresh-token");
+        });
+        var context = CreateContext();
+        using var strategy = CreateStrategy(context, handler);
+        strategy.CreateAuthorizationUrl("auth-session", RegisteredCallbackUri);
+
+        await strategy.CompleteAuthorizationAsync(
+            "auth-session",
+            new Dictionary<string, string?> { ["code"] = "authorization-code" });
+
+        Assert.NotNull(tokenRequestBody);
+        var form = ParseFormValues(tokenRequestBody);
+        Assert.Equal(RegisteredCallbackUri.AbsoluteUri, form["redirect_uri"]);
+        Assert.Equal(CodexOAuthClient.ClientId, form["client_id"]);
+        Assert.Equal("authorization_code", form["grant_type"]);
+        Assert.Equal("authorization-code", form["code"]);
+        Assert.False(string.IsNullOrWhiteSpace(form["code_verifier"]));
+    }
+
     [Fact]
     public async Task TryRefreshSessionAsync_ResponseWithoutRefreshToken_PreservesExistingToken()
     {
@@ -60,7 +132,7 @@ public sealed class CodexConnectedAuthStrategyTests
         });
         var context = CreateContext();
         using var strategy = CreateStrategy(context, handler, timeProvider, TimeSpan.FromMinutes(5));
-        strategy.CreateAuthorizationUrl("auth-session", new Uri("http://localhost/callback"));
+        strategy.CreateAuthorizationUrl("auth-session", RegisteredCallbackUri);
         timeProvider.Advance(TimeSpan.FromMinutes(6));
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -194,7 +266,7 @@ public sealed class CodexConnectedAuthStrategyTests
         });
         var context = CreateContext();
         using var strategy = CreateStrategy(context, handler);
-        strategy.CreateAuthorizationUrl("auth-session", new Uri("http://localhost/callback"));
+        strategy.CreateAuthorizationUrl("auth-session", RegisteredCallbackUri);
 
         await strategy.ClearSessionAsync();
         await Assert.ThrowsAsync<InvalidOperationException>(() => strategy.CompleteAuthorizationAsync(
@@ -229,19 +301,27 @@ public sealed class CodexConnectedAuthStrategyTests
     private static OpenAiCodexSession CreateExpiredSession()
         => new("old-access", "old-refresh", DateTimeOffset.UtcNow.AddMinutes(-1), "account-id");
 
-    private static HttpResponseMessage CreateTokenResponse(string accessToken)
-        => new(HttpStatusCode.OK)
+    private static HttpResponseMessage CreateTokenResponse(string accessToken, string? refreshToken = null)
+    {
+        var payload = new Dictionary<string, object?>
         {
-            Content = JsonContent(JsonSerializer.Serialize(new Dictionary<string, object?>
+            ["access_token"] = accessToken,
+            ["expires_in"] = 3600,
+            ["id_token"] = CreateJwt(new Dictionary<string, object?>
             {
-                ["access_token"] = accessToken,
-                ["expires_in"] = 3600,
-                ["id_token"] = CreateJwt(new Dictionary<string, object?>
-                {
-                    ["chatgpt_account_id"] = "account-id",
-                }),
-            })),
+                ["chatgpt_account_id"] = "account-id",
+            }),
         };
+        if (refreshToken is not null)
+        {
+            payload["refresh_token"] = refreshToken;
+        }
+
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(JsonSerializer.Serialize(payload)),
+        };
+    }
 
     private static StringContent JsonContent(string value) => new(value, Encoding.UTF8, "application/json");
 
@@ -253,6 +333,18 @@ public sealed class CodexConnectedAuthStrategyTests
             .TrimEnd('=')
             .Replace('+', '-')
             .Replace('/', '_');
+
+    private static IReadOnlyDictionary<string, string> ParseFormValues(string value)
+        => value.TrimStart('?')
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(static part => part.Split('=', 2))
+            .ToDictionary(
+                static part => DecodeFormValue(part[0]),
+                static part => DecodeFormValue(part.Length == 2 ? part[1] : string.Empty),
+                StringComparer.Ordinal);
+
+    private static string DecodeFormValue(string value)
+        => Uri.UnescapeDataString(value.Replace('+', ' '));
 
     private sealed class StubHttpMessageHandler(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> sendAsync) : HttpMessageHandler

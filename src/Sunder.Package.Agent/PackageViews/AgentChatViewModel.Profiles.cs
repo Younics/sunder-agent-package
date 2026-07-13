@@ -6,7 +6,7 @@ public sealed partial class AgentChatViewModel
 {
     partial void OnSelectedProfileChanged(AgentProfileRecord? value)
     {
-        _ = _selectionState?.SaveSelectedProfileIdAsync(value?.ProfileId);
+        TrackBackgroundTask(_selectionState?.SaveSelectedProfileIdAsync(value?.ProfileId));
         _globalStatusText = string.Empty;
         CreateSessionCommand.NotifyCanExecuteChanged();
         RefreshSetupState();
@@ -38,7 +38,7 @@ public sealed partial class AgentChatViewModel
                     StringComparison.OrdinalIgnoreCase
                 )
             ) ?? Profiles.FirstOrDefault();
-        _ = _selectionState?.SaveSelectedProfileIdAsync(SelectedProfile?.ProfileId);
+        TrackBackgroundTask(_selectionState?.SaveSelectedProfileIdAsync(SelectedProfile?.ProfileId));
         NotifyProfileStateChanged();
         CreateSessionCommand.NotifyCanExecuteChanged();
         RefreshSetupState();

@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Mcp;
-using Sunder.Package.Agent.Mcp.Services;
+using Sunder.Package.Agent.Mcp.Runtime;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -8,7 +8,7 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class AgentMcpSettingsViewConstructionTests
 {
     [Fact]
-    public void SettingsView_ReceivesRegisteredViewModelWithConfigurationSync()
+    public void SettingsView_ReceivesRuntimeBackedViewModel()
     {
         using var scope = RegressionTestPackageScope.Create();
         var services = new ServiceCollection();
@@ -22,8 +22,10 @@ public sealed class AgentMcpSettingsViewConstructionTests
             Assert.Single(constructor.GetParameters()).ParameterType);
         Assert.Contains(services, descriptor =>
             descriptor.ServiceType == typeof(AgentMcpSettingsViewModel)
-            && descriptor.ImplementationType == typeof(AgentMcpSettingsViewModel));
+            && descriptor.ImplementationFactory is not null);
         Assert.Contains(services, descriptor =>
-            descriptor.ServiceType == typeof(McpSunderConfigurationSyncService));
+            descriptor.ServiceType == typeof(IMcpManagementGateway));
+        Assert.DoesNotContain(services, descriptor =>
+            descriptor.ServiceType.Namespace?.Contains(".Services", StringComparison.Ordinal) == true);
     }
 }

@@ -1,14 +1,19 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Data.Sqlite;
 
 namespace Sunder.Package.Agent.Storage;
 
 public sealed partial class AgentLocalStore
 {
-    private const int LegacySchemaBaselineVersion = 1;
-
     private static readonly SchemaMigration[] SchemaMigrations =
     [
         new(
+            1,
+            "legacy-schema-baseline",
+            "ApplyV1Baseline-v1",
+            ApplyV1Baseline),
+        SqlMigration(
             2,
             "agent-runs",
             """
@@ -30,7 +35,7 @@ public sealed partial class AgentLocalStore
                 ON AgentRuns (SessionId, RunRevision DESC)
                 WHERE FinishedAtUtc IS NULL;
             """),
-        new(
+        SqlMigration(
             3,
             "pending-permission-state",
             """
@@ -51,7 +56,7 @@ public sealed partial class AgentLocalStore
                   AND ExecutionFingerprint <> ''
                   AND CallId <> '';
             """),
-        new(
+        SqlMigration(
             4,
             "typed-run-suspensions",
             """
@@ -71,7 +76,7 @@ public sealed partial class AgentLocalStore
                 WHERE ContinuationToken IS NOT NULL
                   AND Status IN ('Pending', 'Claimed');
             """),
-        new(
+        SqlMigration(
             5,
             "permission-claim-recovery",
             """
@@ -83,7 +88,7 @@ public sealed partial class AgentLocalStore
                 ON AgentPendingPermissionRequests (Status, ClaimLeaseExpiresAtUtc)
                 WHERE Status = 'Claimed';
             """),
-        new(
+        SqlMigration(
             6,
             "parent-continuation-work",
             """
@@ -111,39 +116,84 @@ public sealed partial class AgentLocalStore
                 ON AgentParentContinuationWork (Status, UpdatedAtUtc)
                 WHERE Status IN ('Pending', 'Ready', 'Dispatching');
             """),
+        SqlMigration(
+            7,
+            "permission-execution-snapshot",
+            """
+            ALTER TABLE AgentPendingPermissionRequests
+                ADD COLUMN ExecutionSnapshotJson TEXT NOT NULL DEFAULT '';
+            """),
     ];
 
     private void ApplySchemaMigrations()
     {
         using var connection = CreateConnection();
         connection.Open();
+        ApplySchemaMigrations(connection, SchemaMigrations[^1].Version);
+    }
 
-        BootstrapSchemaMigrationLedger(connection);
-        foreach (var migration in SchemaMigrations)
+    internal static void ApplySchemaMigrations(SqliteConnection connection, int targetVersion)
+    {
+        if (targetVersion < 1 || targetVersion > SchemaMigrations[^1].Version)
+        {
+            throw new ArgumentOutOfRangeException(nameof(targetVersion));
+        }
+
+        BootstrapAndValidateSchemaMigrationLedger(connection);
+        foreach (var migration in SchemaMigrations.Where(item => item.Version <= targetVersion))
         {
             ApplySchemaMigration(connection, migration);
         }
     }
 
-    private static void BootstrapSchemaMigrationLedger(SqliteConnection connection)
+    private static void BootstrapAndValidateSchemaMigrationLedger(SqliteConnection connection)
     {
         using var transaction = connection.BeginTransaction(deferred: false);
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            CREATE TABLE IF NOT EXISTS SchemaMigrations (
-                Version INTEGER PRIMARY KEY,
-                Name TEXT NOT NULL,
-                AppliedAtUtc TEXT NOT NULL
-            );
+        if (!TableExists(connection, transaction, "SchemaMigrations"))
+        {
+            using var createCommand = connection.CreateCommand();
+            createCommand.Transaction = transaction;
+            createCommand.CommandText = """
+                CREATE TABLE SchemaMigrations (
+                    Version INTEGER PRIMARY KEY,
+                    Name TEXT NOT NULL,
+                    Checksum TEXT NOT NULL,
+                    AppliedAtUtc TEXT NOT NULL
+                );
+                """;
+            createCommand.ExecuteNonQuery();
+            transaction.Commit();
+            return;
+        }
 
-            INSERT OR IGNORE INTO SchemaMigrations (Version, Name, AppliedAtUtc)
-            VALUES ($version, $name, $appliedAtUtc);
-            """;
-        command.Parameters.AddWithValue("$version", LegacySchemaBaselineVersion);
-        command.Parameters.AddWithValue("$name", "legacy-schema-baseline");
-        command.Parameters.AddWithValue("$appliedAtUtc", DateTimeOffset.UtcNow.ToString("O"));
-        command.ExecuteNonQuery();
+        var columns = ListTableColumns(connection, transaction, "SchemaMigrations");
+        if (!columns.Contains("Version") || !columns.Contains("Name") || !columns.Contains("AppliedAtUtc"))
+        {
+            throw InvalidLedger("the ledger table does not have the required columns");
+        }
+
+        var entries = ReadLedger(connection, transaction, columns.Contains("Checksum"));
+        ValidateLedgerEntries(entries, allowMissingChecksum: !columns.Contains("Checksum"));
+        if (!columns.Contains("Checksum"))
+        {
+            using var alterCommand = connection.CreateCommand();
+            alterCommand.Transaction = transaction;
+            alterCommand.CommandText = "ALTER TABLE SchemaMigrations ADD COLUMN Checksum TEXT NULL;";
+            alterCommand.ExecuteNonQuery();
+
+            foreach (var entry in entries)
+            {
+                var migration = SchemaMigrations[entry.Version - 1];
+                using var updateCommand = connection.CreateCommand();
+                updateCommand.Transaction = transaction;
+                updateCommand.CommandText = "UPDATE SchemaMigrations SET Checksum = $checksum WHERE Version = $version;";
+                updateCommand.Parameters.AddWithValue("$checksum", migration.Checksum);
+                updateCommand.Parameters.AddWithValue("$version", entry.Version);
+                updateCommand.ExecuteNonQuery();
+            }
+        }
+
+        ValidateLedgerEntries(ReadLedger(connection, transaction, hasChecksum: true), allowMissingChecksum: false);
         transaction.Commit();
     }
 
@@ -156,27 +206,73 @@ public sealed partial class AgentLocalStore
             return;
         }
 
-        using (var migrationCommand = connection.CreateCommand())
-        {
-            migrationCommand.Transaction = transaction;
-            migrationCommand.CommandText = migration.Sql;
-            migrationCommand.ExecuteNonQuery();
-        }
+        migration.Apply(connection, transaction);
 
-        using (var ledgerCommand = connection.CreateCommand())
-        {
-            ledgerCommand.Transaction = transaction;
-            ledgerCommand.CommandText = """
-                INSERT INTO SchemaMigrations (Version, Name, AppliedAtUtc)
-                VALUES ($version, $name, $appliedAtUtc);
-                """;
-            ledgerCommand.Parameters.AddWithValue("$version", migration.Version);
-            ledgerCommand.Parameters.AddWithValue("$name", migration.Name);
-            ledgerCommand.Parameters.AddWithValue("$appliedAtUtc", DateTimeOffset.UtcNow.ToString("O"));
-            ledgerCommand.ExecuteNonQuery();
-        }
-
+        using var ledgerCommand = connection.CreateCommand();
+        ledgerCommand.Transaction = transaction;
+        ledgerCommand.CommandText = """
+            INSERT INTO SchemaMigrations (Version, Name, Checksum, AppliedAtUtc)
+            VALUES ($version, $name, $checksum, $appliedAtUtc);
+            """;
+        ledgerCommand.Parameters.AddWithValue("$version", migration.Version);
+        ledgerCommand.Parameters.AddWithValue("$name", migration.Name);
+        ledgerCommand.Parameters.AddWithValue("$checksum", migration.Checksum);
+        ledgerCommand.Parameters.AddWithValue("$appliedAtUtc", DateTimeOffset.UtcNow.ToString("O"));
+        ledgerCommand.ExecuteNonQuery();
         transaction.Commit();
+    }
+
+    private static void ValidateLedgerEntries(
+        IReadOnlyList<SchemaMigrationLedgerEntry> entries,
+        bool allowMissingChecksum)
+    {
+        for (var index = 0; index < entries.Count; index++)
+        {
+            var entry = entries[index];
+            if (entry.Version > SchemaMigrations[^1].Version)
+            {
+                throw InvalidLedger($"migration {entry.Version} is newer than this build supports");
+            }
+
+            var expectedVersion = index + 1;
+            if (entry.Version != expectedVersion)
+            {
+                throw InvalidLedger($"expected migration {expectedVersion} but found {entry.Version}");
+            }
+
+            var migration = SchemaMigrations[entry.Version - 1];
+            if (!string.Equals(entry.Name, migration.Name, StringComparison.Ordinal))
+            {
+                throw InvalidLedger($"migration {entry.Version} has unknown name '{entry.Name}'");
+            }
+            if (!allowMissingChecksum
+                && !string.Equals(entry.Checksum, migration.Checksum, StringComparison.OrdinalIgnoreCase))
+            {
+                throw InvalidLedger($"migration {entry.Version} ('{entry.Name}') has a checksum mismatch");
+            }
+        }
+    }
+
+    private static IReadOnlyList<SchemaMigrationLedgerEntry> ReadLedger(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        bool hasChecksum)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = hasChecksum
+            ? "SELECT Version, Name, Checksum FROM SchemaMigrations ORDER BY Version;"
+            : "SELECT Version, Name, NULL FROM SchemaMigrations ORDER BY Version;";
+        using var reader = command.ExecuteReader();
+        var entries = new List<SchemaMigrationLedgerEntry>();
+        while (reader.Read())
+        {
+            entries.Add(new SchemaMigrationLedgerEntry(
+                reader.GetInt32(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2)));
+        }
+        return entries;
     }
 
     private static bool HasSchemaMigration(
@@ -191,5 +287,58 @@ public sealed partial class AgentLocalStore
         return command.ExecuteScalar() is not null;
     }
 
-    private sealed record SchemaMigration(int Version, string Name, string Sql);
+    private static bool TableExists(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string tableName)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $name LIMIT 1;";
+        command.Parameters.AddWithValue("$name", tableName);
+        return command.ExecuteScalar() is not null;
+    }
+
+    private static HashSet<string> ListTableColumns(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string tableName)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"PRAGMA table_info({tableName});";
+        using var reader = command.ExecuteReader();
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (reader.Read())
+        {
+            columns.Add(reader.GetString(1));
+        }
+        return columns;
+    }
+
+    private static InvalidOperationException InvalidLedger(string reason)
+        => new($"Agent schema migration ledger validation failed: {reason}. "
+            + "Back up 'agent/agent.db' and use a Sunder Agent build that recognizes this schema; "
+            + "do not edit or delete migration ledger rows.");
+
+    private static SchemaMigration SqlMigration(int version, string name, string sql)
+        => new(version, name, sql, (connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = sql;
+            command.ExecuteNonQuery();
+        });
+
+    private sealed record SchemaMigration(
+        int Version,
+        string Name,
+        string ChecksumSource,
+        Action<SqliteConnection, SqliteTransaction> Apply)
+    {
+        public string Checksum { get; } = Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes($"{Version}\n{Name}\n{ChecksumSource}"))).ToLowerInvariant();
+    }
+
+    private sealed record SchemaMigrationLedgerEntry(int Version, string Name, string? Checksum);
 }

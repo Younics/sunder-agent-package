@@ -28,7 +28,7 @@ public sealed class SubagentStackContributorTests
                 "gpt-5.5",
                 [new AgentProfileSelectableCapabilityAssignmentRecord("skill", "review", "skills")],
                 "{\"temperature\":0.1}");
-            var contributor = new SubagentStackContributor(service, context);
+            var contributor = new SubagentStackContributor(service, context, new RegressionTestExtensionCatalog());
 
             var contribution = await contributor.ExportAsync(new StackExportRequest([subagent.SubagentId]));
 
@@ -53,12 +53,12 @@ public sealed class SubagentStackContributorTests
             var sourceService = new SubagentService(new SubagentStore(sourceContext));
             var subagent = sourceService.CreateSubagent("Researcher");
             serviceSaveResearcher(sourceService, subagent.SubagentId);
-            var sourceContributor = new SubagentStackContributor(sourceService, sourceContext);
+            var sourceContributor = new SubagentStackContributor(sourceService, sourceContext, new RegressionTestExtensionCatalog());
             var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest([subagent.SubagentId]))).Fragments);
 
             var targetContext = new TestPackageContext(Path.Combine(root, "target"));
             var targetService = new SubagentService(new SubagentStore(targetContext));
-            var targetContributor = new SubagentStackContributor(targetService, targetContext);
+            var targetContributor = new SubagentStackContributor(targetService, targetContext, new RegressionTestExtensionCatalog());
             var importFragment = ToImportFragment(fragment);
             var preview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest(
                 [importFragment],
@@ -72,7 +72,7 @@ public sealed class SubagentStackContributorTests
                 new Dictionary<string, string>(),
                 [action.ActionId]));
 
-            Assert.True(result.Success, string.Join(Environment.NewLine, result.Errors));
+            Assert.Equal(StackImportOutcome.Completed, result.Outcome);
             var imported = targetService.GetSubagent(subagent.SubagentId);
             Assert.NotNull(imported);
             Assert.Equal("Researcher", imported.DisplayName);
@@ -134,7 +134,7 @@ public sealed class SubagentStackContributorTests
 
         public IPackageStorageContext Storage { get; } = new TestStorageContext(rootPath);
 
-        public IPackageConfiguration Configuration { get; } = new TestConfiguration();
+        public IPackageSettings Settings { get; } = new TestSettings();
 
         public IPackageSecrets Secrets { get; } = new TestSecrets();
 
@@ -150,13 +150,13 @@ public sealed class SubagentStackContributorTests
             Directory.CreateDirectory(rootPath);
             Files = new TestFileStore(Path.Combine(rootPath, "files"));
             State = new TestKeyValueStore();
-            LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
+            RoleLocalWorkspace = new TestPackageRoleLocalWorkspace(rootPath);
         }
 
         public IPackageFileStore Files { get; }
 
         public IPackageKeyValueStore State { get; }
-        public IPackageLocalWorkspaceLease LocalWorkspace { get; }
+        public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; }
     }
 
     private sealed class TestFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
@@ -185,7 +185,7 @@ public sealed class SubagentStackContributorTests
             => Task.FromResult<IReadOnlyList<string>>(_values.Keys.Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray());
     }
 
-    private sealed class TestConfiguration : EmptyPackageConfiguration;
+    private sealed class TestSettings : EmptyPackageSettings;
 
     private sealed class TestSecrets : InMemoryPackageSecrets
     {

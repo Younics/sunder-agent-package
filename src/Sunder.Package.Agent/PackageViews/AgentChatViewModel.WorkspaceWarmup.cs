@@ -1,4 +1,3 @@
-using Avalonia.Threading;
 using Sunder.Package.Agent.Services;
 
 namespace Sunder.Package.Agent.PackageViews;
@@ -27,7 +26,7 @@ public sealed partial class AgentChatViewModel
         _workspaceWarmupCts = warmupCts;
         var workspace = SelectedWorkspace;
         var version = ++_workspaceWarmupVersion;
-        _ = Task.Run(async () =>
+        _backgroundTasks.Run(async _ =>
         {
             try
             {
@@ -44,7 +43,7 @@ public sealed partial class AgentChatViewModel
             {
                 ApplyWorkspaceWarmupFailure(workspace.WorkspaceId, version, ex.Message);
             }
-        }, CancellationToken.None);
+        });
     }
 
     private void ApplyWorkspaceWarmupFailure(string workspaceId, int version, string message)
@@ -62,13 +61,6 @@ public sealed partial class AgentChatViewModel
             SetGlobalStatus($"Execution target is not ready: {message}");
         }
 
-        if (Dispatcher.UIThread.CheckAccess())
-        {
-            Apply();
-        }
-        else
-        {
-            Dispatcher.UIThread.Post(Apply);
-        }
+        RunOnUiThread(Apply);
     }
 }

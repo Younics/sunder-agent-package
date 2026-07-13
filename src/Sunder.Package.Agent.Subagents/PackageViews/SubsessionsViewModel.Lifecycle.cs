@@ -1,21 +1,40 @@
+using Sunder.Package.Agent.Subagents.Runtime;
+
 namespace Sunder.Package.Agent.Subagents.PackageViews;
 
 public sealed partial class SubsessionsViewModel
 {
+    internal SubsessionsViewModel(
+        ISubsessionSessionReader sessionReader,
+        ISubsessionCheckpointReader checkpointReader,
+        ISubsessionTranscriptPageReader transcriptReader,
+        ISubsessionChangeNotifications changeNotifications)
+        : this(null, null, initialize: false)
+    {
+        SetRuntimePorts(sessionReader, checkpointReader, transcriptReader, changeNotifications);
+        _initialization = InitializeCoreAsync();
+    }
+
     public Task InitializeAsync() => _initialization;
 
-    private Task InitializeCoreAsync()
+    internal void ReportTranscriptPagingFailure(Exception exception)
+    {
+        if (!_disposed)
+        {
+            StatusText = $"Unable to load transcript: {exception.Message}";
+        }
+    }
+
+    private async Task InitializeCoreAsync()
     {
         try
         {
-            ReloadSubsessions(null);
+            await ReloadSubsessionsAsync(null);
         }
         catch (Exception ex)
         {
             StatusText = ex.Message;
         }
-
-        return Task.CompletedTask;
     }
 
     public void Dispose()
@@ -26,10 +45,10 @@ public sealed partial class SubsessionsViewModel
         }
 
         _disposed = true;
-        if (_runtimeCatalog is not null)
+        if (_changeNotifications is not null)
         {
-            _runtimeCatalog.SessionChanged -= OnSessionChanged;
-            _runtimeCatalog.TurnChanged -= OnTurnChanged;
+            _changeNotifications.SessionChanged -= OnSessionChanged;
+            _changeNotifications.TurnChanged -= OnTurnChanged;
         }
 
         _runActivity.Changed -= OnRunActivityStateChanged;
@@ -37,5 +56,7 @@ public sealed partial class SubsessionsViewModel
         _timeline.PropertyChanged -= OnTimelinePropertyChanged;
         _timeline.TurnProjected -= OnTimelineTurnProjected;
         _timeline.Dispose();
+        _activityTicker.Dispose();
+        _tasks.Dispose();
     }
 }

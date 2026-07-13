@@ -7,6 +7,7 @@ using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Stacks;
+using Sunder.Sdk.Logging;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -177,7 +178,7 @@ public sealed class SubagentRuntimeOrchestrationTests
     public void Store_RefusesToOverwriteCorruptOrFutureDocuments(string existingContent)
     {
         using var scope = RegressionTestPackageScope.Create();
-        var filePath = scope.Context.Storage.LocalWorkspace.GetLocalPath("subagents/subagents.json");
+        var filePath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("subagents/subagents.json");
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
         File.WriteAllText(filePath, existingContent);
         var store = new SubagentStore(scope.Context);
@@ -191,7 +192,7 @@ public sealed class SubagentRuntimeOrchestrationTests
     public void Store_PreservesUnknownFieldsWhenUpdatingCurrentDocument()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var filePath = scope.Context.Storage.LocalWorkspace.GetLocalPath("subagents/subagents.json");
+        var filePath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("subagents/subagents.json");
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
         var existing = CreateSubagent("agent-1");
         var serialized = JsonSerializer.Serialize(existing, new JsonSerializerOptions(JsonSerializerDefaults.Web));
@@ -237,7 +238,7 @@ public sealed class SubagentRuntimeOrchestrationTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var store = new SubagentStore(scope.Context);
-        var lockPath = scope.Context.Storage.LocalWorkspace.GetLocalPath("subagents/subagents.json.lock");
+        var lockPath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("subagents/subagents.json.lock");
         using var externalLease = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
 
         var save = Task.Run(() => store.Save(CreateSubagent("blocked")));
@@ -253,12 +254,12 @@ public sealed class SubagentRuntimeOrchestrationTests
     public async Task StackImport_ReportsStoreFailureWithoutPartialImport()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var filePath = scope.Context.Storage.LocalWorkspace.GetLocalPath("subagents/subagents.json");
+        var filePath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("subagents/subagents.json");
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
         const string corruptContent = "{broken";
         File.WriteAllText(filePath, corruptContent);
         var service = new SubagentService(new SubagentStore(scope.Context));
-        var contributor = new SubagentStackContributor(service, scope.Context);
+        var contributor = new SubagentStackContributor(service, scope.Context, new RegressionTestExtensionCatalog());
         const string fragmentId = "subagent.reviewer";
         const string subagentId = "reviewer";
         var fragment = new StackFragmentImport(
@@ -284,7 +285,7 @@ public sealed class SubagentRuntimeOrchestrationTests
             new Dictionary<string, string>(),
             [$"subagent:{fragmentId}:{subagentId}"]));
 
-        Assert.False(result.Success);
+        Assert.Equal(StackImportOutcome.Failed, result.Outcome);
         Assert.Empty(result.ImportedItems);
         Assert.Contains(result.Errors, error => error.Contains("atomic store update", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(corruptContent, File.ReadAllText(filePath));
@@ -366,7 +367,7 @@ public sealed class SubagentRuntimeOrchestrationTests
             => throw new NotSupportedException();
 
         public void LogEvent(
-            AgentLogLevel level,
+            PackageLogLevel level,
             string eventName,
             string message,
             long? elapsedMilliseconds = null,

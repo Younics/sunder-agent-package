@@ -1,4 +1,5 @@
 using System.Text;
+using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -16,7 +17,7 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
         ShellDescription,
         IsReadOnly: false,
         ArgumentsJsonSchema: """
-        {"type":"object","properties":{"command":{"type":"string"},"workingDirectory":{"type":"string"},"timeoutSeconds":{"type":"integer"}},"required":["command"],"additionalProperties":false}
+        {"type":"object","properties":{"command":{"type":"string"},"workingDirectory":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":86400}},"required":["command"],"additionalProperties":false}
         """,
         SourceKind: "workspace",
         SourceId: "shell",
@@ -214,6 +215,12 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
             || !arguments.TryReadOptionalInt32("timeoutSeconds", out var timeoutSeconds, out error))
         {
             error = $"Invalid shell arguments: {error ?? "arguments were empty or invalid."}";
+            return false;
+        }
+
+        if (!BoundedValue.IsInRange(timeoutSeconds, 1, BoundedProcessRunner.MaximumTimeoutSeconds))
+        {
+            error = $"Invalid shell arguments: timeoutSeconds must be between 1 and {BoundedProcessRunner.MaximumTimeoutSeconds}.";
             return false;
         }
 

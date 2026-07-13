@@ -208,7 +208,7 @@ public sealed class MemoryLocalStorePersistenceTests
 
         public MemoryLocalStore OpenStore() => new(_context);
 
-        public string DatabasePath => _context.Storage.LocalWorkspace.GetLocalPath("memory/agent-memory.db");
+        public string DatabasePath => _context.Storage.RoleLocalWorkspace.GetLocalPath("memory/agent-memory.db");
 
         public void Dispose()
         {
@@ -336,7 +336,7 @@ public sealed class MemoryLocalStorePersistenceTests
 
         public IPackageStorageContext Storage { get; } = new TestPackageStorageContext(rootPath);
 
-        public IPackageConfiguration Configuration { get; } = new TestPackageConfiguration();
+        public IPackageSettings Settings { get; } = new TestPackageSettings();
 
         public IPackageSecrets Secrets { get; } = new TestPackageSecrets();
 
@@ -351,14 +351,14 @@ public sealed class MemoryLocalStorePersistenceTests
         {
             Directory.CreateDirectory(rootPath);
             Files = new TestPackageFileStore(rootPath);
-            LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
+            RoleLocalWorkspace = new TestPackageRoleLocalWorkspace(rootPath);
         }
 
         public IPackageFileStore Files { get; }
 
         public IPackageKeyValueStore State { get; } = new TestPackageKeyValueStore();
 
-        public IPackageLocalWorkspaceLease LocalWorkspace { get; }
+        public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; }
     }
 
     private sealed class TestPackageFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
@@ -381,7 +381,7 @@ public sealed class MemoryLocalStorePersistenceTests
             => Task.FromResult<IReadOnlyList<string>>([]);
     }
 
-    private sealed class TestPackageConfiguration : EmptyPackageConfiguration;
+    private sealed class TestPackageSettings : EmptyPackageSettings;
 
     private sealed class TestPackageSecrets : InMemoryPackageSecrets;
 }

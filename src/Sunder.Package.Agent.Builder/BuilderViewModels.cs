@@ -16,6 +16,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
     private readonly BuilderProjectPersistence _persistence;
     private readonly BuilderPathService _pathService;
     private readonly IBuilderUiDispatcher _uiDispatcher;
+    private readonly PresentationTaskScope _tasks = new();
     private readonly TimedStatusController _statusVisibility = new();
     private readonly CancellationTokenSource _lifetime = new();
     private readonly object _initializationSync = new();
@@ -105,6 +106,13 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
     public bool IsProjectIdentityReadOnly => !CanEditProjectIdentity;
 
     public bool CanUseSelectedProjectRuntimeActions => CanEditSelectedProject;
+
+    public bool CanUseDevelopmentSessions => CanEditSelectedProject && _applicationService.DevelopmentSessionAvailability.IsAvailable;
+
+    public string? DevelopmentSessionUnavailableReason
+        => _applicationService.DevelopmentSessionAvailability.IsAvailable
+            ? null
+            : _applicationService.DevelopmentSessionAvailability.UnavailableReason;
 
     public bool ShowRuntimeSection => HasSelectedProject && IsSelectedProjectInitialized;
 
@@ -329,7 +337,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
                     return;
                 }
 
-                IsSelectedProjectLoaded = result.Status.ActiveSourceKind == PackageSessionSourceKind.Dev;
+                IsSelectedProjectLoaded = result.Status.IsLoaded;
                 StatusText = FormatStatus(result.Status);
                 projects = CaptureProjects();
             });
@@ -349,15 +357,13 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
                 return;
             }
 
-            var unloaded = await _operationQueue.RunAsync(
+            var result = await _operationQueue.RunAsync(
                 () => _applicationService.UnloadProjectAsync(project.PackageId, cancellationToken),
                 cancellationToken);
             await _uiDispatcher.InvokeAsync(() =>
             {
                 IsSelectedProjectLoaded = false;
-                StatusText = unloaded
-                    ? $"Unloaded dev package '{project.PackageId}'."
-                    : $"Dev package '{project.PackageId}' was not loaded.";
+                StatusText = result.Message;
             });
             await RefreshSelectedStatusCoreAsync(Interlocked.Increment(ref _selectedProjectStatusVersion), false, cancellationToken);
         });
@@ -412,6 +418,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         _disposed = true;
         _persistence.SaveFailed -= OnPersistenceSaveFailed;
         _statusVisibility.Dispose();
+        _tasks.Dispose();
         _lifetime.Cancel();
         var projects = await _uiDispatcher.InvokeAsync(() =>
         {
@@ -674,13 +681,13 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
     }
 
     private void OnPersistenceSaveFailed(object? sender, BuilderPersistenceFailedEventArgs e)
-        => _uiDispatcher.Post(() =>
+        => _tasks.Run(_ => _uiDispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
             {
                 StatusText = $"Failed to save runtime settings: {e.Exception.Message}";
             }
-        });
+        }));
 
     private void ShowStatusMessageForCurrentText()
     {
@@ -693,7 +700,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
 
         _statusVisibilityTask = _statusVisibility.ScheduleAsync(
             StatusMessageVisibleDuration,
-            () => _uiDispatcher.Post(() => ShowStatusMessage = false));
+            () => _tasks.Run(_ => _uiDispatcher.InvokeAsync(() => ShowStatusMessage = false)));
     }
 
     private void NotifySetupStatePropertiesChanged()
@@ -709,6 +716,8 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         OnPropertyChanged(nameof(CanEditProjectIdentity));
         OnPropertyChanged(nameof(IsProjectIdentityReadOnly));
         OnPropertyChanged(nameof(CanUseSelectedProjectRuntimeActions));
+        OnPropertyChanged(nameof(CanUseDevelopmentSessions));
+        OnPropertyChanged(nameof(DevelopmentSessionUnavailableReason));
         OnPropertyChanged(nameof(ShowRuntimeSection));
         OnPropertyChanged(nameof(ShowInitializeSelectedProject));
         OnPropertyChanged(nameof(ShowSelectedProjectSetup));
@@ -741,13 +750,12 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
             : "Package builder setup is incomplete." + Environment.NewLine + string.Join(Environment.NewLine, missing);
     }
 
-    private static string FormatStatus(PackageSessionStatus status)
+    private static string FormatStatus(PackageDevelopmentSessionStatus status)
     {
-        var source = status.ActiveSourceKind == PackageSessionSourceKind.Dev ? "dev" : "installed";
         var overlay = status.OverridesInstalledPackage ? " overriding installed package" : string.Empty;
         var watch = status.WatchEnabled ? " Watch is enabled." : string.Empty;
         var error = string.IsNullOrWhiteSpace(status.ErrorMessage) ? string.Empty : $" Last error: {status.ErrorMessage}";
-        return $"{status.PackageId} {status.Version} loaded from {source}{overlay}.{watch}{error}";
+        return $"{status.PackageId} {status.Version} loaded from development output{overlay}.{watch}{error}";
     }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

@@ -27,12 +27,11 @@ internal sealed class LMStudioOpenAIStreamTranslator(bool allowMultipleToolCalls
         {
             if (!string.IsNullOrEmpty(contentPart.Text))
             {
-                translated.Add(new ChatResponseUpdate(AIChatRole.Assistant, contentPart.Text)
-                {
-                    ResponseId = responseId,
-                    MessageId = messageId,
-                    ModelId = modelId,
-                });
+                translated.Add(ProviderResponseUpdates.CreateText(
+                    modelId,
+                    responseId,
+                    messageId,
+                    contentPart.Text));
             }
         }
 
@@ -43,6 +42,21 @@ internal sealed class LMStudioOpenAIStreamTranslator(bool allowMultipleToolCalls
                 toolCallUpdate.ToolCallId,
                 toolCallUpdate.FunctionName,
                 toolCallUpdate.FunctionArgumentsUpdate?.ToString());
+        }
+
+        if (update.Usage is { } usage
+            && ProviderResponseUpdates.CreateUsage(
+                modelId,
+                responseId,
+                messageId,
+                new ProviderUsageSnapshot(
+                    usage.InputTokenCount,
+                    usage.OutputTokenCount,
+                    usage.TotalTokenCount,
+                    usage.InputTokenDetails?.CachedTokenCount,
+                    usage.OutputTokenDetails?.ReasoningTokenCount)) is { } usageUpdate)
+        {
+            translated.Add(usageUpdate);
         }
 
         var isTerminal = update.FinishReason is not null;
@@ -135,18 +149,18 @@ internal sealed class LMStudioOpenAIStreamTranslator(bool allowMultipleToolCalls
             functionCalls.Add(new FunctionCallContent(toolCall.CallId, toolCall.ToolId, arguments));
         }
 
-        return new ChatResponseUpdate(AIChatRole.Assistant, functionCalls.ToArray())
-        {
-            ResponseId = responseId,
-            MessageId = messageId,
-            ModelId = modelId,
-            FinishReason = Microsoft.Extensions.AI.ChatFinishReason.ToolCalls,
-        };
+        return ProviderResponseUpdates.Create(
+            modelId,
+            responseId,
+            messageId,
+            functionCalls,
+            Microsoft.Extensions.AI.ChatFinishReason.ToolCalls);
     }
 
     private sealed class ToolCallAccumulator
     {
         private readonly StringBuilder _arguments = new();
+        private int _argumentBytes;
         private string? _callId;
         private string? _toolId;
 
@@ -174,6 +188,13 @@ internal sealed class LMStudioOpenAIStreamTranslator(bool allowMultipleToolCalls
 
             if (!string.IsNullOrEmpty(argumentsDelta))
             {
+                _argumentBytes = checked(_argumentBytes + Encoding.UTF8.GetByteCount(argumentsDelta));
+                if (_argumentBytes > AgentPayloadLimits.MaxStreamedToolArgumentBytes)
+                {
+                    throw LMStudioExceptionMapper.MalformedToolCall(
+                        $"LM Studio streamed tool arguments exceeding the {AgentPayloadLimits.MaxStreamedToolArgumentBytes}-byte limit.");
+                }
+
                 _arguments.Append(argumentsDelta);
             }
         }

@@ -65,7 +65,7 @@ public sealed class AnthropicSettingsStateTests
         var state = new BlockingKeyValueStore();
         var context = new ProviderTestPackageContext(
             "sunder.package.agent.provider.anthropic",
-            state: state);
+            settings: state);
         using var viewModel = new AnthropicSettingsViewModel(context);
         viewModel.UtilityModelSettings.SelectedUtilityModel = viewModel.UtilityModelSettings.UtilityModels.Last();
 

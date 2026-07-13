@@ -1,15 +1,18 @@
 using System.Collections.ObjectModel;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Memory.Semantic.Services;
+using Sunder.Package.Agent.Memory.Semantic.Runtime;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Memory.Semantic.PackageViews;
 
 public sealed partial class MemoryInspectorViewModel : ObservableObject, IDisposable
 {
-    private readonly MemoryInspectorService _memoryInspectorService;
+    private readonly IMemoryInspectorGateway _memoryInspectorService;
+    private readonly IPresentationDispatcher _uiDispatcher = PresentationDispatcher.Capture();
+    private readonly PresentationTaskScope _tasks = new();
     private readonly CancellationTokenSource _lifetime = new();
     private SemanticEmbeddingContext? _selectedSessionSemanticContext;
     private CancellationTokenSource? _sessionLoadCancellation;
@@ -18,7 +21,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
     private int _sessionLoadVersion;
     private int _busyOperationCount;
 
-    public MemoryInspectorViewModel(MemoryInspectorService memoryInspectorService)
+    internal MemoryInspectorViewModel(IMemoryInspectorGateway memoryInspectorService)
     {
         _memoryInspectorService = memoryInspectorService;
         _memoryInspectorService.SessionChanged += OnSessionChanged;
@@ -308,6 +311,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         _memoryInspectorService.SemanticWorkerStatusChanged -= OnSemanticWorkerStatusChanged;
         _sessionLoadCancellation?.Dispose();
         _sessionLoadCancellation = null;
+        _tasks.Dispose();
         _lifetime.Dispose();
     }
 
@@ -530,27 +534,25 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         }
     }
 
-    private static void RunOnUiThread(Action action)
+    private void RunOnUiThread(Action action)
     {
-        if (Avalonia.Application.Current is null || Dispatcher.UIThread.CheckAccess())
+        if (_uiDispatcher.CheckAccess())
         {
             action();
             return;
         }
 
-        Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
+        _tasks.Run(_ => _uiDispatcher.InvokeAsync(action));
     }
 
     private void OnSemanticWorkerStatusChanged()
-        => Dispatcher.UIThread.Post(
-            () =>
+        => RunOnUiThread(() =>
+        {
+            if (!_disposed)
             {
-                if (!_disposed)
-                {
-                    RefreshSemanticWorkerStatus();
-                }
-            },
-            DispatcherPriority.Background);
+                RefreshSemanticWorkerStatus();
+            }
+        });
 
     private void ClearSelectedSession()
     {

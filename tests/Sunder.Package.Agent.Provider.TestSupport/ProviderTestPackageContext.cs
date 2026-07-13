@@ -11,12 +11,15 @@ public sealed class ProviderTestPackageContext : IPackageContext
         IReadOnlyDictionary<string, string>? configurationValues = null,
         IReadOnlyDictionary<string, string>? secretValues = null,
         IPackageKeyValueStore? state = null,
-        IPackageSecrets? secrets = null)
+        IPackageSecrets? secrets = null,
+        IPackageKeyValueStore? settings = null,
+        IPackageCallbackClient? callbacks = null)
     {
         PackageId = packageId;
-        Storage = new ProviderTestStorageContext(configurationValues, state);
-        Configuration = new ProviderTestConfiguration(Storage.State);
+        Storage = new ProviderTestStorageContext(state);
+        Settings = new ProviderTestSettings(settings ?? new ProviderTestKeyValueStore(configurationValues));
         Secrets = secrets ?? new ProviderTestSecrets(secretValues);
+        Callbacks = callbacks ?? NullPackageCallbackClient.Instance;
     }
 
     public string PackageId { get; }
@@ -29,9 +32,11 @@ public sealed class ProviderTestPackageContext : IPackageContext
 
     IPackageStorageContext IPackageContext.Storage => Storage;
 
-    public IPackageConfiguration Configuration { get; }
+    public IPackageSettings Settings { get; }
 
     public IPackageSecrets Secrets { get; }
+
+    public IPackageCallbackClient Callbacks { get; }
 
     public ILoggerFactory LoggerFactory => Logging.LoggerFactory;
 
@@ -41,10 +46,9 @@ public sealed class ProviderTestPackageContext : IPackageContext
 public sealed class ProviderTestStorageContext : IPackageStorageContext
 {
     public ProviderTestStorageContext(
-        IReadOnlyDictionary<string, string>? values,
         IPackageKeyValueStore? state = null)
     {
-        State = state ?? new ProviderTestKeyValueStore(values);
+        State = state ?? new ProviderTestKeyValueStore();
     }
 
     public IPackageFileStore Files => throw new NotSupportedException();
@@ -53,7 +57,7 @@ public sealed class ProviderTestStorageContext : IPackageStorageContext
 
     IPackageKeyValueStore IPackageStorageContext.State => State;
 
-    public IPackageLocalWorkspaceLease LocalWorkspace { get; } = new ProviderTestWorkspace();
+    public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; } = new ProviderTestWorkspace();
 }
 
 public sealed class ProviderTestKeyValueStore : IPackageKeyValueStore
@@ -94,10 +98,19 @@ public sealed class ProviderTestKeyValueStore : IPackageKeyValueStore
             _values.Keys.Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray());
 }
 
-public sealed class ProviderTestConfiguration(IPackageKeyValueStore state) : IPackageConfiguration
+public sealed class ProviderTestSettings(IPackageKeyValueStore settings) : IPackageSettings
 {
     public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
-        => state.GetValueAsync(key, cancellationToken);
+        => settings.GetValueAsync(key, cancellationToken);
+
+    public Task<string?> GetStoredValueAsync(string key, CancellationToken cancellationToken = default)
+        => settings.GetValueAsync(key, cancellationToken);
+
+    public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
+        => settings.SetValueAsync(key, value, cancellationToken);
+
+    public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
+        => settings.DeleteValueAsync(key, cancellationToken);
 }
 
 public sealed class ProviderTestSecrets : IPackageSecrets
@@ -132,9 +145,8 @@ public sealed class ProviderTestSecrets : IPackageSecrets
     }
 }
 
-internal sealed class ProviderTestWorkspace : IPackageLocalWorkspaceLease
+internal sealed class ProviderTestWorkspace : IPackageRoleLocalWorkspace
 {
     public string WorkspaceRootPath => AppContext.BaseDirectory;
     public string GetLocalPath(string relativePath) => Path.GetFullPath(Path.Combine(WorkspaceRootPath, relativePath));
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

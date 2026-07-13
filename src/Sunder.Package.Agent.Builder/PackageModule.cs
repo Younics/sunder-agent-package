@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 
@@ -13,7 +14,7 @@ public sealed class PackageModule : ISunderAppPackageModule
         services.AddSingleton<BuilderSetupService>();
         services.AddSingleton<BuilderWorkspaceExecutionService>();
         services.AddSingleton<BuilderProjectStore>();
-        services.AddSingleton<IBuilderProjectStore>(services => services.GetRequiredService<BuilderProjectStore>());
+        services.AddSingletonAlias<IBuilderProjectStore, BuilderProjectStore>();
         services.AddSingleton<BuilderProjectApplicationService>();
         services.AddSingleton<BuilderProjectPersistence>();
         services.AddSingleton<BuilderOperationQueue>();

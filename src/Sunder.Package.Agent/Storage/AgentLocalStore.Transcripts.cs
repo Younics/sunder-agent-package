@@ -95,8 +95,19 @@ public sealed partial class AgentLocalStore
     {
         using var connection = CreateConnection();
         connection.Open();
+        using var transaction = connection.BeginTransaction(deferred: false);
+        var result = RollbackTranscript(connection, transaction, sessionId, anchorTurnId);
+        transaction.Commit();
+        return result;
+    }
 
-        var anchorTurn = GetTurn(connection, anchorTurnId)
+    private static AgentTranscriptRollbackResult RollbackTranscript(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid sessionId,
+        Guid anchorTurnId)
+    {
+        var anchorTurn = GetRollbackAnchor(connection, transaction, anchorTurnId)
             ?? throw new InvalidOperationException($"Turn '{anchorTurnId}' was not found.");
         if (anchorTurn.SessionId != sessionId)
         {
@@ -108,17 +119,16 @@ public sealed partial class AgentLocalStore
             throw new InvalidOperationException("Rollback can only start from a user message turn.");
         }
 
-        var deletedTurnIds = ListRollbackTurnIds(connection, sessionId, anchorTurn);
+        var deletedTurnIds = ListRollbackTurnIds(connection, transaction, sessionId, anchorTurn);
         if (deletedTurnIds.Count == 0)
         {
             return new AgentTranscriptRollbackResult(sessionId, anchorTurnId, [], []);
         }
 
-        var deletedToolCallIds = ListRollbackToolCallIds(connection, sessionId, anchorTurn);
-        var deletedSessions = ResolveSessionsForParentToolCalls(connection, sessionId, deletedToolCallIds);
+        var deletedToolCallIds = ListRollbackToolCallIds(connection, transaction, sessionId, anchorTurn);
+        var deletedSessions = ResolveSessionsForParentToolCalls(connection, transaction, sessionId, deletedToolCallIds);
         var deletedSessionIds = deletedSessions.Select(session => session.SessionId).ToArray();
 
-        using var transaction = connection.BeginTransaction();
         foreach (var deletedSession in deletedSessions.Reverse())
         {
             DeleteSession(connection, transaction, deletedSession.SessionId.ToString());
@@ -136,7 +146,6 @@ public sealed partial class AgentLocalStore
             latestCheckpoint is null ? AgentSessionState.Active : MapSessionState(latestCheckpoint.Status),
             DateTimeOffset.UtcNow,
             transaction);
-        transaction.Commit();
 
         return new AgentTranscriptRollbackResult(sessionId, anchorTurnId, deletedTurnIds, deletedSessionIds);
     }
@@ -382,6 +391,28 @@ public sealed partial class AgentLocalStore
         return command.ExecuteScalar() is not null;
     }
 
+    private static AgentTurnRecord? GetRollbackAnchor(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid turnId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc FROM AgentTurns WHERE TurnId = $turnId;";
+        command.Parameters.AddWithValue("$turnId", turnId.ToString());
+        using var reader = command.ExecuteReader();
+        return reader.Read()
+            ? new AgentTurnRecord(
+                Guid.Parse(reader.GetString(0)),
+                Guid.Parse(reader.GetString(1)),
+                Enum.Parse<AgentMessageRole>(reader.GetString(2), ignoreCase: true),
+                Enum.Parse<AgentTurnKind>(reader.GetString(3), ignoreCase: true),
+                [],
+                DateTimeOffset.Parse(reader.GetString(4)),
+                DateTimeOffset.Parse(reader.GetString(5)))
+            : null;
+    }
+
     private static bool CanUpdateProjectedMessage(AgentTurnRecord turn)
         => turn.Kind == AgentTurnKind.Message
            && turn.Items.Count == 1
@@ -389,10 +420,12 @@ public sealed partial class AgentLocalStore
 
     private static IReadOnlyList<Guid> ListRollbackTurnIds(
         SqliteConnection connection,
+        SqliteTransaction transaction,
         Guid sessionId,
         AgentTurnRecord anchorTurn)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = BuildRollbackTurnsQuery("SELECT TurnId");
         AddRollbackTurnParameters(command, sessionId, anchorTurn);
 
@@ -408,10 +441,12 @@ public sealed partial class AgentLocalStore
 
     private static IReadOnlySet<string> ListRollbackToolCallIds(
         SqliteConnection connection,
+        SqliteTransaction transaction,
         Guid sessionId,
         AgentTurnRecord anchorTurn)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT DISTINCT i.CallId
             FROM AgentTurnItems i
@@ -437,6 +472,7 @@ public sealed partial class AgentLocalStore
 
     private static IReadOnlyList<AgentSessionRecord> ResolveSessionsForParentToolCalls(
         SqliteConnection connection,
+        SqliteTransaction transaction,
         Guid parentSessionId,
         IReadOnlySet<string> toolCallIds)
     {
@@ -445,7 +481,7 @@ public sealed partial class AgentLocalStore
             return [];
         }
 
-        var sessions = ListSessions(connection);
+        var sessions = ListSessions(connection, transaction);
         var descendantsByParent = sessions
             .Where(session => session.ParentSessionId is not null)
             .GroupBy(session => session.ParentSessionId!.Value)
@@ -727,4 +763,5 @@ internal enum AgentTranscriptMutationKind
     AssistantText = 0,
     ToolCall = 1,
     ToolResult = 2,
+    UserRunStart = 3,
 }

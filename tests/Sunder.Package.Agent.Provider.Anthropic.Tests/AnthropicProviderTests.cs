@@ -6,6 +6,7 @@ using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
+using Sunder.Sdk.Logging;
 using Xunit;
 
 namespace Sunder.Package.Agent.Provider.Anthropic.Tests;
@@ -51,7 +52,8 @@ public sealed class AnthropicProviderTests
 
         var updates = await ReadUpdatesAsync(client, messages, options);
 
-        Assert.Equal("Accepted", Assert.Single(updates).Text);
+        Assert.Equal("Accepted", Assert.Single(ContentUpdates(updates)).Text);
+        AssertUsage(updates, inputTokens: 1, outputTokens: 1);
         using var document = JsonDocument.Parse(Assert.Single(handler.RequestBodies));
         var root = document.RootElement;
         Assert.Equal("claude-opus-4-8", root.GetProperty("model").GetString());
@@ -272,7 +274,7 @@ public sealed class AnthropicProviderTests
 
         var updates = await ReadUpdatesAsync(client, [new ChatMessage(ChatRole.User, "Go fast.")], options);
 
-        Assert.Equal("Fast", Assert.Single(updates).Text);
+        Assert.Equal("Fast", Assert.Single(ContentUpdates(updates)).Text);
         var request = Assert.Single(handler.Requests);
         Assert.Contains(request.Headers,
             header => string.Equals(header.Key, "anthropic-beta", StringComparison.OrdinalIgnoreCase)
@@ -309,7 +311,8 @@ public sealed class AnthropicProviderTests
                 },
             });
 
-        Assert.Equal("Fast stream", Assert.Single(updates).Text);
+        Assert.Equal("Fast stream", Assert.Single(ContentUpdates(updates)).Text);
+        AssertUsage(updates, inputTokens: null, outputTokens: 1);
         Assert.Contains(
             Assert.Single(handler.Requests).Headers,
             header => string.Equals(header.Key, "anthropic-beta", StringComparison.OrdinalIgnoreCase)
@@ -319,11 +322,11 @@ public sealed class AnthropicProviderTests
     [Fact]
     public async Task StandardStreaming_TranslatesReasoningSummaryAndTextDeltas()
     {
-        var sink = new RecordingSink();
+        var logger = new RecordingLogger();
         var handler = new CapturingHandler(_ => SseResponse(
             """
             event: message_start
-            data: {"type":"message_start","message":{"id":"msg-1","type":"message","role":"assistant","content":[],"model":"claude-opus-4-8","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}
+            data: {"type":"message_start","message":{"id":"msg-1","type":"message","role":"assistant","content":[],"model":"claude-opus-4-8","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"cache_creation_input_tokens":1,"cache_read_input_tokens":2,"output_tokens":0}}}
 
             event: content_block_delta
             data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Checking constraints."}}
@@ -338,7 +341,7 @@ public sealed class AnthropicProviderTests
             data: {"type":"message_stop"}
 
             """));
-        var client = CreateChatClient(handler, sink);
+        var client = CreateChatClient(handler, logger);
 
         var updates = await ReadUpdatesAsync(
             client,
@@ -352,12 +355,14 @@ public sealed class AnthropicProviderTests
                 },
             });
 
-        Assert.Equal(2, updates.Count);
-        Assert.Equal("Checking constraints.", Assert.IsType<TextReasoningContent>(updates[0].Contents.Single()).Text);
-        Assert.Equal("Done", updates[1].Text);
+        var contentUpdates = ContentUpdates(updates);
+        Assert.Equal(2, contentUpdates.Count);
+        Assert.Equal("Checking constraints.", Assert.IsType<TextReasoningContent>(contentUpdates[0].Contents.Single()).Text);
+        Assert.Equal("Done", contentUpdates[1].Text);
+        AssertUsage(updates, inputTokens: 4, outputTokens: 1, cachedInputTokens: 2);
         Assert.Equal(
             "provider.request.start,provider.stream.start,provider.stream.first_event,provider.stream.completed",
-            string.Join(",", sink.EventNames));
+            string.Join(",", logger.EventNames));
     }
 
     [Fact]
@@ -407,15 +412,15 @@ public sealed class AnthropicProviderTests
             client,
             [new ChatMessage(ChatRole.User, "Read both.")],
             options);
-        Assert.Equal(2, Assert.Single(updates).Contents.OfType<FunctionCallContent>().Count());
+        Assert.Equal(2, Assert.Single(ContentUpdates(updates)).Contents.OfType<FunctionCallContent>().Count());
     }
 
     [Fact]
     public async Task StreamingCancellation_IsNotMappedAndIsLogged()
     {
         var handler = new BlockingHandler();
-        var sink = new RecordingSink();
-        var client = CreateChatClient(handler, sink);
+        var logger = new RecordingLogger();
+        var client = CreateChatClient(handler, logger);
         using var cancellation = new CancellationTokenSource();
         var readTask = ReadUpdatesAsync(
             client,
@@ -426,7 +431,7 @@ public sealed class AnthropicProviderTests
         cancellation.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => readTask);
-        Assert.Contains("provider.stream.canceled", sink.EventNames);
+        Assert.Contains("provider.stream.canceled", logger.EventNames);
     }
 
     [Fact]
@@ -439,15 +444,15 @@ public sealed class AnthropicProviderTests
                 Encoding.UTF8,
                 "application/json"),
         });
-        var sink = new RecordingSink();
-        var client = CreateChatClient(handler, sink);
+        var logger = new RecordingLogger();
+        var client = CreateChatClient(handler, logger);
 
         var exception = await Assert.ThrowsAsync<AgentChatProviderException>(() => ReadUpdatesAsync(
             client,
             [new ChatMessage(ChatRole.User, "Fail.")]));
 
         Assert.Equal("anthropic-http-error", exception.ErrorCode);
-        Assert.Contains("provider.stream.failed", sink.EventNames);
+        Assert.Contains("provider.stream.failed", logger.EventNames);
     }
 
     [Fact]
@@ -465,18 +470,18 @@ public sealed class AnthropicProviderTests
             data: {"type":"message_stop"}
 
             """));
-        var client = CreateChatClient(handler, new ThrowingSink());
+        var client = CreateChatClient(handler, new ThrowingLogger());
 
         var updates = await ReadUpdatesAsync(client, [new ChatMessage(ChatRole.User, "Continue.")]);
 
-        Assert.Equal("Still works", Assert.Single(updates).Text);
+        Assert.Equal("Still works", Assert.Single(ContentUpdates(updates)).Text);
     }
 
     [Fact]
     public async Task LoggingCancellation_PropagatesBeforeWireRequest()
     {
         var handler = new CapturingHandler(_ => throw new InvalidOperationException("Request should not be sent."));
-        var client = CreateChatClient(handler, new CancelingSink());
+        var client = CreateChatClient(handler, new CancelingLogger());
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
@@ -512,7 +517,7 @@ public sealed class AnthropicProviderTests
             [new ChatMessage(ChatRole.User, "Read.")],
             new ChatOptions { ToolMode = ChatToolMode.Auto, Tools = [CreateTool()] });
 
-        var contents = Assert.Single(updates).Contents;
+        var contents = Assert.Single(ContentUpdates(updates)).Contents;
         Assert.Equal("Before", Assert.IsType<TextContent>(contents[0]).Text);
         Assert.Equal("read_file", Assert.IsType<FunctionCallContent>(contents[1]).Name);
         Assert.Equal("After", Assert.IsType<TextContent>(contents[2]).Text);
@@ -583,9 +588,9 @@ public sealed class AnthropicProviderTests
 
     private static AnthropicChatClient CreateChatClient(
         HttpMessageHandler handler,
-        IAgentProviderEventSink? eventSink = null)
+        IPackageEventLogger? eventLogger = null)
     {
-        var context = new AgentChatClientContext("anthropic", ModelId, eventSink);
+        var context = new AgentChatClientContext("anthropic", ModelId, eventLogger);
         return new AnthropicChatClient(
             context,
             new ProviderCredentialAccessor(
@@ -641,6 +646,22 @@ public sealed class AnthropicProviderTests
         }
 
         return updates;
+    }
+
+    private static IReadOnlyList<ChatResponseUpdate> ContentUpdates(
+        IEnumerable<ChatResponseUpdate> updates)
+        => updates.Where(update => update.Contents.Any(content => content is not UsageContent)).ToArray();
+
+    private static void AssertUsage(
+        IEnumerable<ChatResponseUpdate> updates,
+        long? inputTokens,
+        long? outputTokens,
+        long? cachedInputTokens = null)
+    {
+        var usage = Assert.Single(updates.SelectMany(update => update.Contents).OfType<UsageContent>()).Details;
+        Assert.Equal(inputTokens, usage.InputTokenCount);
+        Assert.Equal(outputTokens, usage.OutputTokenCount);
+        Assert.Equal(cachedInputTokens, usage.CachedInputTokenCount);
     }
 
     private static HttpResponseMessage JsonResponse(string content)
@@ -780,12 +801,12 @@ public sealed class AnthropicProviderTests
         }
     }
 
-    private sealed class RecordingSink : IAgentProviderEventSink
+    private sealed class RecordingLogger : IPackageEventLogger
     {
         internal List<string> EventNames { get; } = [];
 
         public ValueTask WriteAsync(
-            AgentLogLevel level,
+            PackageLogLevel level,
             string eventName,
             string message,
             IReadOnlyDictionary<string, object?>? attributes = null,
@@ -798,10 +819,10 @@ public sealed class AnthropicProviderTests
         }
     }
 
-    private sealed class ThrowingSink : IAgentProviderEventSink
+    private sealed class ThrowingLogger : IPackageEventLogger
     {
         public ValueTask WriteAsync(
-            AgentLogLevel level,
+            PackageLogLevel level,
             string eventName,
             string message,
             IReadOnlyDictionary<string, object?>? attributes = null,
@@ -810,10 +831,10 @@ public sealed class AnthropicProviderTests
             => throw new InvalidOperationException("Logging failed.");
     }
 
-    private sealed class CancelingSink : IAgentProviderEventSink
+    private sealed class CancelingLogger : IPackageEventLogger
     {
         public ValueTask WriteAsync(
-            AgentLogLevel level,
+            PackageLogLevel level,
             string eventName,
             string message,
             IReadOnlyDictionary<string, object?>? attributes = null,

@@ -4,6 +4,7 @@ using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
+using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
@@ -120,7 +121,7 @@ internal sealed class AgentStreamingTurnWriter(AgentLoopTerminalHandler terminal
             "Assistant response contained internal protocol syntax.",
             cancellationToken);
         state.Host.LogEvent(
-            AgentLogLevel.Warning,
+            PackageLogLevel.Warning,
             "assistant.response.protocol_leak_blocked",
             "Assistant response contained internal protocol syntax.",
             state.LoopStopwatch.ElapsedMilliseconds,

@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
+using Sunder.Sdk.Logging;
 using AIChatMessage = Microsoft.Extensions.AI.ChatMessage;
 using AIChatToolMode = Microsoft.Extensions.AI.ChatToolMode;
 
@@ -12,8 +13,12 @@ namespace Sunder.Package.Agent.Provider.OpenAI.Transport;
 
 public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConnectedAuthStrategy, HttpClient httpClient)
 {
+    private const string Originator = "sunder";
+    private const string ResponsesLiteHeader = "x-openai-internal-codex-responses-lite";
+    private const string ResponsesLiteCompatibilityVersion = "0.144.0";
+    private static readonly string ClientVersion = BuildClientVersion();
     private static readonly string UserAgent =
-        $"Sunder/{typeof(CodexConnectedTransport).Assembly.GetName().Version} ({Environment.OSVersion.Platform}; {Environment.OSVersion.VersionString}; {System.Runtime.InteropServices.RuntimeInformation.OSArchitecture})";
+        $"{Originator}/{ClientVersion} ({Environment.OSVersion.Platform}; {Environment.OSVersion.VersionString}; {System.Runtime.InteropServices.RuntimeInformation.OSArchitecture})";
     private readonly CodexConnectedAuthStrategy _codexConnectedAuthStrategy = codexConnectedAuthStrategy;
     private readonly HttpClient _httpClient = httpClient;
 
@@ -32,6 +37,11 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
         var toolAware = options?.ToolMode != AIChatToolMode.None && options?.Tools is { Count: > 0 };
         var continuation = new CodexContinuationManager(continuationStore, options?.ConversationId);
         var attemptPolicy = new CodexAttemptPolicy(session);
+        var modelId = options?.ModelId ?? context.ModelId;
+        var usesResponsesLite = OpenAiModelCatalog.GetCapabilities(modelId).UseResponsesLite;
+        var providerConversationId = usesResponsesLite
+            ? GetResponsesLiteSessionId(continuationStore, options?.ConversationId)
+            : options?.ConversationId;
 
         while (true)
         {
@@ -43,6 +53,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
                 toolAware,
                 continuation.State,
                 attemptPolicy.DisableContinuation,
+                providerConversationId,
                 cancellationToken);
             if (attempt.Response.IsSuccessStatusCode)
             {
@@ -70,7 +81,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
                     continuation.Reject();
                     await LogAsync(
                         context,
-                        AgentLogLevel.Debug,
+                        PackageLogLevel.Debug,
                         "openai.codex.continuation.fallback",
                         "Codex response continuation was rejected; retrying with full prompt.",
                         cancellationToken: cancellationToken);
@@ -80,7 +91,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
                     var refreshStopwatch = Stopwatch.StartNew();
                     await LogAsync(
                         context,
-                        AgentLogLevel.Information,
+                        PackageLogLevel.Information,
                         "openai.codex.auth_refresh.start",
                         "Refreshing Codex auth session.",
                         cancellationToken: cancellationToken);
@@ -89,7 +100,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
                         cancellationToken);
                     await LogAsync(
                         context,
-                        AgentLogLevel.Information,
+                        PackageLogLevel.Information,
                         "openai.codex.auth_refresh.completed",
                         refreshedSession is null ? "not refreshed" : "refreshed",
                         refreshStopwatch.ElapsedMilliseconds,
@@ -108,6 +119,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
                 default:
                     throw CreateHttpException(
                         attemptPolicy.BuildFailureTitle(toolAware),
+                        attempt.Request,
                         attempt.Response,
                         responseContent);
             }
@@ -122,6 +134,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
         bool toolAware,
         CodexResponseContinuationState? continuationState,
         bool disableContinuation,
+        string? providerConversationId,
         CancellationToken cancellationToken)
     {
         var prepareStopwatch = Stopwatch.StartNew();
@@ -131,10 +144,11 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
             options,
             toolAware,
             continuationState,
-            disableContinuation);
+            disableContinuation,
+            providerConversationId);
         await LogAsync(
             context,
-            AgentLogLevel.Debug,
+            PackageLogLevel.Debug,
             toolAware ? "openai.codex.tool_request.prepared" : "openai.codex.request.prepared",
             "Codex request prepared.",
             prepareStopwatch.ElapsedMilliseconds,
@@ -156,6 +170,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
                 ["request.has_previous_response_id"] = request.HasPreviousResponseId,
                 ["request.tool_choice"] = request.ToolChoice,
                 ["request.parallel_tool_calls"] = request.ParallelToolCalls,
+                ["request.uses_responses_lite"] = request.UsesResponsesLite,
                 ["system_prompt.length"] = options?.Instructions?.Length ?? 0,
             },
             cancellationToken: cancellationToken);
@@ -166,19 +181,26 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
         };
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", session.AccessToken);
         httpRequest.Headers.Add("ChatGPT-Account-Id", session.ChatGptAccountId);
-        httpRequest.Headers.Add("originator", "sunder");
+        httpRequest.Headers.Add("originator", Originator);
+        httpRequest.Headers.Add("version", request.UsesResponsesLite ? ResponsesLiteCompatibilityVersion : ClientVersion);
         httpRequest.Headers.UserAgent.ParseAdd(UserAgent);
         httpRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
-        if (!string.IsNullOrWhiteSpace(options?.ConversationId))
+        if (!string.IsNullOrWhiteSpace(providerConversationId))
         {
-            httpRequest.Headers.Add("session_id", options.ConversationId);
-            httpRequest.Headers.Add("x-session-affinity", options.ConversationId);
+            httpRequest.Headers.Add("session-id", providerConversationId);
+            httpRequest.Headers.Add("thread-id", providerConversationId);
+            httpRequest.Headers.Add("x-client-request-id", providerConversationId);
+            httpRequest.Headers.Add("x-session-affinity", providerConversationId);
+        }
+        if (request.UsesResponsesLite)
+        {
+            httpRequest.Headers.Add(ResponsesLiteHeader, "true");
         }
 
         var sendStopwatch = Stopwatch.StartNew();
         await LogAsync(
             context,
-            AgentLogLevel.Debug,
+            PackageLogLevel.Debug,
             toolAware ? "openai.codex.tool_http.send.start" : "openai.codex.http.send.start",
             "POST codex/responses",
             attributes: new Dictionary<string, object?>
@@ -189,7 +211,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
         var response = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         await LogAsync(
             context,
-            response.IsSuccessStatusCode ? AgentLogLevel.Debug : AgentLogLevel.Warning,
+            response.IsSuccessStatusCode ? PackageLogLevel.Debug : PackageLogLevel.Warning,
             toolAware ? "openai.codex.tool_http.headers_received" : "openai.codex.http.headers_received",
             $"{(int)response.StatusCode} {response.ReasonPhrase}",
             sendStopwatch.ElapsedMilliseconds,
@@ -252,7 +274,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
 
     private static ValueTask LogAsync(
         AgentChatClientContext context,
-        AgentLogLevel level,
+        PackageLogLevel level,
         string eventName,
         string message,
         long? elapsedMilliseconds = null,
@@ -263,13 +285,72 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
 
     private static AgentChatProviderException CreateHttpException(
         string title,
+        CodexResponsesRequest request,
         HttpResponseMessage response,
         string responseContent)
-        => new(
+    {
+        if (IsModelUnavailable(responseContent))
+        {
+            const string modelTitle = "OpenAI model unavailable";
+            return new AgentChatProviderException(
+                "openai-model-unavailable",
+                $"### {modelTitle}\n\nOpenAI did not make `{request.Model}` available to this Codex-connected request. Retry after checking the selected model and ChatGPT workspace access.\n\nStatus: {(int)response.StatusCode} {response.ReasonPhrase}\n\n```json\n{responseContent}\n```",
+                "openai-model-unavailable",
+                new HttpRequestException(modelTitle, null, response.StatusCode));
+        }
+
+        return new AgentChatProviderException(
             "codex-http-error",
             $"### {title}\n\nStatus: {(int)response.StatusCode} {response.ReasonPhrase}\n\n```json\n{responseContent}\n```",
             "codex-http-error",
             new HttpRequestException(title, null, response.StatusCode));
+    }
+
+    private static bool IsModelUnavailable(string responseContent)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(responseContent);
+            if (!document.RootElement.TryGetProperty("error", out var error)
+                || error.ValueKind != System.Text.Json.JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            var hasModelParameter = error.TryGetProperty("param", out var parameter)
+                                    && string.Equals(parameter.GetString(), "model", StringComparison.OrdinalIgnoreCase);
+            var hasModelMessage = error.TryGetProperty("message", out var message)
+                                  && message.GetString()?.Contains("model not found", StringComparison.OrdinalIgnoreCase) == true;
+            return hasModelParameter || hasModelMessage;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static string GetResponsesLiteSessionId(
+        CodexResponseContinuationStore continuationStore,
+        string? conversationId)
+    {
+        if (string.IsNullOrWhiteSpace(conversationId))
+        {
+            throw new AgentChatProviderException(
+                "OpenAI Responses Lite requires a conversation ID.",
+                "### OpenAI conversation required\n\nGPT-5.6 Codex requests require a stable conversation identity. Start a new Agent session and retry.",
+                "openai-responses-lite-session-required");
+        }
+
+        return continuationStore.GetOrCreateResponsesLiteSessionId(conversationId);
+    }
+
+    private static string BuildClientVersion()
+    {
+        var version = typeof(CodexConnectedTransport).Assembly.GetName().Version;
+        return version is null
+            ? "0.0.0"
+            : $"{version.Major}.{version.Minor}.{Math.Max(0, version.Build)}";
+    }
 
     private sealed class RequestAttempt(HttpResponseMessage response, CodexResponsesRequest request) : IDisposable
     {

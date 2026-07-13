@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Anthropic.Exceptions;
@@ -14,10 +13,13 @@ namespace Sunder.Package.Agent.Provider.Anthropic;
 
 internal sealed class AnthropicResponseTranslator(AgentChatClientContext context)
 {
+    private readonly ProviderStreamTelemetry _telemetry = new(context);
+
     internal async IAsyncEnumerable<ChatResponseUpdate> TranslateToolResponseAsync<TResponse, TContent>(
         Func<CancellationToken, Task<TResponse>> createResponseAsync,
         Func<TResponse, IReadOnlyList<TContent>> getContent,
         Func<TResponse, string?> getStopReason,
+        Func<TResponse, ProviderUsageSnapshot> getUsage,
         Func<TContent, TextReasoningContent?> getReasoningContent,
         Func<TContent, AnthropicToolCall?> getToolCall,
         Func<TContent, string?> getText,
@@ -25,21 +27,25 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
         bool allowMultipleToolCalls,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var stopwatch = Stopwatch.StartNew();
         TResponse response;
         try
         {
             response = await createResponseAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception ex)
         {
-            await LogAsync(AgentLogLevel.Error, "provider.stream.failed", ex.Message, stopwatch.ElapsedMilliseconds, exception: ex, cancellationToken: CancellationToken.None);
-            throw AnthropicExceptionMapper.ProviderTimeout(ex);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            await LogAsync(AgentLogLevel.Error, "provider.stream.failed", ex.Message, stopwatch.ElapsedMilliseconds, exception: ex, cancellationToken: CancellationToken.None);
-            throw AnthropicExceptionMapper.Map(ex);
+            switch (ProviderStreamFailureClassifier.Classify(ex, cancellationToken))
+            {
+                case ProviderStreamFailureKind.CallerCancellation:
+                    await _telemetry.CanceledAsync();
+                    throw;
+                case ProviderStreamFailureKind.ProviderCancellation:
+                    await _telemetry.FailedAsync(ex);
+                    throw AnthropicExceptionMapper.ProviderTimeout((OperationCanceledException)ex);
+                default:
+                    await _telemetry.FailedAsync(ex);
+                    throw AnthropicExceptionMapper.Map(ex);
+            }
         }
 
         var responseId = Guid.NewGuid().ToString("N");
@@ -74,26 +80,22 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
 
         if (translatedContent.Count > 0)
         {
-            var firstEventKind = translatedContent[0] switch
-            {
-                TextReasoningContent => "ReasoningDelta",
-                FunctionCallContent => "ToolCallRequested",
-                _ => "TextDelta",
-            };
-            await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", firstEventKind, stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
-            yield return CreateUpdate(
+            var update = ProviderResponseUpdates.Create(
                 modelId,
                 responseId,
-                translatedContent.ToArray(),
+                responseId,
+                translatedContent,
                 toolCalls.Length > 0 ? ChatFinishReason.ToolCalls : ChatFinishReason.Stop);
+            await _telemetry.RecordFirstEventAsync(ProviderResponseUpdates.Describe(update), cancellationToken);
+            yield return update;
         }
 
-        await LogAsync(
-            AgentLogLevel.Debug,
-            "provider.stream.completed",
-            translatedContent.Count == 0 ? "Provider completed without content." : null,
-            stopwatch.ElapsedMilliseconds,
-            cancellationToken: cancellationToken);
+        if (ProviderResponseUpdates.CreateUsage(modelId, responseId, responseId, getUsage(response)) is { } usageUpdate)
+        {
+            yield return usageUpdate;
+        }
+
+        await _telemetry.CompletedAsync("Provider completed without content.", cancellationToken);
     }
 
     internal async IAsyncEnumerable<ChatResponseUpdate> TranslateStreamingResponseAsync<TStreamEvent>(
@@ -113,8 +115,7 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
         }
 
         var responseId = Guid.NewGuid().ToString("N");
-        var stopwatch = Stopwatch.StartNew();
-        var firstEventRecorded = false;
+        var usage = new ProviderUsageAccumulator();
         string? stopReason = null;
         await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
         while (true)
@@ -129,23 +130,24 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
 
                 rawEvent = enumerator.Current;
             }
-            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
-            {
-                await LogAsync(AgentLogLevel.Error, "provider.stream.failed", ex.Message, stopwatch.ElapsedMilliseconds, exception: ex, cancellationToken: CancellationToken.None);
-                throw AnthropicExceptionMapper.ProviderTimeout(ex);
-            }
-            catch (OperationCanceledException)
-            {
-                await LogAsync(AgentLogLevel.Warning, "provider.stream.canceled", "Provider stream was canceled.", stopwatch.ElapsedMilliseconds, cancellationToken: CancellationToken.None);
-                throw;
-            }
             catch (Exception ex)
             {
-                await LogAsync(AgentLogLevel.Error, "provider.stream.failed", ex.Message, stopwatch.ElapsedMilliseconds, exception: ex, cancellationToken: CancellationToken.None);
-                throw AnthropicExceptionMapper.Map(ex);
+                switch (ProviderStreamFailureClassifier.Classify(ex, cancellationToken))
+                {
+                    case ProviderStreamFailureKind.CallerCancellation:
+                        await _telemetry.CanceledAsync();
+                        throw;
+                    case ProviderStreamFailureKind.ProviderCancellation:
+                        await _telemetry.FailedAsync(ex);
+                        throw AnthropicExceptionMapper.ProviderTimeout((OperationCanceledException)ex);
+                    default:
+                        await _telemetry.FailedAsync(ex);
+                        throw AnthropicExceptionMapper.Map(ex);
+                }
             }
 
             var content = getStreamingContent(rawEvent);
+            usage.SetLatest(content.Usage);
             if (!string.IsNullOrWhiteSpace(content.StopReason))
             {
                 stopReason = content.StopReason;
@@ -154,24 +156,29 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
             if (content.IsTerminal)
             {
                 ValidateTerminalReason(stopReason, hasToolCalls: false);
-                await LogAsync(
-                    AgentLogLevel.Debug,
-                    "provider.stream.completed",
-                    firstEventRecorded ? null : "Provider completed without content.",
-                    stopwatch.ElapsedMilliseconds,
-                    cancellationToken: cancellationToken);
+                if (usage.CreateContent() is { } usageContent)
+                {
+                    yield return ProviderResponseUpdates.Create(modelId, responseId, responseId, usageContent);
+                }
+
+                await _telemetry.CompletedAsync("Provider completed without content.", cancellationToken);
                 yield break;
+            }
+
+            if (content.UnsupportedEventKind is { } unsupportedEventKind)
+            {
+                await _telemetry.UnsupportedResponseAsync("Anthropic", [unsupportedEventKind], cancellationToken);
+                continue;
             }
 
             if (!string.IsNullOrWhiteSpace(content.ReasoningText))
             {
-                if (!firstEventRecorded)
-                {
-                    firstEventRecorded = true;
-                    await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", "ReasoningDelta", stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
-                }
-
-                yield return CreateUpdate(modelId, responseId, new TextReasoningContent(content.ReasoningText));
+                await _telemetry.RecordFirstEventAsync("ReasoningDelta", cancellationToken);
+                yield return ProviderResponseUpdates.Create(
+                    modelId,
+                    responseId,
+                    responseId,
+                    new TextReasoningContent(content.ReasoningText));
                 continue;
             }
 
@@ -180,13 +187,8 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
                 continue;
             }
 
-            if (!firstEventRecorded)
-            {
-                firstEventRecorded = true;
-                await LogAsync(AgentLogLevel.Debug, "provider.stream.first_event", "TextDelta", stopwatch.ElapsedMilliseconds, cancellationToken: cancellationToken);
-            }
-
-            yield return CreateUpdate(modelId, responseId, content.Text);
+            await _telemetry.RecordFirstEventAsync("TextDelta", cancellationToken);
+            yield return ProviderResponseUpdates.CreateText(modelId, responseId, responseId, content.Text);
         }
 
         throw AnthropicExceptionMapper.IncompleteResponse(
@@ -221,14 +223,21 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
 
     internal static AnthropicStreamingContent GetStreamingContent(RawMessageStreamEvent rawEvent)
     {
+        if (rawEvent.TryPickStart(out var messageStart))
+        {
+            return new AnthropicStreamingContent(Usage: GetUsage(messageStart.RawData, usageUnderMessage: true));
+        }
+
         if (rawEvent.TryPickDelta(out var messageDelta))
         {
-            return new AnthropicStreamingContent(null, null, GetStopReason(messageDelta.RawData), false);
+            return new AnthropicStreamingContent(
+                StopReason: GetStopReason(messageDelta.RawData),
+                Usage: GetUsage(messageDelta.RawData, usageUnderMessage: false));
         }
 
         if (rawEvent.TryPickStop(out _))
         {
-            return new AnthropicStreamingContent(null, null, null, true);
+            return new AnthropicStreamingContent(IsTerminal: true);
         }
 
         if (!rawEvent.TryPickContentBlockDelta(out var delta))
@@ -238,24 +247,31 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
 
         if (delta.Delta.TryPickThinking(out var thinking) && !string.IsNullOrWhiteSpace(thinking.Thinking))
         {
-            return new AnthropicStreamingContent(thinking.Thinking, null, null, false);
+            return new AnthropicStreamingContent(ReasoningText: thinking.Thinking);
         }
 
         return delta.Delta.TryPickText(out var text) && !string.IsNullOrWhiteSpace(text.Text)
-            ? new AnthropicStreamingContent(null, text.Text, null, false)
-            : default;
+            ? new AnthropicStreamingContent(Text: text.Text)
+            : new AnthropicStreamingContent(UnsupportedEventKind: delta.Delta.GetType().Name);
     }
 
     internal static AnthropicStreamingContent GetStreamingContent(BetaRawMessageStreamEvent rawEvent)
     {
+        if (rawEvent.TryPickStart(out var messageStart))
+        {
+            return new AnthropicStreamingContent(Usage: GetUsage(messageStart.RawData, usageUnderMessage: true));
+        }
+
         if (rawEvent.TryPickDelta(out var messageDelta))
         {
-            return new AnthropicStreamingContent(null, null, GetStopReason(messageDelta.RawData), false);
+            return new AnthropicStreamingContent(
+                StopReason: GetStopReason(messageDelta.RawData),
+                Usage: GetUsage(messageDelta.RawData, usageUnderMessage: false));
         }
 
         if (rawEvent.TryPickStop(out _))
         {
-            return new AnthropicStreamingContent(null, null, null, true);
+            return new AnthropicStreamingContent(IsTerminal: true);
         }
 
         if (!rawEvent.TryPickContentBlockDelta(out var delta))
@@ -265,12 +281,12 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
 
         if (delta.Delta.TryPickThinking(out var thinking) && !string.IsNullOrWhiteSpace(thinking.Thinking))
         {
-            return new AnthropicStreamingContent(thinking.Thinking, null, null, false);
+            return new AnthropicStreamingContent(ReasoningText: thinking.Thinking);
         }
 
         return delta.Delta.TryPickText(out var text) && !string.IsNullOrWhiteSpace(text.Text)
-            ? new AnthropicStreamingContent(null, text.Text, null, false)
-            : default;
+            ? new AnthropicStreamingContent(Text: text.Text)
+            : new AnthropicStreamingContent(UnsupportedEventKind: delta.Delta.GetType().Name);
     }
 
     internal static FunctionCallContent TranslateToolCall(AnthropicToolCall toolCall)
@@ -304,44 +320,22 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
         }
     }
 
-    private static ChatResponseUpdate CreateUpdate(string modelId, string responseId, AIContent content)
-        => new(AIChatRole.Assistant, [content])
-        {
-            ResponseId = responseId,
-            MessageId = responseId,
-            ModelId = modelId,
-        };
+    internal static ProviderUsageSnapshot GetUsage(global::Anthropic.Models.Messages.Usage usage)
+        => new(
+            SumInputTokens(usage.InputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens),
+            usage.OutputTokens,
+            CachedInputTokenCount: usage.CacheReadInputTokens);
 
-    private static ChatResponseUpdate CreateUpdate(
-        string modelId,
-        string responseId,
-        AIContent[] content,
-        ChatFinishReason finishReason)
-        => new(AIChatRole.Assistant, content)
-        {
-            ResponseId = responseId,
-            MessageId = responseId,
-            ModelId = modelId,
-            FinishReason = finishReason,
-        };
+    internal static ProviderUsageSnapshot GetUsage(global::Anthropic.Models.Beta.Messages.BetaUsage usage)
+        => new(
+            SumInputTokens(usage.InputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens),
+            usage.OutputTokens,
+            CachedInputTokenCount: usage.CacheReadInputTokens);
 
-    private static ChatResponseUpdate CreateUpdate(string modelId, string responseId, string text)
-        => new(AIChatRole.Assistant, text)
-        {
-            ResponseId = responseId,
-            MessageId = responseId,
-            ModelId = modelId,
-        };
-
-    private ValueTask LogAsync(
-        AgentLogLevel level,
-        string eventName,
-        string? message = null,
-        long? elapsedMilliseconds = null,
-        IReadOnlyDictionary<string, object?>? attributes = null,
-        Exception? exception = null,
-        CancellationToken cancellationToken = default)
-        => context.LogProviderEventAsync(level, eventName, message ?? eventName, elapsedMilliseconds, attributes, exception, cancellationToken);
+    private static long? SumInputTokens(long? inputTokens, long? cacheCreationInputTokens, long? cacheReadInputTokens)
+        => inputTokens is not null || cacheCreationInputTokens is not null || cacheReadInputTokens is not null
+            ? (inputTokens ?? 0) + (cacheCreationInputTokens ?? 0) + (cacheReadInputTokens ?? 0)
+            : null;
 
     private static void ValidateTerminalReason(string? stopReason, bool hasToolCalls)
     {
@@ -376,12 +370,57 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
 
         return stopReason.GetString();
     }
+
+    private static ProviderUsageSnapshot GetUsage(
+        IReadOnlyDictionary<string, JsonElement> rawData,
+        bool usageUnderMessage)
+    {
+        if (usageUnderMessage
+            && rawData.TryGetValue("message", out var message)
+            && message.ValueKind == JsonValueKind.Object)
+        {
+            return GetUsage(message);
+        }
+
+        return GetUsage(rawData);
+    }
+
+    private static ProviderUsageSnapshot GetUsage(JsonElement container)
+        => container.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object
+            ? ParseUsage(usage)
+            : default;
+
+    private static ProviderUsageSnapshot GetUsage(IReadOnlyDictionary<string, JsonElement> container)
+        => container.TryGetValue("usage", out var usage) && usage.ValueKind == JsonValueKind.Object
+            ? ParseUsage(usage)
+            : default;
+
+    private static ProviderUsageSnapshot ParseUsage(JsonElement usage)
+    {
+        var baseInput = GetInt64(usage, "input_tokens");
+        var cacheCreation = GetInt64(usage, "cache_creation_input_tokens");
+        var cacheRead = GetInt64(usage, "cache_read_input_tokens");
+        long? input = baseInput is not null || cacheCreation is not null || cacheRead is not null
+            ? (baseInput ?? 0) + (cacheCreation ?? 0) + (cacheRead ?? 0)
+            : null;
+        return new ProviderUsageSnapshot(
+            input,
+            GetInt64(usage, "output_tokens"),
+            CachedInputTokenCount: cacheRead);
+    }
+
+    private static long? GetInt64(JsonElement element, string propertyName)
+        => element.TryGetProperty(propertyName, out var value) && value.TryGetInt64(out var parsed)
+            ? parsed
+            : null;
 }
 
 internal sealed record AnthropicToolCall(string? Id, string? Name, object? Input);
 
 internal readonly record struct AnthropicStreamingContent(
-    string? ReasoningText,
-    string? Text,
-    string? StopReason,
-    bool IsTerminal);
+    string? ReasoningText = null,
+    string? Text = null,
+    string? StopReason = null,
+    bool IsTerminal = false,
+    ProviderUsageSnapshot Usage = default,
+    string? UnsupportedEventKind = null);

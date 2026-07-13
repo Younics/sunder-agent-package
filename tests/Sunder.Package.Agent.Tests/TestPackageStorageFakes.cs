@@ -3,7 +3,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Tests;
 
-internal class TestPackageWorkspaceLease(string rootPath) : IPackageLocalWorkspaceLease
+internal class TestPackageRoleLocalWorkspace(string rootPath) : IPackageRoleLocalWorkspace
 {
     public string WorkspaceRootPath { get; } = Path.GetFullPath(rootPath);
 
@@ -18,8 +18,6 @@ internal class TestPackageWorkspaceLease(string rootPath) : IPackageLocalWorkspa
 
         return path;
     }
-
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
 
 internal class TestPackageFileStoreBase(string rootPath) : IPackageFileStore
@@ -50,13 +48,22 @@ internal class TestPackageFileStoreBase(string rootPath) : IPackageFileStore
     }
 }
 
-internal class EmptyPackageConfiguration : IPackageConfiguration
+internal class EmptyPackageSettings : IPackageSettings
 {
     public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult<string?>(null);
     }
+
+    public Task<string?> GetStoredValueAsync(string key, CancellationToken cancellationToken = default)
+        => GetValueAsync(key, cancellationToken);
+
+    public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
 }
 
 internal class InMemoryPackageSecrets : IPackageSecrets

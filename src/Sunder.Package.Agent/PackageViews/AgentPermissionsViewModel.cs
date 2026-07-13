@@ -3,19 +3,30 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Services;
+using Sunder.Package.Agent.Runtime;
+using Avalonia.Threading;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-public sealed partial class AgentPermissionsViewModel : ObservableObject
+public sealed partial class AgentPermissionsViewModel : ObservableObject, IDisposable
 {
-    private readonly AgentPermissionService _permissionService;
+    private readonly IAgentPermissionGateway _permissionService;
+    private readonly IAgentRuntimeAvailability? _runtimeAvailability;
+    private readonly PresentationTaskScope _tasks = new();
+    private bool _disposed;
 
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } = [];
 
-    public AgentPermissionsViewModel(AgentPermissionService permissionService)
+    public AgentPermissionsViewModel(IAgentPermissionGateway permissionService)
     {
         _permissionService = permissionService;
-        Reload();
+        _runtimeAvailability = permissionService as IAgentRuntimeAvailability;
+        if (_runtimeAvailability is not null)
+        {
+            _runtimeAvailability.ConnectionStateChanged += OnRuntimeConnectionStateChanged;
+        }
+        TryReload();
     }
 
     public ObservableCollection<PermissionBoundaryRowViewModel> Rows { get; } = [];
@@ -75,6 +86,56 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject
                     boundary.DefaultDecision,
                     selected));
             }
+        }
+    }
+
+    private void TryReload()
+    {
+        try
+        {
+            Reload();
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Agent Runtime is unavailable: {ex.Message}";
+        }
+    }
+
+    private void OnRuntimeConnectionStateChanged(AgentRuntimeConnectionState state)
+        => _tasks.Run(async cancellationToken =>
+        {
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (_disposed || cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                if (state == AgentRuntimeConnectionState.Connected)
+                {
+                    TryReload();
+                    if (Rows.Count > 0)
+                    {
+                        StatusText = string.Empty;
+                    }
+                }
+                else if (state is AgentRuntimeConnectionState.Unavailable or AgentRuntimeConnectionState.Reconnecting)
+                {
+                    StatusText = "Agent Runtime is unavailable. Reconnecting...";
+                }
+            }, DispatcherPriority.Background);
+        });
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        _disposed = true;
+        _tasks.Dispose();
+        if (_runtimeAvailability is not null)
+        {
+            _runtimeAvailability.ConnectionStateChanged -= OnRuntimeConnectionStateChanged;
         }
     }
 }

@@ -9,7 +9,7 @@ namespace Sunder.Package.Agent.Services;
 public sealed class AgentWorkspaceStackContributor(
     AgentWorkspaceService workspaceService,
     IPackageContext packageContext,
-    IPackageExtensionCatalog? extensionCatalog = null) : IPackageStackContributor, IPackageStackImportAppliedHandler
+    IPackageExtensionCatalog extensionCatalog) : IPackageStackContributor, IPackageStackImportAppliedHandler
 {
     private const string PackageId = "sunder.package.agent";
     private const string SchemaId = "sunder.package.agent/workspace";
@@ -164,7 +164,10 @@ public sealed class AgentWorkspaceStackContributor(
             }
         }
 
-        return ValueTask.FromResult(new StackImportResult(errors.Count == 0, imported, idRemaps, warnings, errors));
+        var outcome = errors.Count == 0
+            ? StackImportOutcome.Completed
+            : imported.Count == 0 ? StackImportOutcome.Failed : StackImportOutcome.Partial;
+        return ValueTask.FromResult(new StackImportResult(outcome, imported, idRemaps, warnings, errors));
     }
 
     public ValueTask OnStackImportAppliedAsync(
@@ -186,22 +189,19 @@ public sealed class AgentWorkspaceStackContributor(
     private IReadOnlyList<StackPackageRequirement> BuildPackageRequirements(IReadOnlyList<AgentWorkspaceStackPayload> payloads)
     {
         var packageIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { PackageId };
-        if (extensionCatalog is not null)
+        var targetIds = payloads
+            .Select(payload => payload.PrimaryExecutionBinding?.ContributionId)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (targetIds.Count > 0)
         {
-            var targetIds = payloads
-                .Select(payload => payload.PrimaryExecutionBinding?.ContributionId)
-                .Where(value => !string.IsNullOrWhiteSpace(value))
-                .Select(value => value!)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (targetIds.Count > 0)
+            foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ExecutionTargets))
             {
-                foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ExecutionTargets))
+                var descriptor = contribution.Contribution.Descriptor;
+                if (targetIds.Contains(descriptor.TargetId) || targetIds.Contains(descriptor.TargetKind))
                 {
-                    var descriptor = contribution.Contribution.Descriptor;
-                    if (targetIds.Contains(descriptor.TargetId) || targetIds.Contains(descriptor.TargetKind))
-                    {
-                        AddPackageId(packageIds, contribution.PackageId);
-                    }
+                    AddPackageId(packageIds, contribution.PackageId);
                 }
             }
         }

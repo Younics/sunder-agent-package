@@ -1,0 +1,107 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0": {
+      "Avalonia": {
+        "type": "Direct",
+        "requested": "[12.0.3, )",
+        "resolved": "12.0.3",
+        "contentHash": "OVAzdZB5T/QIOEpw/WmQ0ZJM13BMmLO7RqR5z+lZtBMuStK63W68SV/Q+PNn/GdFEC3Ab8eQhH2FMb8FhNLK+w==",
+        "dependencies": {
+          "Avalonia.BuildServices": "11.3.2",
+          "Avalonia.Remote.Protocol": "12.0.3",
+          "MicroCom.Runtime": "0.11.4"
+        }
+      },
+      "CommunityToolkit.Mvvm": {
+        "type": "Direct",
+        "requested": "[8.4.2, )",
+        "resolved": "8.4.2",
+        "contentHash": "WadCzGEc2U+3e20avRLng4qNtt4zoOGWrdUISqJWrHe3/FSnrYjuM5Sb4yQb09LhkBXrrI4Zt3dLKgRMbItsrg=="
+      },
+      "Sunder.Package.Build": {
+        "type": "Direct",
+        "requested": "[1.1.0, )",
+        "resolved": "1.1.0",
+        "contentHash": "7xFF/CaxghNeAkTRr5vHBWJIn+YPcB4o5W1yNvxAGTFkKiesn/RmUQ70sQhA0a/r+qWi2kBTx2kswnI7VSpr0w=="
+      },
+      "Sunder.Sdk": {
+        "type": "Direct",
+        "requested": "[1.1.0, )",
+        "resolved": "1.1.0",
+        "contentHash": "l8wtwpQD0/G7tYhznF6sRv3iwl4hVWt/iVYmaUYsZjhYeyRWEJjB1dz5NRhgx4e31HvF6YuzP7hhY1IFidVKHQ==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.8"
+        }
+      },
+      "Sunder.Sdk.Avalonia": {
+        "type": "Direct",
+        "requested": "[1.1.0, )",
+        "resolved": "1.1.0",
+        "contentHash": "CTY0Ope+XXbu6WXQcyWLoJ8OSdMDmRl+/dTaWbutS5B3dh62D7iMDy3vaYww5hCkSjTMtPIDvUAWeGMJjsyQ0w==",
+        "dependencies": {
+          "Avalonia": "12.0.3",
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
+          "Sunder.Sdk": "1.1.0"
+        }
+      },
+      "Sunder.Sdk.Stacks": {
+        "type": "Direct",
+        "requested": "[1.1.0, )",
+        "resolved": "1.1.0",
+        "contentHash": "4eOSpVgAbm/9n4/O4yJqUFWkzE7tiNveDFPNuA0gXQT14g6Ev7W3UE+jt/T6wgc8o3UQvsb8sb3VoewP8gQ8IQ==",
+        "dependencies": {
+          "Sunder.Sdk": "1.1.0"
+        }
+      },
+      "Avalonia.BuildServices": {
+        "type": "Transitive",
+        "resolved": "11.3.2",
+        "contentHash": "qHDToxto1e3hci5YqbG9n0Ty8mlp3zBUN5wT66wKqaDVzXyQ0do3EnRILd4Ke9jpvsktaPpgE0YjEk7hornryQ=="
+      },
+      "Avalonia.Remote.Protocol": {
+        "type": "Transitive",
+        "resolved": "12.0.3",
+        "contentHash": "NHvbiGC461oB3DXt8qgLNN+QfcYARcSxY7diyic9R7u6jQA4bc+ZbjEQKX8y8WyF1vOssedRmuOeTvRXlXbF9Q=="
+      },
+      "MicroCom.Runtime": {
+        "type": "Transitive",
+        "resolved": "0.11.4",
+        "contentHash": "yZ8+Lgwo+KtRI29TB2mIOEMzV+csMJ+pKZg4YHReAP3vRewWLKKeYfrBDo5FS69rWnEbCfU3sbM+ZEQr+GDLtg=="
+      },
+      "Microsoft.Extensions.DependencyInjection.Abstractions": {
+        "type": "Transitive",
+        "resolved": "10.0.8",
+        "contentHash": "21nbDV60SRPWGIivsyl6lqBeEJNG1sginhhfWgRrr3Ais7aQ12To25OAHQxgoiJkjqy1aQ6RxpZBGYuTi7Ge6A=="
+      },
+      "Microsoft.Extensions.Logging.Abstractions": {
+        "type": "Transitive",
+        "resolved": "10.0.8",
+        "contentHash": "fdVadZmsC8jRP0KvKy8mO8f6GV/HyBvElfcSxEhd+5FM5boAw/01iSaCto5G3G37ApJira4A3pNaVvBv8cUiLQ==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8"
+        }
+      },
+      "sunder.agent.execution.common": {
+        "type": "Project",
+        "dependencies": {
+          "Sunder.Package.Agent.Contracts": "[1.1.0, )"
+        }
+      },
+      "sunder.package.agent.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Extensions.AI.Abstractions": "[10.5.2, )",
+          "Sunder.Sdk": "[1.1.0, )"
+        }
+      },
+      "Microsoft.Extensions.AI.Abstractions": {
+        "type": "CentralTransitive",
+        "requested": "[10.5.2, )",
+        "resolved": "10.5.2",
+        "contentHash": "Ei+YWV9Ybnps7pR1dgjlG29gelXEwZkhLVAcWmKe6HvXS6LNBYgSdWiY3Hk9OZXYtK34rv/NtLWBQYQGOBQYPQ=="
+      }
+    }
+  }
+}

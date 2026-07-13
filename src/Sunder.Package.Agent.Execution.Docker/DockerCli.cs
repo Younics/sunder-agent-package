@@ -64,8 +64,7 @@ internal static class DockerCli
         IPackageContext packageContext,
         CancellationToken cancellationToken = default)
         => ResolveExecutable(
-            await packageContext.Storage.State.GetValueAsync(ExecutablePathConfigurationKey, cancellationToken)
-            ?? await packageContext.Configuration.GetValueAsync(ExecutablePathConfigurationKey, cancellationToken),
+            await packageContext.Settings.GetValueAsync(ExecutablePathConfigurationKey, cancellationToken),
             Environment.GetEnvironmentVariable(ExecutablePathEnvironmentVariable),
             Environment.GetEnvironmentVariable(PathEnvironmentVariable),
             OperatingSystem.IsWindows() ? WindowsFallbackPaths : UnixFallbackPaths,

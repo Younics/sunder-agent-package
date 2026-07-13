@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Runtime;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -7,7 +8,7 @@ public sealed class AgentRunCoordinator(
     AgentUserMessageRunCoordinator userMessageRunCoordinator,
     AgentRunStopCoordinator stopCoordinator,
     AgentChildRunSessionService childRunSessionService,
-    AgentPermissionResumeCoordinator permissionResumeCoordinator) : IAgentChildRunExecutor
+    AgentPermissionResumeCoordinator permissionResumeCoordinator) : IAgentChildRunExecutor, IAgentRunGateway
 {
     private readonly AgentUserMessageRunCoordinator _userMessageRunCoordinator = userMessageRunCoordinator;
     private readonly AgentRunStopCoordinator _stopCoordinator = stopCoordinator;
@@ -76,7 +77,20 @@ public sealed class AgentRunCoordinator(
         string userMessage,
         string workspaceId,
         IReadOnlyList<AgentAttachmentUploadRequest> attachments)
+        => await RollbackAndQueueUserMessageAsync(
+            sessionId, rollbackAnchorTurnId, profileId, userMessage, workspaceId, attachments,
+            CancellationToken.None).ConfigureAwait(false);
+
+    public async Task<AgentRunCheckpointRecord> RollbackAndQueueUserMessageAsync(
+        Guid sessionId,
+        Guid rollbackAnchorTurnId,
+        string profileId,
+        string userMessage,
+        string workspaceId,
+        IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         await StopAsync(sessionId).ConfigureAwait(false);
         return await _userMessageRunCoordinator.QueueAsync(
             sessionId,
@@ -84,15 +98,36 @@ public sealed class AgentRunCoordinator(
             userMessage,
             workspaceId,
             attachments,
-            rollbackAnchorTurnId).ConfigureAwait(false);
+            rollbackAnchorTurnId,
+            cancellationToken).ConfigureAwait(false);
     }
 
     public Task<AgentRunCheckpointRecord?> StopAsync(Guid sessionId)
         => _stopCoordinator.StopAsync(sessionId);
 
+    Task<AgentRunCheckpointRecord?> IAgentRunGateway.StopAsync(Guid sessionId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return StopAsync(sessionId);
+    }
+
     public Task<AgentRunCheckpointRecord?> ApprovePendingPermissionAsync(Guid sessionId, string requestId)
         => _permissionResumeCoordinator.ApproveAsync(sessionId, requestId);
 
+    Task<AgentRunCheckpointRecord?> IAgentRunGateway.ApprovePendingPermissionAsync(
+        Guid sessionId, string requestId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ApprovePendingPermissionAsync(sessionId, requestId);
+    }
+
     public Task<AgentRunCheckpointRecord?> DenyPendingPermissionAsync(Guid sessionId, string requestId)
         => _permissionResumeCoordinator.DenyAsync(sessionId, requestId);
+
+    Task<AgentRunCheckpointRecord?> IAgentRunGateway.DenyPendingPermissionAsync(
+        Guid sessionId, string requestId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return DenyPendingPermissionAsync(sessionId, requestId);
+    }
 }

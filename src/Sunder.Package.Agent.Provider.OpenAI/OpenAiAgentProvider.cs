@@ -6,6 +6,7 @@ using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Logging;
 
 #pragma warning disable OPENAI001
 
@@ -31,27 +32,27 @@ public sealed class OpenAiAgentProvider(
         PackageId = packageContext.PackageId
     };
 
-    public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(OpenAiModelCatalog.Models);
+        var authMode = await OpenAiAuthMode.GetSelectedAsync(_packageContext.Settings, cancellationToken);
+        return string.Equals(authMode, OpenAiAuthMode.CodexConnected, StringComparison.OrdinalIgnoreCase)
+            ? OpenAiModelCatalog.CodexModels
+            : OpenAiModelCatalog.Models;
     }
 
     public async ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return UtilityModelSettingsState.ResolveModelId(
-            OpenAiSettingsViewModel.NormalizeLegacyUtilityModelId(
-                await _packageContext.Configuration.GetValueAsync(OpenAiProviderConfiguration.UtilityModelKey, cancellationToken)),
-            OpenAiProviderConfiguration.DefaultUtilityModelId,
-            OpenAiProviderConfiguration.UtilityModelOptions.Select(option => option.Value));
+        return await OpenAiProviderConfiguration.UtilityModelSelection
+            .ResolveAsync(_packageContext.Settings, cancellationToken);
     }
 
     public async ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var authMode = await OpenAiAuthMode.GetSelectedAsync(_packageContext.Configuration, cancellationToken);
+        var authMode = await OpenAiAuthMode.GetSelectedAsync(_packageContext.Settings, cancellationToken);
         if (authMode == OpenAiAuthMode.ApiKey)
         {
             return !string.IsNullOrWhiteSpace(await apiKeyAuthStrategy.GetApiKeyAsync(cancellationToken))
@@ -92,7 +93,7 @@ public sealed class OpenAiAgentProvider(
     public async ValueTask<IChatClient> CreateChatClientAsync(AgentChatClientContext context, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var authMode = await OpenAiAuthMode.GetSelectedAsync(_packageContext.Configuration, cancellationToken);
+        var authMode = await OpenAiAuthMode.GetSelectedAsync(_packageContext.Settings, cancellationToken);
 
         if (authMode == OpenAiAuthMode.ApiKey)
         {
@@ -106,7 +107,7 @@ public sealed class OpenAiAgentProvider(
             }
 
             await context.LogProviderEventAsync(
-                AgentLogLevel.Information,
+                PackageLogLevel.Information,
                 "openai.auth.mode.selected",
                 "OpenAI auth mode selected.",
                 attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -115,7 +116,7 @@ public sealed class OpenAiAgentProvider(
                 },
                 cancellationToken: cancellationToken);
             await context.LogProviderEventAsync(
-                AgentLogLevel.Information,
+                PackageLogLevel.Information,
                 "openai.transport.selected",
                 "OpenAI transport selected.",
                 attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -137,7 +138,7 @@ public sealed class OpenAiAgentProvider(
         }
 
         await context.LogProviderEventAsync(
-            AgentLogLevel.Information,
+            PackageLogLevel.Information,
             "openai.auth.mode.selected",
             "OpenAI auth mode selected.",
             attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -146,7 +147,7 @@ public sealed class OpenAiAgentProvider(
             },
             cancellationToken: cancellationToken);
         await context.LogProviderEventAsync(
-            AgentLogLevel.Information,
+            PackageLogLevel.Information,
             "openai.transport.selected",
             "OpenAI transport selected.",
             attributes: new Dictionary<string, object?>(StringComparer.Ordinal)

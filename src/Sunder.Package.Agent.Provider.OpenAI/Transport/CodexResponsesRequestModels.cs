@@ -16,7 +16,28 @@ internal sealed record CodexNormalizedResponsesRequest(
     int? MaxOutputTokens,
     CodexReasoningOptions? Reasoning,
     CodexTextOptions? Text,
-    bool UsesDeveloperInstructionInput);
+    bool UsesDeveloperInstructionInput,
+    bool UsesResponsesLite);
+
+internal sealed record CodexAdditionalToolsInput(
+    [property: JsonPropertyName("tools")] IReadOnlyList<object> Tools)
+{
+    [JsonPropertyName("type")]
+    public string Type { get; } = "additional_tools";
+
+    [JsonPropertyName("role")]
+    public string Role { get; } = "developer";
+}
+
+internal sealed record CodexDeveloperMessageInput(
+    [property: JsonPropertyName("content")] IReadOnlyList<CodexTextPart> Content)
+{
+    [JsonPropertyName("type")]
+    public string Type { get; } = "message";
+
+    [JsonPropertyName("role")]
+    public string Role { get; } = "developer";
+}
 
 internal sealed record CodexInstructionInput(
     [property: JsonPropertyName("role")] string Role,
@@ -92,7 +113,8 @@ internal sealed record CodexRequiredFunctionToolChoice(
 internal sealed record CodexReasoningOptions(
     [property: JsonPropertyName("effort")] string? Effort,
     [property: JsonPropertyName("summary")] string? Summary,
-    [property: JsonPropertyName("mode")] string? Mode);
+    [property: JsonPropertyName("mode")] string? Mode,
+    [property: JsonPropertyName("context")] string? Context = null);
 
 internal sealed record CodexTextOptions(
     [property: JsonPropertyName("verbosity")] string Verbosity);

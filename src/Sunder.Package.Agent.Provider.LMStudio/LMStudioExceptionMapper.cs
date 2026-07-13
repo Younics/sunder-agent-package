@@ -53,7 +53,4 @@ internal static class LMStudioExceptionMapper
             "lmstudio-timeout",
             exception);
 
-    public static bool ContainsCancellation(Exception exception)
-        => exception is OperationCanceledException or TimeoutException
-           || exception.InnerException is not null && ContainsCancellation(exception.InnerException);
 }

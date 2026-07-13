@@ -1,20 +1,18 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
 public sealed partial class LocalExecutionSettingsViewModel : ObservableObject
 {
-    private readonly LocalShellCatalogService _shellCatalogService;
-    private readonly IPackageContext _packageContext;
+    private readonly LocalExecutionAppRuntimeClient _runtimeClient;
 
-    public LocalExecutionSettingsViewModel(LocalShellCatalogService shellCatalogService, IPackageContext packageContext)
+    internal LocalExecutionSettingsViewModel(LocalExecutionAppRuntimeClient runtimeClient)
     {
-        _shellCatalogService = shellCatalogService;
-        _packageContext = packageContext;
+        _runtimeClient = runtimeClient;
         SyntaxOptions =
         [
             new ShellSyntaxOption(AgentShellSyntaxKinds.PowerShell, "PowerShell"),
@@ -27,9 +25,6 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        TimeoutSeconds = await _packageContext.Storage.State.GetValueAsync(LocalExecutionConfiguration.TimeoutKey, cancellationToken)
-            ?? await _packageContext.Configuration.GetValueAsync(LocalExecutionConfiguration.TimeoutKey, cancellationToken)
-            ?? LocalExecutionConfiguration.DefaultTimeoutSeconds;
         await ReloadAsync(cancellationToken);
     }
 
@@ -87,12 +82,7 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject
                 continue;
             }
 
-            var path = Environment.ExpandEnvironmentVariables(shell.ExecutablePath.Trim());
-            if (!File.Exists(path))
-            {
-                StatusText = $"Shell executable does not exist: {path}";
-                return;
-            }
+            var path = shell.ExecutablePath.Trim();
 
             shells.Add(new LocalShellDefinition(
                 shell.ShellId,
@@ -102,25 +92,45 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject
                 IsDetected: false));
         }
 
-        await _shellCatalogService.SaveCustomShellsAsync(shells);
-        await ReloadAsync();
-        StatusText = "Shell settings saved.";
+        try
+        {
+            var response = await _runtimeClient.InvokeAsync(new LocalExecutionOperationRequest(
+                LocalExecutionOperationKind.SaveShells,
+                Shells: shells));
+            ApplyShells(response.Shells ?? []);
+            StatusText = response.Message ?? "Shell settings saved.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            StatusText = ex.Message;
+        }
     }
 
     [RelayCommand]
-    private async Task SaveExecutionSettingsAsync()
+    private async Task SaveExecutionSettingsAsync(CancellationToken cancellationToken)
     {
-        if (!int.TryParse(TimeoutSeconds, out var timeoutSeconds) || timeoutSeconds <= 0)
+        if (!BoundedValue.TryParseInt32(
+                TimeoutSeconds,
+                minimum: 1,
+                maximum: BoundedProcessRunner.MaximumTimeoutSeconds,
+                out var timeoutSeconds))
         {
-            StatusText = "Local shell timeout must be a positive number of seconds.";
+            StatusText = $"Local shell timeout must be between 1 and {BoundedProcessRunner.MaximumTimeoutSeconds} seconds.";
             return;
         }
 
-        await _packageContext.Storage.State.SetValueAsync(
-            LocalExecutionConfiguration.TimeoutKey,
-            timeoutSeconds.ToString());
-        TimeoutSeconds = timeoutSeconds.ToString();
-        StatusText = "Local execution settings saved.";
+        try
+        {
+            var response = await _runtimeClient.InvokeAsync(new LocalExecutionOperationRequest(
+                LocalExecutionOperationKind.SaveSettings,
+                TimeoutSeconds: timeoutSeconds.ToString()), cancellationToken);
+            TimeoutSeconds = response.TimeoutSeconds ?? timeoutSeconds.ToString();
+            StatusText = response.Message ?? "Local execution settings saved.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            StatusText = ex.Message;
+        }
     }
 
     private bool CanDeleteSelectedShell()
@@ -131,9 +141,18 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject
 
     private async Task ReloadAsync(CancellationToken cancellationToken = default)
     {
+        var response = await _runtimeClient.InvokeAsync(
+            new LocalExecutionOperationRequest(LocalExecutionOperationKind.GetSettings),
+            cancellationToken);
+        TimeoutSeconds = response.TimeoutSeconds ?? LocalExecutionConfiguration.DefaultTimeoutSeconds;
+        ApplyShells(response.Shells ?? []);
+    }
+
+    private void ApplyShells(IReadOnlyList<LocalShellDefinition> shells)
+    {
         Shells.Clear();
 
-        foreach (var shell in await _shellCatalogService.ListShellsAsync(cancellationToken))
+        foreach (var shell in shells)
         {
             Shells.Add(CreateRow(shell));
         }
@@ -157,7 +176,7 @@ public sealed partial class LocalShellRowViewModel : ObservableObject
     {
         ShellId = shellId;
         _displayName = displayName;
-        _executablePath = executablePath;
+        ExecutablePath = executablePath;
         IsDetected = isDetected;
         SyntaxOptions = syntaxOptions;
         _selectedSyntax = SyntaxOptions.FirstOrDefault(option => string.Equals(option.SyntaxKind, syntaxKind, StringComparison.OrdinalIgnoreCase))
@@ -175,8 +194,24 @@ public sealed partial class LocalShellRowViewModel : ObservableObject
     [ObservableProperty]
     private string _displayName;
 
-    [ObservableProperty]
-    private string _executablePath;
+    private string _executablePath = string.Empty;
+
+    public string ExecutablePath
+    {
+        get => _executablePath;
+        private set => SetProperty(ref _executablePath, value);
+    }
+
+    internal bool ApplySelectedExecutablePath(string path)
+    {
+        if (path.Length is 0 or > 1024 || !Path.IsPathFullyQualified(path))
+        {
+            return false;
+        }
+
+        ExecutablePath = path;
+        return true;
+    }
 
     [ObservableProperty]
     private ShellSyntaxOption? _selectedSyntax;

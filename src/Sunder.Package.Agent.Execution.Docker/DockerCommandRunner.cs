@@ -1,3 +1,4 @@
+using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 
@@ -48,9 +49,11 @@ internal sealed class DockerCommandRunner(IPackageContext packageContext, Docker
         => await dockerCliRunner.RunAsync(args, timeoutSeconds, cancellationToken, standardInput).ConfigureAwait(false);
 
     public async Task<int> ResolveDefaultTimeoutSecondsAsync(CancellationToken cancellationToken = default)
-        => int.TryParse(await packageContext.Configuration.GetValueAsync("docker.timeoutSeconds.default", cancellationToken), out var parsed) && parsed > 0
-            ? parsed
-            : DefaultTimeoutSeconds;
+        => BoundedValue.ParseInt32(
+            await packageContext.Settings.GetValueAsync(DockerExecutionConfiguration.TimeoutKey, cancellationToken),
+            DefaultTimeoutSeconds,
+            minimum: 1,
+            maximum: BoundedProcessRunner.MaximumTimeoutSeconds);
 
     public static AgentExecutionShellDescriptor GetShellDescriptor(DockerExecutionWorkspaceConfig config)
     {

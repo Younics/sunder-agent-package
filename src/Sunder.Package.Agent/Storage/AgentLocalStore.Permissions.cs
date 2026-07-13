@@ -6,7 +6,7 @@ namespace Sunder.Package.Agent.Storage;
 
 public sealed partial class AgentLocalStore
 {
-    private const string PendingPermissionColumns = "RequestId, SessionId, RunId, RunRevision, ProfileId, UserTurnId, UserMessage, CallId, ActionId, BoundaryId, Summary, ToolId, ArgumentsJson, Command, Path, WorkspaceId, BindingId, ResourceDisplayName, ResourceReference, IsMutation, CreatedAtUtc, ParentSessionId, RootSessionId, Status, ClaimToken, ClaimedAtUtc, DecidedAtUtc, DecisionSummary, ExecutionFingerprint, ContinuationToken, ClaimLeaseExpiresAtUtc, ContinuationConsumedAtUtc, ExecutionStartedAtUtc";
+    private const string PendingPermissionColumns = "RequestId, SessionId, RunId, RunRevision, ProfileId, UserTurnId, UserMessage, CallId, ActionId, BoundaryId, Summary, ToolId, ArgumentsJson, Command, Path, WorkspaceId, BindingId, ResourceDisplayName, ResourceReference, IsMutation, CreatedAtUtc, ParentSessionId, RootSessionId, Status, ClaimToken, ClaimedAtUtc, DecidedAtUtc, DecisionSummary, ExecutionFingerprint, ContinuationToken, ClaimLeaseExpiresAtUtc, ContinuationConsumedAtUtc, ExecutionStartedAtUtc, ExecutionSnapshotJson";
 
     private static readonly TimeSpan PermissionClaimLeaseDuration = TimeSpan.FromMinutes(5);
 
@@ -140,8 +140,8 @@ public sealed partial class AgentLocalStore
 
         using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT OR IGNORE INTO AgentPendingPermissionRequests (RequestId, SessionId, RunId, RunRevision, ProfileId, UserTurnId, UserMessage, CallId, ActionId, BoundaryId, Summary, ToolId, ArgumentsJson, Command, Path, WorkspaceId, BindingId, ResourceDisplayName, ResourceReference, IsMutation, CreatedAtUtc, ParentSessionId, RootSessionId, Status, ClaimToken, ClaimedAtUtc, DecidedAtUtc, DecisionSummary, ExecutionFingerprint, ContinuationToken, ClaimLeaseExpiresAtUtc, ContinuationConsumedAtUtc, ExecutionStartedAtUtc)
-            VALUES ($requestId, $sessionId, $runId, $runRevision, $profileId, $userTurnId, $userMessage, $callId, $actionId, $boundaryId, $summary, $toolId, $argumentsJson, $command, $path, $workspaceId, $bindingId, $resourceDisplayName, $resourceReference, $isMutation, $createdAtUtc, $parentSessionId, $rootSessionId, $status, $claimToken, $claimedAtUtc, $decidedAtUtc, $decisionSummary, $executionFingerprint, $continuationToken, $claimLeaseExpiresAtUtc, $continuationConsumedAtUtc, $executionStartedAtUtc);
+            INSERT OR IGNORE INTO AgentPendingPermissionRequests (RequestId, SessionId, RunId, RunRevision, ProfileId, UserTurnId, UserMessage, CallId, ActionId, BoundaryId, Summary, ToolId, ArgumentsJson, Command, Path, WorkspaceId, BindingId, ResourceDisplayName, ResourceReference, IsMutation, CreatedAtUtc, ParentSessionId, RootSessionId, Status, ClaimToken, ClaimedAtUtc, DecidedAtUtc, DecisionSummary, ExecutionFingerprint, ContinuationToken, ClaimLeaseExpiresAtUtc, ContinuationConsumedAtUtc, ExecutionStartedAtUtc, ExecutionSnapshotJson)
+            VALUES ($requestId, $sessionId, $runId, $runRevision, $profileId, $userTurnId, $userMessage, $callId, $actionId, $boundaryId, $summary, $toolId, $argumentsJson, $command, $path, $workspaceId, $bindingId, $resourceDisplayName, $resourceReference, $isMutation, $createdAtUtc, $parentSessionId, $rootSessionId, $status, $claimToken, $claimedAtUtc, $decidedAtUtc, $decisionSummary, $executionFingerprint, $continuationToken, $claimLeaseExpiresAtUtc, $continuationConsumedAtUtc, $executionStartedAtUtc, $executionSnapshotJson);
             """;
         command.Parameters.AddWithValue("$requestId", record.RequestId);
         command.Parameters.AddWithValue("$sessionId", record.SessionId.ToString());
@@ -176,6 +176,7 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$claimLeaseExpiresAtUtc", record.ClaimLeaseExpiresAtUtc?.ToString("O") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$continuationConsumedAtUtc", record.ContinuationConsumedAtUtc?.ToString("O") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$executionStartedAtUtc", record.ExecutionStartedAtUtc?.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$executionSnapshotJson", record.ExecutionSnapshotJson);
         if (command.ExecuteNonQuery() != 0)
         {
             return record;
@@ -230,14 +231,16 @@ public sealed partial class AgentLocalStore
                 WorkspaceId, BindingId, ResourceDisplayName, ResourceReference, IsMutation,
                 CreatedAtUtc, ParentSessionId, RootSessionId, Status, ClaimToken, ClaimedAtUtc,
                 DecidedAtUtc, DecisionSummary, ExecutionFingerprint, ContinuationToken,
-                ClaimLeaseExpiresAtUtc, ContinuationConsumedAtUtc, ExecutionStartedAtUtc)
+                ClaimLeaseExpiresAtUtc, ContinuationConsumedAtUtc, ExecutionStartedAtUtc,
+                ExecutionSnapshotJson)
             VALUES (
                 $requestId, $sessionId, $runId, $runRevision, $profileId, $userTurnId,
                 $userMessage, $callId, $actionId, $boundaryId, $summary, $toolId,
                 $argumentsJson, $command, $path, $workspaceId, $bindingId,
                 $resourceDisplayName, $resourceReference, $isMutation, $createdAtUtc,
                 $parentSessionId, $rootSessionId, $status, NULL, NULL, NULL, NULL,
-                $executionFingerprint, $continuationToken, NULL, NULL, NULL);
+                $executionFingerprint, $continuationToken, NULL, NULL, NULL,
+                $executionSnapshotJson);
             """;
         AddPendingPermissionParameters(command, persisted);
         if (command.ExecuteNonQuery() != 1)
@@ -708,141 +711,6 @@ public sealed partial class AgentLocalStore
                 AgentPendingPermissionDecisionOutcome.AlreadyDecided,
                 existing),
         };
-    }
-
-    private static AgentPendingPermissionRequestRecord? GetPermissionRequest(
-        SqliteConnection connection,
-        Guid sessionId,
-        string requestId,
-        SqliteTransaction? transaction = null)
-    {
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = $"SELECT {PendingPermissionColumns} FROM AgentPendingPermissionRequests WHERE SessionId = $sessionId AND RequestId = $requestId;";
-        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
-        command.Parameters.AddWithValue("$requestId", requestId);
-        using var reader = command.ExecuteReader();
-        return reader.Read() ? ReadPendingPermissionRequest(reader) : null;
-    }
-
-    private static AgentPendingPermissionRequestRecord ReadPendingPermissionRequest(SqliteDataReader reader)
-        => new(
-            reader.GetString(0),
-            Guid.Parse(reader.GetString(1)),
-            Guid.Parse(reader.GetString(2)),
-            reader.GetInt64(3),
-            reader.IsDBNull(4) ? null : reader.GetString(4),
-            Guid.Parse(reader.GetString(5)),
-            reader.GetString(6),
-            reader.GetString(7),
-            reader.GetString(8),
-            reader.GetString(9),
-            reader.GetString(10),
-            reader.IsDBNull(11) ? null : reader.GetString(11),
-            reader.GetString(12),
-            reader.IsDBNull(13) ? null : reader.GetString(13),
-            reader.IsDBNull(14) ? null : reader.GetString(14),
-            reader.IsDBNull(15) ? null : reader.GetString(15),
-            reader.IsDBNull(16) ? null : reader.GetString(16),
-            reader.IsDBNull(17) ? null : reader.GetString(17),
-            reader.IsDBNull(18) ? null : reader.GetString(18),
-            reader.GetInt64(19) != 0,
-            DateTimeOffset.Parse(reader.GetString(20)),
-            reader.IsDBNull(21) ? null : Guid.Parse(reader.GetString(21)),
-            reader.IsDBNull(22) ? null : Guid.Parse(reader.GetString(22)),
-            Enum.Parse<AgentPendingPermissionStatus>(reader.GetString(23), ignoreCase: true),
-            reader.IsDBNull(24) ? null : reader.GetString(24),
-            reader.IsDBNull(25) ? null : DateTimeOffset.Parse(reader.GetString(25)),
-            reader.IsDBNull(26) ? null : DateTimeOffset.Parse(reader.GetString(26)),
-            reader.IsDBNull(27) ? null : reader.GetString(27),
-            reader.GetString(28),
-            reader.IsDBNull(29) ? null : reader.GetString(29),
-            reader.IsDBNull(30) ? null : DateTimeOffset.Parse(reader.GetString(30)),
-            reader.IsDBNull(31) ? null : DateTimeOffset.Parse(reader.GetString(31)),
-            reader.IsDBNull(32) ? null : DateTimeOffset.Parse(reader.GetString(32)));
-
-    private static void AddPendingPermissionParameters(
-        SqliteCommand command,
-        AgentPendingPermissionRequestRecord record)
-    {
-        command.Parameters.AddWithValue("$requestId", record.RequestId);
-        command.Parameters.AddWithValue("$sessionId", record.SessionId.ToString());
-        command.Parameters.AddWithValue("$runId", record.RunId.ToString());
-        command.Parameters.AddWithValue("$runRevision", record.RunRevision);
-        command.Parameters.AddWithValue("$profileId", (object?)record.ProfileId ?? DBNull.Value);
-        command.Parameters.AddWithValue("$userTurnId", record.UserTurnId.ToString());
-        command.Parameters.AddWithValue("$userMessage", record.UserMessage);
-        command.Parameters.AddWithValue("$callId", record.CallId);
-        command.Parameters.AddWithValue("$actionId", record.ActionId);
-        command.Parameters.AddWithValue("$boundaryId", record.BoundaryId);
-        command.Parameters.AddWithValue("$summary", record.Summary);
-        command.Parameters.AddWithValue("$toolId", (object?)record.ToolId ?? DBNull.Value);
-        command.Parameters.AddWithValue("$argumentsJson", record.ArgumentsJson);
-        command.Parameters.AddWithValue("$command", (object?)record.Command ?? DBNull.Value);
-        command.Parameters.AddWithValue("$path", (object?)record.Path ?? DBNull.Value);
-        command.Parameters.AddWithValue("$workspaceId", (object?)record.WorkspaceId ?? DBNull.Value);
-        command.Parameters.AddWithValue("$bindingId", (object?)record.BindingId ?? DBNull.Value);
-        command.Parameters.AddWithValue("$resourceDisplayName", (object?)record.ResourceDisplayName ?? DBNull.Value);
-        command.Parameters.AddWithValue("$resourceReference", (object?)record.ResourceReference ?? DBNull.Value);
-        command.Parameters.AddWithValue("$isMutation", record.IsMutation ? 1 : 0);
-        command.Parameters.AddWithValue("$createdAtUtc", record.CreatedAtUtc.ToString("O"));
-        command.Parameters.AddWithValue("$parentSessionId", record.ParentSessionId?.ToString() ?? (object)DBNull.Value);
-        command.Parameters.AddWithValue("$rootSessionId", record.RootSessionId?.ToString() ?? (object)DBNull.Value);
-        command.Parameters.AddWithValue("$status", record.Status.ToString());
-        command.Parameters.AddWithValue("$executionFingerprint", record.ExecutionFingerprint);
-        command.Parameters.AddWithValue("$continuationToken", (object?)record.ContinuationToken ?? DBNull.Value);
-        command.Parameters.AddWithValue("$claimLeaseExpiresAtUtc", record.ClaimLeaseExpiresAtUtc?.ToString("O") ?? (object)DBNull.Value);
-        command.Parameters.AddWithValue("$continuationConsumedAtUtc", record.ContinuationConsumedAtUtc?.ToString("O") ?? (object)DBNull.Value);
-        command.Parameters.AddWithValue("$executionStartedAtUtc", record.ExecutionStartedAtUtc?.ToString("O") ?? (object)DBNull.Value);
-    }
-
-    private static bool TryFinalizePermissionRun(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        AgentPendingPermissionRequestRecord request,
-        AgentRunStatus runStatus,
-        string summary,
-        DateTimeOffset now)
-    {
-        _ = summary;
-        var run = GetRun(connection, transaction, request.RunId);
-        if (run?.Key != new AgentDurableRunKey(
-                request.RunId,
-                request.SessionId,
-                request.RunRevision))
-        {
-            return false;
-        }
-
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            UPDATE AgentRuns
-            SET Epoch = Epoch + 1,
-                Status = $status,
-                UpdatedAtUtc = $updatedAtUtc,
-                FinishedAtUtc = $finishedAtUtc,
-                SuspensionKind = NULL,
-                ContinuationToken = NULL,
-                SuspensionDataJson = NULL
-            WHERE RunId = $runId
-              AND SessionId = $sessionId
-              AND RunRevision = $runRevision
-              AND Epoch = $expectedEpoch
-              AND Status = 'WaitingForApproval'
-              AND FinishedAtUtc IS NULL
-              AND SuspensionKind = 'Permission'
-              AND ContinuationToken = $continuationToken;
-            """;
-        command.Parameters.AddWithValue("$status", runStatus.ToString());
-        command.Parameters.AddWithValue("$updatedAtUtc", now.ToString("O"));
-        command.Parameters.AddWithValue("$finishedAtUtc", now.ToString("O"));
-        command.Parameters.AddWithValue("$runId", request.RunId.ToString());
-        command.Parameters.AddWithValue("$sessionId", request.SessionId.ToString());
-        command.Parameters.AddWithValue("$runRevision", request.RunRevision);
-        command.Parameters.AddWithValue("$expectedEpoch", run.Epoch);
-        command.Parameters.AddWithValue("$continuationToken", request.ContinuationToken!);
-        return command.ExecuteNonQuery() == 1;
     }
 
 }

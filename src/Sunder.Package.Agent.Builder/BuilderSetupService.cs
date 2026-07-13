@@ -1,3 +1,5 @@
+using Sunder.Sdk.Packaging;
+
 namespace Sunder.Package.Agent.Builder;
 
 public sealed class BuilderSetupService
@@ -65,7 +67,9 @@ public sealed class BuilderSetupService
                 .Where(version => !string.IsNullOrWhiteSpace(version))
                 .Select(version => version!)
                 .ToArray();
-            var hasRequiredSdk = installedVersions.Any(version => int.TryParse(version.Split('.')[0], out var major) && major >= RequiredSdkMajorVersion);
+            var minimumVersion = SemanticVersion.Parse($"{RequiredSdkMajorVersion}.0.0");
+            var hasRequiredSdk = installedVersions.Any(version =>
+                SemanticVersion.TryParse(version, out var parsedVersion) && parsedVersion >= minimumVersion);
             return hasRequiredSdk
                 ? new BuilderPrerequisiteStatus(BuilderPrerequisiteKind.DotnetSdk, ".NET SDK", true, $"Detected SDK(s): {string.Join(", ", installedVersions)}")
                 : new BuilderPrerequisiteStatus(BuilderPrerequisiteKind.DotnetSdk, ".NET SDK", false, $"Requires .NET SDK {RequiredSdkMajorVersion}.0 or newer. Detected: {string.Join(", ", installedVersions)}");

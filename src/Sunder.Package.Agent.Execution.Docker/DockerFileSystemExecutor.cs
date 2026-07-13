@@ -1,4 +1,5 @@
 using System.Globalization;
+using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Execution.Docker;
@@ -38,7 +39,7 @@ internal sealed class DockerFileSystemExecutor(IDockerCommandExecutor commandRun
         bool allowOutsideConfiguredScope,
         CancellationToken cancellationToken)
     {
-        if (!TryValidateRange(request, out var rangeError))
+        if (!FileOperation.TryValidateRange(request.Offset, request.Limit, out var rangeError))
         {
             return AgentFileReadResult.Failure(request.Path, AgentFileReadErrorCodes.InvalidRange, rangeError!);
         }
@@ -57,7 +58,7 @@ internal sealed class DockerFileSystemExecutor(IDockerCommandExecutor commandRun
                 path!,
                 ranged,
                 request.Offset ?? 1,
-                request.Limit ?? 2000,
+                request.Limit ?? FileOperation.DefaultReadLimit,
                 option: false,
                 redirectStandardInput: false,
                 expectedContentHash: null),
@@ -138,11 +139,11 @@ internal sealed class DockerFileSystemExecutor(IDockerCommandExecutor commandRun
         }
         catch (InvalidOperationException ex)
         {
-            return new AgentFileMutationResult(request.Path, ex.Message, IsError: true, ErrorCode: AgentFileReadErrorCodes.OutsideConfiguredScope);
+            return FileOperation.Failure(request.Path, ex.Message, AgentFileReadErrorCodes.OutsideConfiguredScope);
         }
 
         var result = await commandRunner.RunAsync(
-            BuildArguments(config, containerName, "write", path, ranged: false, 1, 2000, request.Overwrite, redirectStandardInput: true, request.ExpectedContentHash),
+            BuildArguments(config, containerName, "write", path, ranged: false, 1, FileOperation.DefaultReadLimit, request.Overwrite, redirectStandardInput: true, request.ExpectedContentHash),
             await commandRunner.ResolveDefaultTimeoutSecondsAsync(cancellationToken),
             cancellationToken,
             request.Content);
@@ -150,7 +151,7 @@ internal sealed class DockerFileSystemExecutor(IDockerCommandExecutor commandRun
         {
             if (fields[1] == "ok" && fields.ElementAtOrDefault(2) == "file-written" && result.ExitCode == 0)
             {
-                return new AgentFileMutationResult(path, $"Wrote {request.Content.Length} character(s).");
+                return FileOperation.Written(path, request.Content.Length);
             }
 
             if (fields[1] == "error")
@@ -158,19 +159,19 @@ internal sealed class DockerFileSystemExecutor(IDockerCommandExecutor commandRun
                 var errorCode = fields.ElementAtOrDefault(2) ?? "docker-write-failed";
                 var message = errorCode switch
                 {
-                    "file-exists" => "File already exists.",
+                    FileOperation.FileExistsErrorCode => "File already exists.",
                     AgentFileReadErrorCodes.OutsideConfiguredScope => $"Path resolves outside the configured Docker workspace paths: {path}",
                     AgentFileReadErrorCodes.PathCanonicalizationFailed => $"Unable to securely resolve path inside the Docker container: {path}",
                     AgentFileReadErrorCodes.NotAFile => "The write target is not a regular file.",
-                    "file-content-changed" => "The file changed after patch preflight; no mutation was applied.",
+                    FileOperation.ContentChangedErrorCode => "The file changed after patch preflight; no mutation was applied.",
                     "file-hash-unavailable" => "The container cannot verify the expected file content hash.",
                     _ => BuildCommandFailureMessage("Docker file write failed", result),
                 };
-                return new AgentFileMutationResult(path, message, IsError: true, ErrorCode: errorCode);
+                return FileOperation.Failure(path, message, errorCode);
             }
         }
 
-        return new AgentFileMutationResult(path, BuildCommandFailureMessage("Docker file write failed", result), IsError: true, ErrorCode: "docker-write-failed");
+        return FileOperation.Failure(path, BuildCommandFailureMessage("Docker file write failed", result), "docker-write-failed");
     }
 
     public async ValueTask<AgentFileMutationResult> DeleteFileAsync(
@@ -187,11 +188,11 @@ internal sealed class DockerFileSystemExecutor(IDockerCommandExecutor commandRun
         }
         catch (InvalidOperationException ex)
         {
-            return new AgentFileMutationResult(request.Path, ex.Message, IsError: true, ErrorCode: AgentFileReadErrorCodes.OutsideConfiguredScope);
+            return FileOperation.Failure(request.Path, ex.Message, AgentFileReadErrorCodes.OutsideConfiguredScope);
         }
 
         var result = await commandRunner.RunAsync(
-            BuildArguments(config, containerName, "delete", path, ranged: false, 1, 2000, request.Recursive, redirectStandardInput: false, request.ExpectedContentHash),
+            BuildArguments(config, containerName, "delete", path, ranged: false, 1, FileOperation.DefaultReadLimit, request.Recursive, redirectStandardInput: false, request.ExpectedContentHash),
             await commandRunner.ResolveDefaultTimeoutSecondsAsync(cancellationToken),
             cancellationToken);
         if (TryParseProtocol(result.Output, out var fields, out _))
@@ -199,8 +200,8 @@ internal sealed class DockerFileSystemExecutor(IDockerCommandExecutor commandRun
             if (fields[1] == "ok" && result.ExitCode == 0)
             {
                 return fields.ElementAtOrDefault(2) == "directory-deleted"
-                    ? new AgentFileMutationResult(path, "Directory deleted.")
-                    : new AgentFileMutationResult(path, "File deleted.");
+                    ? FileOperation.DirectoryDeleted(path)
+                    : FileOperation.FileDeleted(path);
             }
 
             if (fields[1] == "error")
@@ -208,19 +209,19 @@ internal sealed class DockerFileSystemExecutor(IDockerCommandExecutor commandRun
                 var errorCode = fields.ElementAtOrDefault(2) ?? "docker-delete-failed";
                 var message = errorCode switch
                 {
-                    "path-not-found" => "Path does not exist.",
+                    FileOperation.PathNotFoundErrorCode => "Path does not exist.",
                     AgentFileReadErrorCodes.OutsideConfiguredScope => $"Path resolves outside the configured Docker workspace paths: {path}",
                     AgentFileReadErrorCodes.PathCanonicalizationFailed => $"Unable to securely resolve path inside the Docker container: {path}",
                     AgentFileReadErrorCodes.NotAFile => "The delete target is not a regular file or directory.",
-                    "file-content-changed" => "The file changed after patch preflight; no mutation was applied.",
+                    FileOperation.ContentChangedErrorCode => "The file changed after patch preflight; no mutation was applied.",
                     "file-hash-unavailable" => "The container cannot verify the expected file content hash.",
                     _ => BuildCommandFailureMessage("Docker path deletion failed", result),
                 };
-                return new AgentFileMutationResult(path, message, IsError: true, ErrorCode: errorCode);
+                return FileOperation.Failure(path, message, errorCode);
             }
         }
 
-        return new AgentFileMutationResult(path, BuildCommandFailureMessage("Docker path deletion failed", result), IsError: true, ErrorCode: "docker-delete-failed");
+        return FileOperation.Failure(path, BuildCommandFailureMessage("Docker path deletion failed", result), "docker-delete-failed");
     }
 
     internal static IReadOnlyList<string> BuildArguments(
@@ -282,24 +283,6 @@ internal sealed class DockerFileSystemExecutor(IDockerCommandExecutor commandRun
             error = AgentFileReadResult.Failure(requestedPath, AgentFileReadErrorCodes.OutsideConfiguredScope, ex.Message);
             return false;
         }
-    }
-
-    private static bool TryValidateRange(AgentFileReadRequest request, out string? error)
-    {
-        if (request.Offset is <= 0)
-        {
-            error = "File read offset must be greater than or equal to 1.";
-            return false;
-        }
-
-        if (request.Limit is <= 0 or > 2000)
-        {
-            error = "File read limit must be between 1 and 2000.";
-            return false;
-        }
-
-        error = null;
-        return true;
     }
 
     private static bool TryParseProtocol(string output, out string[] fields, out string payload)

@@ -7,6 +7,7 @@ namespace Sunder.Package.Agent.PackageViews;
 
 internal sealed class AgentTranscriptRowFactory(
     AgentToolPresentationService toolPresentationService,
+    IActivityTicker activityTicker,
     Func<AgentTurnRecord, string> senderNameResolver,
     Func<AgentTurnRecord, AgentTurnItemRecord, IReadOnlyList<AgentChildSessionLinkViewModel>> childSessionLinksResolver)
     : ITranscriptRowFactory<AgentTranscriptRowViewModel>
@@ -60,7 +61,7 @@ internal sealed class AgentTranscriptRowFactory(
     }
 
     public AgentTranscriptRowViewModel CreateActivity(TranscriptActivityProjection projection)
-        => new AgentActivityTranscriptRowViewModel(projection.Text, projection.IsReasoning);
+        => new AgentActivityTranscriptRowViewModel(activityTicker, projection.Text, projection.IsReasoning);
 
     public void UpdateActivity(
         AgentTranscriptRowViewModel row,

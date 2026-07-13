@@ -192,6 +192,34 @@ internal sealed class EmbeddingRepository(string databasePath)
         transaction.Commit();
     }
 
+    public int CleanupStagingGenerations()
+    {
+        using var connection = MemoryDatabase.OpenConnection(_databasePath);
+        using var transaction = connection.BeginTransaction();
+        using (var embeddings = connection.CreateCommand())
+        {
+            embeddings.Transaction = transaction;
+            embeddings.CommandText = """
+                DELETE FROM SessionMemoryEmbeddings
+                WHERE GenerationId IN (
+                    SELECT GenerationId FROM SessionMemoryEmbeddingGenerations WHERE State = 'Staging'
+                );
+                """;
+            embeddings.ExecuteNonQuery();
+        }
+
+        int removed;
+        using (var generations = connection.CreateCommand())
+        {
+            generations.Transaction = transaction;
+            generations.CommandText = "DELETE FROM SessionMemoryEmbeddingGenerations WHERE State = 'Staging';";
+            removed = generations.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+        return removed;
+    }
+
     public void DeleteSession(Guid sessionId)
     {
         using var connection = MemoryDatabase.OpenConnection(_databasePath);

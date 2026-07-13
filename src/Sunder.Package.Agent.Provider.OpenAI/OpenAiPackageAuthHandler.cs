@@ -14,7 +14,7 @@ public sealed class OpenAiPackageAuthHandler(
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var mode = await _packageContext.Configuration.GetValueAsync("auth.mode", cancellationToken) ?? "codex-connected";
+        var mode = await _packageContext.Settings.GetValueAsync("auth.mode", cancellationToken) ?? "codex-connected";
         if (!string.Equals(mode, _codexConnectedAuthStrategy.ModeId, StringComparison.OrdinalIgnoreCase))
         {
             return new PackageAuthStatus(
@@ -45,7 +45,7 @@ public sealed class OpenAiPackageAuthHandler(
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var mode = await _packageContext.Configuration.GetValueAsync("auth.mode", cancellationToken) ?? "codex-connected";
+        var mode = await _packageContext.Settings.GetValueAsync("auth.mode", cancellationToken) ?? "codex-connected";
         if (!string.Equals(mode, _codexConnectedAuthStrategy.ModeId, StringComparison.OrdinalIgnoreCase))
         {
             return null;

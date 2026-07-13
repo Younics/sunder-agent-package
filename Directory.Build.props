@@ -3,13 +3,27 @@
         <TargetFramework>net10.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <LangVersion>14.0</LangVersion>
+        <Deterministic>true</Deterministic>
+        <ContinuousIntegrationBuild Condition="'$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true' or '$(CIRCLECI)' == 'true'">true</ContinuousIntegrationBuild>
+        <EnableNETAnalyzers>true</EnableNETAnalyzers>
         <AnalysisLevel>latest</AnalysisLevel>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <VersionPrefix>1.1.0</VersionPrefix>
+        <Authors>Younics</Authors>
+        <Company>Younics</Company>
+        <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+        <PackageTags>sunder;agent;ai</PackageTags>
+        <RepositoryType>git</RepositoryType>
+        <RepositoryUrl>https://github.com/Younics/sunder-agent-package</RepositoryUrl>
         <SunderSdkProject>$(MSBuildThisFileDirectory)..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj</SunderSdkProject>
         <SunderSdkAvaloniaProject>$(MSBuildThisFileDirectory)..\sunder-core\src\Sdk\Sunder.Sdk.Avalonia\Sunder.Sdk.Avalonia.csproj</SunderSdkAvaloniaProject>
         <SunderSdkStacksProject>$(MSBuildThisFileDirectory)..\sunder-core\src\Sdk\Sunder.Sdk.Stacks\Sunder.Sdk.Stacks.csproj</SunderSdkStacksProject>
         <SunderPackageBuildTargets>$(MSBuildThisFileDirectory)..\sunder-core\src\Sdk\Sunder.Package.Build\build\Sunder.Package.Build.targets</SunderPackageBuildTargets>
         <SunderUseSourceSdk Condition="'$(SunderUseSourceSdk)' == '' and Exists('$(SunderSdkProject)')">true</SunderUseSourceSdk>
         <SunderUseSourceSdk Condition="'$(SunderUseSourceSdk)' == ''">false</SunderUseSourceSdk>
+        <RestorePackagesWithLockFile Condition="'$(SunderUseSourceSdk)' == 'false'">true</RestorePackagesWithLockFile>
+        <NuGetLockFilePath Condition="'$(SunderUseSourceSdk)' == 'false'">$(MSBuildProjectDirectory)/packages.release.lock.json</NuGetLockFilePath>
+        <RestoreLockedMode Condition="'$(SunderUseSourceSdk)' == 'false' and ('$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true' or '$(CIRCLECI)' == 'true')">true</RestoreLockedMode>
     </PropertyGroup>
 </Project>

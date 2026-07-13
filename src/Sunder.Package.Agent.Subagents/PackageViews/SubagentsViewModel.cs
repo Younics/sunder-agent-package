@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Subagents.Models;
+using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Abstractions;
 
@@ -14,11 +15,12 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 {
     private static readonly TimeSpan SuccessStatusDisplayDuration = TimeSpan.FromSeconds(3);
     private static readonly SubagentEditorDraftComparer DraftComparer = new();
-    private readonly SubagentService? _subagentService;
+    private readonly ISubagentManagementGateway? _gateway;
     private readonly IPackageSettingsNavigationService? _settingsNavigationService;
-    private readonly SubagentEditorCapabilityCatalog? _capabilityCatalog;
     private readonly IPresentationDispatcher _uiDispatcher;
     private readonly TimedStatusController _statusClear;
+    private readonly PresentationTaskScope _tasks;
+    private readonly OperationState<SubagentOperation> _operation = new();
     private readonly Task _initialization;
     private readonly Dictionary<string, EditableDocumentState<SubagentEditorDraft>> _drafts =
         new(StringComparer.OrdinalIgnoreCase);
@@ -35,34 +37,40 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         IPackageExtensionCatalog extensionCatalog,
         IPackageSettingsNavigationService? settingsNavigationService = null)
         : this(
-            subagentService,
-            extensionCatalog,
+            new SubagentLocalManagementGateway(subagentService, extensionCatalog),
             settingsNavigationService,
             PresentationDispatcher.Capture())
     {
     }
 
     internal SubagentsViewModel(
-        SubagentService subagentService,
-        IPackageExtensionCatalog extensionCatalog,
+        ISubagentManagementGateway gateway,
         IPackageSettingsNavigationService? settingsNavigationService,
         IPresentationDispatcher uiDispatcher)
     {
-        _subagentService = subagentService;
+        _gateway = gateway;
         _settingsNavigationService = settingsNavigationService;
-        _capabilityCatalog = new SubagentEditorCapabilityCatalog(extensionCatalog);
         _uiDispatcher = uiDispatcher;
+        _tasks = new PresentationTaskScope();
         _statusClear = new TimedStatusController(dispatcher: uiDispatcher);
         ChatBinding = SubagentModelBindingEditor.Create(
-            ProviderModelCatalogAdapter.ForChatProviders(extensionCatalog),
+            new ProviderModelCatalogAdapter(gateway.ListChatProviders, gateway.LoadChatModelsAsync),
             uiDispatcher);
         Subscribe();
         _initialization = InitializeCoreAsync();
     }
 
+    internal SubagentsViewModel(
+        ISubagentManagementGateway gateway,
+        IPackageSettingsNavigationService? settingsNavigationService = null)
+        : this(gateway, settingsNavigationService, PresentationDispatcher.Capture())
+    {
+    }
+
     public SubagentsViewModel()
     {
         _uiDispatcher = PresentationDispatcher.Capture();
+        _tasks = new PresentationTaskScope();
         _statusClear = new TimedStatusController(dispatcher: _uiDispatcher);
         ChatBinding = SubagentModelBindingEditor.Create(new ProviderModelCatalogAdapter(
             () => [],
@@ -110,7 +118,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     public bool IsHydrating => _isHydrating;
 
-    public bool IsBusy => IsHydrating || ChatBinding.IsLoading;
+    public bool IsBusy => _operation.IsBusy || IsHydrating || ChatBinding.IsLoading;
 
     public bool IsEditorEnabled => HasSelectedSubagent && !IsHydrating;
 
@@ -249,7 +257,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        _ = LoadSelectedSubagentAsync(value, ++_loadVersion);
+        _tasks.Run(_ => LoadSelectedSubagentAsync(value, ++_loadVersion));
         if (IsCompactLayout && value is not null)
         {
             IsEditorActive = true;
@@ -282,200 +290,20 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     partial void OnIsEditorActiveChanged(bool value) => NotifyLayoutChanged();
 
-    [RelayCommand(CanExecute = nameof(CanNavigateSubagents))]
-    private async Task CreateSubagentAsync()
-    {
-        if (_subagentService is null)
-        {
-            return;
-        }
-
-        SubagentRecord created;
-        _suppressSubagentChangeNotifications = true;
-        try
-        {
-            created = _subagentService.CreateSubagent("New Subagent");
-        }
-        finally
-        {
-            _suppressSubagentChangeNotifications = false;
-        }
-
-        await ReloadAsync(created.SubagentId);
-        IsEditorActive = true;
-        ClearStatus();
-    }
-
-    [RelayCommand(CanExecute = nameof(CanSaveSubagent))]
-    private async Task SaveSubagentAsync()
-    {
-        if (_subagentService is null || SelectedSubagent is null || !CanSaveSubagent())
-        {
-            return;
-        }
-
-        try
-        {
-            SubagentRecord saved;
-            _suppressSubagentChangeNotifications = true;
-            try
-            {
-                saved = _subagentService.SaveSubagent(
-                    SelectedSubagent.SubagentId,
-                    DisplayName,
-                    Description,
-                    Instructions,
-                    ChatBinding.SelectedProvider?.Id,
-                    ChatBinding.SelectedModel?.Id,
-                    Capabilities.Assignments,
-                    ChatBinding.SettingsJson);
-            }
-            finally
-            {
-                _suppressSubagentChangeNotifications = false;
-            }
-
-            _drafts.Remove(saved.SubagentId);
-            OnPropertyChanged(nameof(IsDirty));
-            var shouldClearSelection = IsCompactLayout;
-            await ReloadAsync(saved.SubagentId);
-            if (shouldClearSelection)
-            {
-                SelectedSubagent = null;
-                ClearStatus();
-            }
-            else
-            {
-                SetStatus("Subagent saved.", SubagentStatusKind.Success, autoClear: true);
-            }
-
-            IsEditorActive = false;
-        }
-        catch (InvalidOperationException ex)
-        {
-            SetStatus(ex.Message, SubagentStatusKind.Error);
-        }
-    }
-
-    [RelayCommand(CanExecute = nameof(CanEditSubagent))]
-    private async Task DeleteSubagentAsync()
-    {
-        if (_subagentService is null || SelectedSubagent is null)
-        {
-            return;
-        }
-
-        var subagentId = SelectedSubagent.SubagentId;
-        var deletedName = SelectedSubagent.DisplayName;
-        var shouldClearSelection = IsCompactLayout;
-        _suppressSubagentChangeNotifications = true;
-        try
-        {
-            _subagentService.DeleteSubagent(subagentId);
-        }
-        finally
-        {
-            _suppressSubagentChangeNotifications = false;
-        }
-
-        _drafts.Remove(subagentId);
-        await ReloadAsync(null);
-        if (shouldClearSelection)
-        {
-            SelectedSubagent = null;
-            ClearStatus();
-        }
-        else
-        {
-            SetStatus($"Deleted subagent '{deletedName}'.", SubagentStatusKind.Success, autoClear: true);
-        }
-
-        IsEditorActive = false;
-    }
-
-    private bool CanEditSubagent() => SelectedSubagent is not null && !IsBusy;
-
-    private bool CanSaveSubagent() => CanSaveSelectedSubagent;
-
-    [RelayCommand(CanExecute = nameof(CanNavigateSubagents))]
-    private void BackToSubagentList()
-    {
-        UpdateCurrentDraft();
-        if (IsCompactLayout)
-        {
-            SelectedSubagent = null;
-        }
-
-        IsEditorActive = false;
-    }
-
-    [RelayCommand]
-    private async Task ReloadSubagentChatProvidersAsync()
-    {
-        if (SelectedSubagent is null)
-        {
-            return;
-        }
-
-        try
-        {
-            await ChatBinding.RefreshAsync(ChatBinding.Selection);
-            UpdateCurrentDraft();
-            ClearStatus();
-        }
-        catch (Exception ex)
-        {
-            SetStatus(ex.Message, SubagentStatusKind.Error);
-        }
-    }
-
-    [RelayCommand]
-    private Task OpenSelectedChatProviderSettingsAsync()
-        => OpenProviderSettingsAsync(ChatBinding.SelectedProvider?.PackageId);
-
-    [RelayCommand]
-    private void OpenSubagentEditor(SubagentRecord? subagent)
-    {
-        if (subagent is not null)
-        {
-            ActivateSubagent(subagent);
-        }
-    }
-
-    public void ActivateSubagent(SubagentRecord subagent)
-    {
-        if (!CanNavigateSubagents)
-        {
-            return;
-        }
-
-        if (!string.Equals(
-            SelectedSubagent?.SubagentId,
-            subagent.SubagentId,
-            StringComparison.OrdinalIgnoreCase))
-        {
-            SelectedSubagent = subagent;
-        }
-
-        if (IsCompactLayout)
-        {
-            IsEditorActive = true;
-        }
-    }
-
     private async Task ReloadAsync(string? selectedSubagentId)
     {
-        if (_subagentService is null)
+        if (_gateway is null)
         {
             ClearEditor();
             return;
         }
 
         var currentSubagentId = SelectedSubagent?.SubagentId;
+        var subagents = await _gateway.ListSubagentsAsync();
         SetSelectionSilently(() =>
         {
             Subagents.Clear();
-            foreach (var subagent in _subagentService.ListSubagents())
+            foreach (var subagent in subagents)
             {
                 Subagents.Add(subagent);
             }
@@ -528,9 +356,9 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
                 _drafts[subagent.SubagentId] = document;
             }
 
-            var localToolsTask = _capabilityCatalog?.ListLocalToolsAsync()
+            var localToolsTask = _gateway?.ListLocalToolsAsync()
                 ?? Task.FromResult<IReadOnlyList<AgentToolDescriptor>>([]);
-            var packageCapabilitiesTask = _capabilityCatalog?.ListPackageCapabilitiesAsync()
+            var packageCapabilitiesTask = _gateway?.ListPackageCapabilitiesAsync()
                 ?? Task.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
 
             _suppressDraftTracking = true;
@@ -612,11 +440,12 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         }
 
         var version = _loadVersion;
+        var operation = BeginOperation(SubagentOperation.RefreshCapabilities);
         try
         {
-            var localToolsTask = _capabilityCatalog?.ListLocalToolsAsync()
+            var localToolsTask = _gateway?.ListLocalToolsAsync()
                 ?? Task.FromResult<IReadOnlyList<AgentToolDescriptor>>([]);
-            var packageCapabilitiesTask = _capabilityCatalog?.ListPackageCapabilitiesAsync()
+            var packageCapabilitiesTask = _gateway?.ListPackageCapabilitiesAsync()
                 ?? Task.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
             await Task.WhenAll(localToolsTask, packageCapabilitiesTask).ConfigureAwait(false);
             var localTools = await localToolsTask.ConfigureAwait(false);
@@ -655,164 +484,9 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
                 }
             }).ConfigureAwait(false);
         }
-    }
-
-    private void ApplyCapabilityOptions(
-        IReadOnlyList<AgentToolDescriptor> localTools,
-        IReadOnlyList<AgentProfileSelectableCapabilityDescriptor> packageCapabilities,
-        IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> assignments,
-        bool preserveCurrent)
-    {
-        var definitions = localTools.Select(descriptor =>
-            {
-                var aliases = descriptor.Aliases?
-                    .Where(alias => !string.IsNullOrWhiteSpace(alias))
-                    .Select(alias => new AgentProfileSelectableCapabilityAssignmentRecord(
-                        AgentProfileSelectableCapabilityKinds.Tool,
-                        alias,
-                        descriptor.SourceId))
-                    .ToArray();
-                return new CapabilityOptionDefinition(
-                    "capability",
-                    AgentProfileSelectableCapabilityKinds.Tool,
-                    descriptor.ToolId,
-                    descriptor.SourceId,
-                    descriptor.DisplayName,
-                    descriptor.Description,
-                    string.Empty,
-                    CanSelect: true,
-                    CapabilityGrouping.ForTool(descriptor),
-                    aliases,
-                    AllowUnscopedAssignment: true);
-            })
-            .Concat(packageCapabilities
-                .Where(capability => !string.Equals(
-                        capability.Kind,
-                        AgentProfileSelectableCapabilityKinds.Subagent,
-                        StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(
-                        capability.SourceId,
-                        SubagentConstants.PackageId,
-                        StringComparison.OrdinalIgnoreCase))
-                .Select(capability => new CapabilityOptionDefinition(
-                    "capability",
-                    capability.Kind,
-                    capability.CapabilityId,
-                    capability.SourceId,
-                    capability.DisplayName,
-                    capability.Description,
-                    capability.StatusText ?? string.Empty,
-                    capability.IsSelectable,
-                    CapabilityGrouping.ForPackage(capability))))
-            .ToArray();
-        if (preserveCurrent)
+        finally
         {
-            Capabilities.Reconcile(definitions);
-        }
-        else
-        {
-            Capabilities.Load(definitions, assignments);
-        }
-    }
-
-    private SubagentEditorDraft CreatePersistedDraft(SubagentRecord subagent) => new(
-        subagent.DisplayName,
-        subagent.Description ?? string.Empty,
-        subagent.Instructions ?? string.Empty,
-        new ModelBindingSelection(
-            subagent.ChatProviderId,
-            subagent.ChatModelId,
-            subagent.ChatModelSettingsJson),
-        subagent.SelectableCapabilityAssignments ?? []);
-
-    private SubagentEditorDraft CaptureDraft() => new(
-        DisplayName,
-        Description,
-        Instructions,
-        ChatBinding.Selection,
-        Capabilities.Assignments);
-
-    private void UpdateCurrentDraft()
-    {
-        if (_suppressDraftTracking || SelectedSubagent is null
-            || !_drafts.TryGetValue(SelectedSubagent.SubagentId, out var document))
-        {
-            return;
-        }
-
-        var wasDirty = document.IsDirty;
-        document.Value = CaptureDraft();
-        if (wasDirty != document.IsDirty)
-        {
-            OnPropertyChanged(nameof(IsDirty));
-        }
-    }
-
-    private void OnEditorChanged()
-    {
-        if (_suppressDraftTracking)
-        {
-            return;
-        }
-
-        _editRevision++;
-        UpdateCurrentDraft();
-    }
-
-    private void Subscribe()
-    {
-        ChatBinding.PropertyChanged += OnModelBindingPropertyChanged;
-        ChatBinding.Changed += OnEditorSelectionChanged;
-        Capabilities.Changed += OnCapabilitiesChanged;
-        if (_subagentService is not null)
-        {
-            _subagentService.SubagentsChanged += OnSubagentsChanged;
-        }
-
-        if (_capabilityCatalog is not null)
-        {
-            _capabilityCatalog.Changed += OnSelectableCapabilitiesChanged;
-        }
-    }
-
-    private void OnModelBindingPropertyChanged(object? sender, PropertyChangedEventArgs args)
-    {
-        // The composed state owns the dependency graph; refresh the thin compatibility surface.
-        OnPropertyChanged(string.Empty);
-        SaveSubagentCommand.NotifyCanExecuteChanged();
-        DeleteSubagentCommand.NotifyCanExecuteChanged();
-    }
-
-    private void OnEditorSelectionChanged() => OnEditorChanged();
-
-    private void OnCapabilitiesChanged() => OnEditorChanged();
-
-    private void OnSelectableCapabilitiesChanged()
-        => RunOnUiThread(() => _ = RefreshSelectedSubagentCapabilitiesAsync());
-
-    private void OnSubagentsChanged() => RunOnUiThread(() =>
-    {
-        if (!_suppressSubagentChangeNotifications)
-        {
-            _ = ReloadSafelyAsync(SelectedSubagent?.SubagentId);
-        }
-    });
-
-    private async Task ReloadSafelyAsync(string? selectedSubagentId)
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        try
-        {
-            await ReloadAsync(selectedSubagentId);
-        }
-        catch (Exception ex)
-        {
-            ClearEditor();
-            SetStatus(ex.Message, SubagentStatusKind.Error);
+            await _uiDispatcher.InvokeAsync(() => EndOperation(operation)).ConfigureAwait(false);
         }
     }
 
@@ -922,14 +596,14 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         StatusText = message;
         if (autoClear && StatusKind == SubagentStatusKind.Success)
         {
-            _ = _statusClear.ScheduleAsync(SuccessStatusDisplayDuration, () =>
+            _tasks.Run(_statusClear.ScheduleAsync(SuccessStatusDisplayDuration, () =>
             {
                 if (StatusKind == SubagentStatusKind.Success
                     && string.Equals(StatusText, message, StringComparison.Ordinal))
                 {
                     ClearStatus();
                 }
-            });
+            }));
         }
     }
 
@@ -956,13 +630,13 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     private void RunOnUiThread(Action action)
     {
-        _ = _uiDispatcher.InvokeAsync(() =>
+        _tasks.Run(_uiDispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
             {
                 action();
             }
-        });
+        }));
     }
 
 }

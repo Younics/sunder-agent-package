@@ -6,6 +6,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Package.Agent.Provider.Gemini;
+using Sunder.Sdk.Logging;
 using Xunit;
 using AIChatMessage = Microsoft.Extensions.AI.ChatMessage;
 using AIChatRole = Microsoft.Extensions.AI.ChatRole;
@@ -146,8 +147,8 @@ public sealed class GeminiChatClientWireTests
     public async Task StreamingRequest_PropagatesCancellationAndRecordsTelemetry()
     {
         await using var server = new GeminiWireServer(hangAfterRequest: true);
-        var sink = new RecordingEventSink();
-        using var client = CreateClient(server, sink);
+        var logger = new RecordingEventLogger();
+        using var client = CreateClient(server, logger);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
@@ -156,7 +157,7 @@ public sealed class GeminiChatClientWireTests
                 [new AIChatMessage(AIChatRole.User, "wait")],
                 cancellationToken: cancellation.Token));
 
-        Assert.Contains(sink.Events, entry => entry.EventName == "provider.stream.canceled");
+        Assert.Contains(logger.Events, entry => entry.EventName == "provider.stream.canceled");
     }
 
     [Fact]
@@ -165,14 +166,14 @@ public sealed class GeminiChatClientWireTests
         await using var server = new GeminiWireServer(
             """{"error":{"code":400,"message":"bad request","status":"INVALID_ARGUMENT"}}""",
             statusCode: 400);
-        var sink = new RecordingEventSink();
-        using var client = CreateClient(server, sink);
+        var logger = new RecordingEventLogger();
+        using var client = CreateClient(server, logger);
 
         var exception = await Assert.ThrowsAsync<AgentChatProviderException>(
             () => ReadUpdatesAsync(client, [new AIChatMessage(AIChatRole.User, "fail")]));
 
         Assert.Equal("gemini-http-error", exception.ErrorCode);
-        Assert.Contains(sink.Events, entry => entry.EventName == "provider.stream.failed");
+        Assert.Contains(logger.Events, entry => entry.EventName == "provider.stream.failed");
     }
 
     [Fact]
@@ -232,10 +233,10 @@ public sealed class GeminiChatClientWireTests
 
     private static GeminiChatClient CreateClient(
         GeminiWireServer server,
-        IAgentProviderEventSink? eventSink = null,
+        IPackageEventLogger? eventLogger = null,
         string modelId = "gemini/gemini-test")
         => new(
-            new AgentChatClientContext("gemini", modelId, eventSink),
+            new AgentChatClientContext("gemini", modelId, eventLogger),
             new ProviderCredentialAccessor(
                 new ProviderTestSecrets(new Dictionary<string, string>
                 {
@@ -261,12 +262,12 @@ public sealed class GeminiChatClientWireTests
         return updates;
     }
 
-    private sealed class RecordingEventSink : IAgentProviderEventSink
+    private sealed class RecordingEventLogger : IPackageEventLogger
     {
-        public List<(AgentLogLevel Level, string EventName)> Events { get; } = [];
+        public List<(PackageLogLevel Level, string EventName)> Events { get; } = [];
 
         public ValueTask WriteAsync(
-            AgentLogLevel level,
+            PackageLogLevel level,
             string eventName,
             string message,
             IReadOnlyDictionary<string, object?>? attributes = null,

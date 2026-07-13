@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
@@ -15,6 +16,7 @@ internal sealed class InlineRenameFocusCoordinator<TItem> : IDisposable where TI
     private readonly Func<TItem, bool> _isRenameActive;
     private readonly Func<Control?> _dropDownProvider;
     private readonly string _textBoxClass;
+    private readonly PresentationTaskScope _tasks = new();
     private object? _pendingKey;
     private bool _disposed;
 
@@ -61,11 +63,12 @@ internal sealed class InlineRenameFocusCoordinator<TItem> : IDisposable where TI
     {
         _disposed = true;
         _pendingKey = null;
+        _tasks.Dispose();
     }
 
     private void QueueFindAndFocus(TItem item, bool reopenDropDown, int attempt = 0)
     {
-        Dispatcher.UIThread.Post(() =>
+        Queue(() =>
         {
             if (!IsPending(item))
             {
@@ -90,7 +93,7 @@ internal sealed class InlineRenameFocusCoordinator<TItem> : IDisposable where TI
     }
 
     private void QueueFocus(TextBox textBox, TItem item, int attempt)
-        => Dispatcher.UIThread.Post(
+        => Queue(
             () => Focus(textBox, item, attempt),
             DispatcherPriority.ContextIdle);
 
@@ -114,7 +117,7 @@ internal sealed class InlineRenameFocusCoordinator<TItem> : IDisposable where TI
             textBox.SelectionEnd = caretIndex;
         }
 
-        Dispatcher.UIThread.Post(() =>
+        Queue(() =>
         {
             if (!IsPending(item))
             {
@@ -131,6 +134,18 @@ internal sealed class InlineRenameFocusCoordinator<TItem> : IDisposable where TI
             }
         }, DispatcherPriority.ContextIdle);
     }
+
+    private void Queue(Action action, DispatcherPriority priority)
+        => _tasks.Run(async cancellationToken =>
+        {
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    action();
+                }
+            }, priority);
+        });
 
     private TextBox? FindTextBox(TItem item)
     {

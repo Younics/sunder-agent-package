@@ -1,7 +1,9 @@
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Provider.Shared;
 using AIChatRole = Microsoft.Extensions.AI.ChatRole;
 
 namespace Sunder.Package.Agent.Provider.OpenAI.Transport;
@@ -20,6 +22,7 @@ internal static class CodexResponsesStreamParser
     {
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);
+        var lineReader = new BoundedSseLineReader(reader, AgentPayloadLimits.MaxProviderSseLineBytes);
         var toolCalls = new CodexStreamingToolCallCollector(options?.AllowMultipleToolCalls == true);
         var modelId = options?.ModelId ?? context.ModelId;
         var currentResponseId = responseId;
@@ -29,7 +32,19 @@ internal static class CodexResponsesStreamParser
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var line = await reader.ReadLineAsync(cancellationToken);
+            string? line;
+            try
+            {
+                line = await lineReader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (ProviderSseLineLimitException)
+            {
+                throw CreateTerminalException(
+                    "openai-stream-line-too-large",
+                    $"OpenAI stream line exceeded the {AgentPayloadLimits.MaxProviderSseLineBytes}-byte limit.",
+                    partialTextCharacters,
+                    emittedToolCalls);
+            }
             if (line is null)
             {
                 throw CreateTerminalException(
@@ -57,7 +72,10 @@ internal static class CodexResponsesStreamParser
             JsonDocument document;
             try
             {
-                document = JsonDocument.Parse(payload);
+                document = JsonDocument.Parse(payload, new JsonDocumentOptions
+                {
+                    MaxDepth = AgentPayloadLimits.MaxToolArgumentJsonDepth,
+                });
             }
             catch (JsonException ex)
             {
@@ -80,6 +98,10 @@ internal static class CodexResponsesStreamParser
 
                 if (!root.TryGetProperty("type", out var typeElement) || typeElement.ValueKind != JsonValueKind.String)
                 {
+                    await new ProviderStreamTelemetry(context).UnsupportedResponseAsync(
+                        "OpenAI",
+                        ["MissingEventType"],
+                        cancellationToken);
                     continue;
                 }
 
@@ -87,12 +109,11 @@ internal static class CodexResponsesStreamParser
                 if (IsReasoningSummaryDeltaEvent(eventType) && TryExtractReasoningDelta(root, out var reasoningDelta))
                 {
                     partialTextCharacters += reasoningDelta.Length;
-                    yield return new ChatResponseUpdate(AIChatRole.Assistant, [new TextReasoningContent(reasoningDelta)])
-                    {
-                        ResponseId = currentResponseId,
-                        MessageId = messageId,
-                        ModelId = modelId,
-                    };
+                    yield return ProviderResponseUpdates.Create(
+                        modelId,
+                        currentResponseId,
+                        messageId,
+                        new TextReasoningContent(reasoningDelta));
                     continue;
                 }
 
@@ -102,12 +123,11 @@ internal static class CodexResponsesStreamParser
                         if (TryGetStringProperty(root, "delta", out var delta))
                         {
                             partialTextCharacters += delta.Length;
-                            yield return new ChatResponseUpdate(AIChatRole.Assistant, delta)
-                            {
-                                ResponseId = currentResponseId,
-                                MessageId = messageId,
-                                ModelId = modelId,
-                            };
+                            yield return ProviderResponseUpdates.CreateText(
+                                modelId,
+                                currentResponseId,
+                                messageId,
+                                delta);
                         }
                         break;
 
@@ -136,6 +156,15 @@ internal static class CodexResponsesStreamParser
                     case "response.completed":
                         EnsureCompletedStatus(root, partialTextCharacters, emittedToolCalls);
                         toolCalls.EnsureAllCompleted();
+                        if (TryGetUsage(root, out var usage)
+                            && ProviderResponseUpdates.CreateUsage(
+                                modelId,
+                                currentResponseId,
+                                messageId,
+                                usage) is { } usageUpdate)
+                        {
+                            yield return usageUpdate;
+                        }
                         yield break;
 
                     case "response.failed":
@@ -158,6 +187,15 @@ internal static class CodexResponsesStreamParser
                             BuildTerminalMessage("OpenAI stream ended with an error event.", root),
                             partialTextCharacters,
                             emittedToolCalls);
+                    default:
+                        if (!IsKnownInformationalEvent(eventType))
+                        {
+                            await new ProviderStreamTelemetry(context).UnsupportedResponseAsync(
+                                "OpenAI",
+                                [eventType ?? "MissingEventType"],
+                                cancellationToken);
+                        }
+                        break;
                 }
             }
         }
@@ -168,15 +206,14 @@ internal static class CodexResponsesStreamParser
         string responseId,
         string messageId,
         string modelId)
-        => new(AIChatRole.Assistant, [new FunctionCallContent(
-            toolCall.CallId,
-            toolCall.ToolId,
-            toolCall.ParseArguments())])
-        {
-            ResponseId = responseId,
-            MessageId = messageId,
-            ModelId = modelId,
-        };
+        => ProviderResponseUpdates.Create(
+            modelId,
+            responseId,
+            messageId,
+            new FunctionCallContent(
+                toolCall.CallId,
+                toolCall.ToolId,
+                toolCall.ParseArguments()));
 
     private static void EnsureCompletedStatus(JsonElement root, int partialTextCharacters, int emittedToolCalls)
     {
@@ -219,7 +256,50 @@ internal static class CodexResponsesStreamParser
            && eventType.Contains("reasoning", StringComparison.OrdinalIgnoreCase)
            && eventType.Contains("delta", StringComparison.OrdinalIgnoreCase)
            && (eventType.Contains("summary", StringComparison.OrdinalIgnoreCase)
-               || eventType.Contains("text", StringComparison.OrdinalIgnoreCase));
+                || eventType.Contains("text", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsKnownInformationalEvent(string? eventType)
+        => eventType is "response.created"
+            or "response.in_progress"
+            or "response.output_item.done"
+            or "response.content_part.added"
+            or "response.content_part.done"
+            or "response.output_text.done";
+
+    private static bool TryGetUsage(JsonElement root, out ProviderUsageSnapshot usage)
+    {
+        usage = default;
+        if (!root.TryGetProperty("response", out var response)
+            || response.ValueKind != JsonValueKind.Object
+            || !response.TryGetProperty("usage", out var usageElement)
+            || usageElement.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        var input = GetInt64(usageElement, "input_tokens");
+        var output = GetInt64(usageElement, "output_tokens");
+        usage = new ProviderUsageSnapshot(
+            input,
+            output,
+            AddIfBothPresent(input, output),
+            GetNestedInt64(usageElement, "input_tokens_details", "cached_tokens"),
+            GetNestedInt64(usageElement, "output_tokens_details", "reasoning_tokens"));
+        return usage.HasValue;
+    }
+
+    private static long? GetInt64(JsonElement element, string propertyName)
+        => element.TryGetProperty(propertyName, out var value) && value.TryGetInt64(out var parsed)
+            ? parsed
+            : null;
+
+    private static long? GetNestedInt64(JsonElement element, string objectName, string propertyName)
+        => element.TryGetProperty(objectName, out var nested) && nested.ValueKind == JsonValueKind.Object
+            ? GetInt64(nested, propertyName)
+            : null;
+
+    private static long? AddIfBothPresent(long? left, long? right)
+        => left is not null && right is not null ? left + right : null;
 
     private static bool TryExtractReasoningDelta(JsonElement root, out string delta)
     {
@@ -282,3 +362,61 @@ internal static class CodexResponsesStreamParser
             : null;
     }
 }
+
+internal sealed class BoundedSseLineReader(TextReader reader, int maxLineBytes)
+{
+    private readonly char[] _buffer = new char[4096];
+    private int _bufferOffset;
+    private int _bufferLength;
+
+    public async ValueTask<string?> ReadLineAsync(CancellationToken cancellationToken)
+    {
+        var line = new StringBuilder();
+        while (true)
+        {
+            if (_bufferOffset == _bufferLength)
+            {
+                _bufferLength = await reader.ReadAsync(_buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
+                _bufferOffset = 0;
+                if (_bufferLength == 0)
+                {
+                    return line.Length == 0 ? null : Complete(line);
+                }
+            }
+
+            var remaining = _buffer.AsSpan(_bufferOffset, _bufferLength - _bufferOffset);
+            var newlineIndex = remaining.IndexOf('\n');
+            var segment = newlineIndex < 0 ? remaining : remaining[..newlineIndex];
+            if (line.Length + segment.Length > maxLineBytes)
+            {
+                throw new ProviderSseLineLimitException();
+            }
+
+            line.Append(segment);
+            _bufferOffset += segment.Length;
+            if (newlineIndex >= 0)
+            {
+                _bufferOffset++;
+                return Complete(line);
+            }
+        }
+    }
+
+    private string Complete(StringBuilder line)
+    {
+        if (line.Length > 0 && line[^1] == '\r')
+        {
+            line.Length--;
+        }
+
+        var value = line.ToString();
+        if (Encoding.UTF8.GetByteCount(value) > maxLineBytes)
+        {
+            throw new ProviderSseLineLimitException();
+        }
+
+        return value;
+    }
+}
+
+internal sealed class ProviderSseLineLimitException : Exception;

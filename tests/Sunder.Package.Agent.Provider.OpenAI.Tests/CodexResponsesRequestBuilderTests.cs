@@ -9,7 +9,7 @@ namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
 public sealed class CodexResponsesRequestBuilderTests
 {
     [Fact]
-    public void Build_Gpt55TextRequest_AppliesOpenCodeCompatibleDefaults()
+    public void Build_Gpt55TextRequest_AppliesCodexDefaults()
     {
         var request = CodexResponsesRequestBuilder.Build(
             new AgentChatClientContext("openai", "openai/gpt-5.5"),
@@ -101,7 +101,30 @@ public sealed class CodexResponsesRequestBuilderTests
         var reasoning = root.GetProperty("reasoning");
         Assert.Equal("xhigh", reasoning.GetProperty("effort").GetString());
         Assert.Equal("auto", reasoning.GetProperty("summary").GetString());
+        Assert.Equal("all_turns", reasoning.GetProperty("context").GetString());
         Assert.False(reasoning.TryGetProperty("mode", out _));
+        Assert.Equal("auto", root.GetProperty("tool_choice").GetString());
+        Assert.False(root.GetProperty("parallel_tool_calls").GetBoolean());
+        Assert.Equal("additional_tools", root.GetProperty("input")[0].GetProperty("type").GetString());
+        Assert.Empty(root.GetProperty("input")[0].GetProperty("tools").EnumerateArray());
+        Assert.True(request.UsesResponsesLite);
+    }
+
+    [Theory]
+    [InlineData("openai/gpt-5.6-sol", true)]
+    [InlineData("openai/gpt-5.6-terra", true)]
+    [InlineData("openai/gpt-5.6-luna", true)]
+    [InlineData("openai/gpt-5.6", false)]
+    [InlineData("openai/gpt-5.5", false)]
+    public void Build_UsesResponsesLiteOnlyForCatalogMarkedModels(string modelId, bool expected)
+    {
+        var request = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", modelId),
+            [new ChatMessage(ChatRole.User, "Say hi.")],
+            new ChatOptions { ConversationId = "session-123" },
+            toolAware: false);
+
+        Assert.Equal(expected, request.UsesResponsesLite);
     }
 
     [Fact]
@@ -144,7 +167,7 @@ public sealed class CodexResponsesRequestBuilderTests
     }
 
     [Fact]
-    public void Build_MaxOutputTokens_MapsToResponsesRequest()
+    public void Build_MaxOutputTokens_IsOmittedForCodexConnectedRequests()
     {
         var request = CodexResponsesRequestBuilder.Build(
             new AgentChatClientContext("openai", "openai/gpt-5.5"),
@@ -154,8 +177,8 @@ public sealed class CodexResponsesRequestBuilderTests
 
         using var document = JsonDocument.Parse(request.Body);
 
-        Assert.Equal(321, document.RootElement.GetProperty("max_output_tokens").GetInt32());
-        Assert.Equal(321, request.MaxOutputTokens);
+        Assert.False(document.RootElement.TryGetProperty("max_output_tokens", out _));
+        Assert.Null(request.MaxOutputTokens);
     }
 
     [Theory]
@@ -281,6 +304,97 @@ public sealed class CodexResponsesRequestBuilderTests
 
         Assert.True(document.RootElement.GetProperty("parallel_tool_calls").GetBoolean());
         Assert.True(request.ParallelToolCalls);
+    }
+
+    [Fact]
+    public void Build_Gpt56LunaToolRequest_UsesResponsesLiteEnvelope()
+    {
+        using var schemaDocument = JsonDocument.Parse("""{"type":"object","properties":{"path":{"type":"string"}}}""");
+        var tool = AIFunctionFactory.CreateDeclaration("read", "Read a file.", schemaDocument.RootElement);
+
+        var request = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", "openai/gpt-5.6-luna"),
+            [new ChatMessage(ChatRole.User, "Read the file.")],
+            new ChatOptions
+            {
+                Instructions = "Follow the workspace instructions.",
+                ConversationId = "session-123",
+                ToolMode = ChatToolMode.Auto,
+                Tools = [tool],
+                AllowMultipleToolCalls = true,
+            },
+            toolAware: true);
+
+        using var document = JsonDocument.Parse(request.Body);
+        var root = document.RootElement;
+        var input = root.GetProperty("input").EnumerateArray().ToArray();
+
+        Assert.Equal("gpt-5.6-luna", root.GetProperty("model").GetString());
+        Assert.Equal(string.Empty, root.GetProperty("instructions").GetString());
+        Assert.False(root.TryGetProperty("tools", out _));
+        Assert.Equal("auto", root.GetProperty("tool_choice").GetString());
+        Assert.False(root.GetProperty("parallel_tool_calls").GetBoolean());
+        Assert.Equal("medium", root.GetProperty("reasoning").GetProperty("effort").GetString());
+        Assert.Equal("all_turns", root.GetProperty("reasoning").GetProperty("context").GetString());
+        Assert.Equal("additional_tools", input[0].GetProperty("type").GetString());
+        Assert.Equal("developer", input[0].GetProperty("role").GetString());
+        Assert.Equal("read", input[0].GetProperty("tools")[0].GetProperty("name").GetString());
+        Assert.Equal("message", input[1].GetProperty("type").GetString());
+        Assert.Equal("developer", input[1].GetProperty("role").GetString());
+        Assert.Equal("Follow the workspace instructions.", input[1].GetProperty("content")[0].GetProperty("text").GetString());
+        Assert.Equal("user", input[2].GetProperty("role").GetString());
+        Assert.True(request.UsesResponsesLite);
+        Assert.True(request.UsesDeveloperInstructionInput);
+        Assert.False(request.HasTopLevelInstructions);
+        Assert.False(request.ParallelToolCalls);
+        Assert.False(request.HasPreviousResponseId);
+    }
+
+    [Fact]
+    public void Build_Gpt56LunaRequest_UsesProviderPromptCacheKeyOverride()
+    {
+        const string providerSessionId = "019f4860-9ca3-7000-81e9-08939c58b0fa";
+        var request = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", "openai/gpt-5.6-luna"),
+            [new ChatMessage(ChatRole.User, "Say hi.")],
+            new ChatOptions { ConversationId = "source-session" },
+            toolAware: false,
+            promptCacheKeyOverride: providerSessionId);
+
+        using var document = JsonDocument.Parse(request.Body);
+        var root = document.RootElement;
+
+        Assert.Equal(providerSessionId, root.GetProperty("prompt_cache_key").GetString());
+        Assert.Equal("auto", root.GetProperty("tool_choice").GetString());
+        Assert.False(root.GetProperty("parallel_tool_calls").GetBoolean());
+        Assert.False(root.TryGetProperty("max_output_tokens", out _));
+        Assert.Equal("additional_tools", root.GetProperty("input")[0].GetProperty("type").GetString());
+        Assert.Empty(root.GetProperty("input")[0].GetProperty("tools").EnumerateArray());
+    }
+
+    [Fact]
+    public void Build_Gpt56LunaRequest_ToolModeNoneDoesNotExposeSuppliedTools()
+    {
+        using var schemaDocument = JsonDocument.Parse("""{"type":"object"}""");
+        var tool = AIFunctionFactory.CreateDeclaration("read", "Read a file.", schemaDocument.RootElement);
+        var request = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", "openai/gpt-5.6-luna"),
+            [new ChatMessage(ChatRole.User, "Say hi.")],
+            new ChatOptions
+            {
+                ConversationId = "session-123",
+                ToolMode = ChatToolMode.None,
+                Tools = [tool],
+            },
+            toolAware: false);
+
+        using var document = JsonDocument.Parse(request.Body);
+        var root = document.RootElement;
+
+        Assert.Equal("auto", root.GetProperty("tool_choice").GetString());
+        Assert.False(root.GetProperty("parallel_tool_calls").GetBoolean());
+        Assert.Empty(root.GetProperty("input")[0].GetProperty("tools").EnumerateArray());
+        Assert.Equal(0, request.ToolCount);
     }
 
     [Theory]

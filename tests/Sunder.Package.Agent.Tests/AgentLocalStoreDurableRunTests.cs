@@ -19,12 +19,12 @@ public sealed class AgentLocalStoreDurableRunTests
 
         using var connection = OpenDatabase(store.DatabasePath);
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Version, Name FROM SchemaMigrations ORDER BY Version;";
+        command.CommandText = "SELECT Version, Name, Checksum FROM SchemaMigrations ORDER BY Version;";
         using var reader = command.ExecuteReader();
-        var migrations = new List<(long Version, string Name)>();
+        var migrations = new List<(long Version, string Name, string Checksum)>();
         while (reader.Read())
         {
-            migrations.Add((reader.GetInt64(0), reader.GetString(1)));
+            migrations.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2)));
         }
 
         Assert.Equal(
@@ -35,8 +35,10 @@ public sealed class AgentLocalStoreDurableRunTests
                 (4L, "typed-run-suspensions"),
                 (5L, "permission-claim-recovery"),
                 (6L, "parent-continuation-work"),
+                (7L, "permission-execution-snapshot"),
             ],
-            migrations);
+            migrations.Select(static migration => (migration.Version, migration.Name)));
+        Assert.All(migrations, migration => Assert.Matches("^[0-9a-f]{64}$", migration.Checksum));
     }
 
     [Fact]
@@ -271,6 +273,62 @@ public sealed class AgentLocalStoreDurableRunTests
         Assert.Empty(store.ListTurns(session.SessionId));
     }
 
+    [Fact]
+    public async Task FencedRunStart_NewerReservationPreservesTranscriptAndPreparingState()
+    {
+        using var scope = DurableRunTestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var session = CreateSession(store);
+        var anchor = store.AppendTextTurn(
+            session.SessionId,
+            AgentMessageRole.User,
+            "original user turn");
+        var response = store.AppendTextTurn(
+            session.SessionId,
+            AgentMessageRole.Assistant,
+            "original response");
+        var staleRun = store.ReserveRun(
+            session.SessionId,
+            "profile.test",
+            "replacement user turn");
+        var transactionAttempted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseTransaction = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        store.BeforeFencedTranscriptTransaction = kind =>
+        {
+            if (kind != AgentTranscriptMutationKind.UserRunStart)
+            {
+                return;
+            }
+
+            transactionAttempted.TrySetResult();
+            releaseTransaction.Task.GetAwaiter().GetResult();
+        };
+
+        var start = Task.Run(() => store.TryStartRun(
+            staleRun.Key,
+            staleRun.Epoch,
+            "replacement user turn",
+            [],
+            anchor.TurnId,
+            "Running."));
+        await transactionAttempted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var newerRun = store.ReserveRun(
+            session.SessionId,
+            "profile.test",
+            "newer user turn");
+        releaseTransaction.TrySetResult();
+
+        Assert.Null(await start.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(
+            [anchor.TurnId, response.TurnId],
+            store.ListTurns(session.SessionId).Select(turn => turn.TurnId));
+        Assert.Equal(AgentDurableRunStatus.Preparing, store.GetRun(staleRun.Key.RunId)?.Status);
+        Assert.Equal(AgentDurableRunStatus.Preparing, store.GetRun(newerRun.Key.RunId)?.Status);
+        Assert.Null(store.GetLatestCheckpoint(session.SessionId));
+    }
+
     private static AgentSessionRecord CreateSession(AgentLocalStore store)
     {
         var workspace = new AgentWorkspaceService(store).CreateWorkspace("Durable run tests");
@@ -334,7 +392,7 @@ internal sealed class DurableRunTestPackageContext(string rootPath) : IPackageCo
 
     public IPackageStorageContext Storage { get; } = new DurableRunTestStorageContext(rootPath);
 
-    public IPackageConfiguration Configuration { get; } = new DurableRunTestConfiguration();
+    public IPackageSettings Settings { get; } = new DurableRunTestSettings();
 
     public IPackageSecrets Secrets { get; } = new DurableRunTestSecrets();
 
@@ -350,14 +408,14 @@ internal sealed class DurableRunTestStorageContext : IPackageStorageContext
     {
         Directory.CreateDirectory(rootPath);
         Files = new DurableRunTestFileStore(Path.Combine(rootPath, "files"));
-        LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
+        RoleLocalWorkspace = new TestPackageRoleLocalWorkspace(rootPath);
     }
 
     public IPackageFileStore Files { get; }
 
     public IPackageKeyValueStore State { get; } = new DurableRunTestKeyValueStore();
 
-    public IPackageLocalWorkspaceLease LocalWorkspace { get; }
+    public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; }
 }
 
 internal sealed class DurableRunTestFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
@@ -393,6 +451,6 @@ internal sealed class DurableRunTestKeyValueStore : IPackageKeyValueStore
                 .ToArray());
 }
 
-internal sealed class DurableRunTestConfiguration : EmptyPackageConfiguration;
+internal sealed class DurableRunTestSettings : EmptyPackageSettings;
 
 internal sealed class DurableRunTestSecrets : InMemoryPackageSecrets;

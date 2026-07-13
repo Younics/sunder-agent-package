@@ -4,6 +4,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
 using Sunder.Package.Agent.Provider.Shared;
+using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 using Sunder.Sdk.Configuration;
@@ -23,21 +24,15 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton(_ => CodexHttpClientFactory.CreateBackendClient());
         services.AddSingleton<CodexResponseContinuationStore>();
         services.AddSingleton<CodexConnectedTransport>();
-        services.AddTransient(serviceProvider => new OpenAiSettingsViewModel(
-            context,
-            serviceProvider.GetRequiredService<CodexConnectedAuthStrategy>(),
-            serviceProvider.GetRequiredService<ProviderCredentialAccessor>()));
         services.AddSingleton<OpenAiPackageAuthHandler>();
-        services.AddSingleton<IPackageAuthHandler>(serviceProvider => serviceProvider.GetRequiredService<OpenAiPackageAuthHandler>());
-        services.AddSingleton<IPackageCallbackHandler>(serviceProvider => serviceProvider.GetRequiredService<OpenAiPackageAuthHandler>());
+        services.AddSingletonAlias<IPackageAuthHandler, OpenAiPackageAuthHandler>();
+        services.AddSingletonAlias<IPackageCallbackHandler, OpenAiPackageAuthHandler>();
+        services.AddSingleton<OpenAiAuthOperationHandler>();
         services.AddSingleton<OpenAiAgentProvider>();
         services.AddSingleton<OpenAiEmbeddingProvider>();
-        services.AddSingleton<IAgentChatProvider>(serviceProvider => serviceProvider.GetRequiredService<OpenAiAgentProvider>());
-        services.AddSingleton<IAgentEmbeddingProvider>(serviceProvider => serviceProvider.GetRequiredService<OpenAiEmbeddingProvider>());
+        services.AddSingletonAlias<IAgentChatProvider, OpenAiAgentProvider>();
+        services.AddSingletonAlias<IAgentEmbeddingProvider, OpenAiEmbeddingProvider>();
     }
-
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
-        => ConfigureRuntimeServices(services, context);
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
@@ -45,21 +40,22 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<OpenAiAgentProvider>());
         registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<OpenAiEmbeddingProvider>());
         registry.RegisterExtension(PackageExtensionPoints.SessionDataCleaners, services.GetRequiredService<CodexResponseContinuationStore>());
-    }
-
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
-    {
-        registry.RegisterSettingsView<OpenAiSettingsView>();
-        registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<OpenAiAgentProvider>());
-        registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<OpenAiEmbeddingProvider>());
-        registry.RegisterExtension(PackageExtensionPoints.SessionDataCleaners, services.GetRequiredService<CodexResponseContinuationStore>());
+        registry.RegisterRuntimeOperation(
+            OpenAiRuntimeOperations.Auth,
+            services.GetRequiredService<OpenAiAuthOperationHandler>());
     }
 }
 
 public sealed class AppPackageModule : ISunderAppPackageModule
 {
-    private readonly PackageModule _module = new();
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
+    {
+        services.AddSingleton<OpenAiAuthPresentationService>();
+        services.AddTransient(serviceProvider => new OpenAiSettingsViewModel(
+            context,
+            serviceProvider.GetRequiredService<OpenAiAuthPresentationService>()));
+    }
 
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
+        => registry.RegisterSettingsView<OpenAiSettingsView>();
 }

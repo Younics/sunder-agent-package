@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Google.GenAI;
 using Google.GenAI.Types;
@@ -10,7 +9,7 @@ namespace Sunder.Package.Agent.Provider.Gemini;
 
 internal sealed class GeminiCompletionTransport(
     GeminiResponseTranslator responseTranslator,
-    GeminiTelemetry telemetry)
+    ProviderStreamTelemetry telemetry)
 {
     public async IAsyncEnumerable<ChatResponseUpdate> StreamAsync(
         Client client,
@@ -20,7 +19,7 @@ internal sealed class GeminiCompletionTransport(
         bool allowMultipleToolCalls,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var (translation, responseId, elapsedMilliseconds) = await ExecuteAsync(
+        var (translation, responseId) = await ExecuteAsync(
             client,
             contents,
             config,
@@ -31,30 +30,27 @@ internal sealed class GeminiCompletionTransport(
         if (translation.UnsupportedPartKinds.Count > 0)
         {
             await telemetry.UnsupportedResponseAsync(
+                "Gemini",
                 translation.UnsupportedPartKinds,
-                elapsedMilliseconds,
                 cancellationToken);
             throw GeminiExceptionMapper.UnsupportedResponse(translation.UnsupportedPartKinds);
         }
 
         if (translation.Contents.Count > 0)
         {
-            await telemetry.FirstEventAsync(translation.FirstEventKind, elapsedMilliseconds, cancellationToken);
-            yield return new ChatResponseUpdate(ChatRole.Assistant, translation.Contents.ToList())
-            {
-                ResponseId = responseId,
-                MessageId = responseId,
-                ModelId = modelId,
-            };
+            await telemetry.RecordFirstEventAsync(translation.FirstEventKind, cancellationToken);
+            yield return ProviderResponseUpdates.Create(modelId, responseId, responseId, translation.Contents);
         }
 
-        await telemetry.CompletedAsync(
-            translation.Contents.Count > 0,
-            elapsedMilliseconds,
-            cancellationToken);
+        if (ProviderResponseUpdates.CreateUsage(modelId, responseId, responseId, translation.Usage) is { } usageUpdate)
+        {
+            yield return usageUpdate;
+        }
+
+        await telemetry.CompletedAsync("Provider completed without content.", cancellationToken);
     }
 
-    private async Task<(GeminiResponseTranslation Translation, string ResponseId, long ElapsedMilliseconds)> ExecuteAsync(
+    private async Task<(GeminiResponseTranslation Translation, string ResponseId)> ExecuteAsync(
         Client client,
         List<GenAIContent> contents,
         GenerateContentConfig config,
@@ -62,7 +58,6 @@ internal sealed class GeminiCompletionTransport(
         bool allowMultipleToolCalls,
         CancellationToken cancellationToken)
     {
-        var stopwatch = Stopwatch.StartNew();
         try
         {
             var response = await client.Models.GenerateContentAsync(
@@ -80,23 +75,22 @@ internal sealed class GeminiCompletionTransport(
             var translation = responseTranslator.Translate(response, allowMultipleToolCalls);
             return (
                 translation,
-                string.IsNullOrWhiteSpace(response.ResponseId) ? Guid.NewGuid().ToString("N") : response.ResponseId,
-                stopwatch.ElapsedMilliseconds);
-        }
-        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
-        {
-            await telemetry.FailedAsync(ex, stopwatch.ElapsedMilliseconds);
-            throw GeminiExceptionMapper.ProviderTimeout(ex);
-        }
-        catch (OperationCanceledException)
-        {
-            await telemetry.CanceledAsync(stopwatch.ElapsedMilliseconds);
-            throw;
+                string.IsNullOrWhiteSpace(response.ResponseId) ? Guid.NewGuid().ToString("N") : response.ResponseId);
         }
         catch (Exception ex)
         {
-            await telemetry.FailedAsync(ex, stopwatch.ElapsedMilliseconds);
-            throw GeminiExceptionMapper.Request(ex);
+            switch (ProviderStreamFailureClassifier.Classify(ex, cancellationToken))
+            {
+                case ProviderStreamFailureKind.CallerCancellation:
+                    await telemetry.CanceledAsync();
+                    throw;
+                case ProviderStreamFailureKind.ProviderCancellation:
+                    await telemetry.FailedAsync(ex);
+                    throw GeminiExceptionMapper.ProviderTimeout((OperationCanceledException)ex);
+                default:
+                    await telemetry.FailedAsync(ex);
+                    throw GeminiExceptionMapper.Request(ex);
+            }
         }
     }
 }

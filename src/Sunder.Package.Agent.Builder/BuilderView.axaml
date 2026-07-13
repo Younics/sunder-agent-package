@@ -439,15 +439,22 @@
                                  PlaceholderText="/bin/Debug/net10.0/sunder-dev" />
                       </StackPanel>
 
-                      <CheckBox IsChecked="{Binding SelectedProject.AutoLoadOnStartup, Mode=TwoWay}">
+                      <CheckBox IsChecked="{Binding SelectedProject.AutoLoadOnStartup, Mode=TwoWay}"
+                                IsEnabled="{Binding CanUseDevelopmentSessions}">
                         <TextBlock Text="Auto load on startup"
                                    Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
                       </CheckBox>
 
-                      <CheckBox IsChecked="{Binding SelectedProject.Watch, Mode=TwoWay}">
+                      <CheckBox IsChecked="{Binding SelectedProject.Watch, Mode=TwoWay}"
+                                IsEnabled="{Binding CanUseDevelopmentSessions}">
                         <TextBlock Text="Live reload"
                                    Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
                       </CheckBox>
+
+                      <TextBlock Classes="builder-field-help"
+                                 IsVisible="{Binding !CanUseDevelopmentSessions}"
+                                 Text="{Binding DevelopmentSessionUnavailableReason}"
+                                 TextWrapping="Wrap" />
 
                       <Border Classes="builder-runtime-log"
                               IsVisible="{Binding HasRuntimeLog}">
@@ -530,12 +537,12 @@
                             Click="OnInitializeProjectClicked" />
                     <Button Classes="primary-action"
                             Content="Load"
-                            IsEnabled="{Binding CanUseSelectedProjectRuntimeActions}"
+                            IsEnabled="{Binding CanUseDevelopmentSessions}"
                             IsVisible="{Binding ShowLoadSelectedProject}"
                             Click="OnLoadProjectClicked" />
                     <Button Classes="secondary-action compact-action"
                             Content="Unload"
-                            IsEnabled="{Binding CanUseSelectedProjectRuntimeActions}"
+                            IsEnabled="{Binding CanUseDevelopmentSessions}"
                             IsVisible="{Binding ShowUnloadSelectedProject}"
                             Click="OnUnloadProjectClicked" />
                   </StackPanel>

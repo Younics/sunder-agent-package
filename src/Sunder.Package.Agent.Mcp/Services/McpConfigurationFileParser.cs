@@ -22,6 +22,7 @@ internal static class McpConfigurationFileParser
 
     public static McpConfigurationFileParseResult Parse(JsonElement root, string sourcePath, string? defaultName)
     {
+        McpJsonShapeValidator.RejectDuplicateProperties(root);
         var servers = new List<DiscoveredMcpServer>();
         var warnings = new List<string>();
         var skipped = 0;

@@ -1,5 +1,5 @@
-using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
+using Sunder.Package.Agent.Shared.Threading;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
 
@@ -7,12 +7,12 @@ internal sealed class MemorySchemaMigrator(string databasePath)
 {
     internal const int CurrentVersion = 4;
 
-    private static readonly ConcurrentDictionary<string, object> MigrationLocks = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ReferenceCountedKeyedLock<string> MigrationLocks = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _databasePath = databasePath;
 
     public void Migrate()
     {
-        lock (MigrationLocks.GetOrAdd(Path.GetFullPath(_databasePath), static _ => new object()))
+        using (MigrationLocks.Enter(Path.GetFullPath(_databasePath)))
         {
             using var connection = MemoryDatabase.OpenConnection(_databasePath);
             EnableWal(connection);

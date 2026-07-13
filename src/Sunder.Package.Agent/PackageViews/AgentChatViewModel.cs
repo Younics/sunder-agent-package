@@ -6,7 +6,9 @@ using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.PackageViews;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
@@ -18,19 +20,24 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private const int TranscriptVisibleRowLimit = 60;
     private const string SubsessionsViewId = "sunder.package.agent.subagents.sessions";
     private const string SubsessionNavigationSessionIdKey = "sessionId";
-    private readonly AgentProfileService _profileService;
-    private readonly AgentWorkspaceService _workspaceService;
-    private readonly AgentSessionService _sessionService;
-    private readonly AgentAttachmentService? _attachmentService;
-    private readonly AgentRunCoordinator _runCoordinator;
-    private readonly AgentExecutionTargetWarmupService? _warmupService;
+    private readonly IAgentProfileGateway _profileService;
+    private readonly IAgentWorkspaceGateway _workspaceService;
+    private readonly IAgentSessionGateway _sessionService;
+    private readonly IAgentAttachmentGateway? _attachmentService;
+    private readonly IAgentRunGateway _runCoordinator;
+    private readonly IAgentExecutionGateway? _warmupService;
     private readonly AgentChatSelectionStateService? _selectionState;
     private readonly AgentToolPresentationService _toolPresentationService;
     private readonly IPackageShellViewService? _shellViewService;
     private readonly TranscriptTimelineState<AgentTranscriptRowViewModel> _timeline;
+    private readonly ActivityTicker _activityTicker = new();
     private readonly AgentRunActivityState _runActivity;
     private readonly AgentComposerState _composer = new();
     private readonly AgentPermissionPanelState _permissionPanel;
+    private readonly IAgentRuntimeAvailability? _runtimeAvailability;
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private readonly AsyncOnce _initialization = new();
+    private readonly PresentationTaskScope _backgroundTasks = new();
     private AgentSessionListItemViewModel? _observedSelectedSession;
     private string _globalStatusText = string.Empty;
     private bool _isReconcilingSessionSelection;
@@ -40,17 +47,17 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private bool _disposed;
 
     public AgentChatViewModel(
-        AgentProfileService profileService,
-        AgentWorkspaceService workspaceService,
-        AgentSessionService sessionService,
-        AgentPermissionService permissionService,
-        AgentRunCoordinator runCoordinator,
+        IAgentProfileGateway profileService,
+        IAgentWorkspaceGateway workspaceService,
+        IAgentSessionGateway sessionService,
+        IAgentPermissionGateway permissionService,
+        IAgentRunGateway runCoordinator,
         AgentChatSelectionStateService? selectionState = null,
         AgentToolPresentationService? toolPresentationService = null,
         TimeSpan? activityQuietDelay = null,
-        AgentExecutionTargetWarmupService? warmupService = null,
+        IAgentExecutionGateway? warmupService = null,
         IPackageShellViewService? shellViewService = null,
-        AgentAttachmentService? attachmentService = null
+        IAgentAttachmentGateway? attachmentService = null
     )
     {
         _profileService = profileService;
@@ -63,8 +70,14 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _toolPresentationService = toolPresentationService ?? new AgentToolPresentationService();
         _shellViewService = shellViewService;
         _permissionPanel = new AgentPermissionPanelState(permissionService, runCoordinator);
+        _runtimeAvailability = profileService as IAgentRuntimeAvailability;
+        if (_runtimeAvailability is not null)
+        {
+            _runtimeAvailability.ConnectionStateChanged += OnRuntimeConnectionStateChanged;
+        }
         var rowFactory = new AgentTranscriptRowFactory(
             _toolPresentationService,
+            _activityTicker,
             ResolveTurnSenderDisplayName,
             ResolveChildSessionLinksFromStore);
         var rowProjector = new TranscriptRowProjector<AgentTranscriptRowViewModel>(
@@ -94,15 +107,25 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _sessionService.RunActivityChanged += OnRunActivityChanged;
     }
 
-    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+        => _initialization.RunAsync(InitializeCoreAsync, cancellationToken);
+
+    private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
-        await _workspaceService.InitializeAsync(cancellationToken);
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _lifetimeCancellation.Token);
+        var lifetimeToken = linkedCancellation.Token;
+        if (_runtimeAvailability is { IsRuntimeAvailable: false })
+        {
+            SetGlobalStatus("Agent Runtime is unavailable. Reconnecting...");
+        }
+        await _workspaceService.InitializeAsync(lifetimeToken);
         var selectedProfileId = _selectionState is null
             ? null
-            : await _selectionState.GetSelectedProfileIdAsync(cancellationToken);
+            : await _selectionState.GetSelectedProfileIdAsync(lifetimeToken);
         var selectedWorkspaceId = _selectionState is null
             ? null
-            : await _selectionState.GetSelectedWorkspaceIdAsync(cancellationToken);
+            : await _selectionState.GetSelectedWorkspaceIdAsync(lifetimeToken);
         ReloadProfiles(selectedProfileId);
         ReloadWorkspaces(selectedWorkspaceId);
         ScheduleSelectedWorkspaceWarmup();
@@ -482,7 +505,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         try
         {
             var readiness = await _profileService.GetChatProviderReadinessAsync(
-                chatBinding.ProviderId
+                chatBinding.ProviderId,
+                _lifetimeCancellation.Token
             );
             if (readiness is null)
             {
@@ -509,7 +533,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                     profileId,
                     message,
                     workspaceId,
-                    attachments
+                    attachments,
+                    _lifetimeCancellation.Token
                 );
             }
             else
@@ -519,7 +544,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                     profileId,
                     message,
                     workspaceId,
-                    attachments
+                    attachments,
+                    _lifetimeCancellation.Token
                 );
             }
 
@@ -650,7 +676,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         }
 
         var sessionId = selectedSession.SessionId;
-        var checkpoint = await _runCoordinator.StopAsync(sessionId);
+        var checkpoint = await _runCoordinator.StopAsync(sessionId, _lifetimeCancellation.Token);
 
         if (checkpoint is null)
         {
@@ -676,6 +702,11 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         }
 
         _disposed = true;
+        _lifetimeCancellation.Cancel();
+        if (_runtimeAvailability is not null)
+        {
+            _runtimeAvailability.ConnectionStateChanged -= OnRuntimeConnectionStateChanged;
+        }
         if (_observedSelectedSession is not null)
         {
             _observedSelectedSession.PropertyChanged -= OnSelectedSessionPropertyChanged;
@@ -695,10 +726,45 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _timeline.PropertyChanged -= OnTimelinePropertyChanged;
         _timeline.TurnProjected -= OnTimelineTurnProjected;
         _timeline.Dispose();
+        _activityTicker.Dispose();
         DisposeAttachmentPreviewImage();
+        _backgroundTasks.Dispose();
+        _initialization.Dispose();
+        _lifetimeCancellation.Dispose();
+    }
+
+    private void OnRuntimeConnectionStateChanged(AgentRuntimeConnectionState state)
+        => RunOnUiThread(() =>
+        {
+            if (state is AgentRuntimeConnectionState.Unavailable or AgentRuntimeConnectionState.Reconnecting)
+            {
+                SetGlobalStatus("Agent Runtime is unavailable. Reconnecting...");
+            }
+            else if (state == AgentRuntimeConnectionState.Connected)
+            {
+                if (string.Equals(_globalStatusText, "Agent Runtime is unavailable. Reconnecting...", StringComparison.Ordinal))
+                {
+                    _globalStatusText = string.Empty;
+                }
+                RefreshSetupState();
+                _backgroundTasks.Run(cancellationToken => InitializeAsync(cancellationToken));
+            }
+        });
+
+    internal void ReportPresentationFailure(Exception exception)
+    {
+        if (!_disposed)
+        {
+            SetGlobalStatus(exception.Message);
+        }
     }
 
     private void RunOnUiThread(Action action)
+    {
+        _backgroundTasks.Run(_ => InvokeOnUiThreadAsync(action));
+    }
+
+    private static async Task InvokeOnUiThreadAsync(Action action)
     {
         if (Application.Current is null || Dispatcher.UIThread.CheckAccess())
         {
@@ -706,7 +772,15 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             return;
         }
 
-        Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
+        await Dispatcher.UIThread.InvokeAsync(action, DispatcherPriority.Background);
+    }
+
+    private void TrackBackgroundTask(Task? task)
+    {
+        if (task is not null)
+        {
+            _backgroundTasks.Run(task);
+        }
     }
 
 }

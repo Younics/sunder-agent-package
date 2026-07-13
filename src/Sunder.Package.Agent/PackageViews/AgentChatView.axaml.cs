@@ -11,7 +11,9 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Services;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
 
@@ -41,11 +43,16 @@ public partial class AgentChatView : UserControl, IDisposable
     private AgentChatViewModel? _viewModel;
     private readonly TranscriptViewBehavior _transcriptBehavior;
     private readonly InlineRenameFocusCoordinator<AgentSessionListItemViewModel> _renameFocus;
+    private readonly PresentationTaskScope _tasks;
+    private readonly AdaptiveEditorStateCache<AgentChatEditorState> _editorStateCache = new();
     private IPackageNotificationService _notificationService = NullPackageNotificationService.Instance;
+    private bool _usesWideLayout;
+    private bool _lastComposerExpanded;
     private bool _disposed;
 
     public AgentChatView()
     {
+        _tasks = new PresentationTaskScope();
         InitializeComponent();
         ConfigureComposerDropTarget(ExpandedComposerDropTarget);
         ConfigureComposerDropTarget(ExpandedComposerTextBox);
@@ -65,9 +72,11 @@ public partial class AgentChatView : UserControl, IDisposable
             TranscriptItemsControl,
             JumpToLatestTranscriptButton,
             () => ViewModel?.CanLoadOlderTranscriptRows == true,
-            anchor => ViewModel?.LoadOlderTranscriptRowsAsync(anchor) ?? Task.FromResult(false),
+            (anchor, cancellationToken) => ViewModel?.LoadOlderTranscriptRowsAsync(anchor, cancellationToken)
+                                           ?? Task.FromResult(false),
             () => ViewModel?.CanLoadNewerTranscriptRows == true,
-            anchor => ViewModel?.LoadNewerTranscriptRowsAsync(anchor) ?? Task.FromResult(false),
+            (anchor, cancellationToken) => ViewModel?.LoadNewerTranscriptRowsAsync(anchor, cancellationToken)
+                                           ?? Task.FromResult(false),
             () => ViewModel?.HasNewerTranscriptRows == true,
             () => ViewModel?.IsTranscriptLoading == true,
             () => ViewModel?.Messages.Count > 0,
@@ -75,22 +84,23 @@ public partial class AgentChatView : UserControl, IDisposable
             () => ViewModel?.DetachTranscriptFromLatest(),
             () => ViewModel?.ResumeTranscriptFollowingLatestIfCaughtUp(),
             isVisible => ViewModel?.SetTranscriptJumpToLatestVisible(isVisible),
-            anchor => ViewModel?.SetTranscriptViewportAnchor(anchor));
+            anchor => ViewModel?.SetTranscriptViewportAnchor(anchor),
+            exception => ViewModel?.ReportTranscriptPagingFailure(exception));
         Loaded += OnLoaded;
         SizeChanged += OnSizeChanged;
     }
 
     public AgentChatView(
-        AgentProfileService profileService,
-        AgentWorkspaceService workspaceService,
-        AgentSessionService sessionService,
-        AgentPermissionService permissionService,
-        AgentRunCoordinator runCoordinator,
+        IAgentProfileGateway profileService,
+        IAgentWorkspaceGateway workspaceService,
+        IAgentSessionGateway sessionService,
+        IAgentPermissionGateway permissionService,
+        IAgentRunGateway runCoordinator,
         AgentChatSelectionStateService selectionState,
         AgentToolPresentationService toolPresentationService,
-        AgentExecutionTargetWarmupService warmupService,
+        IAgentExecutionGateway warmupService,
         IPackageShellViewService shellViewService,
-        AgentAttachmentService attachmentService,
+        IAgentAttachmentGateway attachmentService,
         IPackageNotificationService notificationService)
         : this()
     {
@@ -127,6 +137,7 @@ public partial class AgentChatView : UserControl, IDisposable
         SizeChanged -= OnSizeChanged;
         _transcriptBehavior.Dispose();
         _renameFocus.Dispose();
+        _tasks.Dispose();
         if (_viewModel is not null)
         {
             _viewModel.TranscriptChanging -= OnTranscriptChanging;
@@ -140,12 +151,22 @@ public partial class AgentChatView : UserControl, IDisposable
         _viewModel = null;
     }
 
-    private async void OnLoaded(object? sender, RoutedEventArgs e)
+    private void OnLoaded(object? sender, RoutedEventArgs e)
     {
         ApplyHeaderLayout();
         if (ViewModel is { } viewModel)
         {
-            await viewModel.InitializeAsync();
+            _tasks.Run(async cancellationToken =>
+            {
+                try
+                {
+                    await viewModel.InitializeAsync(cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    viewModel.ReportPresentationFailure(ex);
+                }
+            });
         }
     }
 
@@ -157,6 +178,11 @@ public partial class AgentChatView : UserControl, IDisposable
         {
             _transcriptBehavior.MarkInitialPlacementPending();
         }
+
+        if (string.Equals(e.PropertyName, nameof(AgentChatViewModel.IsComposerExpanded), StringComparison.Ordinal))
+        {
+            CaptureComposerEditorState(_usesWideLayout, _lastComposerExpanded);
+        }
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -165,15 +191,25 @@ public partial class AgentChatView : UserControl, IDisposable
         {
             QueueWorkspacePathChipLayoutUpdate();
         }
+        else if (string.Equals(e.PropertyName, nameof(AgentChatViewModel.IsComposerExpanded), StringComparison.Ordinal))
+        {
+            _lastComposerExpanded = ViewModel?.IsComposerExpanded == true;
+            QueueRestoreComposerEditorState();
+        }
     }
 
-    private async void CopyTranscriptText_OnClick(object? sender, RoutedEventArgs e)
+    private void CopyTranscriptText_OnClick(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string content } button || string.IsNullOrWhiteSpace(content))
         {
             return;
         }
 
+        _tasks.Run(_ => CopyTranscriptTextAsync(button, content));
+    }
+
+    private async Task CopyTranscriptTextAsync(Button button, string content)
+    {
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         if (clipboard is null)
         {
@@ -223,7 +259,10 @@ public partial class AgentChatView : UserControl, IDisposable
             PackageNotificationDisplayMode.ToastOnly,
             severity));
 
-    private async void OnAttachFilesClick(object? sender, RoutedEventArgs e)
+    private void OnAttachFilesClick(object? sender, RoutedEventArgs e)
+        => _tasks.Run(OnAttachFilesAsync);
+
+    private async Task OnAttachFilesAsync(CancellationToken cancellationToken)
     {
         if (_viewModel is null)
         {
@@ -242,6 +281,7 @@ public partial class AgentChatView : UserControl, IDisposable
             AllowMultiple = true,
             FileTypeFilter = [SupportedAttachmentFileType, FilePickerFileTypes.All],
         });
+        cancellationToken.ThrowIfCancellationRequested();
         var paths = files
             .Where(file => file.Path.IsFile)
             .Select(file => file.Path.LocalPath)
@@ -354,7 +394,7 @@ public partial class AgentChatView : UserControl, IDisposable
         textBox.AddHandler(KeyDownEvent, OnComposerKeyDown, RoutingStrategies.Tunnel);
     }
 
-    private async void OnComposerKeyDown(object? sender, KeyEventArgs e)
+    private void OnComposerKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Handled || sender is not TextBox textBox)
         {
@@ -364,7 +404,7 @@ public partial class AgentChatView : UserControl, IDisposable
         if (IsPasteShortcut(e))
         {
             e.Handled = true;
-            await PasteClipboardContentAsync(textBox);
+            _tasks.Run(_ => PasteClipboardContentAsync(textBox));
             return;
         }
 
@@ -384,7 +424,7 @@ public partial class AgentChatView : UserControl, IDisposable
             e.Handled = true;
             if (_viewModel.SendMessageCommand.CanExecute(null))
             {
-                await _viewModel.SendMessageCommand.ExecuteAsync(null);
+                _tasks.Run(_ => _viewModel.SendMessageCommand.ExecuteAsync(null));
             }
         }
     }
@@ -513,7 +553,7 @@ public partial class AgentChatView : UserControl, IDisposable
         }
     }
 
-    private async void OnComposerDrop(object? sender, DragEventArgs e)
+    private void OnComposerDrop(object? sender, DragEventArgs e)
     {
         var paths = GetDroppedFilePaths(e);
         e.DragEffects = paths.Length > 0 ? DragDropEffects.Copy : DragDropEffects.None;
@@ -530,7 +570,7 @@ public partial class AgentChatView : UserControl, IDisposable
             return;
         }
 
-        await _viewModel.AddAttachmentPathsAsync(paths);
+        _tasks.Run(_ => _viewModel.AddAttachmentPathsAsync(paths));
     }
 
     private void UpdateComposerDragState(DragEventArgs e)
@@ -578,6 +618,12 @@ public partial class AgentChatView : UserControl, IDisposable
     private void ApplyHeaderLayout()
     {
         var useWideLayout = Bounds.Width >= WideHeaderMinimumWidth;
+        if (useWideLayout != _usesWideLayout)
+        {
+            CaptureComposerEditorState(_usesWideLayout, _lastComposerExpanded);
+            _usesWideLayout = useWideLayout;
+            QueueRestoreComposerEditorState();
+        }
         HeaderWideLayout.IsVisible = useWideLayout;
         HeaderNarrowLayout.IsVisible = !useWideLayout;
         QueueWorkspacePathChipLayoutUpdate();
@@ -587,7 +633,43 @@ public partial class AgentChatView : UserControl, IDisposable
         => QueueWorkspacePathChipLayoutUpdate();
 
     private void QueueWorkspacePathChipLayoutUpdate()
-        => Dispatcher.UIThread.Post(UpdateWorkspacePathChipLayout, DispatcherPriority.Loaded);
+        => _tasks.Run(async _ =>
+        {
+            await Dispatcher.UIThread.InvokeAsync(UpdateWorkspacePathChipLayout, DispatcherPriority.Loaded);
+        });
+
+    private void CaptureComposerEditorState(bool wide, bool expanded)
+    {
+        var textBox = expanded ? ExpandedComposerTextBox : CollapsedComposerTextBox;
+        _editorStateCache.Save(wide, expanded, new AgentChatEditorState(
+            textBox.CaretIndex,
+            textBox.SelectionStart,
+            textBox.SelectionEnd,
+            textBox.IsKeyboardFocusWithin));
+    }
+
+    private void QueueRestoreComposerEditorState()
+        => _tasks.Run(async cancellationToken =>
+        {
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (cancellationToken.IsCancellationRequested
+                    || !_editorStateCache.TryRestore(_usesWideLayout, _lastComposerExpanded, out var state))
+                {
+                    return;
+                }
+
+                var textBox = _lastComposerExpanded ? ExpandedComposerTextBox : CollapsedComposerTextBox;
+                var textLength = textBox.Text?.Length ?? 0;
+                textBox.CaretIndex = Math.Clamp(state.CaretIndex, 0, textLength);
+                textBox.SelectionStart = Math.Clamp(state.SelectionStart, 0, textLength);
+                textBox.SelectionEnd = Math.Clamp(state.SelectionEnd, 0, textLength);
+                if (state.HadFocus)
+                {
+                    textBox.Focus();
+                }
+            }, DispatcherPriority.Loaded);
+        });
 
     private void UpdateWorkspacePathChipLayout()
     {

@@ -170,6 +170,14 @@ internal static class DockerFileOperationScript
                     emit_error file-exists 73
                 fi
                 verify_expected_hash "$physical"
+                latest=$(resolve_candidate) || {
+                    rm -f "$temporary"
+                    emit_error file-path-unresolvable 76
+                }
+                [ "$latest" = "$physical" ] || {
+                    rm -f "$temporary"
+                    emit_error file-content-changed 84
+                }
                 if [ "$option" = 0 ]; then
                     if ! ln "$temporary" "$physical" 2>/dev/null; then
                         rm -f "$temporary"
@@ -188,10 +196,16 @@ internal static class DockerFileOperationScript
                 ;;
             delete)
                 if [ -L "$candidate" ] || [ -f "$candidate" ]; then
+                    latest=$(resolve_candidate) || emit_error file-path-unresolvable 76
+                    [ "$latest" = "$physical" ] || emit_error file-content-changed 84
                     verify_expected_hash "$physical"
+                    latest=$(resolve_candidate) || emit_error file-path-unresolvable 76
+                    [ "$latest" = "$physical" ] || emit_error file-content-changed 84
                     rm -f "$candidate" || emit_error docker-delete-failed 83
                     printf '%s|ok|file-deleted\n' "$protocol"
                 elif [ -d "$candidate" ]; then
+                    latest=$(resolve_candidate) || emit_error file-path-unresolvable 76
+                    [ "$latest" = "$physical" ] || emit_error file-content-changed 84
                     if [ "$option" = 1 ]; then
                         rm -rf "$candidate" || emit_error docker-delete-failed 83
                     else

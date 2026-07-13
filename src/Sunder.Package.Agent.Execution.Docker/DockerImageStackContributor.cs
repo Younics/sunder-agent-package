@@ -145,7 +145,10 @@ internal sealed class DockerImageStackContributor(
             }
         }
 
-        return new StackImportResult(errors.Count == 0, imported, new Dictionary<string, string>(), warnings, errors);
+        var outcome = errors.Count == 0
+            ? StackImportOutcome.Completed
+            : imported.Count == 0 ? StackImportOutcome.Failed : StackImportOutcome.Partial;
+        return new StackImportResult(outcome, imported, new Dictionary<string, string>(), warnings, errors);
     }
 
     public ValueTask OnStackImportAppliedAsync(

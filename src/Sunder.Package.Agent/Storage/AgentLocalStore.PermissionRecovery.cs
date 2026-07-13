@@ -218,6 +218,7 @@ public sealed partial class AgentLocalStore
             var lacksDurableIdentity = request.RunId == Guid.Empty
                 || request.RunRevision <= 0
                 || string.IsNullOrWhiteSpace(request.ExecutionFingerprint)
+                || string.IsNullOrWhiteSpace(request.ExecutionSnapshotJson)
                 || string.IsNullOrWhiteSpace(request.ContinuationToken);
             if (request.Status == AgentPendingPermissionStatus.Pending && !lacksDurableIdentity)
             {

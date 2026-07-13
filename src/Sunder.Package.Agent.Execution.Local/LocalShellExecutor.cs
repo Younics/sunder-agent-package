@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 
@@ -99,7 +100,9 @@ internal sealed class LocalShellExecutor(IPackageContext packageContext, LocalSh
         };
 
     private async Task<int> ResolveDefaultTimeoutSecondsAsync(CancellationToken cancellationToken)
-        => int.TryParse(await packageContext.Configuration.GetValueAsync("shell.timeoutSeconds.default", cancellationToken), out var parsed) && parsed > 0
-            ? parsed
-            : DefaultTimeoutSeconds;
+        => BoundedValue.ParseInt32(
+            await packageContext.Settings.GetValueAsync(LocalExecutionConfiguration.TimeoutKey, cancellationToken),
+            DefaultTimeoutSeconds,
+            minimum: 1,
+            maximum: BoundedProcessRunner.MaximumTimeoutSeconds);
 }

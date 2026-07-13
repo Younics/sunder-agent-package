@@ -38,7 +38,7 @@ internal static class GeminiModelCatalog
         };
 
     private static readonly IReadOnlyList<AgentModelDescriptor> VendorModels =
-        ApplyReleaseDates([
+        ProviderModelCatalog.ApplyReleaseDates([
         new("gemini/gemini-3.5-flash", "Gemini 3.5 Flash", 1048576, 65536, IsRecommended: true, Variants: ThinkingLevelVariants),
         new("gemini/gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", 1048576, 65536, IsRecommended: true, Variants: ThinkingLevelVariants),
         new("gemini/gemini-3.1-pro-preview-customtools", "Gemini 3.1 Pro Preview Custom Tools", 1048576, 65536, Variants: ThinkingLevelVariants),
@@ -51,7 +51,7 @@ internal static class GeminiModelCatalog
         new("gemini/gemini-flash-lite-latest", "Gemini Flash Lite Latest", 1048576, 65536),
         new("gemini/gemma-4-31b-it", "Gemma 4 31B IT", 262144, 32768),
         new("gemini/gemma-4-26b-a4b-it", "Gemma 4 26B A4B IT", 262144, 32768),
-    ]);
+    ], ReleaseDates, requireEveryModel: true);
 
     private static readonly ProviderModelCatalogSnapshot Catalog = ProviderModelCatalog.ValidateAndOrder(
         VendorModels,
@@ -62,8 +62,4 @@ internal static class GeminiModelCatalog
 
     public static IReadOnlyList<PackageConfigurationOption> UtilityModelOptions { get; } =
         Catalog.UtilityModelOptions;
-
-    private static IReadOnlyList<AgentModelDescriptor> ApplyReleaseDates(
-        IEnumerable<AgentModelDescriptor> models)
-        => models.Select(model => model with { ReleaseDate = ReleaseDates[model.ModelId] }).ToArray();
 }

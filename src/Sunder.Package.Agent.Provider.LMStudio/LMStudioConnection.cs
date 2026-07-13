@@ -146,7 +146,7 @@ internal sealed class LMStudioConnection : IDisposable
     public async Task<LMStudioConnectionValidationResult> GetOptionsAsync(
         CancellationToken cancellationToken = default)
     {
-        var baseUrl = await _packageContext.Configuration.GetValueAsync(
+        var baseUrl = await _packageContext.Settings.GetValueAsync(
             LMStudioProviderConfiguration.BaseUrlKey,
             cancellationToken);
         var credential = await _credentials.GetCredentialAsync(cancellationToken);

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Google.GenAI;
 using Google.GenAI.Types;
@@ -10,7 +9,7 @@ namespace Sunder.Package.Agent.Provider.Gemini;
 
 internal sealed class GeminiStreamingTransport(
     GeminiResponseTranslator responseTranslator,
-    GeminiTelemetry telemetry)
+    ProviderStreamTelemetry telemetry)
 {
     public async IAsyncEnumerable<ChatResponseUpdate> StreamAsync(
         Client client,
@@ -21,8 +20,8 @@ internal sealed class GeminiStreamingTransport(
     {
         var stream = CreateStream(client, contents, config, modelId, cancellationToken);
         var fallbackResponseId = Guid.NewGuid().ToString("N");
-        var stopwatch = Stopwatch.StartNew();
-        var firstEventRecorded = false;
+        var responseId = fallbackResponseId;
+        var usage = new ProviderUsageAccumulator();
         await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
 
         while (true)
@@ -39,27 +38,32 @@ internal sealed class GeminiStreamingTransport(
                 chunk = enumerator.Current;
                 translation = responseTranslator.Translate(chunk, allowMultipleToolCalls: true);
             }
-            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
-            {
-                await telemetry.FailedAsync(ex, stopwatch.ElapsedMilliseconds);
-                throw GeminiExceptionMapper.ProviderTimeout(ex);
-            }
-            catch (OperationCanceledException)
-            {
-                await telemetry.CanceledAsync(stopwatch.ElapsedMilliseconds);
-                throw;
-            }
             catch (Exception ex)
             {
-                await telemetry.FailedAsync(ex, stopwatch.ElapsedMilliseconds);
-                throw GeminiExceptionMapper.Request(ex);
+                switch (ProviderStreamFailureClassifier.Classify(ex, cancellationToken))
+                {
+                    case ProviderStreamFailureKind.CallerCancellation:
+                        await telemetry.CanceledAsync();
+                        throw;
+                    case ProviderStreamFailureKind.ProviderCancellation:
+                        await telemetry.FailedAsync(ex);
+                        throw GeminiExceptionMapper.ProviderTimeout((OperationCanceledException)ex);
+                    default:
+                        await telemetry.FailedAsync(ex);
+                        throw GeminiExceptionMapper.Request(ex);
+                }
             }
+
+            usage.SetLatest(translation.Usage);
+            responseId = string.IsNullOrWhiteSpace(chunk.ResponseId)
+                ? responseId
+                : chunk.ResponseId;
 
             if (translation.UnsupportedPartKinds.Count > 0)
             {
                 await telemetry.UnsupportedResponseAsync(
+                    "Gemini",
                     translation.UnsupportedPartKinds,
-                    stopwatch.ElapsedMilliseconds,
                     cancellationToken);
                 throw GeminiExceptionMapper.UnsupportedResponse(translation.UnsupportedPartKinds);
             }
@@ -74,35 +78,42 @@ internal sealed class GeminiStreamingTransport(
             {
                 if (terminalStatus.IsSuccess)
                 {
-                    await telemetry.CompletedAsync(firstEventRecorded, stopwatch.ElapsedMilliseconds, cancellationToken);
+                    if (usage.CreateContent() is { } usageContent)
+                    {
+                        yield return ProviderResponseUpdates.Create(
+                            modelId,
+                            responseId,
+                            responseId,
+                            usageContent);
+                    }
+
+                    await telemetry.CompletedAsync("Provider stream ended without events.", cancellationToken);
                     yield break;
                 }
 
                 continue;
             }
 
-            if (!firstEventRecorded)
-            {
-                firstEventRecorded = true;
-                await telemetry.FirstEventAsync(
-                    translation.FirstEventKind,
-                    stopwatch.ElapsedMilliseconds,
-                    cancellationToken);
-            }
+            await telemetry.RecordFirstEventAsync(translation.FirstEventKind, cancellationToken);
 
-            var responseId = string.IsNullOrWhiteSpace(chunk.ResponseId)
-                ? fallbackResponseId
-                : chunk.ResponseId;
-            yield return new ChatResponseUpdate(ChatRole.Assistant, translation.Contents.ToList())
-            {
-                ResponseId = responseId,
-                MessageId = responseId,
-                ModelId = modelId,
-            };
+            yield return ProviderResponseUpdates.Create(
+                modelId,
+                responseId,
+                responseId,
+                translation.Contents);
 
             if (terminalStatus.IsSuccess)
             {
-                await telemetry.CompletedAsync(firstEventRecorded, stopwatch.ElapsedMilliseconds, cancellationToken);
+                if (usage.CreateContent() is { } usageContent)
+                {
+                    yield return ProviderResponseUpdates.Create(
+                        modelId,
+                        responseId,
+                        responseId,
+                        usageContent);
+                }
+
+                await telemetry.CompletedAsync("Provider stream ended without events.", cancellationToken);
                 yield break;
             }
         }

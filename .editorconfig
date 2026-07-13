@@ -1,0 +1,19 @@
+root = true
+
+[*.cs]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+generated_code = false
+
+[**/obj/**/*.cs]
+generated_code = true
+
+[**/*.g.cs]
+generated_code = true
+
+[**/*.g.i.cs]
+generated_code = true
+
+[**/*.generated.cs]
+generated_code = true

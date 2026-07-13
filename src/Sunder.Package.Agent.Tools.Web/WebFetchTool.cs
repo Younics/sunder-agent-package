@@ -1,3 +1,4 @@
+using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Presentation;
@@ -166,6 +167,12 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
             || !parsedArguments.TryReadOptionalInt32("timeoutSeconds", out var timeoutSeconds, out error))
         {
             error = $"Invalid web_fetch arguments: {error ?? "arguments were empty or invalid."}";
+            return false;
+        }
+
+        if (!BoundedValue.IsInRange(timeoutSeconds, 1, 120))
+        {
+            error = "Invalid web_fetch arguments: timeoutSeconds must be between 1 and 120.";
             return false;
         }
 

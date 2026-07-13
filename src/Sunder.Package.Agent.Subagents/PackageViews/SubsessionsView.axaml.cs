@@ -35,9 +35,11 @@ public partial class SubsessionsView : UserControl, IDisposable
             TranscriptItemsControl,
             JumpToLatestTranscriptButton,
             () => ViewModel?.CanLoadOlderTranscriptRows == true,
-            anchor => ViewModel?.LoadOlderTranscriptRowsAsync(anchor) ?? Task.FromResult(false),
+            (anchor, cancellationToken) => ViewModel?.LoadOlderTranscriptRowsAsync(anchor, cancellationToken)
+                                           ?? Task.FromResult(false),
             () => ViewModel?.CanLoadNewerTranscriptRows == true,
-            anchor => ViewModel?.LoadNewerTranscriptRowsAsync(anchor) ?? Task.FromResult(false),
+            (anchor, cancellationToken) => ViewModel?.LoadNewerTranscriptRowsAsync(anchor, cancellationToken)
+                                           ?? Task.FromResult(false),
             () => ViewModel?.HasNewerTranscriptRows == true,
             () => ViewModel?.IsTranscriptLoading == true,
             () => ViewModel?.Messages.Count > 0,
@@ -45,7 +47,8 @@ public partial class SubsessionsView : UserControl, IDisposable
             () => ViewModel?.DetachTranscriptFromLatest(),
             () => ViewModel?.ResumeTranscriptFollowingLatestIfCaughtUp(),
             isVisible => ViewModel?.SetTranscriptJumpToLatestVisible(isVisible),
-            anchor => ViewModel?.SetTranscriptViewportAnchor(anchor));
+            anchor => ViewModel?.SetTranscriptViewportAnchor(anchor),
+            exception => ViewModel?.ReportTranscriptPagingFailure(exception));
     }
 
     public SubsessionsView(SubsessionsViewModel viewModel)

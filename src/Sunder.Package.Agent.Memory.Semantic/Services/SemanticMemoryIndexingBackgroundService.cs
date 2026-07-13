@@ -7,6 +7,8 @@ namespace Sunder.Package.Agent.Memory.Semantic.Services;
 public sealed class SemanticMemoryIndexingBackgroundService : IPackageBackgroundService, IAsyncDisposable
 {
     private const int DefaultQueueCapacity = 256;
+    private const int MaxRetryCount = 3;
+    private static readonly TimeSpan InitialRetryDelay = TimeSpan.FromMilliseconds(100);
 
     private readonly MemoryLocalStore _store;
     private readonly SemanticModelRuntimeResolver _modelRuntimeResolver;
@@ -223,6 +225,7 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageBackground
             }
 
             var canceled = false;
+            var failed = false;
             try
             {
                 await ProcessAsync(item, cancellationToken).ConfigureAwait(false);
@@ -240,6 +243,7 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageBackground
             }
             catch (Exception ex)
             {
+                failed = true;
                 _metricsService.RecordWorkerFailure();
                 UpdateStatus(status => status with
                 {
@@ -254,7 +258,16 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageBackground
             {
                 if (_scheduled.TryGetValue(key, out var slot))
                 {
-                    rerun = !canceled && slot.RerunRequested;
+                    if (failed)
+                    {
+                        slot.FailureCount++;
+                    }
+                    else
+                    {
+                        slot.FailureCount = 0;
+                    }
+
+                    rerun = !canceled && (slot.RerunRequested || failed && slot.FailureCount <= MaxRetryCount);
                     if (rerun)
                     {
                         slot.IsProcessing = false;
@@ -277,6 +290,18 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageBackground
                 }
 
                 return;
+            }
+
+            if (failed)
+            {
+                SemanticMemoryWorkSlot retrySlot;
+                lock (_queueSync)
+                {
+                    retrySlot = _scheduled[key];
+                }
+
+                var delay = TimeSpan.FromMilliseconds(InitialRetryDelay.TotalMilliseconds * Math.Pow(2, retrySlot.FailureCount - 1));
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -414,6 +439,7 @@ internal sealed class SemanticMemoryWorkSlot(SemanticMemoryIndexWorkItem item)
     public bool IsProcessing { get; set; }
     public bool IsQueued { get; set; }
     public bool RerunRequested { get; set; }
+    public int FailureCount { get; set; }
 }
 
 public abstract record SemanticMemoryIndexWorkItem

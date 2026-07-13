@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Data.Sqlite;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -88,6 +89,48 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         Assert.Equal(0, harness.Worker.GetStatus().PendingItemCount);
     }
 
+    [Fact]
+    public async Task BackgroundService_TransientFailuresRetryWithBoundedBackoff()
+    {
+        await using var harness = new IndexingHarness();
+        harness.AddMemory("A memory that succeeds after transient provider failures.");
+        harness.Provider.FailuresRemaining = 2;
+
+        await harness.Worker.StartAsync();
+        await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1);
+
+        var status = harness.Worker.GetStatus();
+        Assert.True(status.ProcessedItemCount >= 3);
+        Assert.Null(status.LastFailureMessage);
+    }
+
+    [Fact]
+    public async Task StoreStartup_RemovesAbandonedStagingGenerations()
+    {
+        await using var harness = new IndexingHarness();
+        using (var connection = new SqliteConnection($"Data Source={harness.Store.DatabasePath}"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO SessionMemoryEmbeddingGenerations
+                    (GenerationId, SessionId, ProviderId, ModelId, State, ExpectedMemoryCount, CreatedAtUtc, CompletedAtUtc)
+                VALUES ('abandoned', $sessionId, 'provider', 'model', 'Staging', 1, $createdAt, NULL);
+                """;
+            command.Parameters.AddWithValue("$sessionId", harness.Session.SessionId.ToString());
+            command.Parameters.AddWithValue("$createdAt", DateTimeOffset.UtcNow.ToString("O"));
+            command.ExecuteNonQuery();
+        }
+
+        _ = harness.ReopenStore();
+
+        using var verification = new SqliteConnection($"Data Source={harness.Store.DatabasePath}");
+        verification.Open();
+        using var count = verification.CreateCommand();
+        count.CommandText = "SELECT COUNT(*) FROM SessionMemoryEmbeddingGenerations WHERE State = 'Staging';";
+        Assert.Equal(0L, (long)count.ExecuteScalar()!);
+    }
+
     private static IReadOnlyList<string> Snapshot(IndexingHarness harness)
         => harness.ActiveEmbeddings.Values
             .OrderBy(item => item.MemoryId)
@@ -163,7 +206,9 @@ public sealed class SemanticMemoryIndexingReliabilityTests
                 Guid.NewGuid(),
                 false,
                 0.8f,
-                0.9f));
+               0.9f));
+
+        public MemoryLocalStore ReopenStore() => new(_context);
 
         public Task<int> ReindexAsync(CancellationToken cancellationToken = default)
             => Backend.ReindexSessionAsync(
@@ -194,6 +239,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         public AgentEmbeddingProviderDescriptor Descriptor { get; } = new(providerId, "Controlled Embeddings", []);
         public EmbeddingProviderMode Mode { get; set; }
         public int VectorVersion { get; set; } = 1;
+        public int FailuresRemaining { get; set; }
         public bool CancellationObserved { get; private set; }
         public TaskCompletionSource GenerationStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -216,6 +262,12 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             CancellationToken cancellationToken = default)
         {
             GenerationStarted.TrySetResult();
+            if (FailuresRemaining > 0)
+            {
+                FailuresRemaining--;
+                throw new InvalidOperationException("Transient embedding generation failure.");
+            }
+
             if (Mode == EmbeddingProviderMode.Fail)
             {
                 throw new InvalidOperationException("Embedding generation failed for the reliability fixture.");
@@ -257,6 +309,11 @@ public sealed class SemanticMemoryIndexingReliabilityTests
 
         public IReadOnlyList<T> GetExtensions<T>(PackageExtensionPoint<T> extensionPoint)
             => _extensions.TryGetValue(extensionPoint.Id, out var entries) ? entries.Cast<T>().ToArray() : [];
+
+        public IReadOnlyList<PackageExtensionContribution<T>> GetExtensionContributions<T>(PackageExtensionPoint<T> extensionPoint)
+            => GetExtensions(extensionPoint)
+                .Select(extension => new PackageExtensionContribution<T>("test.package", extension))
+                .ToArray();
     }
 
     private sealed class TestRuntimeCatalog(AgentSessionRecord session, AgentProfileRecord profile) : IAgentRuntimeCatalog
@@ -297,7 +354,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         public string Version => "1.0.0";
         public string InstallPath { get; }
         public IPackageStorageContext Storage { get; }
-        public IPackageConfiguration Configuration { get; } = new TestPackageConfiguration();
+        public IPackageSettings Settings { get; } = new TestPackageSettings();
         public IPackageSecrets Secrets { get; } = new TestPackageSecrets();
         public ILoggerFactory LoggerFactory => Logging.LoggerFactory;
         public IPackageLogging Logging { get; } = NullPackageLogging.Instance;
@@ -309,12 +366,12 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         {
             Directory.CreateDirectory(rootPath);
             Files = new TestPackageFileStore(rootPath);
-            LocalWorkspace = new TestPackageWorkspaceLease(rootPath);
+            RoleLocalWorkspace = new TestPackageRoleLocalWorkspace(rootPath);
         }
 
         public IPackageFileStore Files { get; }
         public IPackageKeyValueStore State { get; } = new TestPackageKeyValueStore();
-        public IPackageLocalWorkspaceLease LocalWorkspace { get; }
+        public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; }
     }
 
     private sealed class TestPackageFileStore(string rootPath) : TestPackageFileStoreBase(rootPath);
@@ -329,7 +386,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             => Task.FromResult<IReadOnlyList<string>>([]);
     }
 
-    private sealed class TestPackageConfiguration : EmptyPackageConfiguration;
+    private sealed class TestPackageSettings : EmptyPackageSettings;
 
     private sealed class TestPackageSecrets : InMemoryPackageSecrets;
 }

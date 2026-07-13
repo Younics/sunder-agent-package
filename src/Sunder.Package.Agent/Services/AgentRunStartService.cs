@@ -1,4 +1,5 @@
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Services;
@@ -48,27 +49,49 @@ internal sealed class AgentRunStartService(
                 return Interrupted(plan, SupersededBeforeExecution);
             }
 
-            if (plan.RollbackAnchorTurnId is { } anchorTurnId)
+            AgentRunStartPersistenceResult persistedStart;
+            var runningSummary = BuildRunningSummary(plan);
+            using (await _transitionGate
+                       .EnterAsync(plan.RunKey.SessionId, runCancellationToken)
+                       .ConfigureAwait(false))
             {
-                _sessionService.RollbackTranscript(plan.RunKey.SessionId, anchorTurnId);
+                runCancellationToken.ThrowIfCancellationRequested();
+                AgentRunStartPersistenceResult? start;
+                try
+                {
+                    start = IsCurrent(plan)
+                        ? _sessionService.TryStartRun(
+                            plan.RunHandle.DurableLease!,
+                            plan.UserMessage,
+                            plan.Attachments,
+                            plan.RollbackAnchorTurnId,
+                            runningSummary)
+                        : null;
+                }
+                catch (AgentRunStartCleanupException)
+                {
+                    userTurnCommitted = true;
+                    throw;
+                }
+
+                if (start is null)
+                {
+                    return Interrupted(plan, SupersededBeforeExecution);
+                }
+
+                persistedStart = start;
+                userTurnCommitted = true;
+            }
+
+            var userTurn = persistedStart.UserTurn;
+            if (persistedStart.Rollback is not null)
+            {
                 var rolledBackSession = _sessionService.GetSession(plan.RunKey.SessionId)
                     ?? throw new InvalidOperationException(
                         $"Session '{plan.RunKey.SessionId}' was not found after rollback.");
                 plan = plan with { Session = rolledBackSession };
             }
 
-            runCancellationToken.ThrowIfCancellationRequested();
-            var userTurn = plan.Attachments.Count == 0
-                ? _sessionService.AppendTextTurn(
-                    plan.RunKey.SessionId,
-                    AgentMessageRole.User,
-                    plan.UserMessage)
-                : _sessionService.AppendUserTurn(
-                    plan.RunKey.SessionId,
-                    AgentMessageRole.User,
-                    plan.UserMessage,
-                    plan.Attachments);
-            userTurnCommitted = true;
             if (plan.ShouldGenerateSessionTitle)
             {
                 _sessionTitleService?.ScheduleTitleFromFirstUserMessage(
@@ -97,24 +120,7 @@ internal sealed class AgentRunStartService(
                 return Interrupted(plan, SupersededBeforeExecution);
             }
 
-            AgentRunCheckpointRecord runningCheckpoint;
-            var runningSummary = BuildRunningSummary(plan);
-            using (await _transitionGate
-                       .EnterAsync(plan.RunKey.SessionId, runCancellationToken)
-                       .ConfigureAwait(false))
-            {
-                runCancellationToken.ThrowIfCancellationRequested();
-                if (!IsCurrent(plan)
-                    || _sessionService.TryTransitionRun(
-                        plan.RunHandle.DurableLease!,
-                        AgentRunStatus.Running,
-                        runningSummary) is not { } runningTransition)
-                {
-                    return Interrupted(plan, SupersededBeforeExecution);
-                }
-
-                runningCheckpoint = runningTransition.Checkpoint;
-            }
+            var runningCheckpoint = persistedStart.Transition.Checkpoint;
             _runEventLogger.LogRunEvent(
                 PackageLogLevel.Debug,
                 plan.RunKey.SessionId,

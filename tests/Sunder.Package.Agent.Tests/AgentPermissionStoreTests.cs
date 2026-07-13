@@ -13,61 +13,13 @@ public sealed class AgentPermissionStoreTests
     public void Migration_ExpiresLegacyRequestsWithoutDurableContinuationState()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var databasePath = scope.Context.Storage.LocalWorkspace.GetLocalPath("agent/agent.db");
+        var databasePath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("agent/agent.db");
         Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
         using (var connection = OpenDatabase(databasePath))
         using (var command = connection.CreateCommand())
         {
+            AgentLocalStore.ApplySchemaMigrations(connection, 2);
             command.CommandText = """
-                CREATE TABLE SchemaMigrations (
-                    Version INTEGER PRIMARY KEY,
-                    Name TEXT NOT NULL,
-                    AppliedAtUtc TEXT NOT NULL
-                );
-                INSERT INTO SchemaMigrations VALUES (1, 'legacy-schema-baseline', '2026-01-01T00:00:00Z');
-                INSERT INTO SchemaMigrations VALUES (2, 'agent-runs', '2026-01-01T00:00:00Z');
-
-                CREATE TABLE AgentRuns (
-                    RunId TEXT PRIMARY KEY,
-                    SessionId TEXT NOT NULL,
-                    RunRevision INTEGER NOT NULL,
-                    Epoch INTEGER NOT NULL,
-                    Status TEXT NOT NULL,
-                    ProfileId TEXT NOT NULL,
-                    UserMessage TEXT NOT NULL,
-                    StartedAtUtc TEXT NOT NULL,
-                    UpdatedAtUtc TEXT NOT NULL,
-                    FinishedAtUtc TEXT NULL,
-                    UNIQUE (SessionId, RunRevision)
-                );
-
-                CREATE TABLE AgentPendingPermissionRequests (
-                    RequestId TEXT PRIMARY KEY,
-                    SessionId TEXT NOT NULL,
-                    RunId TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
-                    RunRevision INTEGER NOT NULL DEFAULT 0,
-                    ProfileId TEXT NULL,
-                    UserTurnId TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
-                    UserMessage TEXT NOT NULL DEFAULT '',
-                    CallId TEXT NOT NULL DEFAULT '',
-                    ActionId TEXT NOT NULL,
-                    BoundaryId TEXT NOT NULL DEFAULT 'unknown',
-                    Summary TEXT NOT NULL,
-                    ToolId TEXT NULL,
-                    ArgumentsJson TEXT NOT NULL DEFAULT '{}',
-                    Command TEXT NULL,
-                    Path TEXT NULL,
-                    TargetKind TEXT NULL,
-                    TargetId TEXT NULL,
-                    WorkspaceId TEXT NULL,
-                    BindingId TEXT NULL,
-                    ResourceDisplayName TEXT NULL,
-                    ResourceReference TEXT NULL,
-                    IsMutation INTEGER NOT NULL DEFAULT 0,
-                    CreatedAtUtc TEXT NOT NULL,
-                    ParentSessionId TEXT NULL,
-                    RootSessionId TEXT NULL
-                );
                 INSERT INTO AgentPendingPermissionRequests (
                     RequestId, SessionId, ActionId, Summary, CreatedAtUtc)
                 VALUES ('legacy-request', '11111111-1111-1111-1111-111111111111', 'legacy.action', 'Legacy request', '2026-01-01T00:00:00Z');
@@ -121,6 +73,56 @@ public sealed class AgentPermissionStoreTests
         Assert.Single(results, result => result.Outcome == AgentPendingPermissionClaimOutcome.Claimed);
         Assert.Single(results, result => result.Outcome == AgentPendingPermissionClaimOutcome.AlreadyClaimed);
         Assert.Equal(AgentPendingPermissionStatus.Claimed, store.GetPermissionRequest(session.SessionId, "request-1")?.Status);
+    }
+
+    [Fact]
+    public async Task ClaimAndDenyRace_CommitsExactlyOnePermissionTransition()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var workspace = new AgentWorkspaceService(store).CreateWorkspace("Permission decision race");
+        var session = store.CreateSession("Session", workspaceId: workspace.WorkspaceId);
+        var run = store.ReserveRun(session.SessionId, "profile", "message");
+        var running = Assert.IsType<AgentRunTransitionResult>(store.TryTransitionRun(
+            run.Key,
+            run.Epoch,
+            AgentRunStatus.Running,
+            "Running."));
+        Assert.NotNull(store.SavePendingPermissionRequestAndSuspendRun(
+            CreateRequest(session.SessionId, run.Key.RunId, run.Key.RunRevision),
+            running.Run.Epoch));
+        using var barrier = new Barrier(3);
+
+        var claim = Task.Run(() =>
+        {
+            barrier.SignalAndWait();
+            return store.TryClaimPendingPermissionRequest(session.SessionId, "request-1");
+        });
+        var deny = Task.Run(() =>
+        {
+            barrier.SignalAndWait();
+            return store.TryDenyPendingPermissionRequest(session.SessionId, "request-1", "Denied.");
+        });
+        barrier.SignalAndWait();
+        await Task.WhenAll(claim, deny);
+        var claimResult = await claim;
+        var denyResult = await deny;
+
+        var persisted = Assert.IsType<AgentPendingPermissionRequestRecord>(
+            store.GetPermissionRequest(session.SessionId, "request-1"));
+        if (claimResult.Outcome == AgentPendingPermissionClaimOutcome.Claimed)
+        {
+            Assert.Equal(AgentPendingPermissionDecisionOutcome.AlreadyClaimed, denyResult.Outcome);
+            Assert.Equal(AgentPendingPermissionStatus.Claimed, persisted.Status);
+            Assert.Equal(AgentDurableRunStatus.WaitingForApproval, store.GetRun(run.Key.RunId)?.Status);
+        }
+        else
+        {
+            Assert.Equal(AgentPendingPermissionClaimOutcome.AlreadyDecided, claimResult.Outcome);
+            Assert.Equal(AgentPendingPermissionDecisionOutcome.Decided, denyResult.Outcome);
+            Assert.Equal(AgentPendingPermissionStatus.Denied, persisted.Status);
+            Assert.Equal(AgentDurableRunStatus.Stopped, store.GetRun(run.Key.RunId)?.Status);
+        }
     }
 
     [Fact]

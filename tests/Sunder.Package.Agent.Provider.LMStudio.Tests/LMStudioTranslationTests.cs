@@ -15,7 +15,7 @@ public sealed class LMStudioTranslationTests
         const string stream = """
             data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":0,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":null}]}
 
-            data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":0,"model":"model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+            data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":0,"model":"model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"reasoning_tokens":3}}}
 
             data: [DONE]
 
@@ -57,7 +57,13 @@ public sealed class LMStudioTranslationTests
             updates.Add(update);
         }
 
-        Assert.Equal("ok", Assert.Single(updates).Text);
+        Assert.Equal("ok", Assert.Single(updates, update => !string.IsNullOrEmpty(update.Text)).Text);
+        var usage = Assert.Single(updates.SelectMany(update => update.Contents).OfType<UsageContent>()).Details;
+        Assert.Equal(12, usage.InputTokenCount);
+        Assert.Equal(7, usage.OutputTokenCount);
+        Assert.Equal(19, usage.TotalTokenCount);
+        Assert.Equal(4, usage.CachedInputTokenCount);
+        Assert.Equal(3, usage.ReasoningTokenCount);
         var request = Assert.Single(handler.Requests);
         Assert.Null(request.Authorization);
         using var body = JsonDocument.Parse(request.Body!);
@@ -101,6 +107,21 @@ public sealed class LMStudioTranslationTests
 
         var exception = Assert.Throws<AgentChatProviderException>(() =>
             translator.ApplyToolCallDelta(0, "call-2", "read_file", "}"));
+
+        Assert.Equal("lmstudio-malformed-tool-call", exception.ErrorCode);
+    }
+
+    [Fact]
+    public void StreamTranslator_RejectsOversizedAccumulatedToolArguments()
+    {
+        var translator = new LMStudioOpenAIStreamTranslator(allowMultipleToolCalls: false);
+
+        var exception = Assert.Throws<AgentChatProviderException>(() =>
+            translator.ApplyToolCallDelta(
+                0,
+                "call-1",
+                "read_file",
+                new string('x', AgentPayloadLimits.MaxStreamedToolArgumentBytes + 1)));
 
         Assert.Equal("lmstudio-malformed-tool-call", exception.ErrorCode);
     }

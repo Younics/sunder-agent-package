@@ -2,6 +2,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Memory.Semantic.Services;
+using Sunder.Package.Agent.Memory.Semantic.Runtime;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
@@ -12,7 +13,7 @@ public sealed class MemoryInspectorService(
     SemanticMemoryIndexingBackgroundService indexingBackgroundService,
     SemanticModelRuntimeResolver modelRuntimeResolver,
     SemanticMemoryMetricsService metricsService
-)
+) : IMemoryInspectorGateway
 {
     private readonly MemoryLocalStore _store = store;
     private readonly SemanticMemoryRetrievalBackend _retrievalBackend = retrievalBackend;
@@ -81,26 +82,48 @@ public sealed class MemoryInspectorService(
         string category,
         string content,
         string? note
-    ) => _store.UpdateMemory(memoryId, category, content, note);
+    )
+    {
+        var memory = _store.UpdateMemory(memoryId, category, content, note);
+        QueueMutationReindex(memory);
+        return memory;
+    }
 
-    public StoredMemoryRecord SetPinned(Guid memoryId, bool isPinned) =>
-        _store.SetPinned(memoryId, isPinned);
+    public StoredMemoryRecord SetPinned(Guid memoryId, bool isPinned)
+    {
+        var memory = _store.SetPinned(memoryId, isPinned);
+        QueueMutationReindex(memory);
+        return memory;
+    }
 
-    public StoredMemoryRecord ContestMemory(Guid memoryId) => _store.SetContested(memoryId);
+    public StoredMemoryRecord ContestMemory(Guid memoryId)
+    {
+        var memory = _store.SetContested(memoryId);
+        QueueMutationReindex(memory);
+        return memory;
+    }
 
-    public StoredMemoryRecord ForgetMemory(Guid memoryId) =>
-        _store.SetState(
+    public StoredMemoryRecord ForgetMemory(Guid memoryId)
+    {
+        var memory = _store.SetState(
             memoryId,
             MemoryLocalStore.ForgottenState,
             "Forgotten in memory inspector."
         );
+        QueueMutationReindex(memory);
+        return memory;
+    }
 
-    public StoredMemoryRecord SupersedeMemory(Guid memoryId) =>
-        _store.SetState(
+    public StoredMemoryRecord SupersedeMemory(Guid memoryId)
+    {
+        var memory = _store.SetState(
             memoryId,
             MemoryLocalStore.SupersededState,
             "Superseded in memory inspector."
         );
+        QueueMutationReindex(memory);
+        return memory;
+    }
 
     public MemoryCorrectionResult CreateCorrectedMemory(
         Guid sourceMemoryId,
@@ -115,6 +138,7 @@ public sealed class MemoryInspectorService(
             "Corrected in memory inspector."
         );
         _metricsService.RecordCorrection();
+        QueueMutationReindex(result.CorrectedMemory);
         return result;
     }
 
@@ -256,6 +280,15 @@ public sealed class MemoryInspectorService(
     }
 
     public SemanticMemoryMetricsSnapshot GetMetricsSnapshot() => _metricsService.GetSnapshot();
+
+    private void QueueMutationReindex(StoredMemoryRecord memory)
+    {
+        var profile = _modelRuntimeResolver.RuntimeCatalog?.GetSessionProfile(memory.SessionId);
+        if (profile is not null)
+        {
+            _indexingBackgroundService.QueueSessionReindex(memory.SessionId, profile.ProfileId);
+        }
+    }
 
 }
 

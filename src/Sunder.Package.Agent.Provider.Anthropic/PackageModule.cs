@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Provider.Shared;
+using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 
@@ -14,35 +15,24 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton(new ProviderCredentialAccessor(
             context.Secrets,
             AnthropicProviderConfiguration.ApiKeySecretKey));
-        services.AddTransient(serviceProvider => new AnthropicSettingsViewModel(
-            context,
-            serviceProvider.GetRequiredService<ProviderCredentialAccessor>()));
         services.AddSingleton(serviceProvider => new AnthropicAgentProvider(
             context,
             serviceProvider.GetRequiredService<ProviderCredentialAccessor>()));
-        services.AddSingleton<IAgentChatProvider>(serviceProvider => serviceProvider.GetRequiredService<AnthropicAgentProvider>());
+        services.AddSingletonAlias<IAgentChatProvider, AnthropicAgentProvider>();
     }
-
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
-        => ConfigureRuntimeServices(services, context);
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterConfigurationSchema(AnthropicProviderConfiguration.Schema);
         registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<AnthropicAgentProvider>());
     }
-
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
-    {
-        registry.RegisterSettingsView<AnthropicSettingsView>();
-        registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<AnthropicAgentProvider>());
-    }
 }
 
 public sealed class AppPackageModule : ISunderAppPackageModule
 {
-    private readonly PackageModule _module = new();
+    public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
+        => services.AddTransient(_ => new AnthropicSettingsViewModel(context));
 
-    public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => _module.ConfigureAppServices(services, context);
-    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services) => _module.RegisterAppContributions(registry, services);
+    public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
+        => registry.RegisterSettingsView<AnthropicSettingsView>();
 }

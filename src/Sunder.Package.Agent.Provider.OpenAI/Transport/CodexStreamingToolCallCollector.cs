@@ -52,7 +52,7 @@ internal sealed class CodexStreamingToolCallCollector(bool allowMultipleToolCall
         accumulator.CallId ??= TryGetString(root, "call_id");
         if (root.TryGetProperty("delta", out var delta) && delta.ValueKind == JsonValueKind.String)
         {
-            accumulator.Arguments.Append(delta.GetString());
+            accumulator.AppendArguments(delta.GetString());
         }
     }
 
@@ -72,7 +72,8 @@ internal sealed class CodexStreamingToolCallCollector(bool allowMultipleToolCall
         if (!string.IsNullOrWhiteSpace(arguments))
         {
             accumulator.Arguments.Clear();
-            accumulator.Arguments.Append(arguments);
+            accumulator.ArgumentBytes = 0;
+            accumulator.AppendArguments(arguments);
         }
 
         if (string.IsNullOrWhiteSpace(accumulator.ToolId))
@@ -118,7 +119,24 @@ internal sealed class CodexStreamingToolCallCollector(bool allowMultipleToolCall
         public string? CallId { get; set; }
         public string? ToolId { get; set; }
         public StringBuilder Arguments { get; } = new();
+        public int ArgumentBytes { get; set; }
         public bool Completed { get; set; }
+
+        public void AppendArguments(string? value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return;
+            }
+
+            ArgumentBytes = checked(ArgumentBytes + Encoding.UTF8.GetByteCount(value));
+            if (ArgumentBytes > AgentPayloadLimits.MaxStreamedToolArgumentBytes)
+            {
+                throw Malformed($"OpenAI streamed tool arguments exceeding the {AgentPayloadLimits.MaxStreamedToolArgumentBytes}-byte limit.");
+            }
+
+            Arguments.Append(value);
+        }
     }
 }
 

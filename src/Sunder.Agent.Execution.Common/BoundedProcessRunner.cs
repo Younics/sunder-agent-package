@@ -24,12 +24,18 @@ public sealed record ProcessRunResult(
 
 public static class BoundedProcessRunner
 {
+    public const int MaximumTimeoutSeconds = 86_400;
+    public const int MaximumOutputLength = 10 * 1024 * 1024;
+
     public static async Task<ProcessRunResult> RunAsync(
         ProcessStartInfo startInfo,
         ProcessRunOptions options,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(startInfo);
+        ArgumentNullException.ThrowIfNull(options);
         cancellationToken.ThrowIfCancellationRequested();
+        ValidateOptions(startInfo, options);
         using var process = new Process
         {
             StartInfo = startInfo,
@@ -45,19 +51,22 @@ public static class BoundedProcessRunner
             return new ProcessRunResult(127, string.Empty, string.Empty, TimedOut: false, WasTruncated: false, StartException: ex);
         }
 
-        var stdoutTask = ReadToEndBoundedAsync(process.StandardOutput, options.MaxOutputLength, options.Progress, cancellationToken);
-        var stderrTask = ReadToEndBoundedAsync(process.StandardError, options.MaxOutputLength, options.Progress, cancellationToken);
-        var stdinTask = WriteStandardInputAsync(process, options.StandardInput, cancellationToken);
-
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(options.TimeoutSeconds));
+        Task<BoundedProcessOutput>? stdoutTask = null;
+        Task<BoundedProcessOutput>? stderrTask = null;
+        Task? stdinTask = null;
+        CancellationTokenSource? timeoutCts = null;
 
         try
         {
-            await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
-            await stdinTask.ConfigureAwait(false);
+            stdoutTask = ReadToEndBoundedAsync(process.StandardOutput, options.MaxOutputLength, options.Progress, cancellationToken);
+            stderrTask = ReadToEndBoundedAsync(process.StandardError, options.MaxOutputLength, options.Progress, cancellationToken);
+            stdinTask = WriteStandardInputAsync(process, options.StandardInput, cancellationToken);
+            timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(options.TimeoutSeconds));
+            var exitTask = process.WaitForExitAsync(timeoutCts.Token);
+            await WaitForOperationsAsync(exitTask, stdinTask, stdoutTask, stderrTask).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true && !cancellationToken.IsCancellationRequested)
         {
             TryKill(process);
             await WaitForExitAfterKillAsync(process).ConfigureAwait(false);
@@ -74,10 +83,24 @@ public static class BoundedProcessRunner
         catch (OperationCanceledException)
         {
             TryKill(process);
+            await WaitForExitAfterKillAsync(process).ConfigureAwait(false);
             ObserveFaults(stdoutTask);
             ObserveFaults(stderrTask);
             ObserveFaults(stdinTask);
             throw;
+        }
+        catch
+        {
+            TryKill(process);
+            await WaitForExitAfterKillAsync(process).ConfigureAwait(false);
+            ObserveFaults(stdoutTask);
+            ObserveFaults(stderrTask);
+            ObserveFaults(stdinTask);
+            throw;
+        }
+        finally
+        {
+            timeoutCts?.Dispose();
         }
 
         var stdout = await stdoutTask.ConfigureAwait(false);
@@ -88,6 +111,50 @@ public static class BoundedProcessRunner
             stderr.Content,
             TimedOut: false,
             stdout.WasTruncated || stderr.WasTruncated);
+    }
+
+    private static void ValidateOptions(ProcessStartInfo startInfo, ProcessRunOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(startInfo.FileName))
+        {
+            throw new ArgumentException("Process file name cannot be empty.", nameof(startInfo));
+        }
+
+        if (options.TimeoutSeconds is <= 0 or > MaximumTimeoutSeconds)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), options.TimeoutSeconds, $"Process timeout must be between 1 and {MaximumTimeoutSeconds} seconds.");
+        }
+
+        if (options.MaxOutputLength is <= 0 or > MaximumOutputLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), options.MaxOutputLength, $"Maximum output length must be between 1 and {MaximumOutputLength} characters.");
+        }
+
+        if (startInfo.UseShellExecute)
+        {
+            throw new ArgumentException("Bounded process execution requires UseShellExecute to be false.", nameof(startInfo));
+        }
+
+        if (!startInfo.RedirectStandardOutput || !startInfo.RedirectStandardError)
+        {
+            throw new ArgumentException("Bounded process execution requires redirected standard output and standard error.", nameof(startInfo));
+        }
+
+        if (options.StandardInput is not null && !startInfo.RedirectStandardInput)
+        {
+            throw new ArgumentException("Standard input must be redirected when input content is provided.", nameof(startInfo));
+        }
+    }
+
+    private static async Task WaitForOperationsAsync(params Task[] operations)
+    {
+        var pending = operations.ToList();
+        while (pending.Count > 0)
+        {
+            var completed = await Task.WhenAny(pending).ConfigureAwait(false);
+            await completed.ConfigureAwait(false);
+            pending.Remove(completed);
+        }
     }
 
     private static async Task<BoundedProcessOutput> ReadToEndBoundedAsync(
@@ -189,8 +256,13 @@ public static class BoundedProcessRunner
         }
     }
 
-    private static async Task<BoundedProcessOutput> CompleteOutputTaskAsync(Task<BoundedProcessOutput> task)
+    private static async Task<BoundedProcessOutput> CompleteOutputTaskAsync(Task<BoundedProcessOutput>? task)
     {
+        if (task is null)
+        {
+            return new BoundedProcessOutput(string.Empty, WasTruncated: false);
+        }
+
         try
         {
             return await task.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
@@ -202,8 +274,13 @@ public static class BoundedProcessRunner
         }
     }
 
-    private static async Task ObserveTaskAsync(Task task)
+    private static async Task ObserveTaskAsync(Task? task)
     {
+        if (task is null)
+        {
+            return;
+        }
+
         try
         {
             await task.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
@@ -214,8 +291,13 @@ public static class BoundedProcessRunner
         }
     }
 
-    private static void ObserveFaults(Task task)
+    private static void ObserveFaults(Task? task)
     {
+        if (task is null)
+        {
+            return;
+        }
+
         _ = task.ContinueWith(
             completed => _ = completed.Exception,
             CancellationToken.None,

@@ -145,6 +145,7 @@ internal sealed class McpServerStackContributor(
         var imported = new List<StackImportedItem>();
         var warnings = new List<string>();
         var errors = new List<string>();
+        var selectedPayloads = new List<McpServerStackPayload>();
         foreach (var fragment in request.Fragments)
         {
             if (!TryReadPayload(fragment, warnings, out var payload) || payload is null)
@@ -158,35 +159,67 @@ internal sealed class McpServerStackContributor(
                 continue;
             }
 
+            selectedPayloads.Add(payload);
+        }
+
+        var duplicateIds = selectedPayloads
+            .GroupBy(payload => payload.ServerId, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToArray();
+        var duplicateNames = selectedPayloads
+            .GroupBy(payload => McpServerCatalogService.NormalizeName(payload.Name), StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToArray();
+        if (duplicateIds.Length > 0 || duplicateNames.Length > 0)
+        {
+            errors.Add("MCP Stack import contains duplicate or case-colliding server ids or names; no servers were changed.");
+        }
+        else
+        {
             try
             {
-                var existing = await serverCatalog.GetServerAsync(payload.ServerId, cancellationToken);
-                var headers = existing is null
-                    ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    : new Dictionary<string, string>(await serverCatalog.GetHeadersAsync(existing, cancellationToken), StringComparer.OrdinalIgnoreCase);
-                var environmentVariables = existing is null
-                    ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    : new Dictionary<string, string>(await serverCatalog.GetEnvironmentVariablesAsync(existing, cancellationToken), StringComparer.OrdinalIgnoreCase);
-                var missingSecrets = ApplySecretInputs(payload.Headers, request.InputValues, headers)
-                                     + ApplySecretInputs(payload.EnvironmentVariables, request.InputValues, environmentVariables);
-                var isEnabled = payload.IsEnabled && missingSecrets == 0;
-                if (payload.IsEnabled && missingSecrets > 0)
+                var writes = new List<McpServerCatalogWrite>();
+                foreach (var payload in selectedPayloads)
                 {
-                    warnings.Add($"Imported MCP server '{payload.DisplayName}' disabled because {missingSecrets} secret value{(missingSecrets == 1 ? string.Empty : "s")} must be supplied locally.");
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var existing = await serverCatalog.GetServerAsync(payload.ServerId, cancellationToken).ConfigureAwait(false);
+                    var headers = existing is null
+                        ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        : new Dictionary<string, string>(await serverCatalog.GetHeadersAsync(existing, cancellationToken).ConfigureAwait(false), StringComparer.OrdinalIgnoreCase);
+                    var environmentVariables = existing is null
+                        ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        : new Dictionary<string, string>(await serverCatalog.GetEnvironmentVariablesAsync(existing, cancellationToken).ConfigureAwait(false), StringComparer.OrdinalIgnoreCase);
+                    var missingSecrets = ApplySecretInputs(payload.Headers, request.InputValues, headers)
+                                         + ApplySecretInputs(payload.EnvironmentVariables, request.InputValues, environmentVariables);
+                    var isEnabled = payload.IsEnabled && missingSecrets == 0;
+                    if (payload.IsEnabled && missingSecrets > 0)
+                    {
+                        warnings.Add($"Imported MCP server '{payload.DisplayName}' disabled because {missingSecrets} secret value{(missingSecrets == 1 ? string.Empty : "s")} must be supplied locally.");
+                    }
+
+                    var now = DateTimeOffset.UtcNow;
+                    writes.Add(new McpServerCatalogWrite(
+                        payload.ToServer(existing?.CreatedAtUtc ?? now, now, isEnabled),
+                        headers,
+                        environmentVariables));
                 }
 
-                var now = DateTimeOffset.UtcNow;
-                var server = payload.ToServer(existing?.CreatedAtUtc ?? now, now, isEnabled);
-                await serverCatalog.SaveServerAsync(server, headers, environmentVariables, cancellationToken);
-                imported.Add(new StackImportedItem(payload.ServerId, payload.DisplayName, "mcp-server"));
+                cancellationToken.ThrowIfCancellationRequested();
+                await serverCatalog.ApplyBatchAsync(writes, [], cancellationToken).ConfigureAwait(false);
+                imported.AddRange(selectedPayloads.Select(payload => new StackImportedItem(payload.ServerId, payload.DisplayName, "mcp-server")));
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                errors.Add($"Failed to import MCP server '{payload.DisplayName}': {ex.Message}");
+                errors.Add($"Failed to import MCP servers: {ex.Message}");
             }
         }
 
-        return new StackImportResult(errors.Count == 0, imported, new Dictionary<string, string>(), warnings, errors);
+        var outcome = errors.Count == 0
+            ? StackImportOutcome.Completed
+            : imported.Count == 0 ? StackImportOutcome.Failed : StackImportOutcome.Partial;
+        return new StackImportResult(outcome, imported, new Dictionary<string, string>(), warnings, errors);
     }
 
     public ValueTask OnStackImportAppliedAsync(
@@ -467,7 +500,18 @@ internal static class McpServerStackPayloadCodec
         payload = null;
         try
         {
-            payload = JsonSerializer.Deserialize<McpServerStackPayload>(fragment.JsonPayload, JsonOptions);
+            if (fragment.JsonPayload.Length > McpConfigurationSourceReader.MaxDocumentBytes)
+            {
+                warnings.Add($"Stack fragment '{fragment.FragmentId}' MCP server payload exceeds the size limit.");
+                return false;
+            }
+
+            using var document = JsonDocument.Parse(fragment.JsonPayload, new JsonDocumentOptions
+            {
+                MaxDepth = McpConfigurationSourceReader.MaxJsonDepth,
+            });
+            McpJsonShapeValidator.RejectDuplicateProperties(document.RootElement);
+            payload = document.RootElement.Deserialize<McpServerStackPayload>(JsonOptions);
             if (payload is null
                 || string.IsNullOrWhiteSpace(payload.ServerId)
                 || string.IsNullOrWhiteSpace(payload.Name)
@@ -478,14 +522,49 @@ internal static class McpServerStackPayloadCodec
                 return false;
             }
 
-            if (payload.TransportType == nameof(ConfiguredMcpTransportType.Stdio) && payload.CommandParts.Count == 0)
+            if (payload.ServerId.Length > 128
+                || payload.Name.Length > 128
+                || payload.DisplayName.Length > 256
+                || payload.ServerId.Any(char.IsControl))
+            {
+                warnings.Add($"Stack fragment '{fragment.FragmentId}' MCP server identity exceeds its bounds or contains control characters.");
+                payload = null;
+                return false;
+            }
+
+            if (payload.Headers.Select(item => item.Name)
+                    .Concat(payload.EnvironmentVariables.Select(item => item.Name))
+                    .Any(string.IsNullOrWhiteSpace)
+                || payload.Headers.Select(item => item.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != payload.Headers.Count
+                || payload.EnvironmentVariables.Select(item => item.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != payload.EnvironmentVariables.Count
+                || payload.Headers.Select(item => item.InputId)
+                    .Concat(payload.EnvironmentVariables.Select(item => item.InputId))
+                    .Any(string.IsNullOrWhiteSpace)
+                || payload.Headers.Select(item => item.InputId)
+                    .Concat(payload.EnvironmentVariables.Select(item => item.InputId))
+                    .Distinct(StringComparer.OrdinalIgnoreCase).Count() != payload.Headers.Count + payload.EnvironmentVariables.Count)
+            {
+                warnings.Add($"Stack fragment '{fragment.FragmentId}' MCP server payload contains empty, duplicate, or case-colliding secret names.");
+                payload = null;
+                return false;
+            }
+
+            if (!Enum.TryParse<ConfiguredMcpTransportType>(payload.TransportType, ignoreCase: false, out var transportType)
+                || !Enum.IsDefined(transportType))
+            {
+                warnings.Add($"Stack fragment '{fragment.FragmentId}' MCP server payload has an unsupported transport.");
+                payload = null;
+                return false;
+            }
+
+            if (transportType == ConfiguredMcpTransportType.Stdio && payload.CommandParts.Count == 0)
             {
                 warnings.Add($"Stack fragment '{fragment.FragmentId}' local MCP server payload is missing command parts.");
                 payload = null;
                 return false;
             }
 
-            if (payload.TransportType == nameof(ConfiguredMcpTransportType.HttpSse)
+            if (transportType == ConfiguredMcpTransportType.HttpSse
                 && (string.IsNullOrWhiteSpace(payload.EndpointUrl) || !Uri.TryCreate(payload.EndpointUrl, UriKind.Absolute, out _)))
             {
                 warnings.Add($"Stack fragment '{fragment.FragmentId}' remote MCP server payload is missing a valid URL.");
@@ -495,7 +574,7 @@ internal static class McpServerStackPayloadCodec
 
             return true;
         }
-        catch (JsonException ex)
+        catch (Exception ex) when (ex is JsonException or InvalidDataException)
         {
             warnings.Add($"Stack fragment '{fragment.FragmentId}' MCP server payload could not be parsed: {ex.Message}");
             return false;

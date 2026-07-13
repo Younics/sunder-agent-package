@@ -18,6 +18,30 @@ internal static class OpenAiModelCatalog
         "gpt-5.6-luna",
     };
 
+    private static readonly IReadOnlySet<string> ResponsesLiteModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    };
+
+    private static readonly IReadOnlySet<string> CodexUnsupportedModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "gpt-5.6",
+    };
+
+    private static readonly IReadOnlyDictionary<string, (int ContextWindow, int MaxOutputTokens)> CodexModelLimits =
+        new Dictionary<string, (int ContextWindow, int MaxOutputTokens)>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["gpt-5.6-sol"] = (500000, 128000),
+            ["gpt-5.6-terra"] = (500000, 128000),
+            ["gpt-5.6-luna"] = (500000, 128000),
+            ["gpt-5.5"] = (400000, 128000),
+            ["gpt-5.4"] = (400000, 128000),
+            ["gpt-5.4-mini"] = (400000, 128000),
+            ["gpt-5.2"] = (400000, 128000),
+        };
+
     private static readonly IReadOnlyList<AgentModelVariantDescriptor> ReasoningVariants =
     [
         new("none", "None", "Disable reasoning effort when the selected model supports it.", AgentReasoningEffort.None),
@@ -89,10 +113,10 @@ internal static class OpenAiModelCatalog
         };
 
     private static readonly IReadOnlyList<AgentModelDescriptor> VendorModels =
-        ApplyReleaseDates([
-        new("openai/gpt-5.6", "GPT-5.6", 1050000, 128000, IsRecommended: true, Variants: ReasoningVariants, SpeedOptions: FastSpeedOptions, ModeOptions: ProModeOptions),
+        ProviderModelCatalog.ApplyReleaseDates([
+        new("openai/gpt-5.6", "GPT-5.6", 1050000, 128000, Variants: ReasoningVariants, SpeedOptions: FastSpeedOptions, ModeOptions: ProModeOptions),
         new("openai/gpt-5.6-sol", "GPT-5.6 Sol", 1050000, 128000, IsRecommended: true, Variants: ReasoningVariants, SpeedOptions: FastSpeedOptions, ModeOptions: ProModeOptions),
-        new("openai/gpt-5.6-terra", "GPT-5.6 Terra", 1050000, 128000, IsRecommended: true, Variants: ReasoningVariants, SpeedOptions: FastSpeedOptions, ModeOptions: ProModeOptions),
+        new("openai/gpt-5.6-terra", "GPT-5.6 Terra", 1050000, 128000, Variants: ReasoningVariants, SpeedOptions: FastSpeedOptions, ModeOptions: ProModeOptions),
         new("openai/gpt-5.6-luna", "GPT-5.6 Luna", 1050000, 128000, Variants: ReasoningVariants, SpeedOptions: FastSpeedOptions, ModeOptions: ProModeOptions),
         new("openai/gpt-5.5", "GPT-5.5", 1050000, 128000, IsRecommended: true, Variants: ReasoningVariants, SpeedOptions: FastSpeedOptions),
         new("openai/gpt-5.5-pro", "GPT-5.5 Pro", 1050000, 128000, Variants: ReasoningVariants),
@@ -137,7 +161,7 @@ internal static class OpenAiModelCatalog
         new("openai/gpt-4", "GPT-4", 8192, 8192),
         new("openai/gpt-3.5-turbo", "GPT-3.5 Turbo", 16385, 4096),
         new("openai/codex-mini-latest", "Codex Mini Latest", 200000, 100000, Variants: ReasoningVariants),
-    ]);
+    ], ReleaseDates);
 
     private static readonly ProviderModelCatalogSnapshot Catalog = ProviderModelCatalog.ValidateAndOrder(
         VendorModels,
@@ -146,29 +170,34 @@ internal static class OpenAiModelCatalog
 
     public static IReadOnlyList<AgentModelDescriptor> Models => Catalog.Models;
 
+    public static IReadOnlyList<AgentModelDescriptor> CodexModels { get; } = Models
+        .Where(model => !CodexUnsupportedModels.Contains(OpenAiModelIds.Normalize(model.ModelId)))
+        .Select(model => CodexModelLimits.TryGetValue(OpenAiModelIds.Normalize(model.ModelId), out var limits)
+            ? model with
+            {
+                ContextWindow = limits.ContextWindow,
+                MaxOutputTokens = limits.MaxOutputTokens,
+            }
+            : model)
+        .ToArray();
+
     public static IReadOnlyList<PackageConfigurationOption> UtilityModelOptions { get; } =
         Catalog.UtilityModelOptions;
 
     internal static OpenAiModelCapabilities GetCapabilities(string modelId)
     {
         var normalizedModelId = OpenAiModelIds.Normalize(modelId);
-        var descriptor = Models.FirstOrDefault(model => string.Equals(
-            OpenAiModelIds.Normalize(model.ModelId),
-            normalizedModelId,
-            StringComparison.OrdinalIgnoreCase));
+        var descriptor = ProviderModelCatalog.FindByNormalizedId(Models, modelId, OpenAiModelIds.Normalize);
         return new OpenAiModelCapabilities(
             descriptor?.Variants is { Count: > 0 },
-            LowTextVerbosityModels.Contains(normalizedModelId));
+            LowTextVerbosityModels.Contains(normalizedModelId),
+            ResponsesLiteModels.Contains(normalizedModelId),
+            string.Equals(normalizedModelId, "gpt-5.6-sol", StringComparison.OrdinalIgnoreCase) ? "low" : "medium");
     }
-
-    private static IReadOnlyList<AgentModelDescriptor> ApplyReleaseDates(
-        IEnumerable<AgentModelDescriptor> models)
-        => models.Select(model => ReleaseDates.TryGetValue(model.ModelId, out var releaseDate)
-                ? model with { ReleaseDate = releaseDate }
-                : model)
-            .ToArray();
 }
 
 internal readonly record struct OpenAiModelCapabilities(
     bool SupportsReasoning,
-    bool UseLowTextVerbosity);
+    bool UseLowTextVerbosity,
+    bool UseResponsesLite,
+    string DefaultReasoningEffort);

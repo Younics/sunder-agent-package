@@ -8,6 +8,7 @@ using Avalonia.VisualTree;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Services;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
@@ -22,12 +23,18 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
 
     private AgentWorkspacesViewModel? _viewModel;
     private readonly AdaptiveMasterDetail _adaptiveLayout;
-    private string? _pendingWorkspacePathEditId;
-    private string? _pendingWorkspaceDocumentEditId;
+    private readonly AgentWorkspacesViewContext _context;
     private bool _disposed;
 
     public AgentWorkspacesView()
+        : this(new AgentWorkspacesViewContext())
     {
+    }
+
+    private AgentWorkspacesView(AgentWorkspacesViewContext context)
+    {
+        _context = context;
+        _context.Failed += OnContextFailed;
         InitializeComponent();
         _adaptiveLayout = new AdaptiveMasterDetail(
             this,
@@ -45,15 +52,25 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
     }
 
     public AgentWorkspacesView(
+        IAgentWorkspaceGateway workspaceService,
+        IAgentExecutionGateway executionGateway,
+        IPackageExtensionCatalog extensionCatalog,
+        IPackageSettingsNavigationService? settingsNavigationService = null,
+        AgentWorkspacesViewContext? context = null)
+        : this(context ?? new AgentWorkspacesViewContext())
+    {
+        _viewModel = new AgentWorkspacesViewModel(workspaceService, executionGateway, extensionCatalog, settingsNavigationService);
+        DataContext = _viewModel;
+    }
+
+    public AgentWorkspacesView(
         AgentWorkspaceService workspaceService,
-        AgentExecutionTargetService targetService,
+        AgentExecutionTargetService executionTargetService,
         IPackageExtensionCatalog extensionCatalog,
         AgentExecutionTargetWarmupService warmupService,
         IPackageSettingsNavigationService? settingsNavigationService = null)
-        : this()
+        : this(workspaceService, warmupService, extensionCatalog, settingsNavigationService)
     {
-        _viewModel = new AgentWorkspacesViewModel(workspaceService, targetService, extensionCatalog, warmupService, settingsNavigationService);
-        DataContext = _viewModel;
     }
 
     public void Dispose()
@@ -65,12 +82,17 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
 
         _disposed = true;
         _adaptiveLayout.Dispose();
+        _context.Failed -= OnContextFailed;
+        _context.Dispose();
         _viewModel?.Dispose();
         DataContext = null;
         _viewModel = null;
     }
 
-    private async void OnAddEditorPathItemClick(object? sender, RoutedEventArgs e)
+    private void OnAddEditorPathItemClick(object? sender, RoutedEventArgs e)
+        => _context.Run(cancellationToken => AddEditorPathItemAsync(sender, cancellationToken));
+
+    private async Task AddEditorPathItemAsync(object? sender, CancellationToken cancellationToken)
     {
         if ((sender as Control)?.DataContext is not AgentEditorPathListFieldViewModel field)
         {
@@ -94,6 +116,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
             Title = "Select workspace path",
             AllowMultiple = false,
         });
+        cancellationToken.ThrowIfCancellationRequested();
 
         var folder = folders.FirstOrDefault();
         if (folder is not null)
@@ -102,7 +125,10 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         }
     }
 
-    private async void OnAddWorkspacePathClick(object? sender, RoutedEventArgs e)
+    private void OnAddWorkspacePathClick(object? sender, RoutedEventArgs e)
+        => _context.Run(AddWorkspacePathAsync);
+
+    private async Task AddWorkspacePathAsync(CancellationToken cancellationToken)
     {
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel?.StorageProvider is null)
@@ -115,6 +141,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
             Title = "Select workspace path",
             AllowMultiple = false,
         });
+        cancellationToken.ThrowIfCancellationRequested();
 
         var folder = folders.FirstOrDefault();
         if (folder is not null)
@@ -123,7 +150,10 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         }
     }
 
-    private async void OnAddWorkspaceDocumentClick(object? sender, RoutedEventArgs e)
+    private void OnAddWorkspaceDocumentClick(object? sender, RoutedEventArgs e)
+        => _context.Run(AddWorkspaceDocumentsAsync);
+
+    private async Task AddWorkspaceDocumentsAsync(CancellationToken cancellationToken)
     {
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel?.StorageProvider is null)
@@ -137,6 +167,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
             AllowMultiple = true,
             FileTypeFilter = [WorkspaceDocumentFileType, FilePickerFileTypes.All],
         });
+        cancellationToken.ThrowIfCancellationRequested();
 
         var viewModel = _viewModel ?? DataContext as AgentWorkspacesViewModel;
         if (viewModel is null)
@@ -209,7 +240,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         editItem.Click += (_, _) =>
         {
             shouldFocusEdit = true;
-            _pendingWorkspacePathEditId = path.PathId;
+            _context.PendingPathEditId = path.PathId;
             viewModel.BeginEditWorkspacePathCommand.Execute(path);
         };
 
@@ -231,7 +262,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
                 return;
             }
 
-            _pendingWorkspacePathEditId = path.PathId;
+            _context.PendingPathEditId = path.PathId;
             QueueFocusInlineWorkspacePathTextBox(path);
         };
         flyout.Items.Add(editItem);
@@ -259,7 +290,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         editItem.Click += (_, _) =>
         {
             shouldFocusEdit = true;
-            _pendingWorkspaceDocumentEditId = document.DocumentId;
+            _context.PendingDocumentEditId = document.DocumentId;
             viewModel.BeginEditWorkspaceDocumentCommand.Execute(document);
         };
 
@@ -274,7 +305,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
                 return;
             }
 
-            _pendingWorkspaceDocumentEditId = document.DocumentId;
+            _context.PendingDocumentEditId = document.DocumentId;
             QueueFocusInlineWorkspaceDocumentTextBox(document);
         };
         flyout.Items.Add(editItem);
@@ -298,7 +329,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         if (e.Key == Key.Enter)
         {
             e.Handled = true;
-            _pendingWorkspacePathEditId = null;
+            _context.PendingPathEditId = null;
             viewModel.SaveWorkspacePathEditCommand.Execute(path);
             return;
         }
@@ -306,7 +337,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         if (e.Key == Key.Escape)
         {
             e.Handled = true;
-            _pendingWorkspacePathEditId = null;
+            _context.PendingPathEditId = null;
             viewModel.CancelWorkspacePathEditCommand.Execute(path);
         }
     }
@@ -327,7 +358,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         if (e.Key == Key.Enter)
         {
             e.Handled = true;
-            _pendingWorkspaceDocumentEditId = null;
+            _context.PendingDocumentEditId = null;
             viewModel.SaveWorkspaceDocumentEditCommand.Execute(document);
             return;
         }
@@ -335,7 +366,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         if (e.Key == Key.Escape)
         {
             e.Handled = true;
-            _pendingWorkspaceDocumentEditId = null;
+            _context.PendingDocumentEditId = null;
             viewModel.CancelWorkspaceDocumentEditCommand.Execute(document);
         }
     }
@@ -359,7 +390,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
     {
         if (textBox?.DataContext is not AgentWorkspacePathItemViewModel path
             || !path.IsEditActive
-            || _pendingWorkspacePathEditId != path.PathId
+            || _context.PendingPathEditId != path.PathId
             || !textBox.IsEffectivelyVisible)
         {
             return;
@@ -372,7 +403,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
     {
         if (textBox?.DataContext is not AgentWorkspaceDocumentItemViewModel document
             || !document.IsEditActive
-            || _pendingWorkspaceDocumentEditId != document.DocumentId
+            || _context.PendingDocumentEditId != document.DocumentId
             || !textBox.IsEffectivelyVisible)
         {
             return;
@@ -383,9 +414,9 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
 
     private void QueueFocusInlineWorkspacePathTextBox(AgentWorkspacePathItemViewModel path, int attempt = 0)
     {
-        Dispatcher.UIThread.Post(() =>
+        _context.Queue(() =>
         {
-            if (_pendingWorkspacePathEditId != path.PathId || !path.IsEditActive)
+            if (_context.PendingPathEditId != path.PathId || !path.IsEditActive)
             {
                 return;
             }
@@ -406,9 +437,9 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
 
     private void QueueFocusInlineWorkspaceDocumentTextBox(AgentWorkspaceDocumentItemViewModel document, int attempt = 0)
     {
-        Dispatcher.UIThread.Post(() =>
+        _context.Queue(() =>
         {
-            if (_pendingWorkspaceDocumentEditId != document.DocumentId || !document.IsEditActive)
+            if (_context.PendingDocumentEditId != document.DocumentId || !document.IsEditActive)
             {
                 return;
             }
@@ -432,7 +463,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         AgentWorkspacePathItemViewModel path,
         int attempt = 0)
     {
-        Dispatcher.UIThread.Post(
+        _context.Queue(
             () => FocusInlineWorkspacePathTextBox(textBox, path, attempt),
             DispatcherPriority.ContextIdle);
     }
@@ -442,7 +473,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         AgentWorkspaceDocumentItemViewModel document,
         int attempt = 0)
     {
-        Dispatcher.UIThread.Post(
+        _context.Queue(
             () => FocusInlineWorkspaceDocumentTextBox(textBox, document, attempt),
             DispatcherPriority.ContextIdle);
     }
@@ -452,13 +483,13 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         AgentWorkspacePathItemViewModel path,
         int attempt)
     {
-        if (_pendingWorkspacePathEditId != path.PathId || !path.IsEditActive)
+        if (_context.PendingPathEditId != path.PathId || !path.IsEditActive)
         {
             return;
         }
 
         FocusInlineWorkspaceEditTextBox(textBox);
-        Dispatcher.UIThread.Post(
+        _context.Queue(
             () => VerifyInlineWorkspacePathTextBoxFocus(textBox, path, attempt),
             DispatcherPriority.ContextIdle);
     }
@@ -468,13 +499,13 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         AgentWorkspaceDocumentItemViewModel document,
         int attempt)
     {
-        if (_pendingWorkspaceDocumentEditId != document.DocumentId || !document.IsEditActive)
+        if (_context.PendingDocumentEditId != document.DocumentId || !document.IsEditActive)
         {
             return;
         }
 
         FocusInlineWorkspaceEditTextBox(textBox);
-        Dispatcher.UIThread.Post(
+        _context.Queue(
             () => VerifyInlineWorkspaceDocumentTextBoxFocus(textBox, document, attempt),
             DispatcherPriority.ContextIdle);
     }
@@ -502,14 +533,14 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         AgentWorkspacePathItemViewModel path,
         int attempt)
     {
-        if (_pendingWorkspacePathEditId != path.PathId || !path.IsEditActive)
+        if (_context.PendingPathEditId != path.PathId || !path.IsEditActive)
         {
             return;
         }
 
         if (textBox.IsKeyboardFocusWithin)
         {
-            _pendingWorkspacePathEditId = null;
+            _context.PendingPathEditId = null;
             return;
         }
 
@@ -524,14 +555,14 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         AgentWorkspaceDocumentItemViewModel document,
         int attempt)
     {
-        if (_pendingWorkspaceDocumentEditId != document.DocumentId || !document.IsEditActive)
+        if (_context.PendingDocumentEditId != document.DocumentId || !document.IsEditActive)
         {
             return;
         }
 
         if (textBox.IsKeyboardFocusWithin)
         {
-            _pendingWorkspaceDocumentEditId = null;
+            _context.PendingDocumentEditId = null;
             return;
         }
 
@@ -608,7 +639,10 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         }
     }
 
-    private async void OnPickEditorPathItemSecondaryFolderClick(object? sender, RoutedEventArgs e)
+    private void OnPickEditorPathItemSecondaryFolderClick(object? sender, RoutedEventArgs e)
+        => _context.Run(cancellationToken => PickEditorPathItemSecondaryFolderAsync(sender, cancellationToken));
+
+    private async Task PickEditorPathItemSecondaryFolderAsync(object? sender, CancellationToken cancellationToken)
     {
         if ((sender as Control)?.DataContext is not AgentEditorPathListItemViewModel item)
         {
@@ -626,6 +660,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
             Title = "Select host folder",
             AllowMultiple = false,
         });
+        cancellationToken.ThrowIfCancellationRequested();
 
         var folder = folders.FirstOrDefault();
         if (folder is not null)
@@ -634,14 +669,14 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
         }
     }
 
-    private async void OnEditorActionClick(object? sender, RoutedEventArgs e)
+    private void OnEditorActionClick(object? sender, RoutedEventArgs e)
     {
         if ((sender as Control)?.DataContext is AgentEditorActionViewModel action)
         {
             var viewModel = _viewModel ?? DataContext as AgentWorkspacesViewModel;
             if (viewModel is not null)
             {
-                await viewModel.ExecuteEditorActionAsync(action);
+                _context.Run(_ => viewModel.ExecuteEditorActionAsync(action));
             }
         }
     }
@@ -663,8 +698,11 @@ public partial class AgentWorkspacesView : UserControl, IDisposable
 
     private void FocusWorkspaceDisplayName()
     {
-        Dispatcher.UIThread.Post(
+        _context.Queue(
             () => WorkspaceDisplayNameTextBox.Focus(),
             DispatcherPriority.Background);
     }
+
+    private void OnContextFailed(Exception exception)
+        => (_viewModel ?? DataContext as AgentWorkspacesViewModel)?.ReportPresentationFailure(exception);
 }

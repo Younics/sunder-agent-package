@@ -69,6 +69,41 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         AssertReadError(result, AgentFileReadErrorCodes.OutsideConfiguredScope);
     }
 
+    [Theory]
+    [MemberData(nameof(RangedTargets))]
+    public async Task MutationTargets_ReturnStructuredScopeFailures(string targetKind)
+    {
+        var fixture = CreateFixture(targetKind);
+
+        var write = await fixture.WriteAsync(new AgentFileWriteRequest("../outside.txt", "unsafe"));
+        var delete = await fixture.DeleteAsync(new AgentFileDeleteRequest("../outside.txt"));
+
+        AssertMutationError(write, AgentFileReadErrorCodes.OutsideConfiguredScope);
+        AssertMutationError(delete, AgentFileReadErrorCodes.OutsideConfiguredScope);
+    }
+
+    [Theory]
+    [MemberData(nameof(RangedTargets))]
+    public async Task MutationTargets_RejectStaleExpectedContent(string targetKind)
+    {
+        var fixture = CreateFixture(targetKind);
+        await fixture.WriteTextAsync("conditional.txt", "newer");
+        var staleHash = ContentHash("older");
+
+        var write = await fixture.WriteAsync(new AgentFileWriteRequest("conditional.txt", "replacement")
+        {
+            ExpectedContentHash = staleHash,
+        });
+        var delete = await fixture.DeleteAsync(new AgentFileDeleteRequest("conditional.txt")
+        {
+            ExpectedContentHash = staleHash,
+        });
+
+        AssertMutationError(write, "file-content-changed");
+        AssertMutationError(delete, "file-content-changed");
+        Assert.Equal("newer", await File.ReadAllTextAsync(Path.Combine(fixture.Root, "conditional.txt")));
+    }
+
     [Fact]
     public async Task DockerHelper_RejectsSymlinkEscapeForReadWriteDeleteAndRangedRead()
     {
@@ -435,6 +470,13 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         Assert.Equal(expectedCode, result.ErrorCode);
         Assert.Empty(result.Content);
         Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage));
+    }
+
+    private static void AssertMutationError(AgentFileMutationResult result, string expectedCode)
+    {
+        Assert.True(result.IsError);
+        Assert.Equal(expectedCode, result.ErrorCode);
+        Assert.False(string.IsNullOrWhiteSpace(result.Summary));
     }
 
     private static void CreateDirectorySymlinkOrSkip(string linkPath, string targetPath)

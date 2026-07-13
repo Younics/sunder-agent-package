@@ -24,7 +24,7 @@ public sealed class SubagentStore
 
     public SubagentStore(IPackageContext context)
     {
-        _filePath = context.Storage.LocalWorkspace.GetLocalPath("subagents/subagents.json");
+        _filePath = context.Storage.RoleLocalWorkspace.GetLocalPath("subagents/subagents.json");
         Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
         _lockPath = _filePath + ".lock";
         _syncRoot = PathLocks.GetOrAdd(_filePath, static _ => new object());

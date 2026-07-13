@@ -5,6 +5,7 @@
     <SunderPackageProject>true</SunderPackageProject>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <SunderAgentSharedCallbackFlow>true</SunderAgentSharedCallbackFlow>
   </PropertyGroup>
 
   <ItemGroup>
