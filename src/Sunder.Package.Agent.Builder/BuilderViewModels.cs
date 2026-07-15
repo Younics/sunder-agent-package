@@ -431,7 +431,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         });
         if (projects is not null)
         {
-            _persistence.RequestSave(projects);
+            await _persistence.SaveNowAsync(projects, CancellationToken.None);
         }
         if (_statusRefreshTask is not null)
         {

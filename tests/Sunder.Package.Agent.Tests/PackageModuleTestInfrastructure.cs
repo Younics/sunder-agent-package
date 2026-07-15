@@ -1,8 +1,8 @@
 using Avalonia.Controls;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
-using Sunder.Sdk.Configuration;
 using Sunder.Sdk.Runtime;
+using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -18,15 +18,8 @@ internal sealed class RecordingPackageContributionRegistry : ISunderRuntimeContr
     public void RegisterPackageView<TView>(PackageViewRegistration registration) where TView : Control
         => Record($"package-view:{registration.Id}", typeof(TView));
 
-    public void RegisterPackageViewFactory<TFactory>(PackageViewRegistration registration)
-        where TFactory : class, IPackageWorkspaceFactory
-        => Record($"package-view-factory:{registration.Id}", typeof(TFactory));
-
     public void RegisterSettingsView<TView>() where TView : Control
         => Record("settings-view", typeof(TView));
-
-    public void RegisterSettingsViewFactory<TFactory>() where TFactory : class, IPackageWorkspaceFactory
-        => Record("settings-view-factory", typeof(TFactory));
 
     public void RegisterBackgroundService<TService>() where TService : class, IPackageBackgroundService
         => Record("background-service", typeof(TService));
@@ -42,10 +35,10 @@ internal sealed class RecordingPackageContributionRegistry : ISunderRuntimeContr
         }
     }
 
-    public void RegisterConfigurationSchema(PackageConfigurationSchema schema)
+    public void RegisterSettingsSchema(PackageSettingsSchema schema)
     {
         ArgumentNullException.ThrowIfNull(schema);
-        _registrations.Add($"configuration:{schema.PackageId}");
+        _registrations.Add("settings-schema");
     }
 
     public void RegisterRuntimeOperation<TRequest, TResponse>(

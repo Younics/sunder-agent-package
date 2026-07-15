@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
@@ -20,27 +21,31 @@ internal sealed class AgentPermissionPanelState(
 
     public bool IsUnrestrictedModeEnabled { get; private set; }
 
-    public void LoadSession(Guid? sessionId)
+    public void ApplySnapshot(
+        Guid? sessionId,
+        AgentSessionPermissionState? sessionState,
+        IReadOnlyList<AgentPendingPermissionRequestRecord> requests)
     {
         _sessionId = sessionId;
-        IsUnrestrictedModeEnabled = sessionId is { } id
-            && permissionService.GetSessionState(id).IsUnrestrictedModeEnabled;
-        Reload();
-    }
-
-    public string SetUnrestrictedMode(bool value)
-    {
-        IsUnrestrictedModeEnabled = value;
-        if (_sessionId is not { } sessionId)
+        IsUnrestrictedModeEnabled = sessionState?.IsUnrestrictedModeEnabled == true;
+        Requests.Clear();
+        foreach (var request in requests)
         {
-            return string.Empty;
+            Requests.Add(request);
         }
 
-        permissionService.SetSessionUnrestrictedMode(sessionId, value);
-        return value
+        UpdateRowPresentations();
+    }
+
+    public void SetUnrestrictedModeValue(bool value)
+    {
+        IsUnrestrictedModeEnabled = value;
+    }
+
+    public static string DescribeUnrestrictedMode(bool value)
+        => value
             ? "Unrestricted Mode is enabled for this session. Ask-style approvals are auto-approved, but hard constraints still apply."
             : "Unrestricted Mode is disabled for this session.";
-    }
 
     public void Reload()
     {
@@ -53,6 +58,11 @@ internal sealed class AgentPermissionPanelState(
             }
         }
 
+        UpdateRowPresentations();
+    }
+
+    private void UpdateRowPresentations()
+    {
         RowPresentations = Requests
             .Select(request => TranscriptRowProjector<object>.DescribePermission(
                 request.RequestId,
@@ -66,12 +76,18 @@ internal sealed class AgentPermissionPanelState(
         AgentPendingPermissionRequestRecord request,
         bool approveForSession)
     {
+        if (runCoordinator is IAgentChatRunGateway chatRuns)
+        {
+            var chatCheckpoint = await chatRuns.ApprovePendingPermissionAsync(
+                request.SessionId,
+                request.RequestId,
+                approveForSession).ConfigureAwait(false);
+            return chatCheckpoint?.Summary ?? "Permission request was no longer pending.";
+        }
+
         if (approveForSession)
         {
-            permissionService.SaveSessionApproval(
-                request.SessionId,
-                request.ActionId,
-                request.BoundaryId);
+            permissionService.SaveSessionApproval(request.SessionId, request.ActionId, request.BoundaryId);
         }
 
         var checkpoint = await runCoordinator.ApprovePendingPermissionAsync(
@@ -86,7 +102,10 @@ internal sealed class AgentPermissionPanelState(
         await runCoordinator.DenyPendingPermissionAsync(
             request.SessionId,
             request.RequestId).ConfigureAwait(false);
-        Reload();
+        if (permissionService is not IAgentChatPermissionCommandGateway)
+        {
+            Reload();
+        }
         return "Permission request denied.";
     }
 }

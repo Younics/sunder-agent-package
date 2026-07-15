@@ -71,15 +71,6 @@ public sealed partial class AgentLocalStore
         return GetTurn(connection, turnId);
     }
 
-    private static IReadOnlyList<AgentTranscriptMessageRecord> ListRecentMessages(SqliteConnection connection)
-    {
-        var turns = ListRecentTurnHeaders(connection, limit: 5);
-        var items = ListTurnItemsForTurns(connection, turns.Select(turn => turn.TurnId).ToArray());
-        return AttachItems(turns, items)
-            .Select(ProjectTurnToTranscriptMessage)
-            .ToArray();
-    }
-
     private static IReadOnlyList<AgentTurnRecord> ListTurns(SqliteConnection connection, Guid sessionId)
     {
         var turns = ListTurnHeadersForSession(connection, sessionId, descending: false);
@@ -120,9 +111,14 @@ public sealed partial class AgentLocalStore
         return turns;
     }
 
-    private static IReadOnlyList<AgentTurnRecord> ListRecentTurnHeadersForSession(SqliteConnection connection, Guid sessionId, int limit)
+    private static IReadOnlyList<AgentTurnRecord> ListRecentTurnHeadersForSession(
+        SqliteConnection connection,
+        Guid sessionId,
+        int limit,
+        SqliteTransaction? transaction = null)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc FROM AgentTurns WHERE SessionId = $sessionId ORDER BY CreatedAtUtc DESC, TurnId DESC LIMIT $limit;";
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
         command.Parameters.AddWithValue("$limit", Math.Max(0, limit));
@@ -237,7 +233,10 @@ public sealed partial class AgentLocalStore
         return items;
     }
 
-    private static IReadOnlyList<AgentTurnItemRecord> ListTurnItemsForTurns(SqliteConnection connection, IReadOnlyList<Guid> turnIds)
+    private static IReadOnlyList<AgentTurnItemRecord> ListTurnItemsForTurns(
+        SqliteConnection connection,
+        IReadOnlyList<Guid> turnIds,
+        SqliteTransaction? transaction = null)
     {
         if (turnIds.Count == 0)
         {
@@ -245,6 +244,7 @@ public sealed partial class AgentLocalStore
         }
 
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         var parameterNames = new List<string>(turnIds.Count);
         for (var index = 0; index < turnIds.Count; index++)
         {

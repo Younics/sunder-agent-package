@@ -27,7 +27,7 @@ public sealed class AnthropicPackageCompositionTests
         runtimeModule.RegisterRuntimeContributions(runtimeRegistry, runtimeProvider);
         Assert.Equal([PackageExtensionPoints.ChatProviders.Id], runtimeRegistry.ExtensionIds);
         Assert.Equal([typeof(AnthropicAgentProvider)], runtimeRegistry.ExtensionTypes);
-        Assert.Equal([context.PackageId], runtimeRegistry.ConfigurationPackageIds);
+        Assert.Same(AnthropicProviderConfiguration.Schema, Assert.Single(runtimeRegistry.SettingsSchemas));
 
         var appServices = new ServiceCollection();
         var appModule = new AppPackageModule();

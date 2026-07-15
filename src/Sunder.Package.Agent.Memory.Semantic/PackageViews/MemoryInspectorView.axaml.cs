@@ -1,8 +1,9 @@
 using Avalonia.Controls;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Memory.Semantic.PackageViews;
 
-public partial class MemoryInspectorView : UserControl, IDisposable
+public partial class MemoryInspectorView : UserControl, IDisposable, IPackageViewNavigationTarget
 {
     private MemoryInspectorViewModel? _viewModel;
     private bool _disposed;
@@ -30,5 +31,16 @@ public partial class MemoryInspectorView : UserControl, IDisposable
         _viewModel?.Dispose();
         DataContext = null;
         _viewModel = null;
+    }
+
+    public async ValueTask OnNavigatedToAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if ((_viewModel ?? DataContext as MemoryInspectorViewModel) is { } viewModel)
+        {
+            await viewModel.InitializeAsync(cancellationToken);
+        }
     }
 }

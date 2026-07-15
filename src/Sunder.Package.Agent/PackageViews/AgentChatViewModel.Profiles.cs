@@ -6,42 +6,31 @@ public sealed partial class AgentChatViewModel
 {
     partial void OnSelectedProfileChanged(AgentProfileRecord? value)
     {
-        TrackBackgroundTask(_selectionState?.SaveSelectedProfileIdAsync(value?.ProfileId));
+        if (_isApplyingChatSnapshot)
+        {
+            return;
+        }
+
         _globalStatusText = string.Empty;
         CreateSessionCommand.NotifyCanExecuteChanged();
         RefreshSetupState();
+        ScheduleChatSnapshotRequest(
+            value?.ProfileId,
+            SelectedWorkspace?.WorkspaceId,
+            SelectedSession?.SessionId);
     }
 
-    private void OnProfilesChanged(string profileId) =>
-        RunOnUiThread(
-            () =>
-                ReloadProfiles(
-                    SelectedProfile?.ProfileId
-                )
-        );
-
-    private void ReloadProfiles(string? selectProfileId)
+    private void OnProfilesChanged(string profileId)
     {
-        var profiles = _profileService.ListProfiles();
-        Profiles.Clear();
-        foreach (var profile in profiles)
+        if (!_isInitialized)
         {
-            Profiles.Add(profile);
+            return;
         }
 
-        var desiredProfileId = selectProfileId ?? SelectedProfile?.ProfileId;
-        SelectedProfile =
-            Profiles.FirstOrDefault(profile =>
-                string.Equals(
-                    profile.ProfileId,
-                    desiredProfileId,
-                    StringComparison.OrdinalIgnoreCase
-                )
-            ) ?? Profiles.FirstOrDefault();
-        TrackBackgroundTask(_selectionState?.SaveSelectedProfileIdAsync(SelectedProfile?.ProfileId));
-        NotifyProfileStateChanged();
-        CreateSessionCommand.NotifyCanExecuteChanged();
-        RefreshSetupState();
+        ScheduleChatSnapshotRequest(
+            SelectedProfile?.ProfileId,
+            SelectedWorkspace?.WorkspaceId,
+            SelectedSession?.SessionId);
     }
 
     private void NotifyProfileStateChanged()

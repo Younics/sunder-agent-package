@@ -346,17 +346,16 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         public TestPackageContext(string rootPath)
         {
             Directory.CreateDirectory(rootPath);
-            InstallPath = rootPath;
+            ContentRootPath = rootPath;
             Storage = new TestPackageStorageContext(rootPath);
         }
 
         public string PackageId => "test.package.agent.memory.semantic";
         public string Version => "1.0.0";
-        public string InstallPath { get; }
+        public string ContentRootPath { get; }
         public IPackageStorageContext Storage { get; }
         public IPackageSettings Settings { get; } = new TestPackageSettings();
         public IPackageSecrets Secrets { get; } = new TestPackageSecrets();
-        public ILoggerFactory LoggerFactory => Logging.LoggerFactory;
         public IPackageLogging Logging { get; } = NullPackageLogging.Instance;
     }
 

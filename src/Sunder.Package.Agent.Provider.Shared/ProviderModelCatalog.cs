@@ -1,11 +1,11 @@
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Configuration;
+using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Provider.Shared;
 
 internal sealed record ProviderModelCatalogSnapshot(
     IReadOnlyList<AgentModelDescriptor> Models,
-    IReadOnlyList<PackageConfigurationOption> UtilityModelOptions);
+    IReadOnlyList<PackageSettingsOption> UtilityModelOptions);
 
 internal static class ProviderModelCatalog
 {
@@ -81,7 +81,7 @@ internal static class ProviderModelCatalog
         }
 
         var utilityOptions = utilityModels
-            .Select(model => new PackageConfigurationOption(model.ModelId, model.DisplayName))
+            .Select(model => new PackageSettingsOption(model.ModelId, model.DisplayName))
             .ToArray();
         if (utilityOptions.Select(option => option.Value).Distinct(StringComparer.OrdinalIgnoreCase).Count() != utilityOptions.Length)
         {

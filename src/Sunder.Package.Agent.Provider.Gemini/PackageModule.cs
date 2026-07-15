@@ -27,7 +27,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
-        registry.RegisterConfigurationSchema(GeminiProviderConfiguration.Schema);
+        registry.RegisterSettingsSchema(GeminiProviderConfiguration.Schema);
         registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<GeminiAgentProvider>());
         registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<GeminiEmbeddingProvider>());
     }

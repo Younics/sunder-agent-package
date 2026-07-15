@@ -7,7 +7,6 @@ using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
-using Sunder.Sdk.Configuration;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
@@ -36,7 +35,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
-        registry.RegisterConfigurationSchema(OpenAiProviderConfiguration.Schema);
+        registry.RegisterSettingsSchema(OpenAiProviderConfiguration.Schema);
         registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<OpenAiAgentProvider>());
         registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<OpenAiEmbeddingProvider>());
         registry.RegisterExtension(PackageExtensionPoints.SessionDataCleaners, services.GetRequiredService<CodexResponseContinuationStore>());

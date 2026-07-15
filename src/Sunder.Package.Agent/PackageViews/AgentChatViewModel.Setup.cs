@@ -35,6 +35,14 @@ public sealed partial class AgentChatViewModel
 
     private (string Title, string Description) GetSetupContent()
     {
+        if (_hasStartupError)
+        {
+            return (
+                "Unable to load Agent Chat",
+                "Agent Chat could not load its startup data. Navigate away and return to retry."
+            );
+        }
+
         if (Profiles.Count == 0)
         {
             return (

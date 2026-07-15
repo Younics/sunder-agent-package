@@ -6,7 +6,7 @@ namespace Sunder.Package.Agent.Execution.Docker;
 
 internal sealed class DockerImageStackContributor(
     DockerImageCatalogService imageCatalog,
-    IPackageContext packageContext) : IPackageStackContributor, IPackageStackImportAppliedHandler
+    IPackageContext packageContext) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
     private const string ItemId = "docker-images";
     private const string SchemaId = "sunder.package.agent.execution.docker/images";
@@ -69,8 +69,7 @@ internal sealed class DockerImageStackContributor(
         var payload = new DockerImageStackPayload(selectedReferences);
         var fragment = new StackFragmentExport(
             FragmentId: "docker-images",
-            ContributorId,
-            SchemaId,
+            SchemaId: SchemaId,
             SchemaVersion: 1,
             DisplayName: "Docker Images",
             JsonPayload: JsonSerializer.Serialize(payload, JsonOptions),

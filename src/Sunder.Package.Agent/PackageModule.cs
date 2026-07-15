@@ -9,6 +9,7 @@ using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
+using Sunder.Sdk.Stacks;
 
 namespace Sunder.Package.Agent;
 
@@ -81,10 +82,9 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         ));
         services.AddSingleton<AgentRunCoordinator>();
         services.AddSingletonAlias<IAgentChildRunExecutor, AgentRunCoordinator>();
-        services.AddSingleton<AgentLocalStoreAccessor>();
         services.AddSingleton<AgentRuntimeChangeHub>();
+        services.AddSingleton<AgentChatSnapshotHandler>();
         services.AddSingleton<AgentDashboardHandler>();
-        services.AddSingleton<AgentSessionPageHandler>();
         services.AddSingleton<AgentTranscriptPageHandler>();
         services.AddSingleton<AgentCatalogHandler>();
         services.AddSingleton<AgentProfileCommandHandler>();
@@ -129,16 +129,10 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
             PackageExtensionPoints.SystemPromptContributors,
             services.GetRequiredService<WorkspaceDocumentationContextService>()
         );
-        registry.RegisterExtension(
-            Sunder.Sdk.Stacks.SunderStackExtensionPoints.StackContributors,
-            services.GetRequiredService<AgentProfileStackContributor>()
-        );
-        registry.RegisterExtension(
-            Sunder.Sdk.Stacks.SunderStackExtensionPoints.StackContributors,
-            services.GetRequiredService<AgentWorkspaceStackContributor>()
-        );
+        RegisterStackContributor(registry, services.GetRequiredService<AgentProfileStackContributor>());
+        RegisterStackContributor(registry, services.GetRequiredService<AgentWorkspaceStackContributor>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.ChatSnapshot, services.GetRequiredService<AgentChatSnapshotHandler>());
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.Dashboard, services.GetRequiredService<AgentDashboardHandler>());
-        registry.RegisterRuntimeOperation(AgentRuntimeOperations.Sessions, services.GetRequiredService<AgentSessionPageHandler>());
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.Transcript, services.GetRequiredService<AgentTranscriptPageHandler>());
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.Catalog, services.GetRequiredService<AgentCatalogHandler>());
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.Profiles, services.GetRequiredService<AgentProfileCommandHandler>());
@@ -148,6 +142,16 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.Permissions, services.GetRequiredService<AgentPermissionCommandHandler>());
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.Attachments, services.GetRequiredService<AgentAttachmentReadHandler>());
         registry.RegisterRuntimeStream(AgentRuntimeOperations.Changes, services.GetRequiredService<AgentRuntimeChangeHub>());
+    }
+
+    private static void RegisterStackContributor<TContributor>(
+        ISunderRuntimeContributionRegistry registry,
+        TContributor contributor)
+        where TContributor : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
+    {
+        registry.RegisterExtension(SunderStackExtensionPoints.StackExporters, contributor);
+        registry.RegisterExtension(SunderStackExtensionPoints.StackImporters, contributor);
+        registry.RegisterExtension(SunderStackExtensionPoints.StackImportAppliedHandlers, contributor);
     }
 }
 

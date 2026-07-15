@@ -365,21 +365,20 @@ public sealed partial class AgentLocalStore
                         SELECT 1 FROM AgentRuns newer
                         WHERE newer.SessionId = AgentPendingPermissionRequests.SessionId
                           AND newer.RunRevision > AgentPendingPermissionRequests.RunRevision))
-            RETURNING {PendingPermissionColumns};
+            ;
             """;
         command.Parameters.AddWithValue("$claimToken", claimToken);
         command.Parameters.AddWithValue("$claimedAtUtc", claimedAtUtc.ToString("O"));
         command.Parameters.AddWithValue("$claimLeaseExpiresAtUtc", leaseExpiresAtUtc.ToString("O"));
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
         command.Parameters.AddWithValue("$requestId", requestId);
-        using (var reader = command.ExecuteReader())
+        if (command.ExecuteNonQuery() == 1)
         {
-            if (reader.Read())
-            {
-                return new AgentPendingPermissionClaimResult(
-                    AgentPendingPermissionClaimOutcome.Claimed,
-                    ReadPendingPermissionRequest(reader));
-            }
+            var claimed = GetPermissionRequest(connection, sessionId, requestId)
+                ?? throw new InvalidOperationException("The claimed permission request could not be reloaded.");
+            return new AgentPendingPermissionClaimResult(
+                AgentPendingPermissionClaimOutcome.Claimed,
+                claimed);
         }
 
         var existing = GetPermissionRequest(connection, sessionId, requestId);

@@ -373,28 +373,6 @@ public sealed partial class AgentLocalStore
         return items;
     }
 
-    private static IReadOnlyList<AgentRunCheckpointRecord> ListRecentCheckpoints(SqliteConnection connection)
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT CheckpointId, SessionId, RunRevision, Status, Summary, CreatedAtUtc FROM AgentRunCheckpoints ORDER BY CreatedAtUtc DESC LIMIT 5;";
-
-        using var reader = command.ExecuteReader();
-        var items = new List<AgentRunCheckpointRecord>();
-        while (reader.Read())
-        {
-            items.Add(new AgentRunCheckpointRecord(
-                Guid.Parse(reader.GetString(0)),
-                Guid.Parse(reader.GetString(1)),
-                reader.GetInt64(2),
-                Enum.Parse<AgentRunStatus>(reader.GetString(3), ignoreCase: true),
-                reader.IsDBNull(4) ? null : reader.GetString(4),
-                DateTimeOffset.Parse(reader.GetString(5))
-            ));
-        }
-
-        return items;
-    }
-
     private static void InsertSession(SqliteConnection connection, AgentSessionRecord session)
     {
         using var command = connection.CreateCommand();

@@ -10,7 +10,7 @@ namespace Sunder.Package.Agent.Subagents.Services;
 internal sealed class SubagentStackContributor(
     SubagentService subagentService,
     IPackageContext packageContext,
-    IPackageExtensionCatalog extensionCatalog) : IPackageStackContributor, IPackageStackImportAppliedHandler
+    IPackageExtensionCatalog extensionCatalog) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
     private const string SchemaId = "sunder.package.agent.subagents/subagent";
     private const string DetailDescription = "description";
@@ -52,8 +52,7 @@ internal sealed class SubagentStackContributor(
         var fragments = subagents
             .Zip(payloads, (subagent, payload) => new StackFragmentExport(
                 FragmentId: "subagent." + SanitizeIdentifier(subagent.SubagentId),
-                ContributorId,
-                SchemaId,
+                SchemaId: SchemaId,
                 SchemaVersion: 1,
                 DisplayName: subagent.DisplayName,
                 JsonPayload: JsonSerializer.Serialize(payload, JsonOptions),

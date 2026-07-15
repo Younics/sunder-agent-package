@@ -19,7 +19,7 @@ using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-public partial class AgentChatView : UserControl, IDisposable
+public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavigationTarget
 {
     private const double WideHeaderMinimumWidth = 520;
     private const double WorkspacePathChipTextFontSize = 11;
@@ -46,6 +46,8 @@ public partial class AgentChatView : UserControl, IDisposable
     private readonly PresentationTaskScope _tasks;
     private readonly AdaptiveEditorStateCache<AgentChatEditorState> _editorStateCache = new();
     private IPackageNotificationService _notificationService = NullPackageNotificationService.Instance;
+    private CancellationTokenSource? _navigationCancellation;
+    private int _navigationGeneration;
     private bool _usesWideLayout;
     private bool _lastComposerExpanded;
     private bool _disposed;
@@ -60,12 +62,6 @@ public partial class AgentChatView : UserControl, IDisposable
         ConfigureComposerDropTarget(CollapsedComposerTextBox);
         ConfigureComposerKeyHandler(ExpandedComposerTextBox);
         ConfigureComposerKeyHandler(CollapsedComposerTextBox);
-        _renameFocus = new InlineRenameFocusCoordinator<AgentSessionListItemViewModel>(
-            this,
-            session => session.SessionId,
-            session => session.IsRenameActive,
-            () => HeaderWideLayout.IsVisible ? WideSessionComboBox : NarrowSessionComboBox,
-            "session-rename-input");
         _transcriptBehavior = new TranscriptViewBehavior(
             this,
             TranscriptScrollViewer,
@@ -86,6 +82,12 @@ public partial class AgentChatView : UserControl, IDisposable
             isVisible => ViewModel?.SetTranscriptJumpToLatestVisible(isVisible),
             anchor => ViewModel?.SetTranscriptViewportAnchor(anchor),
             exception => ViewModel?.ReportTranscriptPagingFailure(exception));
+        _renameFocus = new InlineRenameFocusCoordinator<AgentSessionListItemViewModel>(
+            this,
+            session => session.SessionId,
+            session => session.IsRenameActive,
+            () => HeaderWideLayout.IsVisible ? WideSessionComboBox : NarrowSessionComboBox,
+            "session-rename-input");
         Loaded += OnLoaded;
         SizeChanged += OnSizeChanged;
     }
@@ -105,7 +107,7 @@ public partial class AgentChatView : UserControl, IDisposable
         : this()
     {
         _notificationService = notificationService;
-        _viewModel = new AgentChatViewModel(
+        AttachViewModel(new AgentChatViewModel(
             profileService,
             workspaceService,
             sessionService,
@@ -115,13 +117,12 @@ public partial class AgentChatView : UserControl, IDisposable
             toolPresentationService,
             warmupService: warmupService,
             shellViewService: shellViewService,
-            attachmentService: attachmentService);
-        _viewModel.TranscriptChanging += OnTranscriptChanging;
-        _viewModel.TranscriptChanged += OnTranscriptChanged;
-        _viewModel.PropertyChanging += OnViewModelPropertyChanging;
-        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
-        DataContext = _viewModel;
+            attachmentService: attachmentService));
     }
+
+    internal AgentChatView(AgentChatViewModel viewModel)
+        : this()
+        => AttachViewModel(viewModel);
 
     private AgentChatViewModel? ViewModel => _viewModel ?? DataContext as AgentChatViewModel;
 
@@ -133,6 +134,9 @@ public partial class AgentChatView : UserControl, IDisposable
         }
 
         _disposed = true;
+        _navigationCancellation?.Cancel();
+        _navigationCancellation?.Dispose();
+        _navigationCancellation = null;
         Loaded -= OnLoaded;
         SizeChanged -= OnSizeChanged;
         _transcriptBehavior.Dispose();
@@ -151,23 +155,16 @@ public partial class AgentChatView : UserControl, IDisposable
         _viewModel = null;
     }
 
-    private void OnLoaded(object? sender, RoutedEventArgs e)
+    private void OnLoaded(object? sender, RoutedEventArgs e) => ApplyHeaderLayout();
+
+    private void AttachViewModel(AgentChatViewModel viewModel)
     {
-        ApplyHeaderLayout();
-        if (ViewModel is { } viewModel)
-        {
-            _tasks.Run(async cancellationToken =>
-            {
-                try
-                {
-                    await viewModel.InitializeAsync(cancellationToken);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    viewModel.ReportPresentationFailure(ex);
-                }
-            });
-        }
+        _viewModel = viewModel;
+        _viewModel.TranscriptChanging += OnTranscriptChanging;
+        _viewModel.TranscriptChanged += OnTranscriptChanged;
+        _viewModel.PropertyChanging += OnViewModelPropertyChanging;
+        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        DataContext = _viewModel;
     }
 
     private void OnSizeChanged(object? sender, SizeChangedEventArgs e) => ApplyHeaderLayout();

@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 
 namespace Sunder.Package.Agent.PackageViews;
@@ -12,6 +13,11 @@ public sealed partial class AgentChatViewModel
         AgentSessionListItemViewModel? newValue
     )
     {
+        if (_isApplyingChatSnapshot)
+        {
+            return;
+        }
+
         if (_isReconcilingSessionSelection)
         {
             return;
@@ -43,12 +49,15 @@ public sealed partial class AgentChatViewModel
 
     partial void OnSelectedSessionChanged(AgentSessionListItemViewModel? value)
     {
-        if (_isReconcilingSessionSelection)
+        if (_isApplyingChatSnapshot)
         {
             return;
         }
 
-        TrackBackgroundTask(_selectionState?.SaveSelectedSessionIdAsync(SelectedWorkspace?.WorkspaceId, value?.SessionId));
+        if (_isReconcilingSessionSelection)
+        {
+            return;
+        }
 
         if (value is not null)
         {
@@ -63,118 +72,25 @@ public sealed partial class AgentChatViewModel
             DraftMessage = string.Empty;
         }
 
-        LoadPermissionState(value);
-        ReloadPendingPermissionRequests();
         NotifySelectedSessionRunStateChanged();
         RefreshSetupState();
-        SetDisplayedSession(value);
+        ScheduleChatSnapshotRequest(
+            SelectedProfile?.ProfileId,
+            SelectedWorkspace?.WorkspaceId,
+            value?.SessionId);
     }
 
     partial void OnDisplayedSessionChanged(AgentSessionListItemViewModel? value)
     {
+        if (_isApplyingChatSnapshot)
+        {
+            return;
+        }
+
         value?.ClearUnreadActivity();
         NotifyDisplayedSessionStateChanged();
         RefreshSetupState();
         RefreshTranscript();
-    }
-
-    [RelayCommand(CanExecute = nameof(CanCreateSession))]
-    private void CreateSession()
-    {
-        var profile = SelectedProfile;
-        var workspace = SelectedWorkspace;
-        if (profile is null)
-        {
-            SetGlobalStatus("Create an Agent before starting a session.");
-            return;
-        }
-
-        if (workspace is null)
-        {
-            SetGlobalStatus("Select a workspace before starting a session.");
-            return;
-        }
-
-        var workspaceId = NormalizeSelectedWorkspaceId(workspace.WorkspaceId);
-        if (workspaceId is null || IsUnassignedSessionsWorkspace(workspaceId))
-        {
-            SetGlobalStatus("Select a workspace before starting a session.");
-            return;
-        }
-
-        var session = _sessionService.CreateSession(
-            AgentSessionTitleDefaults.CreateNextTitle(ListMainSessions()),
-            profileId: profile.ProfileId,
-            behaviorLoopId: profile.BehaviorLoopId,
-            workspaceId: workspaceId
-        );
-        if (!string.Equals(session.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("Created session workspace did not match the selected workspace.");
-        }
-
-        TrackBackgroundTask(_selectionState?.SaveSelectedWorkspaceIdAsync(workspaceId));
-        TrackBackgroundTask(_selectionState?.SaveSelectedSessionIdAsync(workspaceId, session.SessionId));
-        ReloadSessions(session.SessionId);
-    }
-
-    [RelayCommand]
-    private void BeginRenameSession(AgentSessionListItemViewModel? session)
-    {
-        if (session is null)
-        {
-            return;
-        }
-
-        foreach (var item in Sessions)
-        {
-            if (!ReferenceEquals(item, session) && item.IsRenameActive)
-            {
-                item.CancelRename();
-            }
-        }
-
-        session.BeginRename();
-    }
-
-    [RelayCommand]
-    private void SaveSessionRename(AgentSessionListItemViewModel? session)
-    {
-        if (session is null)
-        {
-            return;
-        }
-
-        var updated = session.Session with
-        {
-            Title = string.IsNullOrWhiteSpace(session.RenameTitle)
-                ? "Unnamed Session"
-                : session.RenameTitle.Trim(),
-            UpdatedAtUtc = DateTimeOffset.UtcNow,
-        };
-
-        _sessionService.UpdateSession(updated);
-        ReloadSessions(updated.SessionId);
-        session.CancelRename();
-    }
-
-    [RelayCommand]
-    private static void CancelSessionRename(AgentSessionListItemViewModel? session)
-    {
-        session?.CancelRename();
-    }
-
-    [RelayCommand]
-    private void DeleteSession(AgentSessionListItemViewModel? session)
-    {
-        if (session is null)
-        {
-            return;
-        }
-
-        session.CancelRename();
-        _sessionService.DeleteSession(session.SessionId);
-        ReloadSessions(selectSessionId: null);
     }
 
     [RelayCommand]
@@ -210,17 +126,6 @@ public sealed partial class AgentChatViewModel
             SetGlobalStatus("Unable to open the Subsessions view.");
         }
     }
-
-    private bool CanCreateSession()
-        => SelectedProfile is not null
-           && NormalizeSelectedWorkspaceId(SelectedWorkspace?.WorkspaceId) is { } workspaceId
-           && !IsUnassignedSessionsWorkspace(workspaceId);
-
-    private static string? NormalizeSelectedWorkspaceId(string? workspaceId)
-        => string.IsNullOrWhiteSpace(workspaceId) ? null : workspaceId.Trim();
-
-    private static bool IsUnassignedSessionsWorkspace(string workspaceId)
-        => string.Equals(workspaceId, AgentWorkspaceService.UnassignedSessionsWorkspaceId, StringComparison.OrdinalIgnoreCase);
 
     private void ReloadSessions(Guid? selectSessionId)
     {
@@ -314,23 +219,17 @@ public sealed partial class AgentChatViewModel
         return CreateSessionItem(session);
     }
 
-    private void LoadPermissionState(AgentSessionListItemViewModel? session)
-    {
-        _suppressPermissionState = true;
-        try
-        {
-            _permissionPanel.LoadSession(session?.SessionId);
-            OnPropertyChanged(nameof(IsUnrestrictedModeEnabled));
-            NotifyPermissionPanelChanged();
-        }
-        finally
-        {
-            _suppressPermissionState = false;
-        }
-    }
-
     private void ReloadPendingPermissionRequests()
     {
+        if (_chatSnapshotGateway is not null)
+        {
+            ScheduleChatSnapshotRequest(
+                SelectedProfile?.ProfileId,
+                SelectedWorkspace?.WorkspaceId,
+                SelectedSession?.SessionId);
+            return;
+        }
+
         _permissionPanel.Reload();
         NotifyPermissionPanelChanged();
     }
@@ -404,6 +303,44 @@ public sealed partial class AgentChatViewModel
         RestoreReconciledDisplayedSession(displayedSessionId, shouldPreserveDisplayedSession);
     }
 
+    private void ReconcileSessionSnapshots(IReadOnlyList<AgentSessionSnapshot> snapshots)
+    {
+        var rootSnapshots = snapshots
+            .Where(static item => item.Session.ParentSessionId is null)
+            .ToArray();
+        var desiredSessionIds = rootSnapshots
+            .Select(static item => item.Session.SessionId)
+            .ToHashSet();
+        foreach (var item in Sessions)
+        {
+            item.IsSelected = false;
+        }
+        for (var index = Sessions.Count - 1; index >= 0; index--)
+        {
+            if (!desiredSessionIds.Contains(Sessions[index].SessionId))
+            {
+                Sessions.RemoveAt(index);
+            }
+        }
+        for (var index = 0; index < rootSnapshots.Length; index++)
+        {
+            var snapshot = rootSnapshots[index];
+            var existingIndex = FindSessionIndex(snapshot.Session.SessionId);
+            if (existingIndex < 0)
+            {
+                Sessions.Insert(index, CreateSessionItem(snapshot.Session, snapshot.Checkpoint));
+                continue;
+            }
+
+            Sessions[existingIndex].UpdateSession(snapshot.Session);
+            Sessions[existingIndex].ApplyCheckpoint(snapshot.Checkpoint, markUnread: false);
+            if (existingIndex != index)
+            {
+                Sessions.Move(existingIndex, index);
+            }
+        }
+    }
+
     private void RestoreReconciledSessionSelection(Guid? sessionId, bool shouldPreserveSession)
     {
         if (
@@ -468,8 +405,13 @@ public sealed partial class AgentChatViewModel
         return index < 0 ? null : Sessions[index];
     }
 
-    private void OnSessionChanged(Guid sessionId) =>
-        RunOnUiThread(() => ApplySessionChanged(sessionId));
+    private void OnSessionChanged(Guid sessionId)
+    {
+        if (_isInitialized)
+        {
+            RunOnUiThread(() => ApplySessionChanged(sessionId));
+        }
+    }
 
     private void ApplySessionChanged(Guid sessionId)
     {
@@ -478,9 +420,14 @@ public sealed partial class AgentChatViewModel
         var changedSession = _sessionService.GetSession(sessionId);
         if (changedSession is null)
         {
+            _snapshotSessions.Remove(sessionId);
+            _sessionDrafts.Remove(sessionId);
             RemoveMainSession(sessionId);
             return;
         }
+        _snapshotSessions[sessionId] = new AgentSessionSnapshot(
+            changedSession,
+            _sessionService.GetLatestCheckpoint(sessionId));
 
         if (changedSession.ParentSessionId is null)
         {
@@ -546,6 +493,7 @@ public sealed partial class AgentChatViewModel
 
     private void RemoveMainSession(Guid sessionId)
     {
+        _sessionDrafts.Remove(sessionId);
         var index = FindSessionIndex(sessionId);
         if (index < 0)
         {
@@ -698,12 +646,14 @@ public sealed partial class AgentChatViewModel
     }
 
     private AgentSessionListItemViewModel CreateSessionItem(AgentSessionRecord session)
+        => CreateSessionItem(session, _sessionService.GetLatestCheckpoint(session.SessionId));
+
+    private static AgentSessionListItemViewModel CreateSessionItem(
+        AgentSessionRecord session,
+        AgentRunCheckpointRecord? checkpoint)
     {
         var item = new AgentSessionListItemViewModel(session);
-        item.ApplyCheckpoint(
-            _sessionService.GetLatestCheckpoint(session.SessionId),
-            markUnread: false
-        );
+        item.ApplyCheckpoint(checkpoint, markUnread: false);
         return item;
     }
 

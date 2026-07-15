@@ -363,7 +363,7 @@ public sealed class OpenAiAgentProviderTests
 
         public string Version { get; } = "1.0.0";
 
-        public string InstallPath { get; } = AppContext.BaseDirectory;
+        public string ContentRootPath { get; } = AppContext.BaseDirectory;
 
         public IPackageStorageContext Storage { get; } = new TestPackageStorageContext();
 
@@ -371,7 +371,6 @@ public sealed class OpenAiAgentProviderTests
 
         public IPackageSecrets Secrets { get; } = new TestPackageSecrets(secretValues);
 
-        public ILoggerFactory LoggerFactory => Logging.LoggerFactory;
 
         public Sunder.Sdk.Logging.IPackageLogging Logging { get; } = Sunder.Sdk.Logging.NullPackageLogging.Instance;
     }

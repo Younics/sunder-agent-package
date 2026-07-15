@@ -24,7 +24,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
-        registry.RegisterConfigurationSchema(WebToolsConfiguration.Schema);
+        registry.RegisterSettingsSchema(WebToolsConfiguration.Schema);
         registry.RegisterExtension(PackageExtensionPoints.Tools, services.GetRequiredService<WebFetchTool>());
         registry.RegisterExtension(PackageExtensionPoints.Tools, services.GetRequiredService<WebSearchTool>());
     }

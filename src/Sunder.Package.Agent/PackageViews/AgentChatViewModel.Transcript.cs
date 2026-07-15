@@ -1,9 +1,8 @@
 using System.ComponentModel;
-using Avalonia;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.PackageViews;
 
 namespace Sunder.Package.Agent.PackageViews;
@@ -24,15 +23,6 @@ public sealed partial class AgentChatViewModel
 
         var ticket = _timeline.BeginInitialLoad(displayedSession.SessionId);
         StatusText = "Loading transcript...";
-        if (Application.Current is null)
-        {
-            var turns = _sessionService.ListRecentTurns(
-                displayedSession.SessionId,
-                InitialTranscriptTurnLimit + 1);
-            CompleteTranscriptRefresh(displayedSession, ticket, turns);
-            return;
-        }
-
         _backgroundTasks.Run(_ => RefreshTranscriptAsync(displayedSession, ticket));
     }
 
@@ -42,43 +32,41 @@ public sealed partial class AgentChatViewModel
     {
         try
         {
-            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
             ticket.Generation.CancellationToken.ThrowIfCancellationRequested();
-            var turns = await Task.Run(
-                () => _sessionService.ListRecentTurns(
+            var page = await LoadTranscriptPageAsync(
+                new AgentTranscriptPageRequest(
                     displayedSession.SessionId,
-                    InitialTranscriptTurnLimit + 1),
-                ticket.Generation.CancellationToken);
-            await Dispatcher.UIThread.InvokeAsync(
-                () => CompleteTranscriptRefresh(displayedSession, ticket, turns),
-                DispatcherPriority.Background);
+                    AgentTranscriptPageDirection.Recent,
+                    InitialTranscriptTurnLimit),
+                ticket.Generation.CancellationToken).ConfigureAwait(false);
+            await InvokeOnUiThreadAsync(
+                () => CompleteTranscriptRefresh(displayedSession, ticket, page));
         }
         catch (OperationCanceledException) when (ticket.Generation.CancellationToken.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await InvokeOnUiThreadAsync(() =>
             {
                 if (_timeline.TryFailInitialLoad(ticket))
                 {
                     StatusText = $"Unable to load transcript: {ex.Message}";
                 }
-            }, DispatcherPriority.Background);
+            });
         }
     }
 
     private void CompleteTranscriptRefresh(
         AgentSessionListItemViewModel displayedSession,
         TranscriptLoadTicket ticket,
-        IReadOnlyList<AgentTurnRecord> turns)
+        AgentTranscriptPage page)
     {
-        if (!_timeline.TryCompleteInitialLoad(ticket, turns))
+        if (!_timeline.TryCompleteInitialLoad(ticket, page.Turns, page.HasMore))
         {
             return;
         }
 
-        ReloadPendingPermissionRequests();
         TrackCheckpointActivity(_sessionService.GetLatestCheckpoint(displayedSession.SessionId));
         ApplyRunActivityState();
         UpdateSessionState(displayedSession.SessionId, markUnread: false);
@@ -96,15 +84,16 @@ public sealed partial class AgentChatViewModel
                 using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                     cancellationToken,
                     pageCancellationToken);
-                var turns = await Task.Run(
-                    () => _sessionService.ListTurnsBefore(
+                var page = await LoadTranscriptPageAsync(
+                    new AgentTranscriptPageRequest(
                         sessionId,
+                        AgentTranscriptPageDirection.Before,
+                        limit,
                         beforeCreatedAt,
-                        beforeTurnId,
-                        limit),
-                    linkedCancellation.Token);
+                        beforeTurnId),
+                    linkedCancellation.Token).ConfigureAwait(false);
                 linkedCancellation.Token.ThrowIfCancellationRequested();
-                return turns;
+                return page.Turns;
             },
             protectedAnchorKey);
         if (loaded)
@@ -125,15 +114,16 @@ public sealed partial class AgentChatViewModel
                 using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                     cancellationToken,
                     pageCancellationToken);
-                var turns = await Task.Run(
-                    () => _sessionService.ListTurnsAfter(
+                var page = await LoadTranscriptPageAsync(
+                    new AgentTranscriptPageRequest(
                         sessionId,
+                        AgentTranscriptPageDirection.After,
+                        limit,
                         afterCreatedAt,
-                        afterTurnId,
-                        limit),
-                    linkedCancellation.Token);
+                        afterTurnId),
+                    linkedCancellation.Token).ConfigureAwait(false);
                 linkedCancellation.Token.ThrowIfCancellationRequested();
-                return turns;
+                return page.Turns;
             },
             protectedAnchorKey);
         if (loaded)
@@ -184,11 +174,20 @@ public sealed partial class AgentChatViewModel
     internal void SetTranscriptViewportAnchor(TranscriptViewportAnchorData? anchor)
         => _timeline.SetViewportAnchor(anchor);
 
+    internal TranscriptViewportAnchorData? TranscriptViewportAnchor
+        => _timeline.ViewportAnchor;
+
     internal void SetTranscriptRowExpanded(AgentTranscriptRowViewModel row, bool isExpanded)
         => _timeline.SetRowExpanded(row, isExpanded);
 
     private void OnTurnChanged(Guid sessionId, AgentTurnRecord turn)
-        => RunOnUiThread(() =>
+    {
+        if (!_isInitialized)
+        {
+            return;
+        }
+
+        RunOnUiThread(() =>
         {
             if (DisplayedSession?.SessionId == sessionId)
             {
@@ -196,18 +195,31 @@ public sealed partial class AgentChatViewModel
                 ApplyRunActivityState();
             }
         });
+    }
 
     private void OnTranscriptReset(Guid sessionId)
-        => RunOnUiThread(() =>
+    {
+        if (!_isInitialized)
+        {
+            return;
+        }
+
+        RunOnUiThread(() =>
         {
             if (DisplayedSession?.SessionId == sessionId)
             {
                 RefreshTranscript();
             }
         });
+    }
 
     private void OnRunActivityChanged(Guid sessionId, AgentRunActivityUpdate activity)
-        => RunOnUiThread(() => ApplyRunActivityChanged(sessionId, activity));
+    {
+        if (_isInitialized)
+        {
+            RunOnUiThread(() => ApplyRunActivityChanged(sessionId, activity));
+        }
+    }
 
     private void ApplyRunActivityChanged(Guid sessionId, AgentRunActivityUpdate activity)
     {
@@ -295,13 +307,27 @@ public sealed partial class AgentChatViewModel
             return [];
         }
 
-        var parentSession = _sessionService.GetSession(turn.SessionId);
+        var parentSession = _sessionService.GetSession(turn.SessionId)
+                            ?? _snapshotSessions.GetValueOrDefault(turn.SessionId)?.Session;
         if (parentSession is null)
         {
             return [];
         }
 
-        return _sessionService.ListSessions()
+        var workspaceSessions = _sessionService.ListSessionsForWorkspace(
+            parentSession.WorkspaceId ?? string.Empty);
+        if (workspaceSessions.Count == 0)
+        {
+            workspaceSessions = _snapshotSessions.Values
+                .Select(static item => item.Session)
+                .Where(session => string.Equals(
+                    session.WorkspaceId,
+                    parentSession.WorkspaceId,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+        }
+
+        return workspaceSessions
             .Where(session => session.ParentSessionId == parentSession.SessionId
                               && string.Equals(
                                   session.ParentToolCallId,
@@ -316,12 +342,16 @@ public sealed partial class AgentChatViewModel
     {
         var childProfile = string.IsNullOrWhiteSpace(childSession.ProfileId)
             ? null
-            : _profileService.GetProfile(childSession.ProfileId);
+            : Profiles.FirstOrDefault(profile => string.Equals(
+                profile.ProfileId,
+                childSession.ProfileId,
+                StringComparison.OrdinalIgnoreCase));
         return new AgentChildSessionLinkViewModel(
             childSession.SessionId,
             childSession.Title,
             FormatChildSessionSubtitle(childProfile?.DisplayName, childSession.AgentKind),
-            _sessionService.GetLatestCheckpoint(childSession.SessionId)?.Status
+            (_sessionService.GetLatestCheckpoint(childSession.SessionId)
+             ?? _snapshotSessions.GetValueOrDefault(childSession.SessionId)?.Checkpoint)?.Status
             ?? AgentRunStatus.Idle);
     }
 
@@ -349,15 +379,15 @@ public sealed partial class AgentChatViewModel
 
     private string ResolveTurnSenderDisplayName(AgentTurnRecord turn)
     {
-        var session = _sessionService.GetSession(turn.SessionId);
+        var session = _sessionService.GetSession(turn.SessionId)
+                      ?? _snapshotSessions.GetValueOrDefault(turn.SessionId)?.Session;
         var profileId = session?.ProfileId;
         if (!string.IsNullOrWhiteSpace(profileId))
         {
             var profile = Profiles.FirstOrDefault(profile => string.Equals(
-                    profile.ProfileId,
-                    profileId,
-                    StringComparison.OrdinalIgnoreCase))
-                ?? _profileService.GetProfile(profileId);
+                profile.ProfileId,
+                profileId,
+                StringComparison.OrdinalIgnoreCase));
             if (!string.IsNullOrWhiteSpace(profile?.DisplayName))
             {
                 return profile.DisplayName.Trim();
@@ -381,5 +411,42 @@ public sealed partial class AgentChatViewModel
         return !string.IsNullOrWhiteSpace(session?.AgentKind)
             ? session.AgentKind.Trim()
             : "Agent";
+    }
+
+    private Task<AgentTranscriptPage> LoadTranscriptPageAsync(
+        AgentTranscriptPageRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (_transcriptPageGateway is not null)
+        {
+            return _transcriptPageGateway.LoadTranscriptPageAsync(request, cancellationToken);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var limit = Math.Clamp(request.Limit, 1, 500);
+        IReadOnlyList<AgentTurnRecord> turns = request.Direction switch
+        {
+            AgentTranscriptPageDirection.Recent =>
+                _sessionService.ListRecentTurns(request.SessionId, limit + 1),
+            AgentTranscriptPageDirection.Before when request.AnchorCreatedAtUtc is { } createdAt
+                                                     && request.AnchorTurnId is { } turnId =>
+                _sessionService.ListTurnsBefore(request.SessionId, createdAt, turnId, limit + 1),
+            AgentTranscriptPageDirection.After when request.AnchorCreatedAtUtc is { } createdAt
+                                                    && request.AnchorTurnId is { } turnId =>
+                _sessionService.ListTurnsAfter(request.SessionId, createdAt, turnId, limit + 1),
+            AgentTranscriptPageDirection.Turn when request.AnchorTurnId is { } turnId =>
+                _sessionService.GetTurn(turnId) is { } turn ? [turn] : [],
+            _ => throw new InvalidOperationException("The transcript page anchor is invalid."),
+        };
+        var hasMore = turns.Count > limit;
+        var pageTurns = !hasMore
+            ? turns
+            : request.Direction is AgentTranscriptPageDirection.Recent or AgentTranscriptPageDirection.Before
+                ? turns.Skip(turns.Count - limit).ToArray()
+                : turns.Take(limit).ToArray();
+        return Task.FromResult(new AgentTranscriptPage(
+            0,
+            pageTurns,
+            hasMore));
     }
 }

@@ -20,6 +20,8 @@ internal sealed class TranscriptViewBehavior : IDisposable
     private bool _initialPlacementQueued;
     private bool _initialVisibilityRetryQueued;
     private int _initialPlacementVersion;
+    private TaskCompletionSource _initialPresentation = CreatePresentationCompletion();
+    private CancellationTokenSource? _initialPlacementCancellation;
     private bool _loaded;
     private bool _disposed;
 
@@ -105,16 +107,25 @@ internal sealed class TranscriptViewBehavior : IDisposable
         }
     }
 
-    public void MarkInitialPlacementPending()
+    public void MarkInitialPlacementPending(CancellationToken cancellationToken = default)
     {
         if (_disposed)
         {
             return;
         }
 
+        _initialPlacementCancellation?.Cancel();
+        _initialPlacementCancellation?.Dispose();
+        _initialPlacementCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
         if (!_initialPlacementPending || _initialPlacementQueued)
         {
             _initialPlacementVersion++;
+        }
+
+        if (_initialPresentation.Task.IsCompleted || _initialPlacementQueued)
+        {
+            _initialPresentation = CreatePresentationCompletion();
         }
 
         _initialPlacementPending = true;
@@ -122,6 +133,9 @@ internal sealed class TranscriptViewBehavior : IDisposable
         _initialVisibilityRetryQueued = false;
         _scrollViewer.Opacity = 0;
     }
+
+    public Task WaitForInitialPresentationAsync(CancellationToken cancellationToken = default)
+        => _initialPresentation.Task.WaitAsync(cancellationToken);
 
     public void JumpToLatest(Action jumpToLatest)
     {
@@ -162,6 +176,10 @@ internal sealed class TranscriptViewBehavior : IDisposable
         }
 
         _disposed = true;
+        _initialPlacementCancellation?.Cancel();
+        _initialPlacementCancellation?.Dispose();
+        _initialPlacementCancellation = null;
+        _initialPresentation.TrySetCanceled();
         _owner.Loaded -= OnLoaded;
         _tasks.Dispose();
         _scrollCoordinator.Dispose();
@@ -191,7 +209,10 @@ internal sealed class TranscriptViewBehavior : IDisposable
     {
         if (_isInitialLoading())
         {
-            MarkInitialPlacementPending();
+            if (!_initialPlacementPending)
+            {
+                MarkInitialPlacementPending();
+            }
             return true;
         }
 
@@ -222,7 +243,8 @@ internal sealed class TranscriptViewBehavior : IDisposable
         var version = _initialPlacementVersion;
         _scrollViewer.Opacity = 0;
         _scrollCoordinator.QueueScrollToBottomAfterLayoutSettles(
-            () => CompleteInitialPlacement(version));
+            () => CompleteInitialPlacement(version),
+            _initialPlacementCancellation?.Token ?? default);
         return true;
     }
 
@@ -260,5 +282,11 @@ internal sealed class TranscriptViewBehavior : IDisposable
         _initialPlacementQueued = false;
         _initialVisibilityRetryQueued = false;
         _scrollViewer.Opacity = 1;
+        _initialPlacementCancellation?.Dispose();
+        _initialPlacementCancellation = null;
+        _initialPresentation.TrySetResult();
     }
+
+    private static TaskCompletionSource CreatePresentationCompletion()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
 }

@@ -190,7 +190,8 @@ internal sealed class AgentRuntimeChangeHub :
 }
 
 internal sealed class AgentDashboardHandler(
-    AgentLocalStoreAccessor store,
+    AgentProfileService profiles,
+    AgentWorkspaceService workspaces,
     AgentRuntimeChangeHub changes)
     : IPackageRuntimeOperationHandler<AgentDashboardRequest, AgentDashboardProjection>
 {
@@ -198,49 +199,88 @@ internal sealed class AgentDashboardHandler(
         AgentDashboardRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var snapshot = store.GetDashboardSnapshot();
+        var workspaceItems = workspaces.ListWorkspaces();
         return ValueTask.FromResult(new AgentDashboardProjection(
             changes.Revision,
-            snapshot.Profiles,
-            store.ListWorkspaces(),
-            store.ListWorkspaceBindings(),
-            snapshot.Sessions,
-            snapshot.RecentCheckpoints,
-            snapshot.RecentMessages));
+            profiles.ListProfiles(),
+            workspaceItems,
+            workspaceItems
+                .SelectMany(workspace => workspaces.ListBindings(workspace.WorkspaceId))
+                .ToArray()));
     }
 }
 
-// Keeps handlers on service APIs while allowing the dashboard to remain one aggregate read.
-internal sealed class AgentLocalStoreAccessor(AgentLocalStore store)
-{
-    public AgentDashboardSnapshot GetDashboardSnapshot() => store.GetDashboardSnapshot();
-    public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => store.ListWorkspaces();
-    public IReadOnlyList<AgentWorkspaceBindingRecord> ListWorkspaceBindings()
-        => store.ListWorkspaces().SelectMany(workspace => store.ListWorkspaceBindings(workspace.WorkspaceId)).ToArray();
-}
-
-internal sealed class AgentSessionPageHandler(
-    AgentSessionService sessions,
+internal sealed class AgentChatSnapshotHandler(
+    AgentLocalStore store,
+    AgentChatSelectionStateService selectionState,
     AgentRuntimeChangeHub changes)
-    : IPackageRuntimeOperationHandler<AgentSessionPageRequest, AgentSessionPage>
+    : IPackageRuntimeOperationHandler<AgentChatSnapshotRequest, AgentChatSnapshotProjection>
 {
-    public ValueTask<AgentSessionPage> HandleAsync(
-        AgentSessionPageRequest request, CancellationToken cancellationToken = default)
+    private readonly object _cacheGate = new();
+    private ChatSnapshotCacheEntry? _cache;
+
+    public async ValueTask<AgentChatSnapshotProjection> HandleAsync(
+        AgentChatSnapshotRequest request,
+        CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var source = request.SessionId is { } sessionId
-            ? sessions.GetSession(sessionId) is { } session ? [session] : []
-            : string.IsNullOrWhiteSpace(request.WorkspaceId)
-                ? sessions.ListSessions()
-                : sessions.ListSessionsForWorkspace(request.WorkspaceId);
-        var offset = Math.Max(0, request.Offset);
-        var limit = Math.Clamp(request.Limit, 1, 500);
-        var page = source.Skip(offset).Take(limit)
-            .Select(session => new AgentSessionSnapshot(session, sessions.GetLatestCheckpoint(session.SessionId)))
-            .ToArray();
-        return ValueTask.FromResult(new AgentSessionPage(
-            changes.Revision, page, source.Count, offset + page.Length < source.Count));
+        var storedProfileIdTask = selectionState.GetSelectedProfileIdAsync(cancellationToken);
+        var storedWorkspaceIdTask = selectionState.GetSelectedWorkspaceIdAsync(cancellationToken);
+        await Task.WhenAll(storedProfileIdTask, storedWorkspaceIdTask).ConfigureAwait(false);
+        var revision = changes.Revision;
+        var storedProfileId = Normalize(request.PreferredProfileId)
+                              ?? await storedProfileIdTask.ConfigureAwait(false);
+        var storedWorkspaceId = Normalize(request.PreferredWorkspaceId)
+                                ?? await storedWorkspaceIdTask.ConfigureAwait(false);
+        var storedSessionId = storedWorkspaceId is null
+            ? null
+            : await selectionState.GetSelectedSessionIdAsync(storedWorkspaceId, cancellationToken).ConfigureAwait(false);
+        var key = new ChatSnapshotCacheKey(
+            revision,
+            request,
+            storedProfileId,
+            storedWorkspaceId,
+            storedSessionId);
+        lock (_cacheGate)
+        {
+            if (_cache is { } cached && cached.Key == key)
+            {
+                return cached.Snapshot;
+            }
+        }
+
+        var snapshot = await store.ReadChatSnapshotAsync(
+            revision,
+            request,
+            storedProfileId,
+            storedWorkspaceId,
+            (workspaceId, _) => Task.FromResult(
+                string.Equals(workspaceId, storedWorkspaceId, StringComparison.OrdinalIgnoreCase)
+                    ? storedSessionId
+                    : null),
+            cancellationToken).ConfigureAwait(false);
+        if (changes.Revision == revision)
+        {
+            lock (_cacheGate)
+            {
+                _cache = new ChatSnapshotCacheEntry(key, snapshot);
+            }
+        }
+        return snapshot;
     }
+
+    private static string? Normalize(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private readonly record struct ChatSnapshotCacheKey(
+        long Revision,
+        AgentChatSnapshotRequest Request,
+        string? StoredProfileId,
+        string? StoredWorkspaceId,
+        Guid? StoredSessionId);
+
+    private sealed record ChatSnapshotCacheEntry(
+        ChatSnapshotCacheKey Key,
+        AgentChatSnapshotProjection Snapshot);
 }
 
 internal sealed class AgentTranscriptPageHandler(
@@ -267,8 +307,13 @@ internal sealed class AgentTranscriptPageHandler(
             _ => throw new InvalidOperationException("The transcript page anchor is invalid."),
         };
         var hasMore = turns.Count > limit;
+        var pageTurns = !hasMore
+            ? turns
+            : request.Direction is AgentTranscriptPageDirection.Recent or AgentTranscriptPageDirection.Before
+                ? turns.Skip(turns.Count - limit).ToArray()
+                : turns.Take(limit).ToArray();
         return ValueTask.FromResult(new AgentTranscriptPage(
-            changes.Revision, hasMore ? turns.Take(limit).ToArray() : turns, hasMore));
+            changes.Revision, pageTurns, hasMore));
     }
 }
 
@@ -420,12 +465,25 @@ internal sealed class AgentSessionCommandHandler(
 
 internal sealed class AgentRunCommandHandler(
     AgentRunCoordinator runs,
+    AgentPermissionService permissions,
     AgentRuntimeChangeHub changes)
     : IPackageRuntimeOperationHandler<AgentRunCommand, AgentRunCommandResult>
 {
     public async ValueTask<AgentRunCommandResult> HandleAsync(
         AgentRunCommand request, CancellationToken cancellationToken = default)
     {
+        if (request.Kind == AgentRunCommandKind.ApprovePermission && request.ApproveForSession)
+        {
+            var sessionId = request.SessionId;
+            var requestId = Require(request.PermissionRequestId, "Permission request id");
+            if (permissions.GetPendingRequest(sessionId, requestId) is { } pending)
+            {
+                permissions.SaveSessionApproval(
+                    sessionId,
+                    pending.ActionId,
+                    pending.BoundaryId);
+            }
+        }
         var checkpoint = request.Kind switch
         {
             AgentRunCommandKind.Start => await runs.QueueUserMessageAsync(request.SessionId,
@@ -442,6 +500,10 @@ internal sealed class AgentRunCommandHandler(
                 request.SessionId, Require(request.PermissionRequestId, "Permission request id"), cancellationToken),
             _ => throw new InvalidOperationException("Unknown run command."),
         };
+        if (request.Kind is AgentRunCommandKind.ApprovePermission or AgentRunCommandKind.DenyPermission)
+        {
+            changes.NotifyPermissionChanged(request.SessionId);
+        }
         return new AgentRunCommandResult(changes.Revision, checkpoint);
     }
 
@@ -479,11 +541,12 @@ internal sealed class AgentPermissionCommandHandler(
             changes.NotifyPermissionChanged(request.SessionId);
         }
         var sessionId = request.SessionId;
+        var includeGlobalRules = sessionId is null;
         return ValueTask.FromResult(new AgentPermissionProjection(
             changes.Revision,
             sessionId is { } id ? permissions.GetSessionState(id) : null,
-            permissions.ListActions(),
-            permissions.ListOverrides(),
+            includeGlobalRules ? permissions.ListActions() : [],
+            includeGlobalRules ? permissions.ListOverrides() : [],
             sessionId is { } pendingId ? permissions.ListPendingRequestsForSessionTree(pendingId) : []));
     }
 

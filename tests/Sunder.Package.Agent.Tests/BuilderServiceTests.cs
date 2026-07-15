@@ -53,6 +53,41 @@ public sealed class BuilderServiceTests
     }
 
     [Fact]
+    public async Task Persistence_ConcurrentDisposalSharesFinalFlush()
+    {
+        var store = new RecordingProjectStore(blockFirstSave: true);
+        var persistence = new BuilderProjectPersistence(store, TimeSpan.FromMinutes(1));
+        persistence.RequestSave([CreateRecord("pending")]);
+
+        var firstDisposal = persistence.DisposeAsync().AsTask();
+        await store.FirstSaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var secondDisposal = persistence.DisposeAsync().AsTask();
+
+        Assert.False(firstDisposal.IsCompleted);
+        Assert.False(secondDisposal.IsCompleted);
+        store.ReleaseFirstSave.TrySetResult();
+        await Task.WhenAll(firstDisposal, secondDisposal);
+
+        Assert.Equal("pending", Assert.Single(Assert.Single(store.Saves)).Id);
+    }
+
+    [Fact]
+    public async Task Persistence_DisposalWaitsForSaveAlreadyInProgress()
+    {
+        var store = new RecordingProjectStore(blockFirstSave: true);
+        var persistence = new BuilderProjectPersistence(store, TimeSpan.FromMinutes(1));
+        var save = persistence.SaveNowAsync([CreateRecord("saving")]);
+        await store.FirstSaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var disposal = persistence.DisposeAsync().AsTask();
+        Assert.False(disposal.IsCompleted);
+        store.ReleaseFirstSave.TrySetResult();
+        await Task.WhenAll(save, disposal);
+
+        Assert.Equal("saving", Assert.Single(Assert.Single(store.Saves)).Id);
+    }
+
+    [Fact]
     public async Task ViewModel_DisposalFlushesPendingRuntimeAutosave()
     {
         var root = CreateProjectFolder();

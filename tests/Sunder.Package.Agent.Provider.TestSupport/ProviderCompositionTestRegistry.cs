@@ -1,8 +1,8 @@
 using Avalonia.Controls;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
-using Sunder.Sdk.Configuration;
 using Sunder.Sdk.Runtime;
+using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Provider.TestSupport;
 
@@ -10,7 +10,7 @@ public sealed class ProviderCompositionTestRegistry : ISunderRuntimeContribution
 {
     public List<string> ExtensionIds { get; } = [];
     public List<Type> ExtensionTypes { get; } = [];
-    public List<string> ConfigurationPackageIds { get; } = [];
+    public List<PackageSettingsSchema> SettingsSchemas { get; } = [];
     public List<string> RuntimeOperationIds { get; } = [];
     public List<Type> RuntimeOperationHandlerTypes { get; } = [];
     public List<Type> SettingsViewTypes { get; } = [];
@@ -22,8 +22,8 @@ public sealed class ProviderCompositionTestRegistry : ISunderRuntimeContribution
         ExtensionTypes.Add(contribution.GetType());
     }
 
-    public void RegisterConfigurationSchema(PackageConfigurationSchema schema)
-        => ConfigurationPackageIds.Add(schema.PackageId);
+    public void RegisterSettingsSchema(PackageSettingsSchema schema)
+        => SettingsSchemas.Add(schema);
 
     public void RegisterRuntimeOperation<TRequest, TResponse>(
         PackageRuntimeOperation<TRequest, TResponse> operation,
@@ -51,10 +51,4 @@ public sealed class ProviderCompositionTestRegistry : ISunderRuntimeContribution
     public void RegisterPackageView<TView>(PackageViewRegistration registration) where TView : Control
         => throw new NotSupportedException();
 
-    public void RegisterPackageViewFactory<TFactory>(PackageViewRegistration registration)
-        where TFactory : class, IPackageWorkspaceFactory
-        => throw new NotSupportedException();
-
-    public void RegisterSettingsViewFactory<TFactory>() where TFactory : class, IPackageWorkspaceFactory
-        => throw new NotSupportedException();
 }

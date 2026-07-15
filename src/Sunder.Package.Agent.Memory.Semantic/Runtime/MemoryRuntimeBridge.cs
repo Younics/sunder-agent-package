@@ -87,6 +87,7 @@ internal sealed class MemoryAppRuntimeGateway : IMemoryInspectorGateway, IDispos
 {
     private readonly IPackageRuntimeClient _client;
     private readonly CancellationTokenSource _lifetime = new();
+    private int _disposed;
 
     public MemoryAppRuntimeGateway(IPackageRuntimeClient client)
     {
@@ -153,6 +154,11 @@ internal sealed class MemoryAppRuntimeGateway : IMemoryInspectorGateway, IDispos
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         _lifetime.Cancel();
         _lifetime.Dispose();
     }

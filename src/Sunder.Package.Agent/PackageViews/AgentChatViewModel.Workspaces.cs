@@ -8,7 +8,6 @@ public sealed partial class AgentChatViewModel
     private string[] _workspacePathChipLabels = [];
     private int _wideWorkspacePathChipVisibleCount = int.MaxValue;
     private int _narrowWorkspacePathChipVisibleCount = int.MaxValue;
-
     partial void OnSelectedWorkspaceChanged(AgentWorkspaceRecord? value)
     {
         if (_suppressWorkspaceSelection)
@@ -16,60 +15,15 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        TrackBackgroundTask(_selectionState?.SaveSelectedWorkspaceIdAsync(value?.WorkspaceId));
         _globalStatusText = string.Empty;
         RefreshWorkspacePathChips();
-        _backgroundTasks.Run(_ => ReloadStoredSessionsAsync(value?.WorkspaceId));
         CreateSessionCommand.NotifyCanExecuteChanged();
         RefreshSetupState();
         ScheduleSelectedWorkspaceWarmup();
-    }
-
-    private bool ReloadWorkspaces(string? selectWorkspaceId)
-    {
-        var previousSelectedWorkspaceId = SelectedWorkspace?.WorkspaceId;
-        var workspaces = _workspaceService.ListWorkspaces();
-        _suppressWorkspaceSelection = true;
-        try
-        {
-            ReconcileWorkspaces(workspaces);
-
-            var desiredWorkspaceId = selectWorkspaceId ?? previousSelectedWorkspaceId;
-
-            SelectedWorkspace =
-                Workspaces.FirstOrDefault(workspace =>
-                    string.Equals(
-                        workspace.WorkspaceId,
-                        desiredWorkspaceId,
-                        StringComparison.OrdinalIgnoreCase
-                    )
-                ) ?? Workspaces.FirstOrDefault();
-        }
-        finally
-        {
-            _suppressWorkspaceSelection = false;
-        }
-
-        var selectedWorkspaceChanged = !string.Equals(
-            previousSelectedWorkspaceId,
-            SelectedWorkspace?.WorkspaceId,
-            StringComparison.OrdinalIgnoreCase
-        );
-        TrackBackgroundTask(_selectionState?.SaveSelectedWorkspaceIdAsync(SelectedWorkspace?.WorkspaceId));
-        RefreshWorkspacePathChips();
-        NotifyWorkspaceStateChanged();
-        _backgroundTasks.Run(_ => ReloadStoredSessionsAsync(SelectedWorkspace?.WorkspaceId));
-        CreateSessionCommand.NotifyCanExecuteChanged();
-        RefreshSetupState();
-        return selectedWorkspaceChanged;
-    }
-
-    private async Task ReloadStoredSessionsAsync(string? workspaceId)
-    {
-        var sessionId = _selectionState is null
-            ? null
-            : await _selectionState.GetSelectedSessionIdAsync(workspaceId);
-        RunOnUiThread(() => ReloadSessions(sessionId));
+        ScheduleChatSnapshotRequest(
+            SelectedProfile?.ProfileId,
+            value?.WorkspaceId,
+            preferredSessionId: null);
     }
 
     private void ReconcileWorkspaces(IReadOnlyList<AgentWorkspaceRecord> workspaces)
@@ -190,11 +144,19 @@ public sealed partial class AgentChatViewModel
         return -1;
     }
 
-    private void OnWorkspacesChanged() => RunOnUiThread(ApplyWorkspacesChanged);
+    private void OnWorkspacesChanged()
+    {
+        if (_isInitialized)
+        {
+            RunOnUiThread(ApplyWorkspacesChanged);
+        }
+    }
 
     private void ApplyWorkspacesChanged()
     {
-        ReloadWorkspaces(SelectedWorkspace?.WorkspaceId);
-        ScheduleSelectedWorkspaceWarmup();
+        ScheduleChatSnapshotRequest(
+            SelectedProfile?.ProfileId,
+            SelectedWorkspace?.WorkspaceId,
+            SelectedSession?.SessionId);
     }
 }

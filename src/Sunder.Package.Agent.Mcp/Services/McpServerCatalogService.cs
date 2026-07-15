@@ -9,7 +9,7 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
 {
     private const string ServerKeyPrefix = "mcp.servers.";
     private readonly IPackageContext _packageContext = packageContext;
-    private readonly ILogger<McpServerCatalogService> _logger = packageContext.LoggerFactory.CreateLogger<McpServerCatalogService>();
+    private readonly ILogger<McpServerCatalogService> _logger = packageContext.Logging.LoggerFactory.CreateLogger<McpServerCatalogService>();
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
     private IReadOnlyList<McpCatalogDiagnostic> _lastDiagnostics = [];
 

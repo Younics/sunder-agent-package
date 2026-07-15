@@ -134,12 +134,15 @@ public sealed partial class AgentLocalStore
         transaction.Commit();
     }
 
-    private static IReadOnlyList<AgentProfileRecord> ListProfiles(SqliteConnection connection)
+    private static IReadOnlyList<AgentProfileRecord> ListProfiles(
+        SqliteConnection connection,
+        SqliteTransaction? transaction = null)
     {
-        var selectableAssignments = ListAllProfileSelectableCapabilityAssignments(connection);
-        var modelBindings = ListAllProfileModelBindings(connection);
+        var selectableAssignments = ListAllProfileSelectableCapabilityAssignments(connection, transaction);
+        var modelBindings = ListAllProfileModelBindings(connection, transaction);
 
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "SELECT ProfileId, DisplayName, Description, Instructions, ProviderId, ModelId, EmbeddingProviderId, EmbeddingModelId, CreatedAtUtc, UpdatedAtUtc, BehaviorLoopId, BehaviorLoopSourceId, BehaviorLoopSettingsJson, IsInternal FROM AgentProfiles WHERE IsInternal = 0 ORDER BY DisplayName;";
 
         using var reader = command.ExecuteReader();
@@ -219,9 +222,12 @@ public sealed partial class AgentLocalStore
         string? BehaviorLoopSettingsJson,
         bool IsInternal);
 
-    private static Dictionary<string, IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord>> ListAllProfileSelectableCapabilityAssignments(SqliteConnection connection)
+    private static Dictionary<string, IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord>> ListAllProfileSelectableCapabilityAssignments(
+        SqliteConnection connection,
+        SqliteTransaction? transaction = null)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "SELECT ProfileId, Kind, CapabilityId, SourceId FROM AgentProfileSelectableCapabilityAssignments ORDER BY ProfileId, Kind, CapabilityId, SourceId;";
 
         using var reader = command.ExecuteReader();
@@ -318,9 +324,12 @@ public sealed partial class AgentLocalStore
         return assignments;
     }
 
-    private static Dictionary<string, IReadOnlyList<AgentProfileModelBindingRecord>> ListAllProfileModelBindings(SqliteConnection connection)
+    private static Dictionary<string, IReadOnlyList<AgentProfileModelBindingRecord>> ListAllProfileModelBindings(
+        SqliteConnection connection,
+        SqliteTransaction? transaction = null)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "SELECT ProfileId, CapabilityKind, ProviderId, ModelId, SettingsJson, UpdatedAtUtc FROM AgentProfileModelBindings ORDER BY ProfileId, CapabilityKind;";
 
         using var reader = command.ExecuteReader();

@@ -118,3 +118,14 @@ public interface IAgentExecutionGateway
     Task<AgentExecutionTargetWarmupResult> WarmWorkspaceAsync(AgentWorkspaceRecord workspace,
         CancellationToken cancellationToken = default);
 }
+
+internal interface IAgentPresentationInitialization
+{
+    Task InitializeAsync(CancellationToken cancellationToken = default);
+}
+
+internal interface IAgentExecutionTargetLoader
+{
+    Task<IReadOnlyList<AgentExecutionTargetDescriptor>> ListTargetsAsync(
+        CancellationToken cancellationToken = default);
+}

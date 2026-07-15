@@ -20,6 +20,7 @@ public sealed class AgentProfilesViewModelRefreshTests
         {
             var profile = await profileService.CreateProfileAsync("Profile");
             using var viewModel = new AgentProfilesViewModel(profileService);
+            await viewModel.InitializeAsync();
             await WaitUntilAsync(() =>
                 viewModel.SelectedProfile?.ProfileId == profile.ProfileId
                 && !viewModel.IsBusy
@@ -52,6 +53,7 @@ public sealed class AgentProfilesViewModelRefreshTests
         {
             var profile = await profileService.CreateProfileAsync("Profile");
             using var viewModel = new AgentProfilesViewModel(profileService);
+            await viewModel.InitializeAsync();
             await WaitUntilAsync(() =>
                 viewModel.SelectedProfile?.ProfileId == profile.ProfileId
                 && !viewModel.IsBusy

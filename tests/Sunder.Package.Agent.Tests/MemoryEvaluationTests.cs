@@ -599,7 +599,7 @@ public sealed class MemoryEvaluationTests
         public EvaluationPackageContext(string rootPath)
         {
             Directory.CreateDirectory(rootPath);
-            InstallPath = rootPath;
+            ContentRootPath = rootPath;
             _storage = new EvaluationPackageStorageContext(rootPath);
         }
 
@@ -607,7 +607,7 @@ public sealed class MemoryEvaluationTests
 
         public string Version => "1.0.0";
 
-        public string InstallPath { get; }
+        public string ContentRootPath { get; }
 
         public IPackageStorageContext Storage => _storage;
 
@@ -615,7 +615,6 @@ public sealed class MemoryEvaluationTests
 
         public IPackageSecrets Secrets { get; } = new EvaluationPackageSecrets();
 
-        public Microsoft.Extensions.Logging.ILoggerFactory LoggerFactory => Logging.LoggerFactory;
 
         public Sunder.Sdk.Logging.IPackageLogging Logging { get; } = Sunder.Sdk.Logging.NullPackageLogging.Instance;
     }

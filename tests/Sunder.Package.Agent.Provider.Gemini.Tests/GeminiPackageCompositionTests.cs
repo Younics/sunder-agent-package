@@ -31,7 +31,7 @@ public sealed class GeminiPackageCompositionTests
             [PackageExtensionPoints.ChatProviders.Id, PackageExtensionPoints.EmbeddingProviders.Id],
             runtimeRegistry.ExtensionIds);
         Assert.Equal([typeof(GeminiAgentProvider), typeof(GeminiEmbeddingProvider)], runtimeRegistry.ExtensionTypes);
-        Assert.Equal([context.PackageId], runtimeRegistry.ConfigurationPackageIds);
+        Assert.Same(GeminiProviderConfiguration.Schema, Assert.Single(runtimeRegistry.SettingsSchemas));
 
         var appServices = new ServiceCollection();
         var appModule = new AppPackageModule();

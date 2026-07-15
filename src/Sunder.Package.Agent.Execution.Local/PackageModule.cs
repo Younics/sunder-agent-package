@@ -18,7 +18,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
-        registry.RegisterConfigurationSchema(LocalExecutionConfiguration.Schema);
+        registry.RegisterSettingsSchema(LocalExecutionConfiguration.Schema);
         var target = services.GetRequiredService<LocalExecutionTarget>();
         registry.RegisterExtension(PackageExtensionPoints.ExecutionTargets, target);
         registry.RegisterExtension(PackageExtensionPoints.WorkspaceBindingContributors, target);

@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Runtime;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -224,16 +225,42 @@ public sealed partial class AgentProfilesViewModel
         }
     }
 
-    private async Task InitializeAsync()
+    private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
         try
         {
-            await ReloadProfilesAsync(selectProfileId: null);
+            var initializationTask = _profileService is IAgentPresentationInitialization initialization
+                ? initialization.InitializeAsync(cancellationToken)
+                : Task.CompletedTask;
+            await Task.WhenAll(
+                initializationTask,
+                _profileService.ListInstalledLocalToolsAsync(cancellationToken)).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            Task reload = Task.CompletedTask;
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed)
+                {
+                    reload = ReloadProfilesAsync(selectProfileId: null);
+                }
+            }).ConfigureAwait(false);
+            await reload.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await _uiDispatcher.InvokeAsync(() => _isInitialized = !_disposed).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            ClearEditor();
-            SetStatus(ex.Message, AgentProfileStatusKind.Error);
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed)
+                {
+                    ClearEditor();
+                    SetStatus(ex.Message, AgentProfileStatusKind.Error);
+                }
+            }).ConfigureAwait(false);
         }
     }
 

@@ -21,13 +21,14 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     private readonly TimedStatusController _statusClear;
     private readonly OperationState<AgentProfileOperation> _operation = new();
     private readonly PresentationTaskScope _tasks;
-    private readonly Task _initialization;
+    private readonly AsyncOnce _initialization = new();
     private readonly Dictionary<string, EditableDocumentState<ProfileEditorDraft>> _drafts =
         new(StringComparer.OrdinalIgnoreCase);
     private bool _suppressSelectionHandlers;
     private bool _suppressProfileChangeNotifications;
     private bool _suppressDraftTracking;
     private bool _isHydrating;
+    private bool _isInitialized;
     private bool _disposed;
     private int _profileLoadVersion;
     private long _editRevision;
@@ -81,12 +82,14 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         {
             _runtimeAvailability.ConnectionStateChanged += OnRuntimeConnectionStateChanged;
         }
-        _initialization = InitializeAsync();
     }
 
     public ObservableCollection<AgentProfileRecord> Profiles { get; } = [];
 
-    internal Task Initialization => _initialization;
+    internal Task Initialization => InitializeAsync();
+
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+        => _initialization.RunAsync(InitializeCoreAsync, cancellationToken);
 
     internal ModelBindingEditorState ChatBinding { get; }
 
@@ -470,14 +473,20 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     private void OnProfileChanged(string profileId) => RunOnUiThread(() =>
     {
-        if (!_suppressProfileChangeNotifications)
+        if (_isInitialized && !_suppressProfileChangeNotifications)
         {
             _tasks.Run(_ => ReloadProfilesSafelyAsync(SelectedProfile?.ProfileId));
         }
     });
 
     private void OnSelectableCapabilitiesChanged()
-        => RunOnUiThread(() => _tasks.Run(_ => RefreshSelectedProfileCapabilitiesAsync()));
+        => RunOnUiThread(() =>
+        {
+            if (_isInitialized)
+            {
+                _tasks.Run(_ => RefreshSelectedProfileCapabilitiesAsync());
+            }
+        });
 
     private async Task ReloadProfilesSafelyAsync(string? selectProfileId)
     {

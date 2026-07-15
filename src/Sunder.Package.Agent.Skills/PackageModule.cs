@@ -32,7 +32,10 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, feature);
         registry.RegisterExtension(PackageExtensionPoints.SystemPromptContributors, feature);
         registry.RegisterExtension(PackageExtensionPoints.ExecutionResourceProviders, feature);
-        registry.RegisterExtension(SunderStackExtensionPoints.StackContributors, services.GetRequiredService<SkillStackContributor>());
+        var stackContributor = services.GetRequiredService<SkillStackContributor>();
+        registry.RegisterExtension(SunderStackExtensionPoints.StackExporters, stackContributor);
+        registry.RegisterExtension(SunderStackExtensionPoints.StackImporters, stackContributor);
+        registry.RegisterExtension(SunderStackExtensionPoints.StackImportAppliedHandlers, stackContributor);
         registry.RegisterRuntimeOperation(SkillRuntimeOperations.Query, services.GetRequiredService<SkillRuntimeHandler>());
         registry.RegisterRuntimeOperation(SkillRuntimeOperations.Command, services.GetRequiredService<SkillRuntimeHandler>());
         registry.RegisterRuntimeStream(SkillRuntimeOperations.Changes, services.GetRequiredService<SkillRuntimeChangeStream>());

@@ -9,7 +9,7 @@ namespace Sunder.Package.Agent.Services;
 public sealed class AgentWorkspaceStackContributor(
     AgentWorkspaceService workspaceService,
     IPackageContext packageContext,
-    IPackageExtensionCatalog extensionCatalog) : IPackageStackContributor, IPackageStackImportAppliedHandler
+    IPackageExtensionCatalog extensionCatalog) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
     private const string PackageId = "sunder.package.agent";
     private const string SchemaId = "sunder.package.agent/workspace";
@@ -61,8 +61,7 @@ public sealed class AgentWorkspaceStackContributor(
             payloads.Add(payload);
             fragments.Add(new StackFragmentExport(
                 FragmentId: "agent-workspace." + SanitizeIdentifier(workspace.WorkspaceId),
-                ContributorId,
-                SchemaId,
+                SchemaId: SchemaId,
                 SchemaVersion: 1,
                 DisplayName: workspace.DisplayName,
                 JsonPayload: JsonSerializer.Serialize(payload, JsonOptions),

@@ -1,4 +1,4 @@
-using Sunder.Sdk.Configuration;
+using Sunder.Sdk.Settings;
 using Sunder.Package.Agent.Provider.Shared;
 
 namespace Sunder.Package.Agent.Provider.Gemini;
@@ -14,9 +14,7 @@ public static class GeminiProviderConfiguration
         DefaultUtilityModelId,
         GeminiModelCatalog.UtilityModelOptions);
 
-    public static PackageConfigurationSchema Schema { get; } = new(
-        "sunder.package.agent.provider.gemini",
-        "Sunder Agent Provider Gemini",
+    public static PackageSettingsSchema Schema { get; } = new(
         "Configure how the Agent package authenticates and talks to Gemini models.",
         [
             ProviderConfigurationSections.ApiKey(

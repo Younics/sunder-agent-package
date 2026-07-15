@@ -29,7 +29,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
-        registry.RegisterConfigurationSchema(MemorySemanticPackageConfiguration.Schema);
+        registry.RegisterSettingsSchema(MemorySemanticPackageConfiguration.Schema);
         registry.RegisterBackgroundService<SemanticMemoryIndexingBackgroundService>();
         registry.RegisterExtension(PackageExtensionPoints.PromptContextContributors, services.GetRequiredService<MemorySemanticFeature>());
         registry.RegisterExtension(PackageExtensionPoints.LifecycleObservers, services.GetRequiredService<MemorySemanticFeature>());

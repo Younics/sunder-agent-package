@@ -8,7 +8,6 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
 {
     private readonly IPackageExtensionCatalog _extensionCatalog;
     private readonly IPackageExtensionCatalogMonitor? _extensionCatalogMonitor;
-    private readonly IPackageExtensionCatalogChangeNotifier? _extensionCatalogChangeNotifier;
     private readonly object _syncRoot = new();
     private readonly HashSet<IAgentProfileSelectableCapabilityChangeNotifier> _subscribedProviders = [];
     private bool _disposed;
@@ -21,12 +20,6 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
             _extensionCatalogMonitor = monitor;
             monitor.Changed += OnExtensionCatalogChanged;
         }
-        else if (_extensionCatalog is IPackageExtensionCatalogChangeNotifier changeNotifier)
-        {
-            _extensionCatalogChangeNotifier = changeNotifier;
-            changeNotifier.ExtensionsChanged += OnExtensionCatalogChanged;
-        }
-
         RefreshProviderSubscriptions();
     }
 
@@ -60,12 +53,6 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
         }
     }
 
-    private void OnExtensionCatalogChanged(object? sender, EventArgs e)
-    {
-        RefreshProviderSubscriptions();
-        Changed?.Invoke();
-    }
-
     private void OnExtensionCatalogChanged(object? sender, PackageExtensionCatalogChangedEventArgs e)
     {
         RefreshProviderSubscriptions();
@@ -88,11 +75,6 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
             if (_extensionCatalogMonitor is not null)
             {
                 _extensionCatalogMonitor.Changed -= OnExtensionCatalogChanged;
-            }
-
-            if (_extensionCatalogChangeNotifier is not null)
-            {
-                _extensionCatalogChangeNotifier.ExtensionsChanged -= OnExtensionCatalogChanged;
             }
 
             foreach (var provider in _subscribedProviders)

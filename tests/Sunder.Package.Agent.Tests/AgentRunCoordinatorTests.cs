@@ -4935,6 +4935,7 @@ public sealed class AgentRunCoordinatorTests
         );
         var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
         using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        await viewModel.InitializeAsync();
         await WaitUntilAsync(() => viewModel.SelectedProfile?.ProfileId == profile.ProfileId);
 
         viewModel.IsCompactLayout = true;
@@ -4972,6 +4973,7 @@ public sealed class AgentRunCoordinatorTests
         );
         var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
         using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        await viewModel.InitializeAsync();
         await WaitUntilAsync(() => viewModel.SelectedProfile?.ProfileId == profile.ProfileId);
         viewModel.IsCompactLayout = true;
         viewModel.ActivateProfile(
@@ -5014,6 +5016,7 @@ public sealed class AgentRunCoordinatorTests
         );
         var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
         using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        await viewModel.InitializeAsync();
         await WaitUntilAsync(() =>
             viewModel.SelectedProfile?.ProfileId == profile.ProfileId && !viewModel.IsBusy);
         viewModel.Profiles.CollectionChanged += (_, args) =>
@@ -5052,6 +5055,7 @@ public sealed class AgentRunCoordinatorTests
         using var runtime = AgentTestRuntime.CreateWithoutChatProvider();
         var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
         using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        await viewModel.InitializeAsync();
         await WaitUntilAsync(
             () => viewModel.SelectedProfile?.ProfileId == profile.ProfileId && !viewModel.IsBusy
         );
@@ -5089,6 +5093,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.ProfileService,
             settingsNavigation
         );
+        await viewModel.InitializeAsync();
         await WaitUntilAsync(
             () => viewModel.SelectedProfile?.ProfileId == profile.ProfileId && !viewModel.IsBusy
         );
@@ -5119,6 +5124,7 @@ public sealed class AgentRunCoordinatorTests
         runtime.AddEmbeddingProvider(new TestEmbeddingProvider("test-embeddings"));
         var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
         using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        await viewModel.InitializeAsync();
         await WaitUntilAsync(
             () => viewModel.SelectedProfile?.ProfileId == profile.ProfileId && !viewModel.IsBusy
         );
@@ -5153,6 +5159,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.ProfileService,
             settingsNavigation
         );
+        await viewModel.InitializeAsync();
         await WaitUntilAsync(
             () => viewModel.SelectedProfile?.ProfileId == profile.ProfileId && !viewModel.IsBusy
         );
@@ -5678,6 +5685,7 @@ public sealed class AgentRunCoordinatorTests
                 new SubagentFeature(subagentService, runtime.ExtensionCatalog)
             );
             using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+            await viewModel.InitializeAsync();
 
             await WaitUntilAsync(() => viewModel.SelectedProfile is not null && !viewModel.IsBusy);
             Assert.DoesNotContain(
@@ -5783,6 +5791,7 @@ public sealed class AgentRunCoordinatorTests
                 new SubagentFeature(subagentService, runtime.ExtensionCatalog)
             );
             using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+            await viewModel.InitializeAsync();
 
             await WaitUntilAsync(
                 () =>
@@ -5911,6 +5920,7 @@ public sealed class AgentRunCoordinatorTests
                 new McpToolSource(serverCatalogService, connectionManager)
             );
             using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+            await viewModel.InitializeAsync();
 
             await WaitUntilAsync(() => viewModel.SelectedProfile is not null);
             Assert.Empty(viewModel.PackageCapabilities);
@@ -6000,6 +6010,7 @@ public sealed class AgentRunCoordinatorTests
         );
         await runtime.CreateSessionAsync("dynamic_tool");
         using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        await viewModel.InitializeAsync();
 
         await WaitUntilAsync(() => viewModel.SelectedProfile is not null);
         Assert.Empty(viewModel.LocalTools);
@@ -6055,6 +6066,7 @@ public sealed class AgentRunCoordinatorTests
                 []
             );
             using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+            await viewModel.InitializeAsync();
 
             await WaitUntilAsync(() => viewModel.SelectedProfile is not null);
             Assert.Empty(viewModel.PackageCapabilities);
@@ -8025,10 +8037,10 @@ public sealed class AgentRunCoordinatorTests
         );
         await viewModel.InitializeAsync();
 
-        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.Equal(45, viewModel.Messages.Count);
         Assert.True(viewModel.HasOlderTranscriptRows);
         Assert.Equal(
-            "message-105",
+            "message-120",
             Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
         );
         Assert.Equal(
@@ -8043,11 +8055,11 @@ public sealed class AgentRunCoordinatorTests
         Assert.True(viewModel.HasOlderTranscriptRows);
         Assert.True(viewModel.HasNewerTranscriptRows);
         Assert.Equal(
-            "message-075",
+            "message-090",
             Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
         );
         Assert.Equal(
-            "message-134",
+            "message-149",
             Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content
         );
     }
@@ -8080,9 +8092,9 @@ public sealed class AgentRunCoordinatorTests
         );
         await viewModel.InitializeAsync();
 
-        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.Equal(45, viewModel.Messages.Count);
         Assert.Equal(
-            "message-200",
+            "message-215",
             Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
         );
         Assert.Equal(
@@ -8096,11 +8108,11 @@ public sealed class AgentRunCoordinatorTests
         Assert.True(viewModel.HasOlderTranscriptRows);
         Assert.True(viewModel.HasNewerTranscriptRows);
         Assert.Equal(
-            "message-170",
+            "message-185",
             Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content
         );
         Assert.Equal(
-            "message-229",
+            "message-244",
             Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content
         );
 
@@ -8188,24 +8200,24 @@ public sealed class AgentRunCoordinatorTests
         );
         await viewModel.InitializeAsync();
 
-        Assert.Equal(60, viewModel.Messages.Count);
-        Assert.Equal("message-340", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content);
+        Assert.Equal(45, viewModel.Messages.Count);
+        Assert.Equal("message-355", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content);
         Assert.Equal("message-399", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content);
 
         Assert.True(await viewModel.LoadOlderTranscriptRowsAsync());
         Assert.Equal(60, viewModel.Messages.Count);
-        Assert.Equal("message-310", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content);
-        Assert.Equal("message-369", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content);
+        Assert.Equal("message-325", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content);
+        Assert.Equal("message-384", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content);
 
         Assert.True(await viewModel.LoadOlderTranscriptRowsAsync());
         Assert.Equal(60, viewModel.Messages.Count);
-        Assert.Equal("message-280", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content);
-        Assert.Equal("message-339", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content);
+        Assert.Equal("message-295", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content);
+        Assert.Equal("message-354", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content);
 
         Assert.True(await viewModel.LoadNewerTranscriptRowsAsync());
         Assert.Equal(60, viewModel.Messages.Count);
-        Assert.Equal("message-310", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content);
-        Assert.Equal("message-369", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content);
+        Assert.Equal("message-325", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[0]).Content);
+        Assert.Equal("message-384", Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content);
 
         Assert.True(await viewModel.LoadNewerTranscriptRowsAsync());
         Assert.Equal(60, viewModel.Messages.Count);
@@ -11640,7 +11652,8 @@ public sealed class AgentRunCoordinatorTests
                 utilityModelId,
                 readinessHandler,
                 beforeExecutionHandler
-            ) { }
+            )
+        { }
 
         public ScriptedProvider(
             Func<AgentProviderRequest, int, IReadOnlyList<AgentProviderStreamEvent>> handler,
@@ -12901,7 +12914,6 @@ public sealed class AgentRunCoordinatorTests
 
     private sealed class TestExtensionCatalog
         : IPackageExtensionCatalog,
-            IPackageExtensionCatalogChangeNotifier,
             IPackageExtensionCatalogMonitor
     {
         private readonly Dictionary<string, List<object>> _extensions = new(
@@ -12909,8 +12921,6 @@ public sealed class AgentRunCoordinatorTests
         );
 
         private long _revision;
-
-        public event EventHandler? ExtensionsChanged;
 
         public event EventHandler<PackageExtensionCatalogChangedEventArgs>? Changed;
 
@@ -12938,7 +12948,6 @@ public sealed class AgentRunCoordinatorTests
                     ),
                 ]
             );
-            ExtensionsChanged?.Invoke(this, EventArgs.Empty);
             Changed?.Invoke(this, args);
         }
 
@@ -13143,7 +13152,7 @@ public sealed class AgentRunCoordinatorTests
 
         public ValueTask<bool> AddViewToHotbarAsync(
             string viewId,
-            PackageHotbarPlacement placement,
+            PackageViewPlacement placement,
             int? index = null,
             bool openPanel = false,
             IReadOnlyDictionary<string, string?>? parameters = null,
@@ -13351,7 +13360,7 @@ public sealed class AgentRunCoordinatorTests
 
         public string Version => "1.0.0";
 
-        public string InstallPath => rootPath;
+        public string ContentRootPath => rootPath;
 
         public IPackageStorageContext Storage => _storage;
 
@@ -13359,7 +13368,6 @@ public sealed class AgentRunCoordinatorTests
 
         public IPackageSecrets Secrets => _secrets;
 
-        public Microsoft.Extensions.Logging.ILoggerFactory LoggerFactory => Logging.LoggerFactory;
 
         public Sunder.Sdk.Logging.IPackageLogging Logging { get; } =
             Sunder.Sdk.Logging.NullPackageLogging.Instance;

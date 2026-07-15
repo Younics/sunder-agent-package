@@ -1316,9 +1316,10 @@
           <Grid>
             <ScrollViewer x:Name="TranscriptScrollViewer"
                           Classes="transcript-scroll"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto"
                           IsVisible="{Binding !ShowSetupInstructions}">
-              <Border Classes="transcript-content"
-                      Width="{Binding Viewport.Width, ElementName=TranscriptScrollViewer}">
+              <Border x:Name="TranscriptScrollContent">
                 <ItemsControl x:Name="TranscriptItemsControl"
                               Classes="transcript-items"
                               ItemsSource="{Binding Messages}">

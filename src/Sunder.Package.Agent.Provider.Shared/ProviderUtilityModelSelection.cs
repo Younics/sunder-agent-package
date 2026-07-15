@@ -1,12 +1,12 @@
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Configuration;
+using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Provider.Shared;
 
 internal sealed record ProviderUtilityModelSelection(
     string ConfigurationKey,
     string DefaultModelId,
-    IReadOnlyList<PackageConfigurationOption> Options,
+    IReadOnlyList<PackageSettingsOption> Options,
     Func<string?, string?>? Normalize = null)
 {
     public async ValueTask<string> ResolveAsync(

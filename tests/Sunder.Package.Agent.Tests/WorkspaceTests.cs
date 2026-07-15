@@ -143,7 +143,7 @@ public sealed class WorkspaceTests
 
         var fragment = Assert.Single(contribution.Fragments);
         Assert.Equal("sunder.package.agent", Assert.Single(contribution.PackageRequirements).PackageId);
-        Assert.Equal("sunder.package.agent.workspaces", fragment.ContributorId);
+        Assert.Equal("sunder.package.agent.workspaces", contributor.ContributorId);
         Assert.Empty(fragment.RequiredInputs ?? []);
         Assert.Contains(workspaceRoot, fragment.JsonPayload, StringComparison.Ordinal);
         Assert.Contains(documentPath, fragment.JsonPayload, StringComparison.Ordinal);
@@ -170,7 +170,7 @@ public sealed class WorkspaceTests
         var targetContext = new TestPackageContext(Path.Combine(scope.RootPath, "target"));
         var targetService = new AgentWorkspaceService(new AgentLocalStore(targetContext));
         var targetContributor = new AgentWorkspaceStackContributor(targetService, targetContext, new TestExtensionCatalog());
-        var importFragment = ToImportFragment(fragment);
+        var importFragment = ToImportFragment(fragment, sourceContributor.ContributorId);
         var preview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest(
             [importFragment],
             new Dictionary<string, string>(),
@@ -883,7 +883,11 @@ public sealed class WorkspaceTests
 
         var contribution = await contributor.ExportAsync(new StackExportRequest(
             ["docker-images"],
-            [new StackExportItemSelection("docker-images", [new StackExportDetailSelection("custom:latest")])]));
+            [new StackExportItemSelection("docker-images",
+            [
+                new StackExportDetailSelection("custom:latest"),
+                new StackExportDetailSelection("other:latest", IsSelected: false),
+            ])]));
 
         var fragment = Assert.Single(contribution.Fragments);
         Assert.Equal("docker-images", fragment.FragmentId);
@@ -906,7 +910,7 @@ public sealed class WorkspaceTests
         var targetCatalog = new DockerImageCatalogService(targetScope.Context);
         await targetCatalog.DeleteImageAsync(DockerExecutionWorkspaceConfigService.DefaultImageReference);
         var targetContributor = new DockerImageStackContributor(targetCatalog, targetScope.Context);
-        var importFragment = ToImportFragment(fragment);
+        var importFragment = ToImportFragment(fragment, sourceContributor.ContributorId);
         var preview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest(
             [importFragment],
             new Dictionary<string, string>(),
@@ -1537,6 +1541,7 @@ public sealed class WorkspaceTests
         var executionTargetService = new AgentExecutionTargetService(catalog);
         var warmupService = new AgentExecutionTargetWarmupService(workspaceService, executionTargetService);
         using var viewModel = new AgentWorkspacesViewModel(workspaceService, executionTargetService, catalog, warmupService);
+        await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
         viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(targetOption => string.Equals(targetOption.TargetId, target.Descriptor.TargetId, StringComparison.OrdinalIgnoreCase));
@@ -1555,6 +1560,7 @@ public sealed class WorkspaceTests
         var workspaceService = new AgentWorkspaceService(store);
         var executionTargetService = new AgentExecutionTargetService(catalog);
         using var viewModel = new AgentWorkspacesViewModel(workspaceService, executionTargetService, catalog);
+        await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
         Assert.False(viewModel.HasExecutionTargetChoices);
@@ -1577,6 +1583,7 @@ public sealed class WorkspaceTests
         var workspaceService = new AgentWorkspaceService(store);
         var executionTargetService = new AgentExecutionTargetService(catalog);
         using var viewModel = new AgentWorkspacesViewModel(workspaceService, executionTargetService, catalog);
+        await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
         var target = new CountingExecutionTarget("docker");
@@ -1606,6 +1613,7 @@ public sealed class WorkspaceTests
         workspaceService.SavePrimaryExecutionBinding(workspace.WorkspaceId, target.Descriptor.TargetId);
 
         using var viewModel = new AgentWorkspacesViewModel(workspaceService, executionTargetService, catalog);
+        await viewModel.InitializeAsync();
 
         await WaitUntilAsync(() => viewModel.EditorSections.Count == 1);
         Assert.Equal(1, contributor.GetSectionsCallCount);
@@ -1627,6 +1635,7 @@ public sealed class WorkspaceTests
         {
             IsCompactLayout = true,
         };
+        await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
         viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase));
@@ -1663,6 +1672,7 @@ public sealed class WorkspaceTests
         var workspaceService = new AgentWorkspaceService(store);
         var executionTargetService = new AgentExecutionTargetService(catalog);
         using var viewModel = new AgentWorkspacesViewModel(workspaceService, executionTargetService, catalog);
+        await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
         viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase));
@@ -1708,6 +1718,7 @@ public sealed class WorkspaceTests
         {
             IsCompactLayout = true,
         };
+        await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
         viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase));
@@ -1739,6 +1750,7 @@ public sealed class WorkspaceTests
             workspaceService,
             executionTargetService,
             catalog);
+        await viewModel.InitializeAsync();
         viewModel.ActivateWorkspace(originalWorkspace);
         viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(option =>
             string.Equals(option.TargetId, "docker", StringComparison.OrdinalIgnoreCase));
@@ -1765,7 +1777,7 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void AgentWorkspacesViewModel_CreateWorkspace_CompactLayout_OpensEditor()
+    public async Task AgentWorkspacesViewModel_CreateWorkspace_CompactLayout_OpensEditor()
     {
         using var scope = TestScope.Create();
         var services = CreateWorkspaceViewServices(scope.Context);
@@ -1773,6 +1785,7 @@ public sealed class WorkspaceTests
         {
             IsCompactLayout = true,
         };
+        await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
 
@@ -1785,12 +1798,13 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void AgentWorkspacesViewModel_CompactLayout_ClearsDefaultWorkspaceSelection()
+    public async Task AgentWorkspacesViewModel_CompactLayout_ClearsDefaultWorkspaceSelection()
     {
         using var scope = TestScope.Create();
         var services = CreateWorkspaceViewServices(scope.Context);
         var workspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
         using var viewModel = new AgentWorkspacesViewModel(services.WorkspaceService, services.ExecutionTargetService, services.Catalog);
+        await viewModel.InitializeAsync();
         Assert.Equal(workspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
 
         viewModel.IsCompactLayout = true;
@@ -1803,15 +1817,17 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void AgentWorkspacesViewModel_WideLayout_SelectsFirstWorkspace_WhenCompactHadNoSelection()
+    public async Task AgentWorkspacesViewModel_WideLayout_SelectsFirstWorkspace_WhenCompactHadNoSelection()
     {
         using var scope = TestScope.Create();
         var services = CreateWorkspaceViewServices(scope.Context);
         var workspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
-        using var viewModel = new AgentWorkspacesViewModel(services.WorkspaceService, services.ExecutionTargetService, services.Catalog)
-        {
-            IsCompactLayout = true,
-        };
+        using var viewModel = new AgentWorkspacesViewModel(
+            services.WorkspaceService,
+            services.ExecutionTargetService,
+            services.Catalog);
+        await viewModel.InitializeAsync();
+        viewModel.IsCompactLayout = true;
         Assert.Null(viewModel.SelectedWorkspace);
 
         viewModel.IsCompactLayout = false;
@@ -1822,7 +1838,7 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void AgentWorkspacesViewModel_ActivateWorkspace_CompactLayout_OpensSelectedWorkspaceEditor()
+    public async Task AgentWorkspacesViewModel_ActivateWorkspace_CompactLayout_OpensSelectedWorkspaceEditor()
     {
         using var scope = TestScope.Create();
         var services = CreateWorkspaceViewServices(scope.Context);
@@ -1831,6 +1847,7 @@ public sealed class WorkspaceTests
         {
             IsCompactLayout = true,
         };
+        await viewModel.InitializeAsync();
         Assert.False(viewModel.IsEditorActive);
 
         viewModel.ActivateWorkspace(viewModel.Workspaces.Single(item => item.WorkspaceId == workspace.WorkspaceId));
@@ -1853,13 +1870,14 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void AgentWorkspacesViewModel_ActivateWorkspace_WideLayout_KeepsSplitPanesVisible()
+    public async Task AgentWorkspacesViewModel_ActivateWorkspace_WideLayout_KeepsSplitPanesVisible()
     {
         using var scope = TestScope.Create();
         var services = CreateWorkspaceViewServices(scope.Context);
         var firstWorkspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
         var secondWorkspace = services.WorkspaceService.CreateWorkspace("Beta Workspace");
         using var viewModel = new AgentWorkspacesViewModel(services.WorkspaceService, services.ExecutionTargetService, services.Catalog);
+        await viewModel.InitializeAsync();
         Assert.Equal(firstWorkspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
 
         viewModel.ActivateWorkspace(viewModel.Workspaces.Single(item => item.WorkspaceId == secondWorkspace.WorkspaceId));
@@ -1871,7 +1889,7 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void AgentWorkspacesViewModel_DeleteWorkspace_CompactLayout_ReturnsToList()
+    public async Task AgentWorkspacesViewModel_DeleteWorkspace_CompactLayout_ReturnsToList()
     {
         using var scope = TestScope.Create();
         var services = CreateWorkspaceViewServices(scope.Context);
@@ -1881,6 +1899,7 @@ public sealed class WorkspaceTests
         {
             IsCompactLayout = true,
         };
+        await viewModel.InitializeAsync();
         viewModel.SelectedWorkspace = viewModel.Workspaces.Single(item => item.WorkspaceId == secondWorkspace.WorkspaceId);
         Assert.True(viewModel.IsEditorActive);
 
@@ -1896,13 +1915,14 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void AgentWorkspacesViewModel_DeleteWorkspace_WideLayout_SelectsFirstRemainingWorkspace()
+    public async Task AgentWorkspacesViewModel_DeleteWorkspace_WideLayout_SelectsFirstRemainingWorkspace()
     {
         using var scope = TestScope.Create();
         var services = CreateWorkspaceViewServices(scope.Context);
         var firstWorkspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
         var secondWorkspace = services.WorkspaceService.CreateWorkspace("Beta Workspace");
         using var viewModel = new AgentWorkspacesViewModel(services.WorkspaceService, services.ExecutionTargetService, services.Catalog);
+        await viewModel.InitializeAsync();
         viewModel.SelectedWorkspace = viewModel.Workspaces.Single(item => item.WorkspaceId == secondWorkspace.WorkspaceId);
 
         viewModel.DeleteWorkspaceCommand.Execute(null);
@@ -1992,6 +2012,7 @@ public sealed class WorkspaceTests
         var workspaceService = new AgentWorkspaceService(store);
         var executionTargetService = new AgentExecutionTargetService(catalog);
         using var viewModel = new AgentWorkspacesViewModel(workspaceService, executionTargetService, catalog);
+        await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
         viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase));
@@ -3003,11 +3024,12 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void AgentWorkspacesViewModel_CanSaveWorkspaceWithoutAgentProfile()
+    public async Task AgentWorkspacesViewModel_CanSaveWorkspaceWithoutAgentProfile()
     {
         using var scope = TestScope.Create();
         var services = CreateWorkspaceViewServices(scope.Context);
         using var viewModel = new AgentWorkspacesViewModel(services.WorkspaceService, services.ExecutionTargetService, services.Catalog);
+        await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
 
@@ -3022,6 +3044,7 @@ public sealed class WorkspaceTests
         var services = CreateWorkspaceViewServices(scope.Context);
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         using var viewModel = new AgentWorkspacesViewModel(services.WorkspaceService, services.ExecutionTargetService, services.Catalog);
+        await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
         var workspaceId = viewModel.SelectedWorkspace!.WorkspaceId;
@@ -3206,17 +3229,20 @@ public sealed class WorkspaceTests
         return new AgentWorkspaceBindingRecord("binding-test", workspaceId, PackageExtensionPoints.ExecutionTargets.Id, contributionId, "primary-execution-target", true, 0, now, now);
     }
 
-    private static StackFragmentImport ToImportFragment(StackFragmentExport fragment)
+    private static StackFragmentImport ToImportFragment(StackFragmentExport fragment, string contributorId)
         => new(
             fragment.FragmentId,
             "sunder.package.agent",
-            fragment.ContributorId,
+            contributorId,
             fragment.SchemaId,
             fragment.SchemaVersion,
             fragment.DisplayName,
             fragment.JsonPayload,
             fragment.Description,
-            fragment.Files?.Select(file => new StackImportPayloadFile(file.RelativePath, file.SourcePath)).ToArray());
+            fragment.Files?.Select(file => new StackImportPayloadHandle(
+                file.RelativePath,
+                file.OpenReadAsync,
+                file.Length ?? throw new InvalidOperationException("Test export payload length is required."))).ToArray());
 
     private sealed record WorkspaceViewServices(
         AgentLocalStore Store,
@@ -3367,12 +3393,10 @@ public sealed class WorkspaceTests
         }
     }
 
-    private sealed class TestExtensionCatalog : IPackageExtensionCatalog, IPackageExtensionCatalogChangeNotifier, IPackageExtensionCatalogMonitor
+    private sealed class TestExtensionCatalog : IPackageExtensionCatalog, IPackageExtensionCatalogMonitor
     {
         private readonly Dictionary<string, List<object>> _extensions = new(StringComparer.OrdinalIgnoreCase);
         private long _revision;
-
-        public event EventHandler? ExtensionsChanged;
 
         public event EventHandler<PackageExtensionCatalogChangedEventArgs>? Changed;
 
@@ -3389,7 +3413,6 @@ public sealed class WorkspaceTests
                 Interlocked.Increment(ref _revision),
                 PackageExtensionCatalogChangeReason.PackageActivated,
                 [new PackageExtensionChange("test.package", extensionPoint.Id, PackageExtensionChangeKind.Added, extension?.GetType())]);
-            ExtensionsChanged?.Invoke(this, EventArgs.Empty);
             Changed?.Invoke(this, args);
         }
 
@@ -3686,7 +3709,7 @@ public sealed class WorkspaceTests
 
         public string Version { get; } = "1.0.0";
 
-        public string InstallPath => AppContext.BaseDirectory;
+        public string ContentRootPath => AppContext.BaseDirectory;
 
         public IPackageStorageContext Storage { get; } = new TestStorageContext(rootPath);
 
@@ -3694,7 +3717,6 @@ public sealed class WorkspaceTests
 
         public IPackageSecrets Secrets { get; } = new TestSecrets();
 
-        public ILoggerFactory LoggerFactory => Logging.LoggerFactory;
 
         public Sunder.Sdk.Logging.IPackageLogging Logging { get; } = Sunder.Sdk.Logging.NullPackageLogging.Instance;
     }

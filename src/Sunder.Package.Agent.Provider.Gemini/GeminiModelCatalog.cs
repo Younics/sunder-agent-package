@@ -1,6 +1,6 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.Shared;
-using Sunder.Sdk.Configuration;
+using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Provider.Gemini;
 
@@ -60,6 +60,6 @@ internal static class GeminiModelCatalog
 
     public static IReadOnlyList<AgentModelDescriptor> Models => Catalog.Models;
 
-    public static IReadOnlyList<PackageConfigurationOption> UtilityModelOptions { get; } =
+    public static IReadOnlyList<PackageSettingsOption> UtilityModelOptions { get; } =
         Catalog.UtilityModelOptions;
 }

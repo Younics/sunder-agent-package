@@ -509,13 +509,16 @@ public sealed class SkillPackageTests
         => new(
             fragment.FragmentId,
             SkillsPackageId,
-            fragment.ContributorId,
+            "sunder.package.agent.skills.github-skills",
             fragment.SchemaId,
             fragment.SchemaVersion,
             fragment.DisplayName,
             fragment.JsonPayload,
             fragment.Description,
-            fragment.Files?.Select(file => new StackImportPayloadFile(file.RelativePath, file.SourcePath)).ToArray());
+            fragment.Files?.Select(file => new StackImportPayloadHandle(
+                file.RelativePath,
+                file.OpenReadAsync,
+                file.Length ?? throw new InvalidOperationException("Test export payload length is required."))).ToArray());
 
     private static string CreateSkillSource(string root, string skillId, string displayName)
     {
@@ -756,7 +759,7 @@ public sealed class SkillPackageTests
 
         public string Version { get; } = "1.0.0";
 
-        public string InstallPath => AppContext.BaseDirectory;
+        public string ContentRootPath => AppContext.BaseDirectory;
 
         public IPackageStorageContext Storage { get; } = new TestStorageContext(rootPath);
 
@@ -764,7 +767,6 @@ public sealed class SkillPackageTests
 
         public IPackageSecrets Secrets { get; } = new TestSecrets();
 
-        public Microsoft.Extensions.Logging.ILoggerFactory LoggerFactory => Logging.LoggerFactory;
 
         public Sunder.Sdk.Logging.IPackageLogging Logging { get; } = Sunder.Sdk.Logging.NullPackageLogging.Instance;
     }

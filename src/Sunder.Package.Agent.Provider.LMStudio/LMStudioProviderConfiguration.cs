@@ -1,4 +1,4 @@
-using Sunder.Sdk.Configuration;
+using Sunder.Sdk.Settings;
 using Sunder.Package.Agent.Provider.Shared;
 
 namespace Sunder.Package.Agent.Provider.LMStudio;
@@ -10,31 +10,29 @@ public static class LMStudioProviderConfiguration
     public const string ApiKeyKey = "connection.apiKey";
     public const string UtilityModelKey = "utility.modelId";
 
-    public static PackageConfigurationSchema Schema { get; } = new(
-        "sunder.package.agent.provider.lmstudio",
-        "Sunder Agent Provider LM Studio",
+    public static PackageSettingsSchema Schema { get; } = new(
         "Configure how the Agent package connects to a local LM Studio server.",
         [
-            new PackageConfigurationSection(
+            new PackageSettingsSection(
                 "connection",
                 "Connection",
                 "Point the provider at an LM Studio OpenAI-compatible endpoint.",
                 [
-                    new PackageConfigurationField(
+                    new PackageSettingsField(
                         BaseUrlKey,
                         "Base URL",
-                        PackageConfigurationFieldKind.Text,
-                        Description: "LM Studio OpenAI-compatible base URL.",
-                        IsRequired: true,
-                        DefaultValue: DefaultBaseUrl,
-                        Placeholder: DefaultBaseUrl
+                        PackageSettingsFieldKind.Text,
+                        description: "LM Studio OpenAI-compatible base URL.",
+                        isRequired: true,
+                        defaultValue: DefaultBaseUrl,
+                        placeholder: DefaultBaseUrl
                     ),
-                    new PackageConfigurationField(
+                    new PackageSettingsField(
                         ApiKeyKey,
                         "API key",
-                        PackageConfigurationFieldKind.Secret,
-                        Description: "Optional API key if your LM Studio endpoint requires one.",
-                        Placeholder: "lm-studio-key"
+                        PackageSettingsFieldKind.Secret,
+                        description: "Optional API key if your LM Studio endpoint requires one.",
+                        placeholder: "lm-studio-key"
                     )
                 ]
             ),

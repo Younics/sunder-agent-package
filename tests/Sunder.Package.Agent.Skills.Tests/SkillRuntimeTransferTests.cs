@@ -80,11 +80,10 @@ public sealed class SkillRuntimeTransferTests
     {
         public string PackageId => "sunder.package.agent.skills";
         public string Version => "1.0.0";
-        public string InstallPath => AppContext.BaseDirectory;
+        public string ContentRootPath => AppContext.BaseDirectory;
         public IPackageStorageContext Storage { get; } = new TestStorage(root, files);
         public IPackageSettings Settings { get; } = new EmptySettings();
         public IPackageSecrets Secrets { get; } = new EmptySecrets();
-        public ILoggerFactory LoggerFactory => NullLoggerFactory.Instance;
         public IPackageLogging Logging => NullPackageLogging.Instance;
     }
 

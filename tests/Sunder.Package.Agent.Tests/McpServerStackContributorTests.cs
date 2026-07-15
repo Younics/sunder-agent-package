@@ -558,13 +558,16 @@ public sealed class McpServerStackContributorTests
         => new(
             fragment.FragmentId,
             "sunder.package.agent.mcp",
-            fragment.ContributorId,
+            "sunder.package.agent.mcp.servers",
             fragment.SchemaId,
             fragment.SchemaVersion,
             fragment.DisplayName,
             fragment.JsonPayload,
             fragment.Description,
-            fragment.Files?.Select(file => new StackImportPayloadFile(file.RelativePath, file.SourcePath)).ToArray());
+            fragment.Files?.Select(file => new StackImportPayloadHandle(
+                file.RelativePath,
+                file.OpenReadAsync,
+                file.Length ?? throw new InvalidOperationException("Test export payload length is required."))).ToArray());
 
     private static string CreateTempDirectory()
     {
@@ -664,7 +667,7 @@ public sealed class McpServerStackContributorTests
 
         public string Version { get; } = "1.2.3";
 
-        public string InstallPath => AppContext.BaseDirectory;
+        public string ContentRootPath => AppContext.BaseDirectory;
 
         public IPackageStorageContext Storage { get; } = new TestStorageContext(rootPath);
 
@@ -672,7 +675,6 @@ public sealed class McpServerStackContributorTests
 
         public IPackageSecrets Secrets { get; } = new TestSecrets();
 
-        public ILoggerFactory LoggerFactory => Logging.LoggerFactory;
 
         public IPackageLogging Logging { get; } = NullPackageLogging.Instance;
     }

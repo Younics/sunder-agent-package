@@ -1,4 +1,4 @@
-using Sunder.Sdk.Configuration;
+using Sunder.Sdk.Settings;
 using Sunder.Package.Agent.Provider.Shared;
 
 namespace Sunder.Package.Agent.Provider.Anthropic;
@@ -14,9 +14,7 @@ public static class AnthropicProviderConfiguration
         DefaultUtilityModelId,
         AnthropicModelCatalog.UtilityModelOptions);
 
-    public static PackageConfigurationSchema Schema { get; } = new(
-        "sunder.package.agent.provider.anthropic",
-        "Sunder Agent Provider Anthropic",
+    public static PackageSettingsSchema Schema { get; } = new(
         "Configure how the Agent package authenticates and talks to Claude models.",
         [
             ProviderConfigurationSections.ApiKey(

@@ -167,7 +167,7 @@ internal sealed partial class TranscriptScrollCoordinator
         {
             await operation;
         }
-        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
         }
         catch (Exception ex)

@@ -91,6 +91,7 @@ internal sealed class McpAppRuntimeGateway : IMcpManagementGateway, IDisposable
     private readonly PackageCallbackFlowRunner _callbackFlow;
     private readonly CancellationTokenSource _lifetime = new();
     private IReadOnlyList<McpCatalogDiagnostic> _diagnostics = [];
+    private int _disposed;
 
     public McpAppRuntimeGateway(IPackageRuntimeClient client, IPackageCallbackClient callbacks)
     {
@@ -178,7 +179,16 @@ internal sealed class McpAppRuntimeGateway : IMcpManagementGateway, IDisposable
             catch (OperationCanceledException) { return; }
         }
     }
-    public void Dispose() { _lifetime.Cancel(); _lifetime.Dispose(); }
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+    }
 }
 
 internal sealed class McpRuntimeHandler(

@@ -153,6 +153,7 @@ internal sealed class SubagentAppRuntimeGateway :
     private readonly object _runtimeSnapshotLock = new();
     private IReadOnlyList<ProviderCatalogOption>? _providers;
     private Task<SubagentProjection>? _runtimeSnapshot;
+    private int _disposed;
 
     public SubagentAppRuntimeGateway(IPackageRuntimeClient client)
     {
@@ -298,7 +299,16 @@ internal sealed class SubagentAppRuntimeGateway :
         }
     }
 
-    public void Dispose() { _lifetime.Cancel(); _lifetime.Dispose(); }
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+    }
 
     private void UpdateProviders(SubagentProjection projection)
         => _providers = (projection.Providers ?? []).Select(provider =>

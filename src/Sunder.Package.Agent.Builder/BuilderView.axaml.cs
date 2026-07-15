@@ -12,6 +12,7 @@ public partial class BuilderView : UserControl, IDisposable
     private readonly AdaptiveMasterDetail _adaptiveLayout;
     private readonly PresentationTaskScope _tasks = new();
     private BuilderViewModel? _viewModel;
+    private bool _disposed;
 
     public BuilderView()
     {
@@ -41,8 +42,18 @@ public partial class BuilderView : UserControl, IDisposable
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
         _tasks.Dispose();
         _adaptiveLayout.Dispose();
+        // Cached views are released while App capabilities are still published.
+        _viewModel?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        DataContext = null;
+        _viewModel = null;
     }
 
     private async void OnRefreshSetupClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

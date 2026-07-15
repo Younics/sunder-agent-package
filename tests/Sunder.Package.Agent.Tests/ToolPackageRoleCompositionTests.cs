@@ -30,7 +30,7 @@ public sealed class ToolPackageRoleCompositionTests
         {
             "Sunder.Package.Agent.Tools.Web",
             [
-                "configuration:sunder.package.agent.tools.web",
+                "settings-schema",
                 Extension("sunder.package.agent:tools", "Sunder.Package.Agent.Tools.Web.WebFetchTool"),
                 Extension("sunder.package.agent:tools", "Sunder.Package.Agent.Tools.Web.WebSearchTool"),
             ]
@@ -105,11 +105,10 @@ public sealed class ToolPackageRoleCompositionTests
     {
         public string PackageId => inner.PackageId;
         public string Version => inner.Version;
-        public string InstallPath => inner.InstallPath;
+        public string ContentRootPath => inner.ContentRootPath;
         public IPackageStorageContext Storage => inner.Storage;
         public IPackageSettings Settings => settings;
         public IPackageSecrets Secrets => secrets;
-        public ILoggerFactory LoggerFactory => inner.LoggerFactory;
         public IPackageLogging Logging => inner.Logging;
     }
 

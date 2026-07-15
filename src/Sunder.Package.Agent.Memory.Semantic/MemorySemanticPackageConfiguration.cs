@@ -1,49 +1,47 @@
-using Sunder.Sdk.Configuration;
+using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
 
 public static class MemorySemanticPackageConfiguration
 {
-    public static PackageConfigurationSchema Schema { get; } = new(
-        "sunder.package.agent.memory.semantic",
-        "Sunder Agent Memory Semantic",
+    public static PackageSettingsSchema Schema { get; } = new(
         "Configure semantic indexing and retrieval behavior for the optional memory package.",
         [
-            new PackageConfigurationSection(
+            new PackageSettingsSection(
                 "semantic",
                 "Semantic Retrieval",
                 "Controls optional embedding-based indexing and retrieval. Memory still works without semantic retrieval when disabled or unconfigured.",
                 [
-                    new PackageConfigurationField(
+                    new PackageSettingsField(
                         "semantic.enabled",
                         "Enable semantic retrieval",
-                        PackageConfigurationFieldKind.Boolean,
-                        Description: "When enabled, the memory package will try to create and use embeddings for semantic recall when the profile has an embedding provider/model configured.",
-                        DefaultValue: "true"),
-                    new PackageConfigurationField(
+                        PackageSettingsFieldKind.Boolean,
+                        description: "When enabled, the memory package will try to create and use embeddings for semantic recall when the profile has an embedding provider/model configured.",
+                        defaultValue: "true"),
+                    new PackageSettingsField(
                         "semantic.batchSize",
                         "Embedding batch size",
-                        PackageConfigurationFieldKind.Text,
-                        Description: "Maximum number of memory items to embed in one batch request when the selected embedding provider supports batching.",
-                        DefaultValue: "16",
-                        Placeholder: "16"),
-                    new PackageConfigurationField(
+                        PackageSettingsFieldKind.Text,
+                        description: "Maximum number of memory items to embed in one batch request when the selected embedding provider supports batching.",
+                        defaultValue: "16",
+                        placeholder: "16"),
+                    new PackageSettingsField(
                         "semantic.maxCanonicalTextChars",
                         "Max canonical text chars",
-                        PackageConfigurationFieldKind.Text,
-                        Description: "Maximum number of characters from the canonical memory text sent for embedding.",
-                        DefaultValue: "1200",
-                        Placeholder: "1200"),
-                    new PackageConfigurationField(
+                        PackageSettingsFieldKind.Text,
+                        description: "Maximum number of characters from the canonical memory text sent for embedding.",
+                        defaultValue: "1200",
+                        placeholder: "1200"),
+                    new PackageSettingsField(
                         "semantic.reindex.mode",
                         "Stale reindex mode",
-                        PackageConfigurationFieldKind.Select,
-                        Description: "Choose whether stale or missing embeddings should be regenerated lazily during recall.",
-                        DefaultValue: "lazy",
-                        Options:
+                        PackageSettingsFieldKind.Select,
+                        description: "Choose whether stale or missing embeddings should be regenerated lazily during recall.",
+                        defaultValue: "lazy",
+                        options:
                         [
-                            new PackageConfigurationOption("lazy", "Lazy on recall"),
-                            new PackageConfigurationOption("never", "Never regenerate automatically")
+                            new PackageSettingsOption("lazy", "Lazy on recall"),
+                            new PackageSettingsOption("never", "Never regenerate automatically")
                         ])
                 ])
         ]);

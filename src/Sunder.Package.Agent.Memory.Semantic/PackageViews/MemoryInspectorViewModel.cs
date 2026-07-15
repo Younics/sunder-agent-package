@@ -14,9 +14,12 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
     private readonly IPresentationDispatcher _uiDispatcher = PresentationDispatcher.Capture();
     private readonly PresentationTaskScope _tasks = new();
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly AsyncOnce _initialization = new();
     private SemanticEmbeddingContext? _selectedSessionSemanticContext;
     private CancellationTokenSource? _sessionLoadCancellation;
     private bool _suppressSessionSelectionHandlers;
+    private bool _suppressMemorySelectionDetails;
+    private bool _isInitialized;
     private bool _disposed;
     private int _sessionLoadVersion;
     private int _busyOperationCount;
@@ -26,9 +29,6 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         _memoryInspectorService = memoryInspectorService;
         _memoryInspectorService.SessionChanged += OnSessionChanged;
         _memoryInspectorService.SemanticWorkerStatusChanged += OnSemanticWorkerStatusChanged;
-        ReloadSessions();
-        RefreshSemanticWorkerStatus();
-        RefreshMetricsSummary();
     }
 
     public ObservableCollection<AgentSessionRecord> Sessions { get; } = [];
@@ -119,6 +119,9 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
 
     public bool HasSelectedMemorySemanticStatus => SelectedMemory?.HasSemanticIndexStatus == true;
 
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+        => _initialization.RunAsync(InitializeCoreAsync, cancellationToken);
+
     partial void OnSelectedSessionChanged(AgentSessionRecord? value)
     {
         if (_suppressSessionSelectionHandlers)
@@ -138,6 +141,10 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         OnPropertyChanged(nameof(PinButtonText));
         OnPropertyChanged(nameof(ContestButtonText));
         OnPropertyChanged(nameof(HasSelectedMemorySemanticStatus));
+        if (_suppressMemorySelectionDetails)
+        {
+            return;
+        }
         LoadSelectionDetails(value);
     }
 
@@ -306,6 +313,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         _disposed = true;
         _sessionLoadVersion++;
         _lifetime.Cancel();
+        _initialization.Dispose();
         _sessionLoadCancellation?.Cancel();
         _memoryInspectorService.SessionChanged -= OnSessionChanged;
         _memoryInspectorService.SemanticWorkerStatusChanged -= OnSemanticWorkerStatusChanged;
@@ -315,27 +323,37 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         _lifetime.Dispose();
     }
 
+    private async Task InitializeCoreAsync(CancellationToken cancellationToken)
+    {
+        var initialState = await Task.Run(() => new MemoryInspectorInitialState(
+            _memoryInspectorService.ListSessions(),
+            _memoryInspectorService.GetSemanticWorkerStatus(),
+            _memoryInspectorService.GetMetricsSnapshot()), cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        Task sessionLoad = Task.CompletedTask;
+        await _uiDispatcher.InvokeAsync(() =>
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            ApplySessions(initialState.Sessions, preferredSessionId: null);
+            ApplySemanticWorkerStatus(initialState.WorkerStatus);
+            ApplyMetricsSummary(initialState.Metrics);
+            _isInitialized = true;
+            sessionLoad = StartSessionLoadAsync(SelectedSession, preferredMemoryId: null);
+        }).ConfigureAwait(false);
+        await sessionLoad.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     private void ReloadSessions(Guid? preferredMemoryId = null)
     {
         var currentSelectedSessionId = SelectedSession?.SessionId;
         var sessions = _memoryInspectorService.ListSessions();
 
-        Sessions.Clear();
-        foreach (var session in sessions)
-        {
-            Sessions.Add(session);
-        }
-
-        _suppressSessionSelectionHandlers = true;
-        try
-        {
-            SelectedSession = Sessions.FirstOrDefault(session => session.SessionId == currentSelectedSessionId)
-                ?? Sessions.FirstOrDefault();
-        }
-        finally
-        {
-            _suppressSessionSelectionHandlers = false;
-        }
+        ApplySessions(sessions, currentSelectedSessionId);
 
         if (SelectedSession is null)
         {
@@ -346,34 +364,101 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         _ = StartSessionLoadAsync(SelectedSession, preferredMemoryId);
     }
 
+    private void ApplySessions(
+        IReadOnlyList<AgentSessionRecord> sessions,
+        Guid? preferredSessionId)
+    {
+
+        Sessions.Clear();
+        foreach (var session in sessions)
+        {
+            Sessions.Add(session);
+        }
+
+        _suppressSessionSelectionHandlers = true;
+        try
+        {
+            SelectedSession = Sessions.FirstOrDefault(session => session.SessionId == preferredSessionId)
+                ?? Sessions.FirstOrDefault();
+        }
+        finally
+        {
+            _suppressSessionSelectionHandlers = false;
+        }
+    }
+
     private void ReloadMemories(Guid? preferredMemoryId = null)
     {
-        Memories.Clear();
-        EvidenceItems.Clear();
-        SelectedMemory = null;
-        EditCategory = string.Empty;
-        EditContent = string.Empty;
-
         if (SelectedSession is null)
         {
+            Memories.Clear();
+            EvidenceItems.Clear();
+            SelectedMemory = null;
             WorkingSummaryText = string.Empty;
             return;
         }
 
-        WorkingSummaryText = _memoryInspectorService.GetSessionContextCheckpoint(SelectedSession.SessionId)?.SummaryText
-            ?? _memoryInspectorService.GetWorkingSummary(SelectedSession.SessionId)?.SummaryText
-            ?? string.Empty;
+        ApplySessionContent(CaptureSessionContent(
+            SelectedSession.SessionId,
+            preferredMemoryId,
+            _selectedSessionSemanticContext));
+    }
 
-        var memories = _memoryInspectorService.ListMemories(SelectedSession.SessionId, SearchText, IncludeInactive)
-            .Select(memory => new MemoryListItemViewModel(memory, _memoryInspectorService.GetSemanticIndexStatus(memory, _selectedSessionSemanticContext)))
+    private MemorySessionContent CaptureSessionContent(
+        Guid sessionId,
+        Guid? preferredMemoryId,
+        SemanticEmbeddingContext? semanticContext)
+    {
+        var workingSummary = _memoryInspectorService.GetSessionContextCheckpoint(sessionId)?.SummaryText
+            ?? _memoryInspectorService.GetWorkingSummary(sessionId)?.SummaryText
+            ?? string.Empty;
+        var memories = _memoryInspectorService.ListMemories(sessionId, SearchText, IncludeInactive)
+            .Select(memory => new MemoryListItemViewModel(
+                memory,
+                _memoryInspectorService.GetSemanticIndexStatus(memory, semanticContext)))
             .ToArray();
-        foreach (var memory in memories)
+        var selectedMemory = memories.FirstOrDefault(memory => memory.MemoryId == preferredMemoryId)
+            ?? memories.FirstOrDefault();
+        return new MemorySessionContent(
+            workingSummary,
+            memories,
+            selectedMemory?.MemoryId,
+            CaptureSelectionDetails(selectedMemory, semanticContext));
+    }
+
+    private void ApplySessionContent(MemorySessionContent content)
+    {
+        Memories.Clear();
+        EvidenceItems.Clear();
+        EditCategory = string.Empty;
+        EditContent = string.Empty;
+        WorkingSummaryText = content.WorkingSummary;
+
+        _suppressMemorySelectionDetails = true;
+        try
+        {
+            SelectedMemory = null;
+        }
+        finally
+        {
+            _suppressMemorySelectionDetails = false;
+        }
+
+        foreach (var memory in content.Memories)
         {
             Memories.Add(memory);
         }
 
-        SelectedMemory = Memories.FirstOrDefault(memory => memory.MemoryId == preferredMemoryId)
-            ?? Memories.FirstOrDefault();
+        _suppressMemorySelectionDetails = true;
+        try
+        {
+            SelectedMemory = Memories.FirstOrDefault(memory => memory.MemoryId == content.SelectedMemoryId);
+        }
+        finally
+        {
+            _suppressMemorySelectionDetails = false;
+        }
+        ApplySelectionDetails(content.SelectionDetails);
 
         if (Memories.Count == 0)
         {
@@ -413,20 +498,33 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
             _selectedSessionSemanticContext = null;
             SemanticStatusText = "Loading semantic status...";
             CanReindexSemanticIndex = false;
-            ReloadMemories(preferredMemoryId);
 
             var semanticState = await _memoryInspectorService.GetSemanticSessionStateAsync(
                 session.SessionId,
-                cancellationToken: cancellation.Token);
+                cancellationToken: cancellation.Token).ConfigureAwait(false);
+            var content = await Task.Run(
+                () => CaptureSessionContent(
+                    session.SessionId,
+                    preferredMemoryId,
+                    semanticState.Context),
+                cancellation.Token).ConfigureAwait(false);
             if (!IsCurrentSessionLoad(version, session.SessionId))
             {
                 return;
             }
 
-            _selectedSessionSemanticContext = semanticState.Context;
-            SemanticStatusText = semanticState.Status.StatusText;
-            CanReindexSemanticIndex = semanticState.Status.CanReindex;
-            ReloadMemories(preferredMemoryId);
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!IsCurrentSessionLoad(version, session.SessionId))
+                {
+                    return;
+                }
+
+                _selectedSessionSemanticContext = semanticState.Context;
+                SemanticStatusText = semanticState.Status.StatusText;
+                CanReindexSemanticIndex = semanticState.Status.CanReindex;
+                ApplySessionContent(content);
+            }).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -435,21 +533,29 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         {
             if (IsCurrentSessionLoad(version, session.SessionId))
             {
-                _selectedSessionSemanticContext = SemanticEmbeddingContext.Unavailable($"Semantic status failed to load: {ex.Message}");
-                SemanticStatusText = ex.Message;
-                CanReindexSemanticIndex = false;
-                StatusText = ex.Message;
-                ReloadMemories(preferredMemoryId);
+                await _uiDispatcher.InvokeAsync(() =>
+                {
+                    if (IsCurrentSessionLoad(version, session.SessionId))
+                    {
+                        _selectedSessionSemanticContext = SemanticEmbeddingContext.Unavailable($"Semantic status failed to load: {ex.Message}");
+                        SemanticStatusText = ex.Message;
+                        CanReindexSemanticIndex = false;
+                        StatusText = ex.Message;
+                    }
+                }).ConfigureAwait(false);
             }
         }
         finally
         {
-            if (!_disposed)
+            await _uiDispatcher.InvokeAsync(() =>
             {
-                EndBusy();
-            }
+                if (!_disposed)
+                {
+                    EndBusy();
+                }
 
-            CompleteSessionLoad(cancellation);
+                CompleteSessionLoad(cancellation);
+            }).ConfigureAwait(false);
         }
     }
 
@@ -465,16 +571,22 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
 
     private void RefreshSemanticWorkerStatus()
     {
-        var status = _memoryInspectorService.GetSemanticWorkerStatus();
-        SemanticWorkerStatusText = status.StatusText;
-        HasSemanticWorkerFailure = status.HasFailure;
-        OnPropertyChanged(nameof(HasSemanticWorkerStatus));
+        ApplySemanticWorkerStatus(_memoryInspectorService.GetSemanticWorkerStatus());
         RefreshMetricsSummary();
     }
 
-    private void RefreshMetricsSummary()
+    private void ApplySemanticWorkerStatus(SemanticMemoryWorkerStatusRecord status)
     {
-        var metrics = _memoryInspectorService.GetMetricsSnapshot();
+        SemanticWorkerStatusText = status.StatusText;
+        HasSemanticWorkerFailure = status.HasFailure;
+        OnPropertyChanged(nameof(HasSemanticWorkerStatus));
+    }
+
+    private void RefreshMetricsSummary()
+        => ApplyMetricsSummary(_memoryInspectorService.GetMetricsSnapshot());
+
+    private void ApplyMetricsSummary(SemanticMemoryMetricsSnapshot metrics)
+    {
         MemoryMetricsSummaryText =
             $"Promotions: {metrics.PromotionWriteCount}/{metrics.PromotionCandidateCount} candidates committed\n" +
             $"Recall: {metrics.RecallRequestCount} requests, {metrics.RecallEntryCount} total entries returned\n" +
@@ -484,39 +596,65 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
     }
 
     private void LoadSelectionDetails(MemoryListItemViewModel? selection)
+        => ApplySelectionDetails(CaptureSelectionDetails(selection, _selectedSessionSemanticContext));
+
+    private MemorySelectionDetails CaptureSelectionDetails(
+        MemoryListItemViewModel? selection,
+        SemanticEmbeddingContext? semanticContext)
+    {
+        if (selection is null)
+        {
+            return MemorySelectionDetails.Empty;
+        }
+
+        var supersedingMemory = _memoryInspectorService.GetSupersedingMemory(selection.MemoryId);
+        return new MemorySelectionDetails(
+            selection,
+            _memoryInspectorService.ListEvidence(selection.MemoryId)
+                .Select(item => new MemoryEvidenceItemViewModel(item))
+                .ToArray(),
+            supersedingMemory is null
+                ? null
+                : new MemoryListItemViewModel(
+                    supersedingMemory,
+                    _memoryInspectorService.GetSemanticIndexStatus(supersedingMemory, semanticContext)),
+            _memoryInspectorService.ListSupersededMemories(selection.MemoryId)
+                .Select(item => new MemoryListItemViewModel(
+                    item,
+                    _memoryInspectorService.GetSemanticIndexStatus(item, semanticContext)))
+                .ToArray(),
+            _memoryInspectorService.ListCorrectionLineage(selection.MemoryId).Count);
+    }
+
+    private void ApplySelectionDetails(MemorySelectionDetails details)
     {
         EvidenceItems.Clear();
         SupersededMemoryItems.Clear();
         SupersedingMemory = null;
         CorrectionLineageSummaryText = string.Empty;
-        if (selection is null)
+        if (details.Selection is null)
         {
             EditCategory = string.Empty;
             EditContent = string.Empty;
             return;
         }
 
-        EditCategory = selection.Category;
-        EditContent = selection.Content;
-        foreach (var evidence in _memoryInspectorService.ListEvidence(selection.MemoryId)
-                     .Select(item => new MemoryEvidenceItemViewModel(item)))
+        EditCategory = details.Selection.Category;
+        EditContent = details.Selection.Content;
+        foreach (var evidence in details.Evidence)
         {
             EvidenceItems.Add(evidence);
         }
 
-        SupersedingMemory = _memoryInspectorService.GetSupersedingMemory(selection.MemoryId) is { } supersedingMemory
-            ? new MemoryListItemViewModel(supersedingMemory, _memoryInspectorService.GetSemanticIndexStatus(supersedingMemory, _selectedSessionSemanticContext))
-            : null;
-        foreach (var supersededMemory in _memoryInspectorService.ListSupersededMemories(selection.MemoryId)
-                     .Select(item => new MemoryListItemViewModel(item, _memoryInspectorService.GetSemanticIndexStatus(item, _selectedSessionSemanticContext))))
+        SupersedingMemory = details.SupersedingMemory;
+        foreach (var supersededMemory in details.SupersededMemories)
         {
             SupersededMemoryItems.Add(supersededMemory);
         }
 
-        var lineageCount = _memoryInspectorService.ListCorrectionLineage(selection.MemoryId).Count;
-        CorrectionLineageSummaryText = lineageCount == 0
+        CorrectionLineageSummaryText = details.LineageCount == 0
             ? string.Empty
-            : $"This memory is part of a correction lineage with {lineageCount} related memory item(s).";
+            : $"This memory is part of a correction lineage with {details.LineageCount} related memory item(s).";
 
         OnPropertyChanged(nameof(HasSupersedingMemory));
         OnPropertyChanged(nameof(HasSupersededMemories));
@@ -528,7 +666,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
 
     private void ApplySessionChanged(Guid sessionId)
     {
-        if (!_disposed && SelectedSession?.SessionId == sessionId)
+        if (!_disposed && _isInitialized && SelectedSession?.SessionId == sessionId)
         {
             ReloadSessions(SelectedMemory?.MemoryId);
         }
@@ -548,7 +686,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
     private void OnSemanticWorkerStatusChanged()
         => RunOnUiThread(() =>
         {
-            if (!_disposed)
+            if (!_disposed && _isInitialized)
             {
                 RefreshSemanticWorkerStatus();
             }
@@ -590,6 +728,27 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
 
     private bool IsCurrentSessionLoad(int version, Guid sessionId)
         => !_disposed && version == _sessionLoadVersion && SelectedSession?.SessionId == sessionId;
+
+    private sealed record MemoryInspectorInitialState(
+        IReadOnlyList<AgentSessionRecord> Sessions,
+        SemanticMemoryWorkerStatusRecord WorkerStatus,
+        SemanticMemoryMetricsSnapshot Metrics);
+
+    private sealed record MemorySessionContent(
+        string WorkingSummary,
+        IReadOnlyList<MemoryListItemViewModel> Memories,
+        Guid? SelectedMemoryId,
+        MemorySelectionDetails SelectionDetails);
+
+    private sealed record MemorySelectionDetails(
+        MemoryListItemViewModel? Selection,
+        IReadOnlyList<MemoryEvidenceItemViewModel> Evidence,
+        MemoryListItemViewModel? SupersedingMemory,
+        IReadOnlyList<MemoryListItemViewModel> SupersededMemories,
+        int LineageCount)
+    {
+        public static MemorySelectionDetails Empty { get; } = new(null, [], null, [], 0);
+    }
 }
 
 public sealed class MemoryListItemViewModel(StoredMemoryRecord record, MemorySemanticIndexStatusRecord semanticIndexStatus)

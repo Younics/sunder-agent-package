@@ -1,12 +1,11 @@
 using System.Reflection;
 using Sunder.Package.Agent.Execution.Docker;
 using Sunder.Package.Agent.Execution.Local;
-using Sunder.Package.Agent.Mcp;
 using Sunder.Package.Agent.Provider.Anthropic;
 using Sunder.Package.Agent.Provider.Gemini;
 using Sunder.Package.Agent.Provider.LMStudio;
 using Sunder.Package.Agent.Provider.OpenAI;
-using Sunder.Sdk.Configuration;
+using Sunder.Sdk.Settings;
 using Xunit;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
@@ -17,7 +16,6 @@ public sealed class SettingsSchemaParityTests
     {
         yield return [LocalExecutionConfiguration.Schema, typeof(LocalExecutionSettingsViewModel)];
         yield return [DockerExecutionConfiguration.Schema, typeof(DockerExecutionSettingsViewModel)];
-        yield return [McpPackageConfiguration.Schema, typeof(AgentMcpSettingsViewModel)];
         yield return [AnthropicProviderConfiguration.Schema, typeof(AnthropicSettingsViewModel)];
         yield return [GeminiProviderConfiguration.Schema, typeof(GeminiSettingsViewModel)];
         yield return [LMStudioProviderConfiguration.Schema, typeof(LMStudioSettingsViewModel)];
@@ -27,7 +25,7 @@ public sealed class SettingsSchemaParityTests
     [Theory]
     [MemberData(nameof(HostedSettingsSchemas))]
     public void CustomSettingsView_ExplicitlyOwnsEverySchemaKey(
-        PackageConfigurationSchema schema,
+        PackageSettingsSchema schema,
         Type viewModelType)
     {
         var property = viewModelType.GetProperty(

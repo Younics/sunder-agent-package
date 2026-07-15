@@ -49,7 +49,7 @@ public sealed class OpenAiPackageCompositionTests
         Assert.Equal(
             [typeof(OpenAiAgentProvider), typeof(OpenAiEmbeddingProvider), typeof(CodexResponseContinuationStore)],
             runtimeRegistry.ExtensionTypes);
-        Assert.Equal([context.PackageId], runtimeRegistry.ConfigurationPackageIds);
+        Assert.Same(OpenAiProviderConfiguration.Schema, Assert.Single(runtimeRegistry.SettingsSchemas));
         Assert.Equal([OpenAiRuntimeOperations.Auth.OperationId], runtimeRegistry.RuntimeOperationIds);
         Assert.Equal([typeof(OpenAiAuthOperationHandler)], runtimeRegistry.RuntimeOperationHandlerTypes);
 

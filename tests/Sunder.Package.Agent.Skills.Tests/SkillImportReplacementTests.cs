@@ -560,7 +560,7 @@ public sealed class SkillImportReplacementTests
 
         public string Version { get; } = "1.0.0";
 
-        public string InstallPath => AppContext.BaseDirectory;
+        public string ContentRootPath => AppContext.BaseDirectory;
 
         public IPackageStorageContext Storage { get; } = new TestStorageContext(rootPath);
 
@@ -568,7 +568,6 @@ public sealed class SkillImportReplacementTests
 
         public IPackageSecrets Secrets { get; } = new TestSecrets();
 
-        public Microsoft.Extensions.Logging.ILoggerFactory LoggerFactory => Logging.LoggerFactory;
 
         public Sunder.Sdk.Logging.IPackageLogging Logging { get; } = Sunder.Sdk.Logging.NullPackageLogging.Instance;
     }

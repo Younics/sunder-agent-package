@@ -10,7 +10,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-public partial class AgentProfilesView : UserControl, IDisposable
+public partial class AgentProfilesView : UserControl, IDisposable, IPackageViewNavigationTarget
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
     private readonly PresentationTaskScope _tasks = new();
@@ -57,6 +57,17 @@ public partial class AgentProfilesView : UserControl, IDisposable
         _viewModel?.Dispose();
         DataContext = null;
         _viewModel = null;
+    }
+
+    public async ValueTask OnNavigatedToAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if ((_viewModel ?? DataContext as AgentProfilesViewModel) is { } viewModel)
+        {
+            await viewModel.InitializeAsync(cancellationToken);
+        }
     }
 
     private void OnProfileItemTapped(object? sender, TappedEventArgs e)

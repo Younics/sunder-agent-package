@@ -9,7 +9,7 @@ namespace Sunder.Package.Agent.Services;
 public sealed class AgentProfileStackContributor(
     AgentProfileService profileService,
     IPackageContext packageContext,
-    IPackageExtensionCatalog extensionCatalog) : IPackageStackContributor, IPackageStackImportAppliedHandler
+    IPackageExtensionCatalog extensionCatalog) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
     private const string PackageId = "sunder.package.agent";
     private const string SchemaId = "sunder.package.agent/profile";
@@ -57,8 +57,7 @@ public sealed class AgentProfileStackContributor(
         var fragments = profiles
             .Zip(payloads, (profile, payload) => new StackFragmentExport(
                 FragmentId: "agent-profile." + SanitizeId(profile.ProfileId),
-                ContributorId,
-                SchemaId,
+                SchemaId: SchemaId,
                 SchemaVersion: 1,
                 DisplayName: profile.DisplayName,
                 JsonPayload: JsonSerializer.Serialize(payload, JsonOptions),

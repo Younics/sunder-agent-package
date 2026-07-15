@@ -1,4 +1,3 @@
-using System.Reflection;
 using Avalonia.Headless.XUnit;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts;
@@ -33,6 +32,7 @@ public sealed class ProfileHydrationTests
             embeddingProviderId: null,
             embeddingModelId: null);
         using var viewModel = new AgentProfilesViewModel(profileService);
+        var initialization = viewModel.InitializeAsync();
         await provider.LoadStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.True(viewModel.IsHydrating);
@@ -42,7 +42,7 @@ public sealed class ProfileHydrationTests
 
         viewModel.DisplayName = "Edited during hydration";
         provider.Models.SetResult([new AgentModelDescriptor("model", "Model", 16_000, 2_000)]);
-        await GetInitialization(viewModel);
+        await initialization;
 
         Assert.False(viewModel.IsHydrating);
         Assert.Equal("Edited during hydration", viewModel.DisplayName);
@@ -68,6 +68,7 @@ public sealed class ProfileHydrationTests
             embeddingProviderId: null,
             embeddingModelId: null);
         using var viewModel = new AgentProfilesViewModel(profileService);
+        var initialization = viewModel.InitializeAsync();
         await provider.LoadStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
         Assert.True(viewModel.IsHydrating);
 
@@ -80,7 +81,7 @@ public sealed class ProfileHydrationTests
         Assert.True(viewModel.ShowCompactList);
 
         provider.Models.SetResult([new AgentModelDescriptor("model", "Model", 16_000, 2_000)]);
-        await GetInitialization(viewModel);
+        await initialization;
 
         Assert.False(viewModel.IsHydrating);
         Assert.False(viewModel.IsBusy);
@@ -103,11 +104,6 @@ public sealed class ProfileHydrationTests
             extensionCatalog);
         return new AgentProfileService(store, toolService, extensionCatalog);
     }
-
-    private static Task GetInitialization(AgentProfilesViewModel viewModel)
-        => Assert.IsAssignableFrom<Task>(typeof(AgentProfilesViewModel)
-            .GetProperty("Initialization", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(viewModel));
 
     private sealed class DelayedChatProvider : IAgentChatProvider
     {

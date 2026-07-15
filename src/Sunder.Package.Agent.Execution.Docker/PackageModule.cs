@@ -22,8 +22,11 @@ public sealed class PackageModule : ISunderRuntimePackageModule
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
-        registry.RegisterConfigurationSchema(DockerExecutionConfiguration.Schema);
-        registry.RegisterExtension(SunderStackExtensionPoints.StackContributors, services.GetRequiredService<DockerImageStackContributor>());
+        registry.RegisterSettingsSchema(DockerExecutionConfiguration.Schema);
+        var stackContributor = services.GetRequiredService<DockerImageStackContributor>();
+        registry.RegisterExtension(SunderStackExtensionPoints.StackExporters, stackContributor);
+        registry.RegisterExtension(SunderStackExtensionPoints.StackImporters, stackContributor);
+        registry.RegisterExtension(SunderStackExtensionPoints.StackImportAppliedHandlers, stackContributor);
         var target = services.GetRequiredService<DockerExecutionTarget>();
         registry.RegisterExtension(PackageExtensionPoints.ExecutionTargets, target);
         registry.RegisterExtension(PackageExtensionPoints.WorkspaceBindingContributors, target);

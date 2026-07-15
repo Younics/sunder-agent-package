@@ -40,7 +40,10 @@ public sealed class PackageModule : ISunderRuntimePackageModule
             PackageExtensionPoints.BehaviorLoops,
             services.GetRequiredService<OrchestratedAgentBehaviorLoop>()
         );
-        registry.RegisterExtension(SunderStackExtensionPoints.StackContributors, services.GetRequiredService<SubagentStackContributor>());
+        var stackContributor = services.GetRequiredService<SubagentStackContributor>();
+        registry.RegisterExtension(SunderStackExtensionPoints.StackExporters, stackContributor);
+        registry.RegisterExtension(SunderStackExtensionPoints.StackImporters, stackContributor);
+        registry.RegisterExtension(SunderStackExtensionPoints.StackImportAppliedHandlers, stackContributor);
         registry.RegisterRuntimeOperation(SubagentRuntimeOperations.Query, services.GetRequiredService<SubagentRuntimeHandler>());
         registry.RegisterRuntimeOperation(SubagentRuntimeOperations.Command, services.GetRequiredService<SubagentRuntimeHandler>());
         registry.RegisterRuntimeStream(SubagentRuntimeOperations.Changes, services.GetRequiredService<SubagentRuntimeChangeStream>());

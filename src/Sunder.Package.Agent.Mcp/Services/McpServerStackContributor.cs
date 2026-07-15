@@ -7,7 +7,7 @@ namespace Sunder.Package.Agent.Mcp.Services;
 
 internal sealed class McpServerStackContributor(
     McpServerCatalogService serverCatalog,
-    IPackageContext packageContext) : IPackageStackContributor, IPackageStackImportAppliedHandler
+    IPackageContext packageContext) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
     private const string PackageId = "sunder.package.agent.mcp";
     private const string SchemaId = "sunder.package.agent.mcp/server";
@@ -88,8 +88,7 @@ internal sealed class McpServerStackContributor(
             var requiredInputs = BuildRequiredInputs(payload).ToArray();
             fragments.Add(new StackFragmentExport(
                 FragmentId: "mcp-server." + SanitizeIdentifier(server.ServerId),
-                ContributorId,
-                SchemaId,
+                SchemaId: SchemaId,
                 SchemaVersion: 1,
                 DisplayName: server.DisplayName,
                 JsonPayload: JsonSerializer.Serialize(payload, JsonOptions),

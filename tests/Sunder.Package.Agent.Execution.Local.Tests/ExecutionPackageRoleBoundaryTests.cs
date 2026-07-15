@@ -7,7 +7,7 @@ using Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
-using Sunder.Sdk.Configuration;
+using Sunder.Sdk.Settings;
 using Sunder.Sdk.Runtime;
 using Xunit;
 using LocalPackageModule = Sunder.Package.Agent.Execution.Local.PackageModule;
@@ -172,9 +172,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         public List<(string ExtensionPointId, Type ContributionType)> Extensions { get; } = [];
 
         public void RegisterPackageView<TView>(PackageViewRegistration registration) where TView : Control { }
-        public void RegisterPackageViewFactory<TFactory>(PackageViewRegistration registration) where TFactory : class, IPackageWorkspaceFactory { }
         public void RegisterSettingsView<TView>() where TView : Control => SettingsViews.Add(typeof(TView));
-        public void RegisterSettingsViewFactory<TFactory>() where TFactory : class, IPackageWorkspaceFactory { }
         public void RegisterExtension<TContract>(PackageExtensionPoint<TContract> extensionPoint, TContract contribution)
             => Extensions.Add((extensionPoint.Id, contribution!.GetType()));
     }
@@ -187,7 +185,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         public void RegisterBackgroundService<TService>() where TService : class, IPackageBackgroundService { }
         public void RegisterExtension<TContract>(PackageExtensionPoint<TContract> extensionPoint, TContract contribution)
             => ExtensionPointIds.Add(extensionPoint.Id);
-        public void RegisterConfigurationSchema(PackageConfigurationSchema schema) { }
+        public void RegisterSettingsSchema(PackageSettingsSchema schema) { }
         public void RegisterRuntimeOperation<TRequest, TResponse>(
             PackageRuntimeOperation<TRequest, TResponse> operation,
             IPackageRuntimeOperationHandler<TRequest, TResponse> handler)

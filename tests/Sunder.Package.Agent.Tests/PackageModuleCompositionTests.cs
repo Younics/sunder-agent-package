@@ -20,10 +20,14 @@ public sealed class PackageModuleCompositionTests
                 Extension("sunder.package.agent:session-data-cleaners", "Sunder.Package.Agent.Services.AgentAttachmentService"),
                 Extension("sunder.package.agent:behavior-loops", "Sunder.Package.Agent.Services.BehaviorLoops.DefaultAgentBehaviorLoop"),
                 Extension("sunder.package.agent:system-prompt-contributors", "Sunder.Package.Agent.Services.WorkspaceDocumentationContextService"),
-                Extension("sunder:stack-contributors", "Sunder.Package.Agent.Services.AgentProfileStackContributor"),
-                Extension("sunder:stack-contributors", "Sunder.Package.Agent.Services.AgentWorkspaceStackContributor"),
+                StackExporter("Sunder.Package.Agent.Services.AgentProfileStackContributor"),
+                StackImporter("Sunder.Package.Agent.Services.AgentProfileStackContributor"),
+                StackImportAppliedHandler("Sunder.Package.Agent.Services.AgentProfileStackContributor"),
+                StackExporter("Sunder.Package.Agent.Services.AgentWorkspaceStackContributor"),
+                StackImporter("Sunder.Package.Agent.Services.AgentWorkspaceStackContributor"),
+                StackImportAppliedHandler("Sunder.Package.Agent.Services.AgentWorkspaceStackContributor"),
+                RuntimeOperation("agent.chat.snapshot.v1", "Sunder.Package.Agent.Runtime.AgentChatSnapshotHandler"),
                 RuntimeOperation("agent.dashboard.v1", "Sunder.Package.Agent.Runtime.AgentDashboardHandler"),
-                RuntimeOperation("agent.sessions.page.v1", "Sunder.Package.Agent.Runtime.AgentSessionPageHandler"),
                 RuntimeOperation("agent.transcript.page.v1", "Sunder.Package.Agent.Runtime.AgentTranscriptPageHandler"),
                 RuntimeOperation("agent.catalog.v1", "Sunder.Package.Agent.Runtime.AgentCatalogHandler"),
                 RuntimeOperation("agent.profiles.command.v1", "Sunder.Package.Agent.Runtime.AgentProfileCommandHandler"),
@@ -45,7 +49,9 @@ public sealed class PackageModuleCompositionTests
             ["Sunder.Package.Agent.Execution.Docker"] =
             [
                 Configuration("sunder.package.agent.execution.docker"),
-                Extension("sunder:stack-contributors", "Sunder.Package.Agent.Execution.Docker.DockerImageStackContributor"),
+                StackExporter("Sunder.Package.Agent.Execution.Docker.DockerImageStackContributor"),
+                StackImporter("Sunder.Package.Agent.Execution.Docker.DockerImageStackContributor"),
+                StackImportAppliedHandler("Sunder.Package.Agent.Execution.Docker.DockerImageStackContributor"),
                 SettingsView("Sunder.Package.Agent.Execution.Docker.DockerExecutionSettingsView"),
                 Extension("sunder.package.agent:execution-targets", "Sunder.Package.Agent.Execution.Docker.DockerExecutionTarget"),
                 Extension("sunder.package.agent:workspace-binding-contributors", "Sunder.Package.Agent.Execution.Docker.DockerExecutionTarget"),
@@ -67,11 +73,12 @@ public sealed class PackageModuleCompositionTests
             ],
             ["Sunder.Package.Agent.Mcp"] =
             [
-                Configuration("sunder.package.agent.mcp"),
                 SettingsView("Sunder.Package.Agent.Mcp.AgentMcpSettingsView"),
                 Extension("sunder.package.agent:tool-sources", "Sunder.Package.Agent.Mcp.McpToolSource"),
                 Extension("sunder.package.agent:profile-selectable-capability-providers", "Sunder.Package.Agent.Mcp.McpToolSource"),
-                Extension("sunder:stack-contributors", "Sunder.Package.Agent.Mcp.Services.McpServerStackContributor"),
+                StackExporter("Sunder.Package.Agent.Mcp.Services.McpServerStackContributor"),
+                StackImporter("Sunder.Package.Agent.Mcp.Services.McpServerStackContributor"),
+                StackImportAppliedHandler("Sunder.Package.Agent.Mcp.Services.McpServerStackContributor"),
                 RuntimeOperation("mcp.query.v1", "Sunder.Package.Agent.Mcp.Runtime.McpRuntimeHandler"),
                 RuntimeOperation("mcp.command.v1", "Sunder.Package.Agent.Mcp.Runtime.McpRuntimeHandler"),
                 RuntimeStream("mcp.changes.v1", "Sunder.Package.Agent.Mcp.Runtime.McpRuntimeChangeStream"),
@@ -125,7 +132,9 @@ public sealed class PackageModuleCompositionTests
                 Extension("sunder.package.agent:tool-sources", "Sunder.Package.Agent.Skills.Services.SkillsFeature"),
                 Extension("sunder.package.agent:system-prompt-contributors", "Sunder.Package.Agent.Skills.Services.SkillsFeature"),
                 Extension("sunder.package.agent:execution-resource-providers", "Sunder.Package.Agent.Skills.Services.SkillsFeature"),
-                Extension("sunder:stack-contributors", "Sunder.Package.Agent.Skills.Services.SkillStackContributor"),
+                StackExporter("Sunder.Package.Agent.Skills.Services.SkillStackContributor"),
+                StackImporter("Sunder.Package.Agent.Skills.Services.SkillStackContributor"),
+                StackImportAppliedHandler("Sunder.Package.Agent.Skills.Services.SkillStackContributor"),
                 RuntimeOperation("skills.query.v1", "Sunder.Package.Agent.Skills.Runtime.SkillRuntimeHandler"),
                 RuntimeOperation("skills.command.v1", "Sunder.Package.Agent.Skills.Runtime.SkillRuntimeHandler"),
                 RuntimeStream("skills.changes.v1", "Sunder.Package.Agent.Skills.Runtime.SkillRuntimeChangeStream"),
@@ -138,7 +147,9 @@ public sealed class PackageModuleCompositionTests
                 Extension("sunder.package.agent:tool-sources", "Sunder.Package.Agent.Subagents.Services.SubagentFeature"),
                 Extension("sunder.package.agent:system-prompt-contributors", "Sunder.Package.Agent.Subagents.Services.SubagentFeature"),
                 Extension("sunder.package.agent:behavior-loops", "Sunder.Package.Agent.Subagents.Services.OrchestratedAgentBehaviorLoop"),
-                Extension("sunder:stack-contributors", "Sunder.Package.Agent.Subagents.Services.SubagentStackContributor"),
+                StackExporter("Sunder.Package.Agent.Subagents.Services.SubagentStackContributor"),
+                StackImporter("Sunder.Package.Agent.Subagents.Services.SubagentStackContributor"),
+                StackImportAppliedHandler("Sunder.Package.Agent.Subagents.Services.SubagentStackContributor"),
                 RuntimeOperation("subagents.query.v1", "Sunder.Package.Agent.Subagents.Runtime.SubagentRuntimeHandler"),
                 RuntimeOperation("subagents.command.v1", "Sunder.Package.Agent.Subagents.Runtime.SubagentRuntimeHandler"),
                 RuntimeStream("subagents.changes.v1", "Sunder.Package.Agent.Subagents.Runtime.SubagentRuntimeChangeStream"),
@@ -252,6 +263,15 @@ public sealed class PackageModuleCompositionTests
     private static string Extension(string extensionPoint, string implementationType)
         => $"extension:{extensionPoint}:{implementationType}";
 
+    private static string StackExporter(string implementationType)
+        => Extension("sunder:stack-exporters", implementationType);
+
+    private static string StackImporter(string implementationType)
+        => Extension("sunder:stack-importers", implementationType);
+
+    private static string StackImportAppliedHandler(string implementationType)
+        => Extension("sunder:stack-import-applied-handlers", implementationType);
+
     private static string PackageView(string id, string implementationType)
         => $"package-view:{id}:{implementationType}";
 
@@ -268,5 +288,5 @@ public sealed class PackageModuleCompositionTests
         => $"runtime-stream:{id}:{implementationType}";
 
     private static string Configuration(string packageId)
-        => $"configuration:{packageId}";
+        => "settings-schema";
 }

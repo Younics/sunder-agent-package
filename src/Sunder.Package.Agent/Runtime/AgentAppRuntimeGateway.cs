@@ -23,7 +23,7 @@ internal interface IAgentRuntimeAvailability
     event Action<AgentRuntimeConnectionState>? ConnectionStateChanged;
 }
 
-internal sealed class AgentAppRuntimeGateway :
+internal sealed partial class AgentAppRuntimeGateway :
     IAgentProfileGateway,
     IAgentWorkspaceGateway,
     IAgentSessionGateway,
@@ -31,23 +31,37 @@ internal sealed class AgentAppRuntimeGateway :
     IAgentRunGateway,
     IAgentAttachmentGateway,
     IAgentExecutionGateway,
+    IAgentChatSnapshotGateway,
+    IAgentTranscriptPageGateway,
+    IAgentChatSessionCommandGateway,
+    IAgentChatPermissionCommandGateway,
+    IAgentChatRunGateway,
+    IAgentPresentationInitialization,
+    IAgentExecutionTargetLoader,
     IAgentRuntimeAvailability,
     IDisposable
 {
-    private const int SessionPageSize = 100;
     private static readonly TimeSpan InitialReconnectDelay = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan MaximumReconnectDelay = TimeSpan.FromSeconds(2);
     private readonly AgentRuntimeTransport _transport;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly object _cacheLock = new();
+    private readonly object _observationLock = new();
+    private readonly SemaphoreSlim _resnapshotGate = new(1, 1);
     private readonly ConcurrentDictionary<string, Lazy<Task<AgentCatalogProjection>>> _catalogs = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<AgentSessionSnapshot>> _workspaceSessions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<Guid, AgentSessionSnapshot> _knownSessions = [];
     private AgentDashboardProjection? _dashboard;
     private Task<AgentDashboardProjection>? _dashboardLoad;
-    private List<AgentSessionSnapshot>? _sessions;
-    private Task<List<AgentSessionSnapshot>>? _sessionsLoad;
     private AgentPermissionProjection? _globalPermissions;
+    private AgentChatSnapshotRequest? _pendingChatSnapshotRequest;
+    private AgentChatSnapshotProjection? _pendingChatSnapshot;
+    private AgentChatSnapshotRequest? _activeChatSnapshotRequest;
     private long _revision;
     private AgentRuntimeConnectionState _connectionState;
+    private CancellationTokenSource? _observationCancellation;
+    private int _observationGeneration;
+    private int _chatSnapshotLoadGeneration;
     private bool _disposed;
 
     public AgentAppRuntimeGateway(IPackageRuntimeClient client)
@@ -56,7 +70,7 @@ internal sealed class AgentAppRuntimeGateway :
         _connectionState = client.IsAvailable
             ? AgentRuntimeConnectionState.Connecting
             : AgentRuntimeConnectionState.Unavailable;
-        _ = ObserveChangesAsync(_lifetime.Token);
+        StartObservingChanges();
     }
 
     public AgentRuntimeConnectionState ConnectionState => _connectionState;
@@ -69,6 +83,7 @@ internal sealed class AgentAppRuntimeGateway :
     public event Action<Guid, AgentTurnRecord>? TurnChanged;
     public event Action<Guid>? TranscriptReset;
     public event Action<Guid, AgentRunActivityUpdate>? RunActivityChanged;
+    public event Action<AgentChatSnapshotProjection>? ChatSnapshotReloaded;
 
     public IReadOnlyList<AgentProfileRecord> ListProfiles() => GetDashboard().Profiles;
     public AgentProfileRecord? GetProfile(string profileId)
@@ -194,10 +209,24 @@ internal sealed class AgentAppRuntimeGateway :
         => _ = await GetDashboardAsync(cancellationToken).ConfigureAwait(false);
 
     public IReadOnlyList<AgentSessionRecord> ListSessions()
-        => GetSessionSnapshots().Select(static item => item.Session).ToArray();
+    {
+        lock (_cacheLock)
+        {
+            return _knownSessions.Values.Select(static item => item.Session).ToArray();
+        }
+    }
     public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId)
-        => GetSessionSnapshots().Where(item => string.Equals(item.Session.WorkspaceId, workspaceId,
-            StringComparison.OrdinalIgnoreCase)).Select(static item => item.Session).ToArray();
+    {
+        lock (_cacheLock)
+        {
+            if (_workspaceSessions.TryGetValue(workspaceId, out var cached))
+            {
+                return cached.Select(static item => item.Session).ToArray();
+            }
+        }
+
+        return [];
+    }
     public AgentSessionRecord CreateSession(string title, Guid? parentSessionId = null, Guid? rootSessionId = null,
         Guid? parentRunId = null, long? parentRunRevision = null, string? parentToolCallId = null,
         string? taskId = null, string? profileId = null, string? behaviorLoopId = null,
@@ -211,21 +240,30 @@ internal sealed class AgentAppRuntimeGateway :
         var result = Invoke(AgentRuntimeOperations.SessionCommands,
             new AgentSessionCommand(AgentSessionCommandKind.Create, Title: title, ProfileId: profileId,
                 BehaviorLoopId: behaviorLoopId, WorkspaceId: workspaceId));
-        InvalidateSessions();
-        return result.Session?.Session ?? throw new InvalidOperationException("Runtime did not return the created session.");
+        var created = result.Session ?? throw new InvalidOperationException("Runtime did not return the created session.");
+        CacheSession(created);
+        return created.Session;
     }
     public AgentSessionRecord? GetSession(Guid sessionId)
     {
-        var cached = GetSessionSnapshots().FirstOrDefault(item => item.Session.SessionId == sessionId)?.Session;
-        if (cached is not null) return cached;
-        return Invoke(AgentRuntimeOperations.Sessions,
-            new AgentSessionPageRequest(SessionId: sessionId, Limit: 1)).Items.FirstOrDefault()?.Session;
+        lock (_cacheLock)
+        {
+            if (_knownSessions.TryGetValue(sessionId, out var known))
+            {
+                return known.Session;
+            }
+        }
+
+        return null;
     }
     public void UpdateSession(AgentSessionRecord session)
     {
-        Invoke(AgentRuntimeOperations.SessionCommands,
+        var result = Invoke(AgentRuntimeOperations.SessionCommands,
             new AgentSessionCommand(AgentSessionCommandKind.Update, Session: session));
-        InvalidateSessions();
+        if (result.Session is not null)
+        {
+            CacheSession(result.Session);
+        }
     }
     public void DeleteSession(Guid sessionId)
     {
@@ -233,7 +271,57 @@ internal sealed class AgentAppRuntimeGateway :
             AgentSessionState.Active, default, default);
         Invoke(AgentRuntimeOperations.SessionCommands,
             new AgentSessionCommand(AgentSessionCommandKind.Delete, Session: session));
-        InvalidateSessions();
+        RemoveCachedSession(sessionId);
+    }
+    public async Task<AgentSessionSnapshot> CreateRootSessionAsync(
+        string title,
+        string profileId,
+        string? behaviorLoopId,
+        string workspaceId,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await InvokeAsync(
+            AgentRuntimeOperations.SessionCommands,
+            new AgentSessionCommand(
+                AgentSessionCommandKind.Create,
+                Title: title,
+                ProfileId: profileId,
+                BehaviorLoopId: behaviorLoopId,
+                WorkspaceId: workspaceId),
+            cancellationToken).ConfigureAwait(false);
+        var created = result.Session
+                      ?? throw new InvalidOperationException("Runtime did not return the created session.");
+        CacheSession(created);
+        return created;
+    }
+    public async Task<AgentSessionSnapshot> UpdateSessionAsync(
+        AgentSessionRecord session,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await InvokeAsync(
+            AgentRuntimeOperations.SessionCommands,
+            new AgentSessionCommand(AgentSessionCommandKind.Update, Session: session),
+            cancellationToken).ConfigureAwait(false);
+        var updated = result.Session
+                      ?? throw new InvalidOperationException("Runtime did not return the updated session.");
+        CacheSession(updated);
+        return updated;
+    }
+    public async Task DeleteSessionAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        var session = GetSession(sessionId) ?? new AgentSessionRecord(
+            sessionId,
+            string.Empty,
+            AgentSessionState.Active,
+            default,
+            default);
+        _ = await InvokeAsync(
+            AgentRuntimeOperations.SessionCommands,
+            new AgentSessionCommand(AgentSessionCommandKind.Delete, Session: session),
+            cancellationToken).ConfigureAwait(false);
+        RemoveCachedSession(sessionId);
     }
     public IReadOnlyList<AgentTurnRecord> ListTurns(Guid sessionId)
         => ReadTranscript(new AgentTranscriptPageRequest(sessionId, AgentTranscriptPageDirection.Recent, 500)).Turns;
@@ -251,9 +339,17 @@ internal sealed class AgentAppRuntimeGateway :
         => ReadTranscript(new AgentTranscriptPageRequest(Guid.Empty, AgentTranscriptPageDirection.Turn, 1,
             AnchorTurnId: turnId)).Turns.FirstOrDefault();
     public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId)
-        => GetSessionSnapshots().FirstOrDefault(item => item.Session.SessionId == sessionId)?.Checkpoint
-           ?? Invoke(AgentRuntimeOperations.Sessions,
-               new AgentSessionPageRequest(SessionId: sessionId, Limit: 1)).Items.FirstOrDefault()?.Checkpoint;
+    {
+        lock (_cacheLock)
+        {
+            if (_knownSessions.TryGetValue(sessionId, out var known))
+            {
+                return known.Checkpoint;
+            }
+        }
+
+        return null;
+    }
 
     public AgentSessionPermissionState GetSessionState(Guid sessionId)
         => ReadPermissions(sessionId).SessionState ?? new AgentSessionPermissionState(sessionId, false);
@@ -281,6 +377,22 @@ internal sealed class AgentAppRuntimeGateway :
     public void SaveSessionApproval(Guid sessionId, string actionId, string boundaryId)
         => Invoke(AgentRuntimeOperations.Permissions, new AgentPermissionCommand(
             AgentPermissionCommandKind.SaveSessionApproval, sessionId, ActionId: actionId, BoundaryId: boundaryId));
+    public async Task<AgentChatPermissionProjection> SetSessionUnrestrictedModeAsync(
+        Guid sessionId,
+        bool isEnabled,
+        CancellationToken cancellationToken = default)
+    {
+        var projection = await InvokeAsync(
+            AgentRuntimeOperations.Permissions,
+            new AgentPermissionCommand(
+                AgentPermissionCommandKind.SetUnrestricted,
+                sessionId,
+                isEnabled),
+            cancellationToken).ConfigureAwait(false);
+        return new AgentChatPermissionProjection(
+            projection.SessionState,
+            projection.PendingRequests);
+    }
 
     public async Task<AgentRunCheckpointRecord> QueueUserMessageAsync(Guid sessionId, string profileId,
         string userMessage, string workspaceId, IReadOnlyList<AgentAttachmentUploadRequest> attachments,
@@ -302,6 +414,16 @@ internal sealed class AgentAppRuntimeGateway :
         => (await InvokeAsync(AgentRuntimeOperations.Runs, new AgentRunCommand(
             AgentRunCommandKind.ApprovePermission, sessionId, PermissionRequestId: requestId), cancellationToken)
             .ConfigureAwait(false)).Checkpoint;
+    async Task<AgentRunCheckpointRecord?> IAgentChatRunGateway.ApprovePendingPermissionAsync(
+        Guid sessionId,
+        string requestId,
+        bool approveForSession,
+        CancellationToken cancellationToken)
+        => (await InvokeAsync(AgentRuntimeOperations.Runs, new AgentRunCommand(
+            AgentRunCommandKind.ApprovePermission,
+            sessionId,
+            PermissionRequestId: requestId,
+            ApproveForSession: approveForSession), cancellationToken).ConfigureAwait(false)).Checkpoint;
     public async Task<AgentRunCheckpointRecord?> DenyPendingPermissionAsync(Guid sessionId, string requestId,
         CancellationToken cancellationToken = default)
         => (await InvokeAsync(AgentRuntimeOperations.Runs, new AgentRunCommand(
@@ -318,7 +440,15 @@ internal sealed class AgentAppRuntimeGateway :
         => (await InvokeAsync(AgentRuntimeOperations.Attachments,
             new AgentAttachmentReadRequest(metadata), cancellationToken).ConfigureAwait(false)).Content;
 
+    public async Task<AgentTranscriptPage> LoadTranscriptPageAsync(
+        AgentTranscriptPageRequest request,
+        CancellationToken cancellationToken = default)
+        => await InvokeAsync(AgentRuntimeOperations.Transcript, request, cancellationToken).ConfigureAwait(false);
+
     public IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets() => GetCatalog().ExecutionTargets;
+    public async Task<IReadOnlyList<AgentExecutionTargetDescriptor>> ListTargetsAsync(
+        CancellationToken cancellationToken = default)
+        => (await GetCatalogAsync(new AgentCatalogRequest(), cancellationToken).ConfigureAwait(false)).ExecutionTargets;
     public async Task<AgentExecutionTargetWarmupResult> WarmWorkspaceAsync(
         AgentWorkspaceRecord workspace, CancellationToken cancellationToken = default)
         => (await InvokeAsync(AgentRuntimeOperations.Workspaces,
@@ -338,11 +468,11 @@ internal sealed class AgentAppRuntimeGateway :
             {
                 return _dashboard;
             }
-            load = _dashboardLoad ??= Task.Run(async () => await InvokeAsync(
+            load = _dashboardLoad ??= InvokeAsync(
                     AgentRuntimeOperations.Dashboard,
                     new AgentDashboardRequest(),
-                    _lifetime.Token).ConfigureAwait(false),
-                CancellationToken.None);
+                    _lifetime.Token)
+                .AsTask();
         }
 
         try
@@ -389,59 +519,6 @@ internal sealed class AgentAppRuntimeGateway :
         try { return await lazy.Value.WaitAsync(cancellationToken).ConfigureAwait(false); }
         catch { _catalogs.TryRemove(key, out _); throw; }
     }
-    private IReadOnlyList<AgentSessionSnapshot> GetSessionSnapshots()
-        => GetSessionSnapshotsAsync(_lifetime.Token).GetAwaiter().GetResult();
-
-    private async Task<List<AgentSessionSnapshot>> GetSessionSnapshotsAsync(CancellationToken cancellationToken)
-    {
-        Task<List<AgentSessionSnapshot>> load;
-        lock (_cacheLock)
-        {
-            if (_sessions is not null) return _sessions;
-            load = _sessionsLoad ??= Task.Run(
-                () => LoadSessionSnapshotsAsync(_lifetime.Token),
-                CancellationToken.None);
-        }
-        try
-        {
-            var sessions = await load.WaitAsync(cancellationToken).ConfigureAwait(false);
-            lock (_cacheLock)
-            {
-                if (ReferenceEquals(_sessionsLoad, load))
-                {
-                    _sessions = sessions;
-                    _sessionsLoad = null;
-                }
-                return _sessions ?? sessions;
-            }
-        }
-        catch
-        {
-            lock (_cacheLock)
-            {
-                if (ReferenceEquals(_sessionsLoad, load))
-                {
-                    _sessionsLoad = null;
-                }
-            }
-            throw;
-        }
-    }
-
-    private async Task<List<AgentSessionSnapshot>> LoadSessionSnapshotsAsync(CancellationToken cancellationToken)
-    {
-        var items = new List<AgentSessionSnapshot>();
-        var offset = 0;
-        while (true)
-        {
-            var page = await InvokeAsync(AgentRuntimeOperations.Sessions,
-                new AgentSessionPageRequest(Offset: offset, Limit: SessionPageSize), cancellationToken)
-                .ConfigureAwait(false);
-            items.AddRange(page.Items);
-            if (!page.HasMore) return items;
-            offset += page.Items.Count;
-        }
-    }
     private AgentTranscriptPage ReadTranscript(AgentTranscriptPageRequest request)
         => Invoke(AgentRuntimeOperations.Transcript, request);
     private AgentPermissionProjection ReadPermissions(Guid? sessionId)
@@ -469,119 +546,6 @@ internal sealed class AgentAppRuntimeGateway :
         {
             SetConnectionState(AgentRuntimeConnectionState.Unavailable);
             throw;
-        }
-    }
-
-    private async Task ObserveChangesAsync(CancellationToken cancellationToken)
-    {
-        var reconnectDelay = InitialReconnectDelay;
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            if (!_transport.IsAvailable)
-            {
-                SetConnectionState(AgentRuntimeConnectionState.Unavailable);
-                if (!await DelayForReconnectAsync(reconnectDelay, cancellationToken).ConfigureAwait(false)) return;
-                reconnectDelay = NextReconnectDelay(reconnectDelay);
-                continue;
-            }
-            try
-            {
-                SetConnectionState(_revision == 0
-                    ? AgentRuntimeConnectionState.Connecting
-                    : AgentRuntimeConnectionState.Reconnecting);
-                await foreach (var change in _transport.SubscribeAsync(
-                                   AgentRuntimeOperations.Changes,
-                                   new AgentChangeSubscription(_revision), cancellationToken))
-                {
-                    var requiresSnapshot = ApplyChange(change);
-                    if (requiresSnapshot)
-                    {
-                        await ResnapshotAsync(cancellationToken).ConfigureAwait(false);
-                    }
-                    reconnectDelay = InitialReconnectDelay;
-                    SetConnectionState(AgentRuntimeConnectionState.Connected);
-                }
-                SetConnectionState(AgentRuntimeConnectionState.Reconnecting);
-                if (!await DelayForReconnectAsync(reconnectDelay, cancellationToken).ConfigureAwait(false)) return;
-                reconnectDelay = NextReconnectDelay(reconnectDelay);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
-            catch
-            {
-                SetConnectionState(AgentRuntimeConnectionState.Reconnecting);
-                if (!await DelayForReconnectAsync(reconnectDelay, cancellationToken).ConfigureAwait(false)) return;
-                reconnectDelay = NextReconnectDelay(reconnectDelay);
-            }
-        }
-    }
-
-    private bool ApplyChange(AgentRuntimeChange change)
-    {
-        if (change.Kind is AgentRuntimeChangeKind.ResnapshotRequired)
-        {
-            _revision = change.Revision;
-            InvalidateAll();
-            return true;
-        }
-        if (change.Kind is not AgentRuntimeChangeKind.Connected
-            && change.Revision > _revision + 1)
-        {
-            _revision = change.Revision;
-            InvalidateAll();
-            return true;
-        }
-        if (change.Revision <= _revision && change.Kind is not AgentRuntimeChangeKind.Connected) return false;
-        _revision = change.Revision;
-        switch (change.Kind)
-        {
-            case AgentRuntimeChangeKind.Connected:
-                break;
-            case AgentRuntimeChangeKind.Profile:
-                InvalidateDashboard();
-                Raise(ProfileChanged, change.ProfileId ?? string.Empty);
-                break;
-            case AgentRuntimeChangeKind.Catalog:
-                _catalogs.Clear();
-                Raise(SelectableCapabilitiesChanged);
-                break;
-            case AgentRuntimeChangeKind.Workspace:
-                InvalidateDashboard();
-                Raise(WorkspacesChanged);
-                break;
-            case AgentRuntimeChangeKind.Session:
-                InvalidateSessions();
-                if (change.SessionId is { } sessionId) Raise(SessionChanged, sessionId);
-                break;
-            case AgentRuntimeChangeKind.Turn:
-                if (change.SessionId is { } turnSessionId && change.Turn is { } turn)
-                    Raise(TurnChanged, turnSessionId, turn);
-                break;
-            case AgentRuntimeChangeKind.TranscriptReset:
-                if (change.SessionId is { } resetSessionId) Raise(TranscriptReset, resetSessionId);
-                break;
-            case AgentRuntimeChangeKind.RunActivity:
-                if (change.SessionId is { } activitySessionId && change.RunActivity is { } activity)
-                    Raise(RunActivityChanged, activitySessionId, activity);
-                break;
-            case AgentRuntimeChangeKind.Permission:
-                _globalPermissions = null;
-                break;
-        }
-        return change.Kind == AgentRuntimeChangeKind.Connected && _dashboard is null;
-    }
-
-    private async Task ResnapshotAsync(CancellationToken cancellationToken)
-    {
-        InvalidateAll();
-        _ = await GetDashboardAsync(cancellationToken).ConfigureAwait(false);
-        var sessions = await GetSessionSnapshotsAsync(cancellationToken).ConfigureAwait(false);
-        Raise(ProfileChanged, string.Empty);
-        Raise(SelectableCapabilitiesChanged);
-        Raise(WorkspacesChanged);
-        foreach (var session in sessions)
-        {
-            Raise(SessionChanged, session.Session.SessionId);
-            Raise(TranscriptReset, session.Session.SessionId);
         }
     }
 
@@ -638,18 +602,55 @@ internal sealed class AgentAppRuntimeGateway :
             throw new InvalidOperationException("Agent Runtime is unavailable. Reconnect Runtime and try again.");
     }
     private void InvalidateDashboard() { lock (_cacheLock) { _dashboard = null; _dashboardLoad = null; } }
-    private void InvalidateSessions() { lock (_cacheLock) { _sessions = null; _sessionsLoad = null; } }
+    private void InvalidateSessions()
+    {
+        lock (_cacheLock)
+        {
+            _workspaceSessions.Clear();
+            _knownSessions.Clear();
+        }
+    }
     private void InvalidateAll()
     {
         lock (_cacheLock)
         {
             _dashboard = null;
             _dashboardLoad = null;
-            _sessions = null;
-            _sessionsLoad = null;
+            _workspaceSessions.Clear();
+            _knownSessions.Clear();
             _globalPermissions = null;
         }
         _catalogs.Clear();
+    }
+    private void CacheSession(AgentSessionSnapshot snapshot)
+    {
+        lock (_cacheLock)
+        {
+            RemoveCachedSessionCore(snapshot.Session.SessionId);
+            _knownSessions[snapshot.Session.SessionId] = snapshot;
+            if (!string.IsNullOrWhiteSpace(snapshot.Session.WorkspaceId)
+                && _workspaceSessions.TryGetValue(snapshot.Session.WorkspaceId, out var workspaceItems))
+            {
+                workspaceItems.Add(snapshot);
+                workspaceItems.Sort(static (left, right) =>
+                    right.Session.UpdatedAtUtc.CompareTo(left.Session.UpdatedAtUtc));
+            }
+        }
+    }
+    private void RemoveCachedSession(Guid sessionId)
+    {
+        lock (_cacheLock)
+        {
+            RemoveCachedSessionCore(sessionId);
+        }
+    }
+    private void RemoveCachedSessionCore(Guid sessionId)
+    {
+        _knownSessions.Remove(sessionId);
+        foreach (var workspaceItems in _workspaceSessions.Values)
+        {
+            workspaceItems.RemoveAll(item => item.Session.SessionId == sessionId);
+        }
     }
     private void SetConnectionState(AgentRuntimeConnectionState state)
     {
@@ -663,10 +664,18 @@ internal sealed class AgentAppRuntimeGateway :
             catch { /* Presentation listeners cannot break Runtime transport state. */ }
         }
     }
+    private void SetConnectionStateIfCurrent(int generation, AgentRuntimeConnectionState state)
+    {
+        if (IsCurrentObservation(generation))
+        {
+            SetConnectionState(state);
+        }
+    }
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        PauseObservingChanges();
         _lifetime.Cancel();
         _lifetime.Dispose();
         SetConnectionState(AgentRuntimeConnectionState.Disposed);

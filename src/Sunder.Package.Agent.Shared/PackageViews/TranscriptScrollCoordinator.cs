@@ -11,9 +11,8 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
     private const double DefaultLoadOlderThreshold = 96;
     private const double DefaultLoadNewerThreshold = 96;
     private const double ViewportLoadThresholdRatio = 0.25;
-    private const int BottomPlacementMaxPasses = 18;
-    private const int BottomPlacementStablePasses = 3;
-    private const int BottomPlacementPostRevealPasses = 6;
+    private const int BottomPlacementMaxRenderPasses = 8;
+    private const int BottomPlacementStableRenderPasses = 2;
 
     private readonly ScrollViewer _scrollViewer;
     private readonly ItemsControl? _itemsControl;
@@ -37,9 +36,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
     private bool _isProgrammaticScroll;
     private bool _isRestoringAnchor;
     private bool _scrollToBottomPending;
-    private bool _settledScrollToBottomPending;
     private bool _bottomPlacementLockActive;
-    private bool _bottomPlacementReleasePending;
     private bool _restoreAnchorPending;
     private bool _loadOlderPending;
     private bool _loadNewerPending;
@@ -227,18 +224,14 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
     private static async Task InvokeOnDispatcherAsync(Action action, DispatcherPriority priority)
         => await Dispatcher.UIThread.InvokeAsync(action, priority);
 
-    public void QueueScrollToBottomAfterLayoutSettles(Action? completed = null)
+    public void QueueScrollToBottomAfterLayoutSettles(
+        Action? completed = null,
+        CancellationToken cancellationToken = default)
     {
-        _pendingSettledScrollCompleted += completed;
-        BeginBottomPlacementLock();
-        if (_settledScrollToBottomPending)
-        {
-            return;
-        }
-
-        _settledScrollToBottomPending = true;
+        _pendingSettledScrollCompleted = completed;
+        var version = BeginBottomPlacementLock();
         var operation = Dispatcher.UIThread.InvokeAsync(
-            () => CompleteSettledScrollAsync(_lifetimeCancellation.Token),
+            () => CompleteSettledScrollAsync(version, cancellationToken),
             DispatcherPriority.Loaded);
         _settledScrollOperation = ObservePagingOperationAsync(operation);
     }
@@ -260,14 +253,14 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         {
             if (_bottomPlacementLockActive)
             {
-                PinToBottom(updateLayout: false);
+                PinToBottom();
                 UpdateJumpToLatestVisibility();
                 return;
             }
 
             if (ShouldPinToBottomForLayoutGrowth())
             {
-                PinToBottom(updateLayout: false);
+                PinToBottom();
                 UpdateJumpToLatestVisibility();
                 return;
             }
@@ -473,7 +466,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
 
     private void ScrollToBottom()
     {
-        PinToBottom(updateLayout: true);
+        PinToBottom();
         _shouldAutoScroll = !_hasNewerRows();
         if (!_hasNewerRows())
         {
@@ -491,7 +484,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         }
     }
 
-    private async Task CompleteSettledScrollAsync(CancellationToken cancellationToken)
+    private async Task CompleteSettledScrollAsync(int version, CancellationToken cancellationToken)
     {
         try
         {
@@ -499,16 +492,19 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         }
         finally
         {
-            _settledScrollToBottomPending = false;
-            if (cancellationToken.IsCancellationRequested || _disposed)
+            if (version == _bottomPlacementLockVersion)
             {
-                _pendingSettledScrollCompleted = null;
-            }
-            else
-            {
-                var callback = _pendingSettledScrollCompleted;
-                _pendingSettledScrollCompleted = null;
-                QueueReleaseBottomPlacementLock(callback);
+                if (cancellationToken.IsCancellationRequested || _disposed)
+                {
+                    _pendingSettledScrollCompleted = null;
+                    _bottomPlacementLockActive = false;
+                }
+                else
+                {
+                    var completed = _pendingSettledScrollCompleted;
+                    _pendingSettledScrollCompleted = null;
+                    QueueReleaseBottomPlacementLock(completed, cancellationToken);
+                }
             }
         }
     }
@@ -522,7 +518,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         var previousExtentHeight = -1d;
         var previousViewportHeight = -1d;
         var stablePasses = 0;
-        for (var pass = 0; pass < BottomPlacementMaxPasses; pass++)
+        for (var pass = 0; pass < BottomPlacementMaxRenderPasses; pass++)
         {
             await WaitForRenderedContentAsync(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
@@ -530,7 +526,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
             {
                 return;
             }
-            PinToBottom(updateLayout: false);
+            PinToBottom();
 
             var extentHeight = _scrollViewer.Extent.Height;
             var viewportHeight = _scrollViewer.Viewport.Height;
@@ -546,7 +542,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
                 stablePasses = 0;
             }
 
-            if (stablePasses >= BottomPlacementStablePasses)
+            if (stablePasses >= BottomPlacementStableRenderPasses)
             {
                 break;
             }
@@ -558,27 +554,24 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         ScrollToBottom();
     }
 
-    private void BeginBottomPlacementLock()
+    private int BeginBottomPlacementLock()
     {
         _bottomPlacementLockVersion++;
         _bottomPlacementLockActive = true;
         _pendingAnchor = null;
         _shouldAutoScroll = true;
         UpdateJumpToLatestVisibility();
+        return _bottomPlacementLockVersion;
     }
 
-    private void QueueReleaseBottomPlacementLock(Action? completed = null)
+    private void QueueReleaseBottomPlacementLock(
+        Action? completed = null,
+        CancellationToken cancellationToken = default)
     {
-        _pendingBottomPlacementReleaseCompleted += completed;
-        if (_bottomPlacementReleasePending)
-        {
-            return;
-        }
-
-        _bottomPlacementReleasePending = true;
+        _pendingBottomPlacementReleaseCompleted = completed;
         var version = _bottomPlacementLockVersion;
         var operation = Dispatcher.UIThread.InvokeAsync(
-            () => ReleaseBottomPlacementLockAsync(version, _lifetimeCancellation.Token),
+            () => ReleaseBottomPlacementLockAsync(version, cancellationToken),
             DispatcherPriority.Background);
         _bottomPlacementReleaseOperation = ObservePagingOperationAsync(operation);
     }
@@ -587,53 +580,43 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
     {
         try
         {
-            for (var pass = 0; pass < BottomPlacementPostRevealPasses; pass++)
+            await WaitForRenderedContentAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!_disposed)
             {
-                await WaitForRenderedContentAsync(cancellationToken);
-                cancellationToken.ThrowIfCancellationRequested();
-                if (_disposed)
-                {
-                    return;
-                }
-                PinToBottom(updateLayout: false);
+                PinToBottom();
             }
         }
         finally
         {
-            _bottomPlacementReleasePending = false;
-            if (cancellationToken.IsCancellationRequested || _disposed)
+            if (version == _bottomPlacementLockVersion)
             {
-                _pendingBottomPlacementReleaseCompleted = null;
-            }
-            else if (version == _bottomPlacementLockVersion)
-            {
-                PinToBottom(updateLayout: true);
-                _bottomPlacementLockActive = false;
-                _shouldAutoScroll = !_hasNewerRows();
-                if (!_hasNewerRows())
+                if (cancellationToken.IsCancellationRequested || _disposed)
                 {
-                    _onReachedLatest?.Invoke();
+                    _pendingBottomPlacementReleaseCompleted = null;
+                    _bottomPlacementLockActive = false;
                 }
+                else
+                {
+                    PinToBottom();
+                    _bottomPlacementLockActive = false;
+                    _shouldAutoScroll = !_hasNewerRows();
+                    if (!_hasNewerRows())
+                    {
+                        _onReachedLatest?.Invoke();
+                    }
 
-                UpdateJumpToLatestVisibility();
-                var callback = _pendingBottomPlacementReleaseCompleted;
-                _pendingBottomPlacementReleaseCompleted = null;
-                callback?.Invoke();
-            }
-            else if (_bottomPlacementLockActive)
-            {
-                QueueReleaseBottomPlacementLock();
+                    UpdateJumpToLatestVisibility();
+                    var callback = _pendingBottomPlacementReleaseCompleted;
+                    _pendingBottomPlacementReleaseCompleted = null;
+                    callback?.Invoke();
+                }
             }
         }
     }
 
-    private void PinToBottom(bool updateLayout)
+    private void PinToBottom()
     {
-        if (updateLayout)
-        {
-            _scrollViewer.UpdateLayout();
-        }
-
         var maxOffsetY = Math.Max(0, _scrollViewer.Extent.Height - _scrollViewer.Viewport.Height);
         SetProgrammaticOffset(maxOffsetY);
     }
@@ -647,8 +630,6 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         {
             return;
         }
-
-        _scrollViewer.UpdateLayout();
     }
 
     private void UpdateJumpToLatestVisibility()

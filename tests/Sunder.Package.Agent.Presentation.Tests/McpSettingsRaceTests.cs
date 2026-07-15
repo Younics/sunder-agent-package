@@ -180,11 +180,10 @@ public sealed class McpSettingsRaceTests
         public ControlledKeyValueStore State { get; }
         public string PackageId => "test.mcp.presentation";
         public string Version { get; } = "1.0.0";
-        public string InstallPath => AppContext.BaseDirectory;
+        public string ContentRootPath => AppContext.BaseDirectory;
         public IPackageStorageContext Storage => _storage;
         public IPackageSettings Settings { get; } = new EmptySettings();
         public IPackageSecrets Secrets { get; } = new EmptySecrets();
-        public ILoggerFactory LoggerFactory => NullLoggerFactory.Instance;
         public IPackageLogging Logging => NullPackageLogging.Instance;
     }
 

@@ -7,7 +7,7 @@ namespace Sunder.Package.Agent.Skills.Services;
 internal sealed class SkillStackContributor(
     SkillStore store,
     SkillImportService importService,
-    IPackageContext packageContext) : IPackageStackContributor, IPackageStackImportAppliedHandler
+    IPackageContext packageContext) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
     private const string SchemaId = "sunder.package.agent.skills/github-skill";
     private const string DetailSource = "github-url";
@@ -69,8 +69,7 @@ internal sealed class SkillStackContributor(
             var githubUrl = skill.SourceUri!.Trim();
             fragments.Add(new StackFragmentExport(
                 FragmentId: "github-skill." + SanitizeIdentifier(skill.SkillId),
-                ContributorId,
-                SchemaId,
+                SchemaId: SchemaId,
                 SchemaVersion: 1,
                 DisplayName: SkillStore.ResolveDisplayName(skill),
                 JsonPayload: JsonSerializer.Serialize(new GitHubSkillStackPayload(githubUrl), JsonOptions),

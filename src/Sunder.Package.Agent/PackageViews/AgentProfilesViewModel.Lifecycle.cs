@@ -14,6 +14,7 @@ public sealed partial class AgentProfilesViewModel
         _disposed = true;
         _profileLoadVersion++;
         _lifetimeCancellation.Cancel();
+        _initialization.Dispose();
         _statusClear.Dispose();
         _tasks.Dispose();
         _operation.PropertyChanged -= OnOperationPropertyChanged;
@@ -40,7 +41,7 @@ public sealed partial class AgentProfilesViewModel
         {
             return;
         }
-        if (state == Runtime.AgentRuntimeConnectionState.Connected)
+        if (state == Runtime.AgentRuntimeConnectionState.Connected && _isInitialized)
         {
             RunOnUiThread(() => _tasks.Run(_ => ReloadProfilesSafelyAsync(SelectedProfile?.ProfileId)));
         }

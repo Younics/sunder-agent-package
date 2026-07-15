@@ -332,7 +332,7 @@ public sealed class MemoryLocalStorePersistenceTests
 
         public string Version => "1.0.0";
 
-        public string InstallPath => rootPath;
+        public string ContentRootPath => rootPath;
 
         public IPackageStorageContext Storage { get; } = new TestPackageStorageContext(rootPath);
 
@@ -340,7 +340,6 @@ public sealed class MemoryLocalStorePersistenceTests
 
         public IPackageSecrets Secrets { get; } = new TestPackageSecrets();
 
-        public ILoggerFactory LoggerFactory => Logging.LoggerFactory;
 
         public IPackageLogging Logging { get; } = NullPackageLogging.Instance;
     }

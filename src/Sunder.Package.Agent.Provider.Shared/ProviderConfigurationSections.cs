@@ -1,10 +1,10 @@
-using Sunder.Sdk.Configuration;
+using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Provider.Shared;
 
 internal static class ProviderConfigurationSections
 {
-    public static PackageConfigurationSection ApiKey(
+    public static PackageSettingsSection ApiKey(
         string key,
         string sectionDescription,
         string fieldDescription,
@@ -14,15 +14,15 @@ internal static class ProviderConfigurationSections
             "Authentication",
             sectionDescription,
             [
-                new PackageConfigurationField(
+                new PackageSettingsField(
                     key,
                     "API key",
-                    PackageConfigurationFieldKind.Secret,
-                    Description: fieldDescription,
-                    Placeholder: placeholder),
+                    PackageSettingsFieldKind.Secret,
+                    description: fieldDescription,
+                    placeholder: placeholder),
             ]);
 
-    public static PackageConfigurationSection UtilityModelSelect(
+    public static PackageSettingsSection UtilityModelSelect(
         ProviderUtilityModelSelection selection,
         string sectionDescription)
         => new(
@@ -30,17 +30,17 @@ internal static class ProviderConfigurationSections
             "Utility model",
             sectionDescription,
             [
-                new PackageConfigurationField(
+                new PackageSettingsField(
                     selection.ConfigurationKey,
                     "Utility model",
-                    PackageConfigurationFieldKind.Select,
-                    Description: "Used for short background tasks, not regular agent replies.",
-                    IsRequired: true,
-                    DefaultValue: selection.DefaultModelId,
-                    Options: selection.Options),
+                    PackageSettingsFieldKind.Select,
+                    description: "Used for short background tasks, not regular agent replies.",
+                    isRequired: true,
+                    defaultValue: selection.DefaultModelId,
+                    options: selection.Options),
             ]);
 
-    public static PackageConfigurationSection UtilityModelText(
+    public static PackageSettingsSection UtilityModelText(
         string key,
         string sectionDescription,
         string fieldDescription,
@@ -50,11 +50,11 @@ internal static class ProviderConfigurationSections
             "Utility model",
             sectionDescription,
             [
-                new PackageConfigurationField(
+                new PackageSettingsField(
                     key,
                     "Utility model ID",
-                    PackageConfigurationFieldKind.Text,
-                    Description: fieldDescription,
-                    Placeholder: placeholder),
+                    PackageSettingsFieldKind.Text,
+                    description: fieldDescription,
+                    placeholder: placeholder),
             ]);
 }

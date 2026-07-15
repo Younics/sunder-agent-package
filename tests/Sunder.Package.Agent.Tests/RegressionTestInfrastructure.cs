@@ -73,7 +73,7 @@ internal sealed class RegressionTestPackageContext(string rootPath) : IPackageCo
 
     public string Version { get; } = "1.0.0";
 
-    public string InstallPath => AppContext.BaseDirectory;
+    public string ContentRootPath => AppContext.BaseDirectory;
 
     public IPackageStorageContext Storage { get; } = new RegressionTestStorageContext(rootPath);
 
@@ -81,7 +81,6 @@ internal sealed class RegressionTestPackageContext(string rootPath) : IPackageCo
 
     public IPackageSecrets Secrets { get; } = new RegressionTestSecrets();
 
-    public Microsoft.Extensions.Logging.ILoggerFactory LoggerFactory => Logging.LoggerFactory;
 
     public Sunder.Sdk.Logging.IPackageLogging Logging { get; } =
         Sunder.Sdk.Logging.NullPackageLogging.Instance;

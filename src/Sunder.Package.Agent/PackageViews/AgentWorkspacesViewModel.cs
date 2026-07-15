@@ -20,7 +20,6 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private readonly IAgentExecutionGateway _executionGateway;
     private readonly IPackageExtensionCatalog _extensionCatalog;
     private readonly IPackageExtensionCatalogMonitor? _extensionCatalogMonitor;
-    private readonly IPackageExtensionCatalogChangeNotifier? _extensionCatalogChangeNotifier;
     private readonly IPackageSettingsNavigationService? _settingsNavigationService;
     private readonly IAgentRuntimeAvailability? _runtimeAvailability;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
@@ -28,8 +27,10 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private readonly PresentationTaskScope _tasks;
     private readonly TimedStatusController _statusClear;
     private readonly OperationState<AgentWorkspaceOperation> _operation = new();
+    private readonly AsyncOnce _initialization = new();
     private bool _suppressSelectionHandlers;
     private bool _suppressWorkspaceChangeNotifications;
+    private bool _isInitialized;
     private bool _disposed;
 
     public AgentWorkspacesViewModel(
@@ -56,21 +57,6 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         if (_extensionCatalogMonitor is not null)
         {
             _extensionCatalogMonitor.Changed += OnExtensionCatalogChanged;
-        }
-        else if (extensionCatalog is IPackageExtensionCatalogChangeNotifier changeNotifier)
-        {
-            _extensionCatalogChangeNotifier = changeNotifier;
-            changeNotifier.ExtensionsChanged += OnExtensionCatalogChanged;
-        }
-
-        try
-        {
-            ReloadTargets();
-            ReloadWorkspaces(selectWorkspaceId: null);
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"Agent Runtime is unavailable: {ex.Message}", AgentWorkspaceStatusKind.Warning);
         }
     }
 
@@ -103,6 +89,9 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     public bool HasWorkspaceDocuments => WorkspaceDocuments.Count > 0;
 
     public bool IsBusy => _operation.IsBusy;
+
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+        => _initialization.RunAsync(InitializeCoreAsync, cancellationToken);
 
     public bool IsListActive => !IsEditorActive;
 
@@ -187,6 +176,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
         _disposed = true;
         _lifetimeCancellation.Cancel();
+        _initialization.Dispose();
         if (_runtimeAvailability is not null)
         {
             _runtimeAvailability.ConnectionStateChanged -= OnRuntimeConnectionStateChanged;
@@ -201,10 +191,6 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             _extensionCatalogMonitor.Changed -= OnExtensionCatalogChanged;
         }
 
-        if (_extensionCatalogChangeNotifier is not null)
-        {
-            _extensionCatalogChangeNotifier.ExtensionsChanged -= OnExtensionCatalogChanged;
-        }
         _lifetimeCancellation.Dispose();
     }
 
@@ -365,7 +351,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private void OnWorkspacesChanged()
         => RunOnUiThread(() =>
         {
-            if (!_disposed && !_suppressWorkspaceChangeNotifications)
+            if (!_disposed && _isInitialized && !_suppressWorkspaceChangeNotifications)
             {
                 ReloadWorkspaces(SelectedWorkspace?.WorkspaceId);
             }
@@ -378,7 +364,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             {
                 return;
             }
-            if (state == AgentRuntimeConnectionState.Connected)
+            if (state == AgentRuntimeConnectionState.Connected && _isInitialized)
             {
                 ReloadTargets(SelectedExecutionTarget?.TargetId);
                 ReloadWorkspaces(SelectedWorkspace?.WorkspaceId);
@@ -390,15 +376,59 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             }
         });
 
+    private async Task InitializeCoreAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var targetsTask = _executionGateway is IAgentExecutionTargetLoader loader
+                ? loader.ListTargetsAsync(cancellationToken)
+                : Task.FromResult(_executionGateway.ListTargets());
+            await Task.WhenAll(
+                _workspaceService.InitializeAsync(cancellationToken),
+                targetsTask).ConfigureAwait(false);
+            var targets = await targetsTask.ConfigureAwait(false);
+            var workspaces = _workspaceService.ListWorkspaces();
+            cancellationToken.ThrowIfCancellationRequested();
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                ReloadTargets(targets);
+                ReloadWorkspaceList(selectWorkspaceId: null, workspaces);
+                LoadWorkspace(SelectedWorkspace);
+                _isInitialized = true;
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed)
+                {
+                    SetStatus($"Agent Runtime is unavailable: {ex.Message}", AgentWorkspaceStatusKind.Warning);
+                }
+            }).ConfigureAwait(false);
+        }
+    }
+
     private void ReloadWorkspaces(string? selectWorkspaceId)
     {
         ReloadWorkspaceList(selectWorkspaceId);
         LoadWorkspace(SelectedWorkspace);
     }
 
-    private void ReloadWorkspaceList(string? selectWorkspaceId)
+    private void ReloadWorkspaceList(
+        string? selectWorkspaceId,
+        IReadOnlyList<AgentWorkspaceRecord>? workspaces = null)
     {
-        var workspaces = _workspaceService.ListWorkspaces();
+        workspaces ??= _workspaceService.ListWorkspaces();
         _suppressSelectionHandlers = true;
         try
         {

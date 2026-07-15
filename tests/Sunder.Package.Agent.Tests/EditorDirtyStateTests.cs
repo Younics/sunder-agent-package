@@ -18,6 +18,7 @@ public sealed class EditorDirtyStateTests
         var first = await profileService.CreateProfileAsync("Alpha");
         var second = await profileService.CreateProfileAsync("Beta");
         using var viewModel = new AgentProfilesViewModel(profileService);
+        await viewModel.InitializeAsync();
         await WaitUntilAsync(() => viewModel.SelectedProfile is not null && !viewModel.IsBusy);
 
         viewModel.SelectedProfile = viewModel.Profiles.Single(item => item.ProfileId == first.ProfileId);

@@ -23,7 +23,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
-        registry.RegisterConfigurationSchema(AnthropicProviderConfiguration.Schema);
+        registry.RegisterSettingsSchema(AnthropicProviderConfiguration.Schema);
         registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<AnthropicAgentProvider>());
     }
 }

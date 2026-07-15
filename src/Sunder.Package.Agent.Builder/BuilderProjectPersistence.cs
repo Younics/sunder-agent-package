@@ -19,7 +19,10 @@ public sealed class BuilderProjectPersistence : IAsyncDisposable
     private IReadOnlyList<BuilderProjectRecord> _latestProjects = [];
     private long _generation;
     private long _persistedGeneration;
+    private int _activeSaves;
+    private TaskCompletionSource? _activeSavesCompleted;
     private bool _disposed;
+    private Task? _disposeTask;
 
     public BuilderProjectPersistence(IBuilderProjectStore store)
         : this(store, DefaultDebounceDelay)
@@ -59,48 +62,79 @@ public sealed class BuilderProjectPersistence : IAsyncDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             _latestProjects = projects.ToArray();
             generation = ++_generation;
+            _activeSaves++;
         }
 
-        // If the caller is cancelled while waiting for the writer, the owned worker still persists this generation.
-        _changed.Release();
-        await PersistAsync(generation, reportFailure: false, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // If the caller is cancelled while waiting for the writer, the owned worker still persists this generation.
+            _changed.Release();
+            await PersistAsync(generation, reportFailure: false, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            CompleteActiveSave();
+        }
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
+        Task disposeTask;
         lock (_syncRoot)
         {
-            if (_disposed)
+            if (_disposeTask is not null)
             {
-                return;
+                return new ValueTask(_disposeTask);
             }
 
             _disposed = true;
+            disposeTask = _disposeTask = DisposeCoreAsync();
+        }
+
+        return new ValueTask(disposeTask);
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        Task activeSaves;
+        lock (_syncRoot)
+        {
+            activeSaves = _activeSaves == 0
+                ? Task.CompletedTask
+                : (_activeSavesCompleted ??= new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously)).Task;
         }
 
         _shutdown.Cancel();
         try
         {
-            await _worker.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
-        {
-        }
+            try
+            {
+                await _worker.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+            {
+            }
 
-        long generation;
-        lock (_syncRoot)
-        {
-            generation = _generation;
-        }
+            await activeSaves.ConfigureAwait(false);
 
-        if (generation > Volatile.Read(ref _persistedGeneration))
-        {
-            await PersistAsync(generation, reportFailure: false, CancellationToken.None).ConfigureAwait(false);
-        }
+            long generation;
+            lock (_syncRoot)
+            {
+                generation = _generation;
+            }
 
-        _shutdown.Dispose();
-        _changed.Dispose();
-        _writeGate.Dispose();
+            if (generation > Volatile.Read(ref _persistedGeneration))
+            {
+                await PersistAsync(generation, reportFailure: false, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _shutdown.Dispose();
+            _changed.Dispose();
+            _writeGate.Dispose();
+        }
     }
 
     private async Task RunWorkerAsync()
@@ -187,6 +221,22 @@ public sealed class BuilderProjectPersistence : IAsyncDisposable
         {
             return generation == _generation;
         }
+    }
+
+    private void CompleteActiveSave()
+    {
+        TaskCompletionSource? completed = null;
+        lock (_syncRoot)
+        {
+            _activeSaves--;
+            if (_activeSaves == 0)
+            {
+                completed = _activeSavesCompleted;
+                _activeSavesCompleted = null;
+            }
+        }
+
+        completed?.TrySetResult();
     }
 
     private void DrainChanges()

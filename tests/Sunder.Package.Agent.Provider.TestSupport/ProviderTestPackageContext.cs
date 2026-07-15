@@ -26,7 +26,7 @@ public sealed class ProviderTestPackageContext : IPackageContext
 
     public string Version { get; } = "1.0.0";
 
-    public string InstallPath { get; } = AppContext.BaseDirectory;
+    public string ContentRootPath { get; } = AppContext.BaseDirectory;
 
     public ProviderTestStorageContext Storage { get; }
 
@@ -38,7 +38,6 @@ public sealed class ProviderTestPackageContext : IPackageContext
 
     public IPackageCallbackClient Callbacks { get; }
 
-    public ILoggerFactory LoggerFactory => Logging.LoggerFactory;
 
     public IPackageLogging Logging { get; } = NullPackageLogging.Instance;
 }

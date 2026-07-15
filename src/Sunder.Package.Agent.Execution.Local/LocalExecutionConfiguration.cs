@@ -1,4 +1,4 @@
-using Sunder.Sdk.Configuration;
+using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
@@ -7,23 +7,21 @@ public static class LocalExecutionConfiguration
     public const string TimeoutKey = "shell.timeoutSeconds.default";
     public const string DefaultTimeoutSeconds = "300";
 
-    public static PackageConfigurationSchema Schema { get; } = new(
-        "sunder.package.agent.execution.local",
-        "Sunder Agent Execution Local",
+    public static PackageSettingsSchema Schema { get; } = new(
         "Configure local-machine execution defaults. Workspaces define paths before tools can use this target.",
         [
-            new PackageConfigurationSection(
+            new PackageSettingsSection(
                 "shell",
                 "Shell",
                 "Defaults used when a workspace runs commands on the local machine.",
                 [
-                    new PackageConfigurationField(
+                    new PackageSettingsField(
                         TimeoutKey,
                         "Default shell timeout",
-                        PackageConfigurationFieldKind.Text,
-                        Description: "Default timeout in seconds for local shell commands when the request does not specify one.",
-                        DefaultValue: DefaultTimeoutSeconds,
-                        Placeholder: DefaultTimeoutSeconds),
+                        PackageSettingsFieldKind.Text,
+                        description: "Default timeout in seconds for local shell commands when the request does not specify one.",
+                        defaultValue: DefaultTimeoutSeconds,
+                        placeholder: DefaultTimeoutSeconds),
                 ])
         ]);
 }

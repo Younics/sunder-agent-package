@@ -21,7 +21,7 @@ public sealed class McpOAuthService : IAsyncDisposable
     public McpOAuthService(IPackageContext packageContext)
     {
         _packageContext = packageContext;
-        _loggerFactory = packageContext.LoggerFactory;
+        _loggerFactory = packageContext.Logging.LoggerFactory;
     }
 
     public async Task<ClientOAuthOptions?> CreateClientOptionsAsync(

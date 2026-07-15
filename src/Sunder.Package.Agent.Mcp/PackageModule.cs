@@ -20,7 +20,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<McpOAuthCallbackHandler>();
         services.AddSingleton<IPackageCallbackHandler>(provider => provider.GetRequiredService<McpOAuthCallbackHandler>());
         services.AddSingleton(serviceProvider => new McpClientConnectionManager(
-            context.LoggerFactory,
+            context.Logging.LoggerFactory,
             serviceProvider.GetRequiredService<McpOAuthService>()));
         services.AddSingleton<McpEcosystemConfigurationImporter>();
         services.AddSingleton(serviceProvider => new McpSunderConfigurationSyncService(
@@ -39,10 +39,12 @@ public sealed class PackageModule : ISunderRuntimePackageModule
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
         services.GetRequiredService<McpConfigurationCoordinator>().Start();
-        registry.RegisterConfigurationSchema(McpPackageConfiguration.Schema);
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, services.GetRequiredService<McpToolSource>());
         registry.RegisterExtension(PackageExtensionPoints.ProfileSelectableCapabilityProviders, services.GetRequiredService<McpToolSource>());
-        registry.RegisterExtension(SunderStackExtensionPoints.StackContributors, services.GetRequiredService<McpServerStackContributor>());
+        var stackContributor = services.GetRequiredService<McpServerStackContributor>();
+        registry.RegisterExtension(SunderStackExtensionPoints.StackExporters, stackContributor);
+        registry.RegisterExtension(SunderStackExtensionPoints.StackImporters, stackContributor);
+        registry.RegisterExtension(SunderStackExtensionPoints.StackImportAppliedHandlers, stackContributor);
         registry.RegisterRuntimeOperation(McpRuntimeOperations.Query, services.GetRequiredService<McpRuntimeHandler>());
         registry.RegisterRuntimeOperation(McpRuntimeOperations.Command, services.GetRequiredService<McpRuntimeHandler>());
         registry.RegisterRuntimeStream(McpRuntimeOperations.Changes, services.GetRequiredService<McpRuntimeChangeStream>());
@@ -53,8 +55,9 @@ public sealed class AppPackageModule : ISunderAppPackageModule
 {
     public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
     {
-        services.AddSingleton(context.Callbacks);
-        services.AddSingleton<McpAppRuntimeGateway>();
+        services.AddSingleton(provider => new McpAppRuntimeGateway(
+            provider.GetRequiredService<Sunder.Sdk.Runtime.IPackageRuntimeClient>(),
+            context.Callbacks));
         services.AddSingletonAlias<IMcpManagementGateway, McpAppRuntimeGateway>();
         services.AddTransient(provider => new AgentMcpSettingsViewModel(
             provider.GetRequiredService<IMcpManagementGateway>(),

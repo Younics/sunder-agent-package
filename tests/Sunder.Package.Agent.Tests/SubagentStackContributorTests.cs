@@ -101,13 +101,16 @@ public sealed class SubagentStackContributorTests
         => new(
             fragment.FragmentId,
             "sunder.package.agent.subagents",
-            fragment.ContributorId,
+            "sunder.package.agent.subagents.subagents",
             fragment.SchemaId,
             fragment.SchemaVersion,
             fragment.DisplayName,
             fragment.JsonPayload,
             fragment.Description,
-            fragment.Files?.Select(file => new StackImportPayloadFile(file.RelativePath, file.SourcePath)).ToArray());
+            fragment.Files?.Select(file => new StackImportPayloadHandle(
+                file.RelativePath,
+                file.OpenReadAsync,
+                file.Length ?? throw new InvalidOperationException("Test export payload length is required."))).ToArray());
 
     private static string CreateTempDirectory()
     {
@@ -130,7 +133,7 @@ public sealed class SubagentStackContributorTests
 
         public string Version { get; } = "1.2.3";
 
-        public string InstallPath => AppContext.BaseDirectory;
+        public string ContentRootPath => AppContext.BaseDirectory;
 
         public IPackageStorageContext Storage { get; } = new TestStorageContext(rootPath);
 
@@ -138,7 +141,6 @@ public sealed class SubagentStackContributorTests
 
         public IPackageSecrets Secrets { get; } = new TestSecrets();
 
-        public ILoggerFactory LoggerFactory => Logging.LoggerFactory;
 
         public IPackageLogging Logging { get; } = NullPackageLogging.Instance;
     }

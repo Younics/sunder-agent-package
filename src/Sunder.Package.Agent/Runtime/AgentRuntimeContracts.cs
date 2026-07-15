@@ -7,10 +7,10 @@ namespace Sunder.Package.Agent.Runtime;
 
 internal static class AgentRuntimeOperations
 {
+    public static readonly PackageRuntimeOperation<AgentChatSnapshotRequest, AgentChatSnapshotProjection> ChatSnapshot =
+        new("agent.chat.snapshot.v1");
     public static readonly PackageRuntimeOperation<AgentDashboardRequest, AgentDashboardProjection> Dashboard =
         new("agent.dashboard.v1");
-    public static readonly PackageRuntimeOperation<AgentSessionPageRequest, AgentSessionPage> Sessions =
-        new("agent.sessions.page.v1");
     public static readonly PackageRuntimeOperation<AgentTranscriptPageRequest, AgentTranscriptPage> Transcript =
         new("agent.transcript.page.v1");
     public static readonly PackageRuntimeOperation<AgentCatalogRequest, AgentCatalogProjection> Catalog =
@@ -31,23 +31,45 @@ internal static class AgentRuntimeOperations
         new("agent.changes.v1");
 }
 
+internal sealed record AgentChatSnapshotRequest(
+    int InitialTranscriptLimit = 60,
+    string? PreferredProfileId = null,
+    string? PreferredWorkspaceId = null,
+    Guid? PreferredSessionId = null);
+internal sealed record AgentChatPermissionProjection(
+    AgentSessionPermissionState? SessionState,
+    IReadOnlyList<AgentPendingPermissionRequestRecord> PendingRequests);
+internal sealed record AgentChatSnapshotProjection(
+    long Revision,
+    IReadOnlyList<AgentProfileRecord> Profiles,
+    IReadOnlyList<AgentWorkspaceRecord> Workspaces,
+    IReadOnlyList<AgentWorkspaceBindingRecord> WorkspaceBindings,
+    AgentProfileRecord? SelectedProfile,
+    AgentWorkspaceRecord? SelectedWorkspace,
+    AgentSessionSnapshot? SelectedSession,
+    IReadOnlyList<AgentSessionSnapshot> WorkspaceSessions,
+    AgentTranscriptPage InitialTranscript,
+    AgentChatPermissionProjection Permissions);
+
+internal interface IAgentChatSnapshotGateway
+{
+    event Action<AgentChatSnapshotProjection>? ChatSnapshotReloaded;
+
+    Task<AgentChatSnapshotProjection> LoadChatSnapshotAsync(
+        AgentChatSnapshotRequest request,
+        CancellationToken cancellationToken = default);
+
+    void CompleteChatSnapshot(AgentChatSnapshotProjection snapshot, bool applied);
+}
+
 internal sealed record AgentDashboardRequest;
 internal sealed record AgentDashboardProjection(
     long Revision,
     IReadOnlyList<AgentProfileRecord> Profiles,
     IReadOnlyList<AgentWorkspaceRecord> Workspaces,
-    IReadOnlyList<AgentWorkspaceBindingRecord> WorkspaceBindings,
-    IReadOnlyList<AgentSessionRecord> RecentSessions,
-    IReadOnlyList<AgentRunCheckpointRecord> RecentCheckpoints,
-    IReadOnlyList<AgentTranscriptMessageRecord> RecentMessages);
+    IReadOnlyList<AgentWorkspaceBindingRecord> WorkspaceBindings);
 
-internal sealed record AgentSessionPageRequest(
-    string? WorkspaceId = null,
-    Guid? SessionId = null,
-    int Offset = 0,
-    int Limit = 100);
 internal sealed record AgentSessionSnapshot(AgentSessionRecord Session, AgentRunCheckpointRecord? Checkpoint);
-internal sealed record AgentSessionPage(long Revision, IReadOnlyList<AgentSessionSnapshot> Items, int TotalCount, bool HasMore);
 
 internal enum AgentTranscriptPageDirection { Recent, Before, After, Turn }
 internal sealed record AgentTranscriptPageRequest(
@@ -57,6 +79,46 @@ internal sealed record AgentTranscriptPageRequest(
     DateTimeOffset? AnchorCreatedAtUtc = null,
     Guid? AnchorTurnId = null);
 internal sealed record AgentTranscriptPage(long Revision, IReadOnlyList<AgentTurnRecord> Turns, bool HasMore);
+
+internal interface IAgentTranscriptPageGateway
+{
+    Task<AgentTranscriptPage> LoadTranscriptPageAsync(
+        AgentTranscriptPageRequest request,
+        CancellationToken cancellationToken = default);
+}
+
+internal interface IAgentChatSessionCommandGateway
+{
+    Task<AgentSessionSnapshot> CreateRootSessionAsync(
+        string title,
+        string profileId,
+        string? behaviorLoopId,
+        string workspaceId,
+        CancellationToken cancellationToken = default);
+
+    Task<AgentSessionSnapshot> UpdateSessionAsync(
+        AgentSessionRecord session,
+        CancellationToken cancellationToken = default);
+
+    Task DeleteSessionAsync(Guid sessionId, CancellationToken cancellationToken = default);
+}
+
+internal interface IAgentChatPermissionCommandGateway
+{
+    Task<AgentChatPermissionProjection> SetSessionUnrestrictedModeAsync(
+        Guid sessionId,
+        bool isEnabled,
+        CancellationToken cancellationToken = default);
+}
+
+internal interface IAgentChatRunGateway
+{
+    Task<AgentRunCheckpointRecord?> ApprovePendingPermissionAsync(
+        Guid sessionId,
+        string requestId,
+        bool approveForSession,
+        CancellationToken cancellationToken = default);
+}
 
 internal sealed record AgentCatalogRequest(
     AgentProfileRecord? Profile = null,
@@ -127,7 +189,8 @@ internal sealed record AgentRunCommand(
     string? WorkspaceId = null,
     IReadOnlyList<AgentAttachmentUploadRequest>? Attachments = null,
     Guid? RollbackAnchorTurnId = null,
-    string? PermissionRequestId = null);
+    string? PermissionRequestId = null,
+    bool ApproveForSession = false);
 internal sealed record AgentRunCommandResult(long Revision, AgentRunCheckpointRecord? Checkpoint);
 
 internal enum AgentPermissionCommandKind { Read, SetUnrestricted, SaveOverride, DeleteOverride, SaveSessionApproval }

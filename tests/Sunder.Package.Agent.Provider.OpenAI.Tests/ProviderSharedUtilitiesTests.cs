@@ -3,7 +3,7 @@ using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
-using Sunder.Sdk.Configuration;
+using Sunder.Sdk.Settings;
 using Xunit;
 
 namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
@@ -228,8 +228,8 @@ public sealed class ProviderSharedUtilitiesTests
             "utility.modelId",
             "vendor/default",
             [
-                new PackageConfigurationOption("vendor/default", "Default"),
-                new PackageConfigurationOption("vendor/other", "Other"),
+                new PackageSettingsOption("vendor/default", "Default"),
+                new PackageSettingsOption("vendor/other", "Other"),
             ],
             value => string.Equals(value?.Trim(), "vendor/legacy", StringComparison.OrdinalIgnoreCase)
                 ? "vendor/other"

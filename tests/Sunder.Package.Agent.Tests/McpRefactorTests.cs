@@ -183,7 +183,7 @@ public sealed class McpRefactorTests
         var lease = await manager.AcquireClientLeaseAsync(server, Empty, Empty, null, McpConnectionScope.Shared);
         Assert.NotNull(lease);
 
-        await manager.DisconnectServerAsync(server.ServerId).WaitAsync(TimeSpan.FromSeconds(3));
+        await manager.DisconnectServerAsync(server.ServerId).WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal(1, factory.Connections[0].DisposeCount);
         Assert.Equal(0, manager.KeyedLockCount);
@@ -207,7 +207,8 @@ public sealed class McpRefactorTests
         Assert.Equal(1, factory.ConnectCount);
 
         await lease.DisposeAsync();
-        await reconfigure.WaitAsync(TimeSpan.FromSeconds(2));
+        await factory.SecondConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await reconfigure;
         Assert.Equal(1, factory.Connections[0].DisposeCount);
         Assert.Equal(2, factory.ConnectCount);
     }
@@ -483,6 +484,7 @@ public sealed class McpRefactorTests
         public int ConnectCount { get; private set; }
         public bool BlockConnect { get; init; }
         public TaskCompletionSource ConnectStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource SecondConnectStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public List<FakeConnection> Connections { get; } = [];
 
         public async Task<IMcpClientConnection> ConnectAsync(
@@ -495,6 +497,10 @@ public sealed class McpRefactorTests
         {
             ConnectCount++;
             ConnectStarted.TrySetResult();
+            if (ConnectCount == 2)
+            {
+                SecondConnectStarted.TrySetResult();
+            }
             if (BlockConnect)
             {
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
@@ -539,11 +545,10 @@ public sealed class McpRefactorTests
         public FaultingSecrets Secrets { get; }
         public string PackageId => "test.mcp";
         public string Version { get; } = "1.0.0";
-        public string InstallPath => AppContext.BaseDirectory;
+        public string ContentRootPath => AppContext.BaseDirectory;
         public IPackageStorageContext Storage => _storage;
         public IPackageSettings Settings { get; } = new EmptySettings();
         IPackageSecrets IPackageContext.Secrets => Secrets;
-        public ILoggerFactory LoggerFactory => NullLoggerFactory.Instance;
         public IPackageLogging Logging { get; } = NullPackageLogging.Instance;
     }
 

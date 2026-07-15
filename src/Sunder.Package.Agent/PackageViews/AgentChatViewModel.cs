@@ -15,7 +15,7 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 {
-    private const int InitialTranscriptTurnLimit = 60;
+    private const int InitialTranscriptTurnLimit = 45;
     private const int OlderTranscriptTurnPageSize = 30;
     private const int TranscriptVisibleRowLimit = 60;
     private const string SubsessionsViewId = "sunder.package.agent.subagents.sessions";
@@ -23,6 +23,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private readonly IAgentProfileGateway _profileService;
     private readonly IAgentWorkspaceGateway _workspaceService;
     private readonly IAgentSessionGateway _sessionService;
+    private readonly IAgentPermissionGateway _permissionService;
     private readonly IAgentAttachmentGateway? _attachmentService;
     private readonly IAgentRunGateway _runCoordinator;
     private readonly IAgentExecutionGateway? _warmupService;
@@ -35,15 +36,27 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private readonly AgentComposerState _composer = new();
     private readonly AgentPermissionPanelState _permissionPanel;
     private readonly IAgentRuntimeAvailability? _runtimeAvailability;
+    private readonly IAgentChatSnapshotGateway? _chatSnapshotGateway;
+    private readonly IAgentTranscriptPageGateway? _transcriptPageGateway;
+    private readonly IAgentChatSessionCommandGateway? _chatSessionCommandGateway;
+    private readonly IAgentChatPermissionCommandGateway? _chatPermissionCommandGateway;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly AsyncOnce _initialization = new();
     private readonly PresentationTaskScope _backgroundTasks = new();
+    private readonly SemaphoreSlim _selectionPersistenceGate = new(1, 1);
+    private readonly Dictionary<Guid, AgentSessionSnapshot> _snapshotSessions = [];
+    private readonly Dictionary<Guid, string> _sessionDrafts = [];
     private AgentSessionListItemViewModel? _observedSelectedSession;
+    private readonly object _chatSnapshotRequestLock = new();
+    private CancellationTokenSource? _chatSnapshotRequestCancellation;
     private string _globalStatusText = string.Empty;
     private bool _isReconcilingSessionSelection;
     private bool _isRestoringReconciledSessionSelection;
     private bool _suppressWorkspaceSelection;
-    private bool _suppressPermissionState;
+    private int _chatSnapshotRequestGeneration;
+    private bool _isApplyingChatSnapshot;
+    private bool _isInitialized;
+    private bool _hasStartupError;
     private bool _disposed;
 
     public AgentChatViewModel(
@@ -63,6 +76,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _profileService = profileService;
         _workspaceService = workspaceService;
         _sessionService = sessionService;
+        _permissionService = permissionService;
         _attachmentService = attachmentService;
         _runCoordinator = runCoordinator;
         _warmupService = warmupService;
@@ -71,6 +85,14 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _shellViewService = shellViewService;
         _permissionPanel = new AgentPermissionPanelState(permissionService, runCoordinator);
         _runtimeAvailability = profileService as IAgentRuntimeAvailability;
+        _chatSnapshotGateway = profileService as IAgentChatSnapshotGateway;
+        _transcriptPageGateway = sessionService as IAgentTranscriptPageGateway;
+        _chatSessionCommandGateway = sessionService as IAgentChatSessionCommandGateway;
+        _chatPermissionCommandGateway = permissionService as IAgentChatPermissionCommandGateway;
+        if (_chatSnapshotGateway is not null)
+        {
+            _chatSnapshotGateway.ChatSnapshotReloaded += OnChatSnapshotReloaded;
+        }
         if (_runtimeAvailability is not null)
         {
             _runtimeAvailability.ConnectionStateChanged += OnRuntimeConnectionStateChanged;
@@ -107,30 +129,6 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _sessionService.RunActivityChanged += OnRunActivityChanged;
     }
 
-    public Task InitializeAsync(CancellationToken cancellationToken = default)
-        => _initialization.RunAsync(InitializeCoreAsync, cancellationToken);
-
-    private async Task InitializeCoreAsync(CancellationToken cancellationToken)
-    {
-        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken, _lifetimeCancellation.Token);
-        var lifetimeToken = linkedCancellation.Token;
-        if (_runtimeAvailability is { IsRuntimeAvailable: false })
-        {
-            SetGlobalStatus("Agent Runtime is unavailable. Reconnecting...");
-        }
-        await _workspaceService.InitializeAsync(lifetimeToken);
-        var selectedProfileId = _selectionState is null
-            ? null
-            : await _selectionState.GetSelectedProfileIdAsync(lifetimeToken);
-        var selectedWorkspaceId = _selectionState is null
-            ? null
-            : await _selectionState.GetSelectedWorkspaceIdAsync(lifetimeToken);
-        ReloadProfiles(selectedProfileId);
-        ReloadWorkspaces(selectedWorkspaceId);
-        ScheduleSelectedWorkspaceWarmup();
-    }
-
     public ObservableCollection<AgentWorkspaceRecord> Workspaces { get; } = [];
 
     public ObservableCollection<AgentProfileRecord> Profiles { get; } = [];
@@ -151,6 +149,10 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     public event Action? TranscriptChanged;
 
     public event Action? TranscriptChanging;
+
+    internal bool IsInitialized => _isInitialized;
+
+    internal Guid? DisplayedTranscriptSessionId => DisplayedSession?.SessionId;
 
     public bool IsSelectedSessionRunActive => SelectedSession?.IsRunActive == true;
 
@@ -283,39 +285,11 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private string _setupDescription =
         "Create an Agent, select a workspace and session, then start chatting.";
 
-    public bool IsUnrestrictedModeEnabled
-    {
-        get => _permissionPanel.IsUnrestrictedModeEnabled;
-        set
-        {
-            if (_permissionPanel.IsUnrestrictedModeEnabled == value)
-            {
-                return;
-            }
-
-            var status = _permissionPanel.SetUnrestrictedMode(value);
-            OnPropertyChanged();
-            OnIsUnrestrictedModeEnabledChanged(value, status);
-        }
-    }
-
     [ObservableProperty]
     private bool _isSendOnEnterEnabled = true;
 
     [ObservableProperty]
     private bool _isComposerExpanded;
-
-    public bool HasPendingPermissionRequests => _permissionPanel.HasRequests;
-
-    private void OnIsUnrestrictedModeEnabledChanged(bool value, string status)
-    {
-        if (_suppressPermissionState || SelectedSession is null || string.IsNullOrWhiteSpace(status))
-        {
-            return;
-        }
-
-        ApplySessionStatus(SelectedSession, status);
-    }
 
     partial void OnIsComposerExpandedChanged(bool value)
     {
@@ -335,6 +309,11 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             SelectedSession.DraftMessage = value;
         }
 
+        if (SelectedSession is not null)
+        {
+            _sessionDrafts[SelectedSession.SessionId] = value;
+        }
+
         SendMessageCommand.NotifyCanExecuteChanged();
         ClearComposerCommand.NotifyCanExecuteChanged();
     }
@@ -348,70 +327,6 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ShowStopAction));
         SendMessageCommand.NotifyCanExecuteChanged();
         ClearComposerCommand.NotifyCanExecuteChanged();
-    }
-
-    [RelayCommand]
-    private async Task ApprovePermissionAsync(AgentPendingPermissionRequestRecord? request)
-    {
-        var selectedSession = SelectedSession;
-        if (
-            selectedSession is null
-            || request is null
-            || string.IsNullOrWhiteSpace(request.RequestId)
-        )
-        {
-            return;
-        }
-
-        var summary = await _permissionPanel.ApproveAsync(request, approveForSession: false);
-        NotifyPermissionPanelChanged();
-        ApplySessionStatus(
-            selectedSession,
-            summary
-        );
-        SyncSelectedSessionState(selectedSession.SessionId);
-    }
-
-    [RelayCommand]
-    private async Task ApprovePermissionForSessionAsync(
-        AgentPendingPermissionRequestRecord? request
-    )
-    {
-        var selectedSession = SelectedSession;
-        if (
-            selectedSession is null
-            || request is null
-            || string.IsNullOrWhiteSpace(request.RequestId)
-        )
-        {
-            return;
-        }
-
-        var summary = await _permissionPanel.ApproveAsync(request, approveForSession: true);
-        NotifyPermissionPanelChanged();
-        ApplySessionStatus(
-            selectedSession,
-            summary
-        );
-        SyncSelectedSessionState(selectedSession.SessionId);
-    }
-
-    [RelayCommand]
-    private async Task DenyPermissionAsync(AgentPendingPermissionRequestRecord? request)
-    {
-        var selectedSession = SelectedSession;
-        if (
-            selectedSession is null
-            || request is null
-            || string.IsNullOrWhiteSpace(request.RequestId)
-        )
-        {
-            return;
-        }
-
-        ApplySessionStatus(selectedSession, await _permissionPanel.DenyAsync(request));
-        NotifyPermissionPanelChanged();
-        SyncSelectedSessionState(selectedSession.SessionId);
     }
 
     [RelayCommand(CanExecute = nameof(CanClearComposer))]
@@ -475,7 +390,10 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         }
 
         var profileId = profile.ProfileId;
-        var chatBinding = _profileService.GetChatBinding(profile.ProfileId);
+        var chatBinding = (profile.ModelBindings ?? []).FirstOrDefault(binding => string.Equals(
+            binding.CapabilityKind,
+            AgentModelCapabilityKinds.Chat,
+            StringComparison.OrdinalIgnoreCase));
         if (
             string.IsNullOrWhiteSpace(chatBinding?.ProviderId)
             || string.IsNullOrWhiteSpace(chatBinding.ModelId)
@@ -488,9 +406,15 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             return;
         }
 
+        var existingTranscript = await LoadTranscriptPageAsync(
+            new AgentTranscriptPageRequest(
+                sessionId,
+                AgentTranscriptPageDirection.Recent,
+                500),
+            _lifetimeCancellation.Token);
         var submission = _composer.TryBeginSubmission(
             sessionId,
-            _sessionService.ListTurns(sessionId).Select(turn => turn.TurnId).ToHashSet());
+            existingTranscript.Turns.Select(turn => turn.TurnId).ToHashSet());
         if (submission is null)
         {
             ApplySessionStatus(
@@ -549,7 +473,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                 );
             }
 
-            CompleteOrRestoreComposerSubmission(selectedSession, submission);
+            await CompleteOrRestoreComposerSubmissionAsync(selectedSession, submission);
 
             if (SelectedSession?.SessionId == sessionId)
             {
@@ -563,7 +487,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         }
         catch
         {
-            CompleteOrRestoreComposerSubmission(selectedSession, submission);
+            await CompleteOrRestoreComposerSubmissionAsync(selectedSession, submission);
             throw;
         }
         finally
@@ -618,11 +542,17 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void CompleteOrRestoreComposerSubmission(
+    private async Task CompleteOrRestoreComposerSubmissionAsync(
         AgentSessionListItemViewModel submittedSession,
         AgentComposerSubmission submission)
     {
-        var wasCommitted = _sessionService.ListTurns(submission.SessionId)
+        var transcript = await LoadTranscriptPageAsync(
+            new AgentTranscriptPageRequest(
+                submission.SessionId,
+                AgentTranscriptPageDirection.Recent,
+                500),
+            _lifetimeCancellation.Token);
+        var wasCommitted = transcript.Turns
             .Any(turn => turn.Role == AgentMessageRole.User
                          && !submission.ExistingTurnIds.Contains(turn.TurnId));
         if (wasCommitted)
@@ -703,6 +633,16 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
         _disposed = true;
         _lifetimeCancellation.Cancel();
+        lock (_chatSnapshotRequestLock)
+        {
+            _chatSnapshotRequestCancellation?.Cancel();
+            _chatSnapshotRequestCancellation?.Dispose();
+            _chatSnapshotRequestCancellation = null;
+        }
+        if (_chatSnapshotGateway is not null)
+        {
+            _chatSnapshotGateway.ChatSnapshotReloaded -= OnChatSnapshotReloaded;
+        }
         if (_runtimeAvailability is not null)
         {
             _runtimeAvailability.ConnectionStateChanged -= OnRuntimeConnectionStateChanged;
@@ -747,17 +687,30 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                     _globalStatusText = string.Empty;
                 }
                 RefreshSetupState();
-                _backgroundTasks.Run(cancellationToken => InitializeAsync(cancellationToken));
             }
         });
 
     internal void ReportPresentationFailure(Exception exception)
-    {
-        if (!_disposed)
+        => RunOnUiThread(() =>
         {
-            SetGlobalStatus(exception.Message);
-        }
-    }
+            if (!_disposed)
+            {
+                SetGlobalStatus(exception.Message);
+            }
+        });
+
+    internal void ReportStartupFailure()
+        => RunOnUiThread(() =>
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _hasStartupError = true;
+            SetGlobalStatus("Unable to load Agent Chat. Navigate away and return to retry.");
+            RefreshSetupState();
+        });
 
     private void RunOnUiThread(Action action)
     {

@@ -1,5 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -12,7 +14,9 @@ using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Memory.Semantic;
 using Sunder.Package.Agent.Memory.Semantic.PackageViews;
 using Sunder.Package.Agent.Memory.Semantic.Services;
+using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.PackageViews;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Provider.Anthropic;
@@ -25,6 +29,7 @@ using Sunder.Package.Agent.Subagents.PackageViews;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Notifications;
 using Sunder.Sdk.Runtime;
 using Xunit;
 
@@ -61,6 +66,28 @@ public sealed class ViewLifecycleTests
     }
 
     [AvaloniaFact]
+    public async Task RuntimeBackedViews_ConstructWithoutWaitingForBlockedRuntime()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var runtime = new BlockingRuntimeClient();
+        var services = new ServiceCollection();
+        services.AddSingleton<IPackageRuntimeClient>(runtime);
+        services.AddSingleton<IPackageExtensionCatalog>(new RegressionTestExtensionCatalog());
+        new Sunder.Package.Agent.AppPackageModule().ConfigureAppServices(services, scope.Context);
+        new Sunder.Package.Agent.Memory.Semantic.AppPackageModule().ConfigureAppServices(services, scope.Context);
+        await using var provider = services.BuildServiceProvider();
+
+        var profiles = ActivatorUtilities.CreateInstance<AgentProfilesView>(provider);
+        var workspaces = ActivatorUtilities.CreateInstance<AgentWorkspacesView>(provider);
+        var memory = ActivatorUtilities.CreateInstance<MemoryInspectorView>(provider);
+
+        Assert.Equal(0, runtime.InvocationCount);
+        profiles.Dispose();
+        workspaces.Dispose();
+        memory.Dispose();
+    }
+
+    [AvaloniaFact]
     public void DisposableView_ActivatesAndReleasesOwnedSubscriptions()
     {
         using var view = new SkillSettingsView();
@@ -89,6 +116,240 @@ public sealed class ViewLifecycleTests
     }
 
     [AvaloniaFact]
+    public async Task AgentChatView_NavigationAwaitsAppliedAndPlacedInitialTranscript()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var services = CreateAgentServices(scope);
+        using var profileService = services.ProfileService;
+        await profileService.CreateProfileAsync("Navigation profile");
+        var workspace = services.WorkspaceService.CreateWorkspace("Navigation workspace");
+        var session = services.SessionService.CreateSession(
+            "Navigation session",
+            workspaceId: workspace.WorkspaceId);
+        services.SessionService.AppendTextTurn(
+            session.SessionId,
+            AgentMessageRole.Assistant,
+            "Initial response.");
+        var selectionState = new AgentChatSelectionStateService(scope.Context);
+        var attachmentService = new AgentAttachmentService(scope.Context);
+        using var view = new AgentChatView(
+            profileService,
+            services.WorkspaceService,
+            services.SessionService,
+            NoOpPermissionGateway.Instance,
+            NoOpRunGateway.Instance,
+            selectionState,
+            new AgentToolPresentationService(),
+            new AgentExecutionTargetWarmupService(
+                services.WorkspaceService,
+                services.TargetService),
+            null!,
+            attachmentService,
+            NullPackageNotificationService.Instance);
+        var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
+        var window = new Window { Width = 900, Height = 700, Content = view };
+        window.Show();
+        Assert.Empty(viewModel.Profiles);
+        var transcriptNotificationsOnUi = new List<bool>();
+        viewModel.Messages.CollectionChanged += (_, _) =>
+            transcriptNotificationsOnUi.Add(Dispatcher.UIThread.CheckAccess());
+
+        await Task.Run(async () => await view.OnNavigatedToAsync(new PackageViewNavigationContext(
+            "sunder.package.agent.chat",
+            new Dictionary<string, string?>())));
+
+        Assert.Single(viewModel.Messages);
+        Assert.Equal("Initial response.", Assert.IsType<AgentTextTranscriptRowViewModel>(
+            viewModel.Messages[0]).Content);
+        Assert.NotEmpty(transcriptNotificationsOnUi);
+        Assert.All(transcriptNotificationsOnUi, Assert.True);
+        var transcript = GetTranscriptScrollViewer(view);
+        Assert.Equal(1d, transcript.Opacity);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task AgentChatView_WarmNavigationLoadsSnapshotExactlyOnceWithoutResetOrSettle()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var services = CreateAgentServices(scope);
+        using var profileService = services.ProfileService;
+        await profileService.CreateProfileAsync("Warm profile");
+        var workspace = services.WorkspaceService.CreateWorkspace("Warm workspace");
+        var session = services.SessionService.CreateSession("Warm session", workspaceId: workspace.WorkspaceId);
+        services.SessionService.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, "Warm response.");
+        var sessionGateway = new CountingSessionGateway(services.SessionService);
+        using var view = new AgentChatView(
+            profileService,
+            services.WorkspaceService,
+            sessionGateway,
+            NoOpPermissionGateway.Instance,
+            NoOpRunGateway.Instance,
+            new AgentChatSelectionStateService(scope.Context),
+            new AgentToolPresentationService(),
+            new AgentExecutionTargetWarmupService(services.WorkspaceService, services.TargetService),
+            null!,
+            new AgentAttachmentService(scope.Context),
+            NullPackageNotificationService.Instance);
+        var window = new Window { Width = 900, Height = 700, Content = view };
+        window.Show();
+        var context = new PackageViewNavigationContext(
+            "sunder.package.agent.chat",
+            new Dictionary<string, string?>());
+        await Task.Run(async () => await view.OnNavigatedToAsync(context));
+        var transcript = GetTranscriptScrollViewer(view);
+        var settledOperation = GetSettledScrollOperation(view);
+        var opacityChanges = 0;
+        transcript.PropertyChanged += (_, change) =>
+        {
+            if (change.Property.Name == "Opacity")
+            {
+                opacityChanges++;
+            }
+        };
+
+        await Task.Run(async () => await view.OnNavigatedToAsync(context));
+
+        Assert.Equal(1, sessionGateway.RecentTranscriptReadCount);
+        Assert.Equal(0, opacityChanges);
+        Assert.Same(settledOperation, GetSettledScrollOperation(view));
+        Assert.Equal(1d, transcript.Opacity);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task AgentChatView_NavigationCancellationStopsInitialLayoutPlacement()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var services = CreateAgentServices(scope);
+        using var profileService = services.ProfileService;
+        await profileService.CreateProfileAsync("Cancellation profile");
+        var workspace = services.WorkspaceService.CreateWorkspace("Cancellation workspace");
+        var session = services.SessionService.CreateSession(
+            "Cancellation session",
+            workspaceId: workspace.WorkspaceId);
+        for (var index = 0; index < 60; index++)
+        {
+            services.SessionService.AppendTextTurn(
+                session.SessionId,
+                AgentMessageRole.Assistant,
+                $"Response {index}: {new string('x', 200)}");
+        }
+
+        using var view = new AgentChatView(
+            profileService,
+            services.WorkspaceService,
+            services.SessionService,
+            NoOpPermissionGateway.Instance,
+            NoOpRunGateway.Instance,
+            new AgentChatSelectionStateService(scope.Context),
+            new AgentToolPresentationService(),
+            new AgentExecutionTargetWarmupService(services.WorkspaceService, services.TargetService),
+            null!,
+            new AgentAttachmentService(scope.Context),
+            NullPackageNotificationService.Instance);
+        var window = new Window { Width = 900, Height = 700, Content = view };
+        window.Show();
+        var transcript = GetTranscriptScrollViewer(view);
+        using var cancellation = new CancellationTokenSource();
+        var placementStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationTriggered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var layoutUpdates = 0;
+        EventHandler? layoutHandler = null;
+        layoutHandler = (_, _) =>
+        {
+            layoutUpdates++;
+            cancellationTriggered.TrySetResult();
+        };
+        transcript.PropertyChanged += (_, change) =>
+        {
+            if (change.Property.Name == "Opacity" && transcript.Opacity == 0)
+            {
+                transcript.LayoutUpdated += layoutHandler;
+                placementStarted.TrySetResult();
+            }
+        };
+        var context = new PackageViewNavigationContext(
+            "sunder.package.agent.chat",
+            new Dictionary<string, string?>());
+
+        var cancelOnLayout = Task.Run(async () =>
+        {
+            await cancellationTriggered.Task;
+            cancellation.Cancel();
+        });
+        var navigation = Task.Run(async () => await view.OnNavigatedToAsync(context, cancellation.Token));
+        await placementStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await cancellationTriggered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await cancelOnLayout;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => navigation);
+        await GetSettledScrollOperation(view).WaitAsync(TimeSpan.FromSeconds(3));
+        transcript.LayoutUpdated -= layoutHandler;
+        var updatesAfterCancellation = layoutUpdates;
+        await Task.Delay(50);
+
+        Assert.Equal(updatesAfterCancellation, layoutUpdates);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task AgentChatView_NavigationPresentsRetryableStartupErrorWithoutHostFault()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var services = CreateAgentServices(scope);
+        using var profileService = services.ProfileService;
+        var workspaceGateway = new FailOnceWorkspaceGateway(services.WorkspaceService);
+        using var view = new AgentChatView(
+            profileService,
+            workspaceGateway,
+            services.SessionService,
+            NoOpPermissionGateway.Instance,
+            NoOpRunGateway.Instance,
+            new AgentChatSelectionStateService(scope.Context),
+            new AgentToolPresentationService(),
+            new AgentExecutionTargetWarmupService(
+                services.WorkspaceService,
+                services.TargetService),
+            null!,
+            new AgentAttachmentService(scope.Context),
+            NullPackageNotificationService.Instance);
+        var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
+        var window = new Window { Width = 900, Height = 700, Content = view };
+        window.Show();
+        var context = new PackageViewNavigationContext(
+            "sunder.package.agent.chat",
+            new Dictionary<string, string?>());
+        var failureNotificationsOnUi = new List<bool>();
+        viewModel.PropertyChanged += (_, eventArgs) =>
+        {
+            if (eventArgs.PropertyName is nameof(AgentChatViewModel.SetupTitle)
+                or nameof(AgentChatViewModel.SetupDescription)
+                or nameof(AgentChatViewModel.StatusText))
+            {
+                failureNotificationsOnUi.Add(Dispatcher.UIThread.CheckAccess());
+            }
+        };
+
+        var firstNavigation = Task.Run(async () => await view.OnNavigatedToAsync(context));
+        await workspaceGateway.FirstInitializationStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.False(firstNavigation.IsCompleted);
+        workspaceGateway.FailFirstInitialization.TrySetResult();
+        await firstNavigation;
+
+        Assert.Equal("Unable to load Agent Chat", viewModel.SetupTitle);
+        Assert.Contains("return to retry", viewModel.SetupDescription, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Unable to load Agent Chat", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.NotEmpty(failureNotificationsOnUi);
+        Assert.All(failureNotificationsOnUi, Assert.True);
+
+        await Task.Run(async () => await view.OnNavigatedToAsync(context));
+
+        Assert.Equal(2, workspaceGateway.InitializeCount);
+        Assert.Equal("Create an agent before chatting", viewModel.SetupTitle);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public async Task ProfilesView_DisposeStopsOwnedViewModelFromReloading()
     {
         using var scope = RegressionTestPackageScope.Create();
@@ -97,6 +358,9 @@ public sealed class ViewLifecycleTests
         await profileService.CreateProfileAsync("Initial profile");
         var view = new AgentProfilesView(profileService);
         var viewModel = Assert.IsType<AgentProfilesViewModel>(view.DataContext);
+        await view.OnNavigatedToAsync(new PackageViewNavigationContext(
+            "sunder.package.agent.profiles",
+            new Dictionary<string, string?>()));
         await WaitUntilAsync(() => viewModel.Profiles.Count > 0 && !viewModel.IsBusy);
         var profileCount = viewModel.Profiles.Count;
 
@@ -109,7 +373,7 @@ public sealed class ViewLifecycleTests
     }
 
     [AvaloniaFact]
-    public void WorkspacesView_DisposeStopsOwnedViewModelFromReloading()
+    public async Task WorkspacesView_DisposeStopsOwnedViewModelFromReloading()
     {
         using var scope = RegressionTestPackageScope.Create();
         var services = CreateAgentServices(scope);
@@ -122,6 +386,9 @@ public sealed class ViewLifecycleTests
             services.ExtensionCatalog,
             warmup);
         var viewModel = Assert.IsType<AgentWorkspacesViewModel>(view.DataContext);
+        await view.OnNavigatedToAsync(new PackageViewNavigationContext(
+            "sunder.package.agent.workspaces",
+            new Dictionary<string, string?>()));
         var workspaceCount = viewModel.Workspaces.Count;
 
         view.Dispose();
@@ -165,10 +432,14 @@ public sealed class ViewLifecycleTests
             [inspector],
             culture: null)!;
         var view = new MemoryInspectorView(viewModel);
+        var navigation = view.OnNavigatedToAsync(new PackageViewNavigationContext(
+            "sunder.package.agent.memory.semantic.inspector",
+            new Dictionary<string, string?>())).AsTask();
         await embeddingProvider.ReadinessStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         view.Dispose();
         await embeddingProvider.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => navigation);
 
         Assert.Null(view.DataContext);
         Assert.Equal("Loading semantic status...", viewModel.SemanticStatusText);
@@ -487,6 +758,204 @@ public sealed class ViewLifecycleTests
             await Task.CompletedTask;
             yield break;
         }
+    }
+
+    private sealed class FailOnceWorkspaceGateway(IAgentWorkspaceGateway inner)
+        : IAgentWorkspaceGateway
+    {
+        private int _initializeCount;
+
+        public int InitializeCount => Volatile.Read(ref _initializeCount);
+        public TaskCompletionSource FirstInitializationStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource FailFirstInitialization { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public event Action? WorkspacesChanged
+        {
+            add => inner.WorkspacesChanged += value;
+            remove => inner.WorkspacesChanged -= value;
+        }
+        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => inner.ListWorkspaces();
+        public AgentWorkspaceRecord? GetWorkspace(string workspaceId) => inner.GetWorkspace(workspaceId);
+        public AgentWorkspaceRecord CreateWorkspace(string displayName) => inner.CreateWorkspace(displayName);
+        public void SaveWorkspace(string workspaceId, string displayName, string? description)
+            => inner.SaveWorkspace(workspaceId, displayName, description);
+        public void SaveWorkspaceAggregate(
+            string workspaceId,
+            string displayName,
+            string? description,
+            IReadOnlyList<AgentWorkspacePathRecord> paths,
+            IReadOnlyList<AgentWorkspaceDocumentRecord> documents,
+            string? executionTargetId)
+            => inner.SaveWorkspaceAggregate(
+                workspaceId,
+                displayName,
+                description,
+                paths,
+                documents,
+                executionTargetId);
+        public void DeleteWorkspace(string workspaceId) => inner.DeleteWorkspace(workspaceId);
+        public IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId)
+            => inner.ListBindings(workspaceId);
+        public AgentWorkspaceBindingRecord SavePrimaryExecutionBinding(
+            string workspaceId,
+            string contributionId,
+            string displayRole = AgentWorkspaceBindingRoles.PrimaryExecutionTarget)
+            => inner.SavePrimaryExecutionBinding(workspaceId, contributionId, displayRole);
+        public void RemovePrimaryExecutionBinding(string workspaceId)
+            => inner.RemovePrimaryExecutionBinding(workspaceId);
+
+        public async Task InitializeAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Interlocked.Increment(ref _initializeCount) == 1)
+            {
+                FirstInitializationStarted.TrySetResult();
+                await FailFirstInitialization.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                throw new InvalidOperationException("Injected startup failure.");
+            }
+
+            await inner.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private sealed class CountingSessionGateway(IAgentSessionGateway inner) : IAgentSessionGateway
+    {
+        public int RecentTranscriptReadCount { get; private set; }
+
+        public event Action<Guid>? SessionChanged
+        {
+            add => inner.SessionChanged += value;
+            remove => inner.SessionChanged -= value;
+        }
+
+        public event Action<Guid, AgentTurnRecord>? TurnChanged
+        {
+            add => inner.TurnChanged += value;
+            remove => inner.TurnChanged -= value;
+        }
+
+        public event Action<Guid>? TranscriptReset
+        {
+            add => inner.TranscriptReset += value;
+            remove => inner.TranscriptReset -= value;
+        }
+
+        public event Action<Guid, AgentRunActivityUpdate>? RunActivityChanged
+        {
+            add => inner.RunActivityChanged += value;
+            remove => inner.RunActivityChanged -= value;
+        }
+
+        public IReadOnlyList<AgentSessionRecord> ListSessions() => inner.ListSessions();
+        public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId)
+            => inner.ListSessionsForWorkspace(workspaceId);
+        public AgentSessionRecord CreateSession(string title, Guid? parentSessionId = null, Guid? rootSessionId = null,
+            Guid? parentRunId = null, long? parentRunRevision = null, string? parentToolCallId = null,
+            string? taskId = null, string? profileId = null, string? behaviorLoopId = null,
+            string? agentKind = null, string? workspaceId = null)
+            => inner.CreateSession(title, parentSessionId, rootSessionId, parentRunId, parentRunRevision,
+                parentToolCallId, taskId, profileId, behaviorLoopId, agentKind, workspaceId);
+        public AgentSessionRecord? GetSession(Guid sessionId) => inner.GetSession(sessionId);
+        public void UpdateSession(AgentSessionRecord session) => inner.UpdateSession(session);
+        public void DeleteSession(Guid sessionId) => inner.DeleteSession(sessionId);
+        public IReadOnlyList<AgentTurnRecord> ListTurns(Guid sessionId) => inner.ListTurns(sessionId);
+        public IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit)
+        {
+            RecentTranscriptReadCount++;
+            return inner.ListRecentTurns(sessionId, limit);
+        }
+        public IReadOnlyList<AgentTurnRecord> ListTurnsBefore(
+            Guid sessionId, DateTimeOffset beforeCreatedAtUtc, Guid beforeTurnId, int limit)
+            => inner.ListTurnsBefore(sessionId, beforeCreatedAtUtc, beforeTurnId, limit);
+        public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(
+            Guid sessionId, DateTimeOffset afterCreatedAtUtc, Guid afterTurnId, int limit)
+            => inner.ListTurnsAfter(sessionId, afterCreatedAtUtc, afterTurnId, limit);
+        public AgentTurnRecord? GetTurn(Guid turnId) => inner.GetTurn(turnId);
+        public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => inner.GetLatestCheckpoint(sessionId);
+    }
+
+    private sealed class BlockingRuntimeClient : IPackageRuntimeClient
+    {
+        private int _invocationCount;
+
+        public bool IsAvailable => true;
+        public int InvocationCount => Volatile.Read(ref _invocationCount);
+
+        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            PackageRuntimeOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            Interlocked.Increment(ref _invocationCount);
+            return new ValueTask<TResponse>(WaitForCancellationAsync<TResponse>(cancellationToken));
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            PackageRuntimeStream<TRequest, TEvent> stream,
+            TRequest request,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
+
+        private static async Task<T> WaitForCancellationAsync<T>(CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Cancellation was expected.");
+        }
+    }
+
+    private static Task GetSettledScrollOperation(AgentChatView view)
+    {
+        var behavior = typeof(AgentChatView)
+            .GetField("_transcriptBehavior", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(view)!;
+        var coordinator = behavior.GetType()
+            .GetField("_scrollCoordinator", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(behavior)!;
+        return Assert.IsAssignableFrom<Task>(coordinator.GetType()
+            .GetField("_settledScrollOperation", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(coordinator));
+    }
+
+    private static ScrollViewer GetTranscriptScrollViewer(AgentChatView view)
+        => Assert.IsType<ScrollViewer>(view.FindControl<ScrollViewer>("TranscriptScrollViewer"));
+
+    private sealed class NoOpPermissionGateway : IAgentPermissionGateway
+    {
+        public static NoOpPermissionGateway Instance { get; } = new();
+        public AgentSessionPermissionState GetSessionState(Guid sessionId) => new(sessionId, false);
+        public void SetSessionUnrestrictedMode(Guid sessionId, bool isEnabled) { }
+        public IReadOnlyList<AgentPermissionActionDescriptor> ListActions() => [];
+        public IReadOnlyList<AgentPermissionOverride> ListOverrides() => [];
+        public void SaveOverride(string actionId, string boundaryId, AgentPermissionDecision decision) { }
+        public void DeleteOverride(string actionId, string boundaryId) { }
+        public IReadOnlyList<AgentPendingPermissionRequestRecord> ListPendingRequestsForSessionTree(Guid sessionId) => [];
+        public void SaveSessionApproval(Guid sessionId, string actionId, string boundaryId) { }
+    }
+
+    private sealed class NoOpRunGateway : IAgentRunGateway
+    {
+        public static NoOpRunGateway Instance { get; } = new();
+        public Task<AgentRunCheckpointRecord> QueueUserMessageAsync(Guid sessionId, string profileId,
+            string userMessage, string workspaceId, IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<AgentRunCheckpointRecord> RollbackAndQueueUserMessageAsync(Guid sessionId,
+            Guid rollbackAnchorTurnId, string profileId, string userMessage, string workspaceId,
+            IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<AgentRunCheckpointRecord?> StopAsync(Guid sessionId,
+            CancellationToken cancellationToken = default) => Task.FromResult<AgentRunCheckpointRecord?>(null);
+        public Task<AgentRunCheckpointRecord?> ApprovePendingPermissionAsync(Guid sessionId, string requestId,
+            CancellationToken cancellationToken = default) => Task.FromResult<AgentRunCheckpointRecord?>(null);
+        public Task<AgentRunCheckpointRecord?> DenyPendingPermissionAsync(Guid sessionId, string requestId,
+            CancellationToken cancellationToken = default) => Task.FromResult<AgentRunCheckpointRecord?>(null);
     }
 
     private sealed class BlockingEmbeddingProvider : IAgentEmbeddingProvider

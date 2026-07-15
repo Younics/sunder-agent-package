@@ -404,7 +404,6 @@ static Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopResult.operator !=
 static Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopResult.operator ==(Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopResult? left, Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopResult? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.operator !=(Sunder.Package.Agent.Contracts.Models.AgentChatClientContext? left, Sunder.Package.Agent.Contracts.Models.AgentChatClientContext? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.operator ==(Sunder.Package.Agent.Contracts.Models.AgentChatClientContext? left, Sunder.Package.Agent.Contracts.Models.AgentChatClientContext? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentChatClientContextLogExtensions.LogProviderEventAsync(this Sunder.Package.Agent.Contracts.Models.AgentChatClientContext! context, Sunder.Package.Agent.Contracts.Models.AgentLogLevel level, string! eventName, string! message, long? elapsedMilliseconds = null, System.Collections.Generic.IReadOnlyDictionary<string!, object?>? attributes = null, System.Exception? exception = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 static Sunder.Package.Agent.Contracts.Models.AgentChatModelSettings.operator !=(Sunder.Package.Agent.Contracts.Models.AgentChatModelSettings? left, Sunder.Package.Agent.Contracts.Models.AgentChatModelSettings? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentChatModelSettings.operator ==(Sunder.Package.Agent.Contracts.Models.AgentChatModelSettings? left, Sunder.Package.Agent.Contracts.Models.AgentChatModelSettings? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentChatModelSettingsJson.Parse(string? settingsJson) -> Sunder.Package.Agent.Contracts.Models.AgentChatModelSettings!
@@ -679,7 +678,6 @@ Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoopRuntime.IsCurrentRun(
 Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoopRuntime.ListReadyToolsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentRuntimeTool!>!>
 Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoopRuntime.ListRecentTurns(int limit) -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentTurnRecord!>!
 Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoopRuntime.ListTurns() -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentTurnRecord!>!
-Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoopRuntime.LogEvent(Sunder.Package.Agent.Contracts.Models.AgentLogLevel level, string! eventName, string! message, long? elapsedMilliseconds = null, System.Collections.Generic.IReadOnlyDictionary<string!, object?>? attributes = null, System.Exception? exception = null) -> void
 Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoopRuntime.PublishLifecycleEventAsync(Sunder.Package.Agent.Contracts.Models.AgentLifecycleEventKind kind, Sunder.Package.Agent.Contracts.Models.AgentRunStatus status, Sunder.Package.Agent.Contracts.Models.AgentTurnRecord? triggerTurn = null, Sunder.Package.Agent.Contracts.Models.AgentRunCheckpointRecord? checkpoint = null, bool isInterrupted = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoopRuntime.SaveCheckpoint(Sunder.Package.Agent.Contracts.Models.AgentRunStatus status, string? summary) -> Sunder.Package.Agent.Contracts.Models.AgentRunCheckpointRecord!
 Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoopRuntime.UpsertAssistantTurn(Sunder.Package.Agent.Contracts.Models.AgentTurnRecord? assistantTurn, string! content) -> Sunder.Package.Agent.Contracts.Models.AgentTurnRecord!
@@ -810,9 +808,7 @@ Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspaceExecutionResolver.ListWo
 Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspaceExecutionResolver.ResolveAsync(string! workspaceId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Contracts.Models.AgentWorkspaceExecutionResolution!>
 Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspacePathMigrationContributor
 Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspacePathMigrationContributor.CanMigrate(Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathMigrationContext! context) -> bool
-Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspacePathMigrationContributor.CompleteWorkspacePathMigration(Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathMigrationContext! context) -> void
 Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspacePathMigrationContributor.ContributorId.get -> string!
-Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspacePathMigrationContributor.GetLegacyWorkspacePaths(Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathMigrationContext! context) -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathMigrationItem!>!
 Sunder.Package.Agent.Contracts.IAgentRunContext
 Sunder.Package.Agent.Contracts.IAgentRunContext.IsInterrupted.get -> bool
 Sunder.Package.Agent.Contracts.IAgentRunContext.Revision.get -> long
@@ -973,13 +969,9 @@ Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopResult.Deconstruct(out Su
 Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopResult.Equals(Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopResult? other) -> bool
 Sunder.Package.Agent.Contracts.Models.AgentChatClientContext
 Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentChatClientContext!
-Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.AgentChatClientContext(string! ProviderId, string! ModelId, Sunder.Package.Agent.Contracts.Models.IAgentProviderEventSink? EventSink = null, System.Collections.Generic.IReadOnlyDictionary<string!, object?>? CorrelationAttributes = null) -> void
 Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.CorrelationAttributes.get -> System.Collections.Generic.IReadOnlyDictionary<string!, object?>?
 Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.CorrelationAttributes.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.Deconstruct(out string! ProviderId, out string! ModelId, out Sunder.Package.Agent.Contracts.Models.IAgentProviderEventSink? EventSink, out System.Collections.Generic.IReadOnlyDictionary<string!, object?>? CorrelationAttributes) -> void
 Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.Equals(Sunder.Package.Agent.Contracts.Models.AgentChatClientContext? other) -> bool
-Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.EventSink.get -> Sunder.Package.Agent.Contracts.Models.IAgentProviderEventSink?
-Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.EventSink.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.ModelId.get -> string!
 Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.ModelId.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.ProviderId.get -> string!
@@ -1431,13 +1423,6 @@ Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.Deconstruct(o
 Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.Equals(Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult? other) -> bool
 Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.WorkingSummary.get -> string?
 Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.WorkingSummary.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentLogLevel
-Sunder.Package.Agent.Contracts.Models.AgentLogLevel.Critical = 5 -> Sunder.Package.Agent.Contracts.Models.AgentLogLevel
-Sunder.Package.Agent.Contracts.Models.AgentLogLevel.Debug = 1 -> Sunder.Package.Agent.Contracts.Models.AgentLogLevel
-Sunder.Package.Agent.Contracts.Models.AgentLogLevel.Error = 4 -> Sunder.Package.Agent.Contracts.Models.AgentLogLevel
-Sunder.Package.Agent.Contracts.Models.AgentLogLevel.Information = 2 -> Sunder.Package.Agent.Contracts.Models.AgentLogLevel
-Sunder.Package.Agent.Contracts.Models.AgentLogLevel.Trace = 0 -> Sunder.Package.Agent.Contracts.Models.AgentLogLevel
-Sunder.Package.Agent.Contracts.Models.AgentLogLevel.Warning = 3 -> Sunder.Package.Agent.Contracts.Models.AgentLogLevel
 Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor
 Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor!
 Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor.AgentMcpServerDescriptor(string! ServerId, string! DisplayName, string? Description = null, string? StatusText = null) -> void
@@ -2729,8 +2714,55 @@ Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord.UpdatedAtUtc.get -> S
 Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord.UpdatedAtUtc.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord.WorkspaceId.get -> string!
 Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord.WorkspaceId.init -> void
-Sunder.Package.Agent.Contracts.Models.IAgentProviderEventSink
-Sunder.Package.Agent.Contracts.Models.IAgentProviderEventSink.WriteAsync(Sunder.Package.Agent.Contracts.Models.AgentLogLevel level, string! eventName, string! message, System.Collections.Generic.IReadOnlyDictionary<string!, object?>? attributes = null, System.Exception? exception = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+static Sunder.Package.Agent.Contracts.Models.AgentChatClientContextLogExtensions.LogProviderEventAsync(this Sunder.Package.Agent.Contracts.Models.AgentChatClientContext! context, Sunder.Sdk.Logging.PackageLogLevel level, string! eventName, string! message, long? elapsedMilliseconds = null, System.Collections.Generic.IReadOnlyDictionary<string!, object?>? attributes = null, System.Exception? exception = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoopRuntime.LogEvent(Sunder.Sdk.Logging.PackageLogLevel level, string! eventName, string! message, long? elapsedMilliseconds = null, System.Collections.Generic.IReadOnlyDictionary<string!, object?>? attributes = null, System.Exception? exception = null) -> void
+Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.AgentChatClientContext(string! ProviderId, string! ModelId, Sunder.Sdk.Logging.IPackageEventLogger? EventLogger = null, System.Collections.Generic.IReadOnlyDictionary<string!, object?>? CorrelationAttributes = null) -> void
+Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.Deconstruct(out string! ProviderId, out string! ModelId, out Sunder.Sdk.Logging.IPackageEventLogger? EventLogger, out System.Collections.Generic.IReadOnlyDictionary<string!, object?>? CorrelationAttributes) -> void
+Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.EventLogger.get -> Sunder.Sdk.Logging.IPackageEventLogger?
+Sunder.Package.Agent.Contracts.Models.AgentChatClientContext.EventLogger.init -> void
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.BinaryFile = "file-binary" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.FileNotFound = "file-not-found" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.InvalidRange = "file-range-invalid" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.NotAFile = "file-not-regular" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.OutsideConfiguredScope = "file-outside-scope" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.PathCanonicalizationFailed = "file-path-unresolvable" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.RangeOutsideFile = "file-range-out-of-bounds" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.ReadFailed = "file-read-failed" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.TimedOut = "file-read-timeout" -> string!
+const Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes.TooLarge = "file-too-large" -> string!
+static Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.Failure(string! path, string! errorCode, string! errorMessage) -> Sunder.Package.Agent.Contracts.Models.AgentFileReadResult!
+Sunder.Package.Agent.Contracts.Contracts.IAgentInnerBehaviorLoopRuntime
+Sunder.Package.Agent.Contracts.Contracts.IAgentInnerBehaviorLoopRuntime.RunDefaultLoopAsync(Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopResult!>
+Sunder.Package.Agent.Contracts.Contracts.IAgentRangedFileExecutionTarget
+Sunder.Package.Agent.Contracts.Models.AgentFileDeleteRequest.ExpectedContentHash.get -> string?
+Sunder.Package.Agent.Contracts.Models.AgentFileDeleteRequest.ExpectedContentHash.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.EndLine.get -> int?
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.EndLine.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.ErrorCode.get -> string?
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.ErrorCode.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.ErrorMessage.get -> string?
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.ErrorMessage.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.IsError.get -> bool
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.IsError.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.StartLine.get -> int?
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.StartLine.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.TotalLines.get -> int?
+Sunder.Package.Agent.Contracts.Models.AgentFileReadResult.TotalLines.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentFileWriteRequest.ExpectedContentHash.get -> string?
+Sunder.Package.Agent.Contracts.Models.AgentFileWriteRequest.ExpectedContentHash.init -> void
+Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspacePathMigrationContributor.CompleteWorkspacePathMigrationAsync(Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathMigrationContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspacePathMigrationContributor.GetLegacyWorkspacePathsAsync(Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathMigrationContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathMigrationItem!>!>!
+Sunder.Package.Agent.Contracts.Models.AgentPayloadLimits
+const Sunder.Package.Agent.Contracts.Models.AgentPayloadLimits.MaxLocalDirectoryEntries = 10000 -> int
+const Sunder.Package.Agent.Contracts.Models.AgentPayloadLimits.MaxLocalFullFileReadBytes = 4194304 -> int
+const Sunder.Package.Agent.Contracts.Models.AgentPayloadLimits.MaxMcpContentItems = 1024 -> int
+const Sunder.Package.Agent.Contracts.Models.AgentPayloadLimits.MaxMcpResultBytes = 4194304 -> int
+const Sunder.Package.Agent.Contracts.Models.AgentPayloadLimits.MaxProviderSseLineBytes = 1048576 -> int
+const Sunder.Package.Agent.Contracts.Models.AgentPayloadLimits.MaxStreamedToolArgumentBytes = 1048576 -> int
+const Sunder.Package.Agent.Contracts.Models.AgentPayloadLimits.MaxToolArgumentBytes = 1048576 -> int
+const Sunder.Package.Agent.Contracts.Models.AgentPayloadLimits.MaxToolArgumentJsonDepth = 64 -> int
+const Sunder.Package.Agent.Contracts.Models.AgentPayloadLimits.MaxToolArgumentProperties = 4096 -> int
 Sunder.Package.Agent.Contracts.PackageExtensionPoints
 Sunder.Package.Agent.Contracts.Services.AgentProfileSelectableCapabilityChangeObserver
 Sunder.Package.Agent.Contracts.Services.AgentProfileSelectableCapabilityChangeObserver.AgentProfileSelectableCapabilityChangeObserver(Sunder.Sdk.Abstractions.IPackageExtensionCatalog! extensionCatalog) -> void

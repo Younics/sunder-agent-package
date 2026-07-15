@@ -45,11 +45,13 @@ public sealed partial class AgentWorkspacesViewModel
         }
     }
 
-    private void ReloadTargets(string? preferredTargetId = null)
+    private void ReloadTargets(
+        IReadOnlyList<AgentExecutionTargetDescriptor> targets,
+        string? preferredTargetId = null)
     {
         ExecutionTargets.Clear();
         ExecutionTargets.Add(ExecutionTargetOption.Unconfigured);
-        foreach (var target in _executionGateway.ListTargets())
+        foreach (var target in targets)
         {
             ExecutionTargets.Add(new ExecutionTargetOption(
                 target.TargetId,
@@ -66,13 +68,14 @@ public sealed partial class AgentWorkspacesViewModel
         OnPropertyChanged(nameof(HasNoExecutionTargetChoices));
     }
 
-    private void OnExtensionCatalogChanged(object? sender, EventArgs e)
-        => RunOnUiThread(ApplyExtensionCatalogChanges);
+    private void ReloadTargets(string? preferredTargetId = null)
+        => ReloadTargets(_executionGateway.ListTargets(), preferredTargetId);
 
     private void OnExtensionCatalogChanged(object? sender, PackageExtensionCatalogChangedEventArgs e)
     {
-        if (e.IncludesExtensionPoint(PackageExtensionPoints.ExecutionTargets.Id)
-            || e.IncludesExtensionPoint(PackageExtensionPoints.WorkspaceEditorContributors.Id))
+        if (_isInitialized
+            && (e.IncludesExtensionPoint(PackageExtensionPoints.ExecutionTargets.Id)
+                || e.IncludesExtensionPoint(PackageExtensionPoints.WorkspaceEditorContributors.Id)))
         {
             RunOnUiThread(ApplyExtensionCatalogChanges);
         }

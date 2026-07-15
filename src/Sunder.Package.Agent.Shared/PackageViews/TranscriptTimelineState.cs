@@ -116,7 +116,8 @@ internal sealed class TranscriptTimelineState<TRow> : INotifyPropertyChanged, ID
 
     public bool TryCompleteInitialLoad(
         TranscriptLoadTicket ticket,
-        IReadOnlyList<AgentTurnRecord> turns)
+        IReadOnlyList<AgentTurnRecord> turns,
+        bool? hasOlderRows = null)
     {
         if (!IsCurrent(ticket))
         {
@@ -131,7 +132,7 @@ internal sealed class TranscriptTimelineState<TRow> : INotifyPropertyChanged, ID
         }
 
         ApplyPendingTurns(ticket.SessionId);
-        SetHasOlderRows(orderedTurns.Length > _initialTurnLimit);
+        SetHasOlderRows(hasOlderRows ?? orderedTurns.Length > _initialTurnLimit);
         SetHasNewerRows(false);
         ApplyTrim(AgentTranscriptTrimDirection.Oldest);
         _isInitialLoading = false;

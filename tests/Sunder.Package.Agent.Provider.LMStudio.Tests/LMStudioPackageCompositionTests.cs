@@ -33,7 +33,7 @@ public sealed class LMStudioPackageCompositionTests
             [PackageExtensionPoints.ChatProviders.Id, PackageExtensionPoints.EmbeddingProviders.Id],
             runtimeRegistry.ExtensionIds);
         Assert.Equal([typeof(LMStudioAgentProvider), typeof(LMStudioEmbeddingProvider)], runtimeRegistry.ExtensionTypes);
-        Assert.Equal([context.PackageId], runtimeRegistry.ConfigurationPackageIds);
+        Assert.Same(LMStudioProviderConfiguration.Schema, Assert.Single(runtimeRegistry.SettingsSchemas));
 
         var appServices = new ServiceCollection();
         var appModule = new AppPackageModule();
