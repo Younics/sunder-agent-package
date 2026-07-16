@@ -27,6 +27,8 @@
              Link="PackageViews\AgentRunActivityState.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\InlineRenameFocusCoordinator.cs"
              Link="PackageViews\InlineRenameFocusCoordinator.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\ITranscriptAnchorItem.cs"
+             Link="PackageViews\ITranscriptAnchorItem.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptRowProjector.cs"
              Link="PackageViews\TranscriptRowProjector.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptScrollCoordinator.cs"
@@ -35,6 +37,8 @@
              Link="PackageViews\TranscriptScrollCoordinator.Anchors.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptScrollCoordinator.Lifetime.cs"
              Link="PackageViews\TranscriptScrollCoordinator.Lifetime.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptScrollCoordinator.Interactions.cs"
+             Link="PackageViews\TranscriptScrollCoordinator.Interactions.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptScrollCoordinator.Paging.cs"
              Link="PackageViews\TranscriptScrollCoordinator.Paging.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptTimelineState.cs"

@@ -6,10 +6,10 @@
              xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
              xmlns:agentModels="using:Sunder.Package.Agent.Models"
              xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
-             xmlns:md="clr-namespace:LiveMarkdown.Avalonia;assembly=LiveMarkdown.Avalonia"
-             x:Class="Sunder.Package.Agent.PackageViews.AgentChatView"
-             x:DataType="vm:AgentChatViewModel"
-             mc:Ignorable="d">
+              xmlns:md="clr-namespace:LiveMarkdown.Avalonia;assembly=LiveMarkdown.Avalonia"
+              x:Class="Sunder.Package.Agent.PackageViews.AgentChatView"
+              x:DataType="vm:AgentChatViewModel"
+              mc:Ignorable="d">
   <UserControl.Resources>
     <ResourceDictionary>
       <ResourceDictionary.MergedDictionaries>
@@ -156,6 +156,102 @@
                   ToolTip.Tip="Cancel rename"
                   IsVisible="{Binding IsRenameActive}" />
         </Grid>
+      </DataTemplate>
+
+      <DataTemplate x:Key="AgentToolDetailsTemplate"
+                    x:DataType="vm:AgentToolInvocationRowViewModel">
+        <Border Classes="tool-output-card"
+                Margin="28,10,0,0"
+                MinWidth="0">
+          <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                MinWidth="0">
+            <Border Classes="tool-output-header"
+                    IsVisible="{Binding HasOutput}">
+              <TextBlock Text="Output"
+                         FontSize="12"
+                         FontWeight="SemiBold"
+                         Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+            </Border>
+
+            <Border Grid.Row="1"
+                    Classes="tool-output-body"
+                    IsVisible="{Binding HasOutput}">
+              <TextBlock Classes="output-text"
+                         MinWidth="0"
+                         Text="{Binding OutputText}" />
+            </Border>
+
+            <StackPanel Grid.Row="2"
+                        Margin="16,14,16,0"
+                        Spacing="6"
+                        MinWidth="0"
+                        IsVisible="{Binding HasToolDiff}">
+              <TextBlock Classes="tool-diff-section-title"
+                         Text="{Binding ToolDiffSectionTitle}" />
+              <ItemsControl ItemsSource="{Binding ToolDiffFiles}"
+                            MinWidth="0"
+                            HorizontalAlignment="Stretch" />
+            </StackPanel>
+
+            <Border Grid.Row="3"
+                    Padding="16"
+                    MinWidth="0"
+                    HorizontalAlignment="Stretch"
+                    IsVisible="{Binding ShowMarkdownDetails}">
+              <md:MarkdownRenderer MarkdownBuilder="{Binding DetailMarkdownBuilder}"
+                                   MinWidth="0"
+                                   HorizontalAlignment="Stretch" />
+            </Border>
+
+            <Border Grid.Row="4"
+                    Classes="metadata-bar"
+                    IsVisible="{Binding HasMetadata}">
+              <WrapPanel>
+                <Border Classes="metadata-pill error"
+                        IsVisible="{Binding HasErrorCode}">
+                  <Grid ColumnDefinitions="Auto,*"
+                        ColumnSpacing="5"
+                        MinWidth="0">
+                    <TextBlock Text="Error code:"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource Sunder.Brush.Danger}" />
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding ErrorCodeText}"
+                               FontSize="12"
+                               FontFamily="Menlo,Consolas,monospace"
+                               Foreground="{DynamicResource Sunder.Brush.Danger}"
+                               MinWidth="0"
+                               TextWrapping="Wrap"
+                               MaxLines="2"
+                               TextTrimming="CharacterEllipsis" />
+                  </Grid>
+                </Border>
+
+                <Border Classes="metadata-pill neutral"
+                        IsVisible="{Binding HasBackend}">
+                  <Grid ColumnDefinitions="Auto,*"
+                        ColumnSpacing="5"
+                        MinWidth="0">
+                    <TextBlock Text="Backend:"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding BackendText}"
+                               FontSize="12"
+                               FontFamily="Menlo,Consolas,monospace"
+                               Foreground="{DynamicResource Sunder.Brush.Foreground.Secondary}"
+                               MinWidth="0"
+                               TextWrapping="Wrap"
+                               MaxLines="2"
+                               TextTrimming="CharacterEllipsis" />
+                  </Grid>
+                </Border>
+              </WrapPanel>
+            </Border>
+          </Grid>
+        </Border>
       </DataTemplate>
     </ResourceDictionary>
   </UserControl.Resources>
@@ -1056,99 +1152,11 @@
             </ItemsControl.ItemTemplate>
           </ItemsControl>
 
-          <Border Classes="tool-output-card"
-                  Margin="28,10,0,0"
-                  MinWidth="0"
-                  IsVisible="{Binding ShowDetails}">
-            <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto"
-                  MinWidth="0">
-              <Border Classes="tool-output-header"
-                      IsVisible="{Binding HasOutput}">
-                <TextBlock Text="Output"
-                           FontSize="12"
-                           FontWeight="SemiBold"
-                           Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-              </Border>
-
-              <Border Grid.Row="1"
-                      Classes="tool-output-body"
-                      IsVisible="{Binding HasOutput}">
-                <TextBlock Classes="output-text"
-                           MinWidth="0"
-                           Text="{Binding OutputText}" />
-              </Border>
-
-              <StackPanel Grid.Row="2"
-                           Margin="16,14,16,0"
-                           Spacing="6"
-                           MinWidth="0"
-                           IsVisible="{Binding HasToolDiff}">
-                <TextBlock Classes="tool-diff-section-title"
-                           Text="{Binding ToolDiffSectionTitle}" />
-                <ItemsControl ItemsSource="{Binding ToolDiffFiles}"
-                              MinWidth="0"
-                              HorizontalAlignment="Stretch" />
-              </StackPanel>
-
-              <Border Grid.Row="3"
-                      Padding="16"
-                      MinWidth="0"
-                      HorizontalAlignment="Stretch"
-                      IsVisible="{Binding ShowMarkdownDetails}">
-                <md:MarkdownRenderer MarkdownBuilder="{Binding DetailMarkdownBuilder}"
-                                      MinWidth="0"
-                                      HorizontalAlignment="Stretch" />
-              </Border>
-
-              <Border Grid.Row="4"
-                      Classes="metadata-bar"
-                      IsVisible="{Binding HasMetadata}">
-                <WrapPanel>
-                  <Border Classes="metadata-pill error"
-                           IsVisible="{Binding HasErrorCode}">
-                    <Grid ColumnDefinitions="Auto,*"
-                          ColumnSpacing="5"
-                          MinWidth="0">
-                      <TextBlock Text="Error code:"
-                                  FontSize="12"
-                                  FontWeight="SemiBold"
-                                  Foreground="{DynamicResource Sunder.Brush.Danger}" />
-                      <TextBlock Grid.Column="1"
-                                 Text="{Binding ErrorCodeText}"
-                                 FontSize="12"
-                                 FontFamily="Menlo,Consolas,monospace"
-                                 Foreground="{DynamicResource Sunder.Brush.Danger}"
-                                 MinWidth="0"
-                                 TextWrapping="Wrap"
-                                 MaxLines="2"
-                                 TextTrimming="CharacterEllipsis" />
-                    </Grid>
-                  </Border>
-
-                  <Border Classes="metadata-pill neutral"
-                           IsVisible="{Binding HasBackend}">
-                    <Grid ColumnDefinitions="Auto,*"
-                          ColumnSpacing="5"
-                          MinWidth="0">
-                      <TextBlock Text="Backend:"
-                                  FontSize="12"
-                                  FontWeight="SemiBold"
-                                  Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-                      <TextBlock Grid.Column="1"
-                                 Text="{Binding BackendText}"
-                                 FontSize="12"
-                                 FontFamily="Menlo,Consolas,monospace"
-                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Secondary}"
-                                 MinWidth="0"
-                                 TextWrapping="Wrap"
-                                 MaxLines="2"
-                                 TextTrimming="CharacterEllipsis" />
-                    </Grid>
-                  </Border>
-                </WrapPanel>
-              </Border>
-            </Grid>
-          </Border>
+          <ContentControl Content="{Binding ExpandedDetails}"
+                          ContentTemplate="{StaticResource AgentToolDetailsTemplate}"
+                          MinWidth="0"
+                          HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Stretch" />
         </StackPanel>
       </Grid>
     </DataTemplate>
@@ -1315,22 +1323,27 @@
                 IsVisible="{Binding ShowTranscriptSurface}">
           <Grid>
             <ScrollViewer x:Name="TranscriptScrollViewer"
-                          Classes="transcript-scroll"
-                          HorizontalScrollBarVisibility="Disabled"
-                          VerticalScrollBarVisibility="Auto"
-                          IsVisible="{Binding !ShowSetupInstructions}">
-              <Border x:Name="TranscriptScrollContent">
-                <ItemsControl x:Name="TranscriptItemsControl"
-                              Classes="transcript-items"
-                              ItemsSource="{Binding Messages}">
-                  <ItemsControl.ItemTemplate>
+                           Classes="transcript-scroll"
+                           HorizontalScrollBarVisibility="Disabled"
+                           VerticalScrollBarVisibility="Auto"
+                           IsVisible="{Binding !ShowSetupInstructions}">
+              <Border x:Name="TranscriptScrollContent"
+                      Classes="transcript-content">
+                <ItemsRepeater x:Name="TranscriptItemsControl"
+                               Classes="transcript-items"
+                               ItemsSource="{Binding Messages}">
+                  <ItemsRepeater.Layout>
+                    <StackLayout />
+                  </ItemsRepeater.Layout>
+                  <ItemsRepeater.ItemTemplate>
                     <DataTemplate x:DataType="vm:AgentTranscriptRowViewModel">
                       <shared:TranscriptRowPresenter Classes="transcript-row-anchor"
                                                      AnchorKey="{Binding AnchorKey}"
+                                                     IsRepeaterHosted="True"
                                                      Content="{Binding}" />
                     </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                  </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
               </Border>
             </ScrollViewer>
 

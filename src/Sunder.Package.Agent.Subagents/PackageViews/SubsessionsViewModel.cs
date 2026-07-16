@@ -27,7 +27,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private readonly TranscriptTimelineState<SubsessionTranscriptRowViewModel> _timeline;
     private readonly ActivityTicker _activityTicker = new();
     private readonly AgentRunActivityState _runActivity;
-    private readonly Task _initialization;
+    private readonly AsyncOnce _initialization = new();
     private readonly PresentationTaskScope _tasks = new();
     private readonly Dictionary<Guid, AgentSessionRecord> _knownSessions = [];
     private readonly Dictionary<string, AgentProfileRecord> _knownProfiles = new(StringComparer.OrdinalIgnoreCase);
@@ -41,21 +41,8 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private bool _disposed;
 
     public SubsessionsViewModel(
-        IPackageExtensionCatalog extensionCatalog,
-        TimeSpan? activityQuietDelay = null)
-        : this(extensionCatalog, activityQuietDelay, initialize: true)
-    {
-    }
-
-    public SubsessionsViewModel()
-        : this(null, null, initialize: true)
-    {
-    }
-
-    private SubsessionsViewModel(
         IPackageExtensionCatalog? extensionCatalog,
-        TimeSpan? activityQuietDelay,
-        bool initialize)
+        TimeSpan? activityQuietDelay = null)
     {
         _extensionCatalog = extensionCatalog;
         var toolPresentation = new TranscriptToolPresentationService(() =>
@@ -84,7 +71,11 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         _timeline.PropertyChanged += OnTimelinePropertyChanged;
         _timeline.TurnProjected += OnTimelineTurnProjected;
         _runActivity.Changed += OnRunActivityStateChanged;
-        _initialization = initialize ? InitializeCoreAsync() : Task.CompletedTask;
+    }
+
+    public SubsessionsViewModel()
+        : this(null, null)
+    {
     }
 
     public ObservableCollection<SubsessionListItemViewModel> Subsessions { get; } = [];
@@ -196,6 +187,19 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
         var sessionId = TryGetSessionId(context.Parameters);
+        try
+        {
+            await EnsureInitializedAsync(sessionId, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+            return;
+        }
         if (sessionId is not null
             && SelectedSubsession?.SessionId == sessionId.Value
             && IsDetailActive)
@@ -203,11 +207,21 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        await ReloadSubsessionsAsync(sessionId, cancellationToken);
-        if (sessionId is not null)
+        if (sessionId is null)
         {
-            IsDetailActive = true;
+            return;
         }
+
+        if (FindSubsessionItem(sessionId.Value) is { } subsession)
+        {
+            SelectedSubsession = subsession;
+        }
+        else
+        {
+            await ReloadSubsessionsAsync(sessionId, cancellationToken);
+        }
+
+        IsDetailActive = true;
     }
 
     [RelayCommand]

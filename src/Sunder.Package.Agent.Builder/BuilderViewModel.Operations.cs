@@ -5,47 +5,101 @@ namespace Sunder.Package.Agent.Builder;
 
 public sealed partial class BuilderViewModel
 {
-    public Task InitializeAsync()
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
     {
+        Task initialization;
         lock (_initializationSync)
         {
-            if (_initialized || _disposed)
+            if (_disposed)
             {
                 return Task.CompletedTask;
             }
 
-            return _initializationTask ??= InitializeCoreAsync();
+            initialization = _initializationTask ??= InitializeAndReportAsync();
         }
+
+        return cancellationToken.CanBeCanceled
+            ? initialization.WaitAsync(cancellationToken)
+            : initialization;
     }
 
-    private async Task InitializeCoreAsync()
+    private async Task InitializeAndReportAsync()
     {
+        await Task.Yield();
+        var succeeded = false;
         try
         {
-            await _uiDispatcher.InvokeAsync(ReloadWorkspaces);
-            var projects = await _applicationService.LoadProjectsAsync(_lifetime.Token);
+            await InitializeCoreAsync(_lifetime.Token);
             await _uiDispatcher.InvokeAsync(() =>
             {
-                ApplyLoadedProjects(projects);
-                _projectsLoaded = true;
-                _initialized = true;
+                if (StatusText.StartsWith(
+                        "Package builder initialization failed:",
+                        StringComparison.Ordinal))
+                {
+                    RuntimeLogText = string.Empty;
+                    StatusText = string.Empty;
+                }
             });
-            if (!_processedStartupAutoLoad)
-            {
-                _processedStartupAutoLoad = true;
-                await LoadStartupAutoLoadProjectsAsync(_lifetime.Token);
-            }
+            succeeded = true;
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            await _uiDispatcher.InvokeAsync(() =>
+            if (!_disposed)
             {
-                RuntimeLogText = ex.ToString();
-                StatusText = $"Package builder initialization failed: {ex.Message}";
-            });
+                await _uiDispatcher.InvokeAsync(() =>
+                {
+                    if (!_disposed)
+                    {
+                        RuntimeLogText = ex.ToString();
+                        StatusText = $"Package builder initialization failed: {ex.Message}";
+                    }
+                });
+            }
+        }
+        finally
+        {
+            if (!succeeded)
+            {
+                lock (_initializationSync)
+                {
+                    _initializationTask = null;
+                }
+            }
+        }
+    }
+
+    private async Task InitializeCoreAsync(CancellationToken cancellationToken)
+    {
+        await _uiDispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed)
+            {
+                ReloadWorkspaces();
+            }
+        });
+        var projects = await _applicationService.LoadProjectsAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        await _uiDispatcher.InvokeAsync(() =>
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            ApplyLoadedProjects(projects);
+            _projectsLoaded = true;
+        });
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_disposed)
+        {
+            return;
+        }
+        if (!_processedStartupAutoLoad)
+        {
+            await LoadStartupAutoLoadProjectsAsync(cancellationToken);
+            _processedStartupAutoLoad = true;
         }
     }
 

@@ -53,6 +53,7 @@ internal sealed partial class AgentAppRuntimeGateway :
     private readonly Dictionary<Guid, AgentSessionSnapshot> _knownSessions = [];
     private AgentDashboardProjection? _dashboard;
     private Task<AgentDashboardProjection>? _dashboardLoad;
+    private Task<AgentDashboardProjection>? _abandonedDashboardLoad;
     private AgentPermissionProjection? _globalPermissions;
     private AgentChatSnapshotRequest? _pendingChatSnapshotRequest;
     private AgentChatSnapshotProjection? _pendingChatSnapshot;
@@ -70,7 +71,6 @@ internal sealed partial class AgentAppRuntimeGateway :
         _connectionState = client.IsAvailable
             ? AgentRuntimeConnectionState.Connecting
             : AgentRuntimeConnectionState.Unavailable;
-        StartObservingChanges();
     }
 
     public AgentRuntimeConnectionState ConnectionState => _connectionState;
@@ -206,7 +206,10 @@ internal sealed partial class AgentAppRuntimeGateway :
             workspace.Paths, workspace.Documents, null);
     }
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
-        => _ = await GetDashboardAsync(cancellationToken).ConfigureAwait(false);
+    {
+        StartObservingChanges();
+        _ = await GetDashboardAsync(cancellationToken).ConfigureAwait(false);
+    }
 
     public IReadOnlyList<AgentSessionRecord> ListSessions()
     {
@@ -462,17 +465,25 @@ internal sealed partial class AgentAppRuntimeGateway :
     private async Task<AgentDashboardProjection> GetDashboardAsync(CancellationToken cancellationToken)
     {
         Task<AgentDashboardProjection> load;
+        bool retryIfFaulted;
         lock (_cacheLock)
         {
             if (_dashboard is not null)
             {
                 return _dashboard;
             }
+            if (_dashboardLoad is { IsFaulted: true } or { IsCanceled: true })
+            {
+                _ = _dashboardLoad.Exception;
+                _dashboardLoad = null;
+                _abandonedDashboardLoad = null;
+            }
             load = _dashboardLoad ??= InvokeAsync(
                     AgentRuntimeOperations.Dashboard,
                     new AgentDashboardRequest(),
                     _lifetime.Token)
                 .AsTask();
+            retryIfFaulted = ReferenceEquals(_abandonedDashboardLoad, load);
         }
 
         try
@@ -484,10 +495,22 @@ internal sealed partial class AgentAppRuntimeGateway :
                 {
                     _dashboard = dashboard;
                     _dashboardLoad = null;
+                    _abandonedDashboardLoad = null;
                     _revision = Math.Max(_revision, dashboard.Revision);
                 }
                 return _dashboard ?? dashboard;
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            lock (_cacheLock)
+            {
+                if (ReferenceEquals(_dashboardLoad, load))
+                {
+                    _abandonedDashboardLoad = load;
+                }
+            }
+            throw;
         }
         catch
         {
@@ -497,6 +520,14 @@ internal sealed partial class AgentAppRuntimeGateway :
                 {
                     _dashboardLoad = null;
                 }
+                if (ReferenceEquals(_abandonedDashboardLoad, load))
+                {
+                    _abandonedDashboardLoad = null;
+                }
+            }
+            if (retryIfFaulted)
+            {
+                return await GetDashboardAsync(cancellationToken).ConfigureAwait(false);
             }
             throw;
         }

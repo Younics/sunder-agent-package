@@ -13,7 +13,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageViewNavigationTarget
+public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
     private const int WorkspaceInlineEditFocusRetryLimit = 12;
     private static readonly FilePickerFileType WorkspaceDocumentFileType = new("Workspace documents")
@@ -89,9 +89,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageVie
         _viewModel = null;
     }
 
-    public async ValueTask OnNavigatedToAsync(
-        PackageViewNavigationContext context,
-        CancellationToken cancellationToken = default)
+    public async ValueTask WarmupAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if ((_viewModel ?? DataContext as AgentWorkspacesViewModel) is { } viewModel)
@@ -99,6 +97,11 @@ public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageVie
             await viewModel.InitializeAsync(cancellationToken);
         }
     }
+
+    public ValueTask OnNavigatedToAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
+        => WarmupAsync(cancellationToken);
 
     private void OnAddEditorPathItemClick(object? sender, RoutedEventArgs e)
         => _context.Run(cancellationToken => AddEditorPathItemAsync(sender, cancellationToken));

@@ -3,7 +3,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Memory.Semantic.PackageViews;
 
-public partial class MemoryInspectorView : UserControl, IDisposable, IPackageViewNavigationTarget
+public partial class MemoryInspectorView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
     private MemoryInspectorViewModel? _viewModel;
     private bool _disposed;
@@ -33,9 +33,7 @@ public partial class MemoryInspectorView : UserControl, IDisposable, IPackageVie
         _viewModel = null;
     }
 
-    public async ValueTask OnNavigatedToAsync(
-        PackageViewNavigationContext context,
-        CancellationToken cancellationToken = default)
+    public async ValueTask WarmupAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if ((_viewModel ?? DataContext as MemoryInspectorViewModel) is { } viewModel)
@@ -43,4 +41,9 @@ public partial class MemoryInspectorView : UserControl, IDisposable, IPackageVie
             await viewModel.InitializeAsync(cancellationToken);
         }
     }
+
+    public ValueTask OnNavigatedToAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
+        => WarmupAsync(cancellationToken);
 }

@@ -21,7 +21,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     private readonly TimedStatusController _statusClear;
     private readonly PresentationTaskScope _tasks;
     private readonly OperationState<SubagentOperation> _operation = new();
-    private readonly Task _initialization;
+    private readonly AsyncOnce _initialization = new();
     private readonly Dictionary<string, EditableDocumentState<SubagentEditorDraft>> _drafts =
         new(StringComparer.OrdinalIgnoreCase);
     private bool _suppressSelectionHandlers;
@@ -29,6 +29,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     private bool _suppressDraftTracking;
     private bool _isHydrating;
     private bool _disposed;
+    private string? _initializationFailureStatus;
     private int _loadVersion;
     private long _editRevision;
 
@@ -57,7 +58,6 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
             new ProviderModelCatalogAdapter(gateway.ListChatProviders, gateway.LoadChatModelsAsync),
             uiDispatcher);
         Subscribe();
-        _initialization = InitializeCoreAsync();
     }
 
     internal SubagentsViewModel(
@@ -77,7 +77,6 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
             (_, _) => Task.FromResult(new ProviderModelCatalogResult([], string.Empty))),
             _uiDispatcher);
         Subscribe();
-        _initialization = InitializeCoreAsync();
     }
 
     public ObservableCollection<SubagentRecord> Subagents { get; } = [];
@@ -290,7 +289,9 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     partial void OnIsEditorActiveChanged(bool value) => NotifyLayoutChanged();
 
-    private async Task ReloadAsync(string? selectedSubagentId)
+    private async Task ReloadAsync(
+        string? selectedSubagentId,
+        CancellationToken cancellationToken = default)
     {
         if (_gateway is null)
         {
@@ -298,42 +299,60 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var currentSubagentId = SelectedSubagent?.SubagentId;
-        var subagents = await _gateway.ListSubagentsAsync();
-        SetSelectionSilently(() =>
+        var subagents = await _gateway.ListSubagentsAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        Task selectedSubagentLoad = Task.CompletedTask;
+        await _uiDispatcher.InvokeAsync(() =>
         {
-            Subagents.Clear();
-            foreach (var subagent in subagents)
+            if (_disposed || cancellationToken.IsCancellationRequested)
             {
-                Subagents.Add(subagent);
+                return;
             }
 
-            var selected = Subagents.FirstOrDefault(subagent => string.Equals(
-                subagent.SubagentId,
-                selectedSubagentId,
-                StringComparison.OrdinalIgnoreCase));
-            if (selected is null && (!IsCompactLayout || selectedSubagentId is not null))
+            var currentSubagentId = SelectedSubagent?.SubagentId;
+            SetSelectionSilently(() =>
             {
-                selected = Subagents.FirstOrDefault(subagent => string.Equals(
-                        subagent.SubagentId,
-                        currentSubagentId,
-                        StringComparison.OrdinalIgnoreCase))
-                    ?? Subagents.FirstOrDefault();
+                Subagents.Clear();
+                foreach (var subagent in subagents)
+                {
+                    Subagents.Add(subagent);
+                }
+
+                var selected = Subagents.FirstOrDefault(subagent => string.Equals(
+                    subagent.SubagentId,
+                    selectedSubagentId,
+                    StringComparison.OrdinalIgnoreCase));
+                if (selected is null && (!IsCompactLayout || selectedSubagentId is not null))
+                {
+                    selected = Subagents.FirstOrDefault(subagent => string.Equals(
+                            subagent.SubagentId,
+                            currentSubagentId,
+                            StringComparison.OrdinalIgnoreCase))
+                        ?? Subagents.FirstOrDefault();
+                }
+
+                SelectedSubagent = selected;
+            });
+
+            if (SelectedSubagent is null)
+            {
+                ClearEditor();
+                return;
             }
 
-            SelectedSubagent = selected;
-        });
-
-        if (SelectedSubagent is null)
-        {
-            ClearEditor();
-            return;
-        }
-
-        await LoadSelectedSubagentAsync(SelectedSubagent, ++_loadVersion);
+            selectedSubagentLoad = LoadSelectedSubagentAsync(
+                SelectedSubagent,
+                ++_loadVersion,
+                cancellationToken);
+        }).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        await selectedSubagentLoad.ConfigureAwait(false);
     }
 
-    private async Task LoadSelectedSubagentAsync(SubagentRecord? subagent, int version)
+    private async Task LoadSelectedSubagentAsync(
+        SubagentRecord? subagent,
+        int version,
+        CancellationToken cancellationToken = default)
     {
         if (subagent is null)
         {
@@ -356,9 +375,9 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
                 _drafts[subagent.SubagentId] = document;
             }
 
-            var localToolsTask = _gateway?.ListLocalToolsAsync()
+            var localToolsTask = _gateway?.ListLocalToolsAsync(cancellationToken)
                 ?? Task.FromResult<IReadOnlyList<AgentToolDescriptor>>([]);
-            var packageCapabilitiesTask = _gateway?.ListPackageCapabilitiesAsync()
+            var packageCapabilitiesTask = _gateway?.ListPackageCapabilitiesAsync(cancellationToken)
                 ?? Task.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
 
             _suppressDraftTracking = true;
@@ -374,7 +393,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
             }
 
             await Task.WhenAll(
-                ChatBinding.RefreshAsync(draft.ChatBinding),
+                ChatBinding.RefreshAsync(draft.ChatBinding, cancellationToken),
                 localToolsTask,
                 packageCapabilitiesTask).ConfigureAwait(false);
             var localTools = await localToolsTask.ConfigureAwait(false);
@@ -414,6 +433,10 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
                 OnPropertyChanged(nameof(IsDirty));
             }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

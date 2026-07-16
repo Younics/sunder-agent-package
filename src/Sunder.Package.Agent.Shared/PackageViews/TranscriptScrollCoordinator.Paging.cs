@@ -10,7 +10,9 @@ internal sealed partial class TranscriptScrollCoordinator
             _loadNewerOperation,
             _settledScrollOperation,
             _bottomPlacementReleaseOperation,
-            _restoreAnchorOperation);
+            _restoreAnchorOperation,
+            _scrollToBottomOperation,
+            _focusBringIntoViewOperation);
 
     private async Task RestorePendingAnchorAsync(CancellationToken cancellationToken)
     {
@@ -26,7 +28,7 @@ internal sealed partial class TranscriptScrollCoordinator
 
     private async Task LoadOlderRowsAsync(
         ScrollAnchor anchor,
-        double offsetYWhenQueued,
+        long interactionRevision,
         CancellationToken cancellationToken)
     {
         var loaded = false;
@@ -39,7 +41,7 @@ internal sealed partial class TranscriptScrollCoordinator
             cancellationToken.ThrowIfCancellationRequested();
             if (loaded)
             {
-                _shouldAutoScroll = false;
+                SetShouldAutoScroll(false);
                 UpdateJumpToLatestVisibility();
             }
         }
@@ -56,13 +58,17 @@ internal sealed partial class TranscriptScrollCoordinator
             {
                 if (!cancellationToken.IsCancellationRequested && !_disposed)
                 {
-                    if (loaded && Math.Abs(_scrollViewer.Offset.Y - offsetYWhenQueued) < 1)
+                    if (loaded && ShouldRestoreOlderRowsAnchor(
+                            interactionRevision,
+                            _interactionRevision))
                     {
-                        await RestoreScrollAnchorAfterRenderedContentAsync(anchor, cancellationToken);
+                        await RestoreScrollAnchorAfterRenderedContentAsync(
+                            anchor,
+                            cancellationToken);
                     }
                     else
                     {
-                        await WaitForRenderedContentAsync(cancellationToken);
+                        await YieldForRenderedContent(cancellationToken);
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();
@@ -86,10 +92,15 @@ internal sealed partial class TranscriptScrollCoordinator
         }
     }
 
+    internal static bool ShouldRestoreOlderRowsAnchor(
+        long queuedUserScrollRevision,
+        long currentUserScrollRevision)
+        => queuedUserScrollRevision == currentUserScrollRevision;
+
     private async Task LoadNewerRowsAsync(
         ScrollAnchor anchor,
         bool wasAtBottom,
-        double offsetYWhenQueued,
+        long interactionRevision,
         CancellationToken cancellationToken)
     {
         var loaded = false;
@@ -119,25 +130,27 @@ internal sealed partial class TranscriptScrollCoordinator
             {
                 if (!cancellationToken.IsCancellationRequested && !_disposed)
                 {
-                    if (loaded && Math.Abs(_scrollViewer.Offset.Y - offsetYWhenQueued) < 1)
+                    if (loaded && interactionRevision == _interactionRevision)
                     {
                         if (wasAtBottom)
                         {
-                            await WaitForRenderedContentAsync(cancellationToken);
+                            await YieldForRenderedContent(cancellationToken);
                             cancellationToken.ThrowIfCancellationRequested();
-                            if (!_disposed)
+                            if (!_disposed && interactionRevision == _interactionRevision)
                             {
                                 ScrollToBottom();
                             }
                         }
                         else
                         {
-                            await RestoreScrollAnchorAfterRenderedContentAsync(anchor, cancellationToken);
+                            await RestoreScrollAnchorAfterRenderedContentAsync(
+                                anchor,
+                                cancellationToken);
                         }
                     }
                     else
                     {
-                        await WaitForRenderedContentAsync(cancellationToken);
+                        await YieldForRenderedContent(cancellationToken);
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();

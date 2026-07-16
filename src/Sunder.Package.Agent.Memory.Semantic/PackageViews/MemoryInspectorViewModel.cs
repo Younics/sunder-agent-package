@@ -325,6 +325,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
 
     private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
+        await _memoryInspectorService.InitializeAsync(cancellationToken).ConfigureAwait(false);
         var initialState = await Task.Run(() => new MemoryInspectorInitialState(
             _memoryInspectorService.ListSessions(),
             _memoryInspectorService.GetSemanticWorkerStatus(),

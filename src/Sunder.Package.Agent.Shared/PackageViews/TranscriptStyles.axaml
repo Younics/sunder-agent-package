@@ -8,7 +8,8 @@
     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
   </Style>
 
-  <Style Selector="ItemsControl.transcript-items">
+  <Style Selector=".transcript-items"
+         x:SetterTargetType="Control">
     <Setter Property="MinWidth" Value="0" />
     <Setter Property="HorizontalAlignment" Value="Stretch" />
   </Style>
@@ -330,12 +331,17 @@
     <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
     <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
     <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+    <Setter Property="BringIntoViewOnFocusChange" Value="False" />
   </Style>
 
   <Style Selector="Border.transcript-content">
     <Setter Property="Padding" Value="30,30,42,30" />
     <Setter Property="MinWidth" Value="0" />
     <Setter Property="HorizontalAlignment" Value="Stretch" />
+  </Style>
+
+  <Style Selector="Border.transcript-content.compact">
+    <Setter Property="Padding" Value="16,30,24,30" />
   </Style>
 
   <Style Selector="Border.message-bubble">

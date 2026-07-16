@@ -4,10 +4,11 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Shared.Presentation;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
 
-public partial class SubsessionsView : UserControl, IDisposable
+public partial class SubsessionsView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
     private readonly TranscriptViewBehavior _transcriptBehavior;
@@ -24,6 +25,7 @@ public partial class SubsessionsView : UserControl, IDisposable
             SubsessionDetailPane,
             isCompact =>
             {
+                TranscriptScrollContent.Classes.Set("compact", isCompact);
                 if (ViewModel is { } viewModel)
                 {
                     viewModel.IsCompactLayout = isCompact;
@@ -83,6 +85,26 @@ public partial class SubsessionsView : UserControl, IDisposable
 
         DataContext = null;
         _viewModel = null;
+    }
+
+    public async ValueTask WarmupAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (ViewModel is { } viewModel)
+        {
+            await viewModel.InitializeAsync(cancellationToken);
+        }
+    }
+
+    public async ValueTask OnNavigatedToAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (ViewModel is { } viewModel)
+        {
+            await viewModel.OnNavigatedToAsync(context, cancellationToken);
+        }
     }
 
     private void OnViewModelPropertyChanging(object? sender, PropertyChangingEventArgs e)

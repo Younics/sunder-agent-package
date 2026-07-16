@@ -4,10 +4,11 @@ using Avalonia.Input;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Sunder.Package.Agent.Shared.Presentation;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Builder;
 
-public partial class BuilderView : UserControl, IDisposable
+public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
     private readonly PresentationTaskScope _tasks = new();
@@ -37,7 +38,6 @@ public partial class BuilderView : UserControl, IDisposable
     {
         _viewModel = viewModel;
         DataContext = viewModel;
-        _tasks.Run(viewModel.InitializeAsync());
     }
 
     public void Dispose()
@@ -50,11 +50,23 @@ public partial class BuilderView : UserControl, IDisposable
         _disposed = true;
         _tasks.Dispose();
         _adaptiveLayout.Dispose();
-        // Cached views are released while App capabilities are still published.
-        _viewModel?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         DataContext = null;
         _viewModel = null;
     }
+
+    public async ValueTask WarmupAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if ((_viewModel ?? DataContext as BuilderViewModel) is { } viewModel)
+        {
+            await viewModel.InitializeAsync(cancellationToken);
+        }
+    }
+
+    public ValueTask OnNavigatedToAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
+        => WarmupAsync(cancellationToken);
 
     private async void OnRefreshSetupClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {

@@ -13,6 +13,37 @@
       <ResourceDictionary.MergedDictionaries>
         <ResourceInclude Source="avares://LiveMarkdown.Avalonia/Defaults.axaml" />
       </ResourceDictionary.MergedDictionaries>
+
+      <DataTemplate x:Key="SubsessionToolDetailsTemplate"
+                    x:DataType="vm:SubsessionToolInvocationRowViewModel">
+        <Border Classes="tool-output-card"
+                Margin="28,10,0,0"
+                ClipToBounds="True"
+                MinWidth="0">
+          <StackPanel Spacing="12"
+                      Margin="16"
+                      MinWidth="0">
+            <TextBlock Text="{Binding OutputText}"
+                       FontFamily="Menlo,Consolas,monospace"
+                       FontSize="13"
+                       MinWidth="0"
+                       TextWrapping="Wrap"
+                       IsVisible="{Binding HasOutput}" />
+            <StackPanel Spacing="6"
+                        MinWidth="0"
+                        IsVisible="{Binding HasToolDiff}">
+              <TextBlock Classes="tool-diff-section-title"
+                         Text="{Binding ToolDiffSectionTitle}" />
+              <ItemsControl ItemsSource="{Binding ToolDiffFiles}"
+                            MinWidth="0" />
+            </StackPanel>
+            <md:MarkdownRenderer MarkdownBuilder="{Binding DetailMarkdownBuilder}"
+                                 MinWidth="0"
+                                 HorizontalAlignment="Stretch"
+                                 IsVisible="{Binding ShowMarkdownDetails}" />
+          </StackPanel>
+        </Border>
+      </DataTemplate>
     </ResourceDictionary>
   </UserControl.Resources>
 
@@ -296,34 +327,11 @@
             </ItemsControl.ItemTemplate>
           </ItemsControl>
 
-          <Border Classes="tool-output-card"
-                  Margin="28,10,0,0"
-                  ClipToBounds="True"
-                  MinWidth="0"
-                  IsVisible="{Binding ShowDetails}">
-            <StackPanel Spacing="12"
-                        Margin="16"
-                        MinWidth="0">
-              <TextBlock Text="{Binding OutputText}"
-                         FontFamily="Menlo,Consolas,monospace"
-                         FontSize="13"
-                         MinWidth="0"
-                         TextWrapping="Wrap"
-                         IsVisible="{Binding HasOutput}" />
-              <StackPanel Spacing="6"
+          <ContentControl Content="{Binding ExpandedDetails}"
+                          ContentTemplate="{StaticResource SubsessionToolDetailsTemplate}"
                           MinWidth="0"
-                          IsVisible="{Binding HasToolDiff}">
-                <TextBlock Classes="tool-diff-section-title"
-                           Text="{Binding ToolDiffSectionTitle}" />
-                <ItemsControl ItemsSource="{Binding ToolDiffFiles}"
-                              MinWidth="0" />
-              </StackPanel>
-              <md:MarkdownRenderer MarkdownBuilder="{Binding DetailMarkdownBuilder}"
-                                   MinWidth="0"
-                                   HorizontalAlignment="Stretch"
-                                   IsVisible="{Binding ShowMarkdownDetails}" />
-            </StackPanel>
-          </Border>
+                          HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Stretch" />
         </StackPanel>
       </Grid>
     </DataTemplate>
@@ -410,7 +418,8 @@
           <Grid Grid.Row="1">
             <ScrollViewer x:Name="TranscriptScrollViewer"
                           Classes="transcript-scroll">
-              <Border Classes="transcript-content"
+              <Border x:Name="TranscriptScrollContent"
+                      Classes="transcript-content"
                       Width="{Binding Viewport.Width, ElementName=TranscriptScrollViewer}">
                 <ItemsControl x:Name="TranscriptItemsControl"
                               Classes="transcript-items"

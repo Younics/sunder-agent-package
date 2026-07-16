@@ -8,6 +8,8 @@ namespace Sunder.Package.Agent.Memory.Semantic.Runtime;
 
 internal interface IMemoryInspectorGateway
 {
+    Task InitializeAsync(CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
     event Action<Guid>? SessionChanged;
     event Action? SemanticWorkerStatusChanged;
     IReadOnlyList<AgentSessionRecord> ListSessions();
@@ -87,12 +89,24 @@ internal sealed class MemoryAppRuntimeGateway : IMemoryInspectorGateway, IDispos
 {
     private readonly IPackageRuntimeClient _client;
     private readonly CancellationTokenSource _lifetime = new();
+    private int _observationStarted;
     private int _disposed;
 
     public MemoryAppRuntimeGateway(IPackageRuntimeClient client)
     {
         _client = client;
-        _ = ObserveChangesAsync(_lifetime.Token);
+    }
+
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (Interlocked.Exchange(ref _observationStarted, 1) == 0)
+        {
+            _ = ObserveChangesAsync(_lifetime.Token);
+        }
+
+        return Task.CompletedTask;
     }
 
     public event Action<Guid>? SessionChanged;

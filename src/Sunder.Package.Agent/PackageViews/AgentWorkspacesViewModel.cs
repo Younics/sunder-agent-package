@@ -32,6 +32,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private bool _suppressWorkspaceChangeNotifications;
     private bool _isInitialized;
     private bool _disposed;
+    private string? _initializationFailureStatus;
 
     public AgentWorkspacesViewModel(
         IAgentWorkspaceGateway workspaceService,
@@ -90,8 +91,43 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     public bool IsBusy => _operation.IsBusy;
 
-    public Task InitializeAsync(CancellationToken cancellationToken = default)
-        => _initialization.RunAsync(InitializeCoreAsync, cancellationToken);
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await _initialization.RunAsync(InitializeCoreAsync, cancellationToken);
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (_initializationFailureStatus is not null
+                    && (string.Equals(StatusText, _initializationFailureStatus, StringComparison.Ordinal)
+                        || string.Equals(
+                            StatusText,
+                            "Agent Runtime is unavailable. Reconnecting...",
+                            StringComparison.Ordinal)))
+                {
+                    ClearStatus();
+                }
+                _initializationFailureStatus = null;
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed)
+                {
+                    _initializationFailureStatus = $"Agent Runtime is unavailable: {ex.Message}";
+                    SetStatus(
+                        _initializationFailureStatus,
+                        AgentWorkspaceStatusKind.Warning);
+                }
+            }).ConfigureAwait(false);
+        }
+    }
 
     public bool IsListActive => !IsEditorActive;
 
@@ -370,6 +406,10 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
                 ReloadWorkspaces(SelectedWorkspace?.WorkspaceId);
                 ClearStatus();
             }
+            else if (state == AgentRuntimeConnectionState.Connected)
+            {
+                _tasks.Run(InitializeAsync);
+            }
             else if (state is AgentRuntimeConnectionState.Unavailable or AgentRuntimeConnectionState.Reconnecting)
             {
                 SetStatus("Agent Runtime is unavailable. Reconnecting...", AgentWorkspaceStatusKind.Warning);
@@ -378,44 +418,27 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
-        try
+        var targetsTask = _executionGateway is IAgentExecutionTargetLoader loader
+            ? loader.ListTargetsAsync(cancellationToken)
+            : Task.FromResult(_executionGateway.ListTargets());
+        await Task.WhenAll(
+            _workspaceService.InitializeAsync(cancellationToken),
+            targetsTask).ConfigureAwait(false);
+        var targets = await targetsTask.ConfigureAwait(false);
+        var workspaces = _workspaceService.ListWorkspaces();
+        cancellationToken.ThrowIfCancellationRequested();
+        await _uiDispatcher.InvokeAsync(() =>
         {
-            var targetsTask = _executionGateway is IAgentExecutionTargetLoader loader
-                ? loader.ListTargetsAsync(cancellationToken)
-                : Task.FromResult(_executionGateway.ListTargets());
-            await Task.WhenAll(
-                _workspaceService.InitializeAsync(cancellationToken),
-                targetsTask).ConfigureAwait(false);
-            var targets = await targetsTask.ConfigureAwait(false);
-            var workspaces = _workspaceService.ListWorkspaces();
-            cancellationToken.ThrowIfCancellationRequested();
-            await _uiDispatcher.InvokeAsync(() =>
+            if (_disposed)
             {
-                if (_disposed)
-                {
-                    return;
-                }
+                return;
+            }
 
-                ReloadTargets(targets);
-                ReloadWorkspaceList(selectWorkspaceId: null, workspaces);
-                LoadWorkspace(SelectedWorkspace);
-                _isInitialized = true;
-            }).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            await _uiDispatcher.InvokeAsync(() =>
-            {
-                if (!_disposed)
-                {
-                    SetStatus($"Agent Runtime is unavailable: {ex.Message}", AgentWorkspaceStatusKind.Warning);
-                }
-            }).ConfigureAwait(false);
-        }
+            ReloadTargets(targets);
+            ReloadWorkspaceList(selectWorkspaceId: null, workspaces);
+            LoadWorkspace(SelectedWorkspace);
+            _isInitialized = true;
+        }).ConfigureAwait(false);
     }
 
     private void ReloadWorkspaces(string? selectWorkspaceId)

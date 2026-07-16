@@ -30,6 +30,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     private bool _isHydrating;
     private bool _isInitialized;
     private bool _disposed;
+    private string? _initializationFailureStatus;
     private int _profileLoadVersion;
     private long _editRevision;
 
@@ -88,8 +89,42 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     internal Task Initialization => InitializeAsync();
 
-    public Task InitializeAsync(CancellationToken cancellationToken = default)
-        => _initialization.RunAsync(InitializeCoreAsync, cancellationToken);
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await _initialization.RunAsync(InitializeCoreAsync, cancellationToken);
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (_initializationFailureStatus is not null
+                    && (string.Equals(StatusText, _initializationFailureStatus, StringComparison.Ordinal)
+                        || string.Equals(
+                            StatusText,
+                            "Agent Runtime is unavailable. Reconnecting...",
+                            StringComparison.Ordinal)))
+                {
+                    ClearStatus();
+                }
+                _initializationFailureStatus = null;
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed)
+                {
+                    ClearEditor();
+                    _initializationFailureStatus = ex.Message;
+                    SetStatus(_initializationFailureStatus, AgentProfileStatusKind.Error);
+                }
+            }).ConfigureAwait(false);
+        }
+    }
 
     internal ModelBindingEditorState ChatBinding { get; }
 

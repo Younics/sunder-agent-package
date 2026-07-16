@@ -8,7 +8,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
 {
     private readonly Control _owner;
     private readonly ScrollViewer _scrollViewer;
-    private readonly ItemsControl _itemsControl;
+    private readonly Control _itemsControl;
     private readonly Button _jumpToLatestButton;
     private readonly Func<bool> _isInitialLoading;
     private readonly Func<bool> _hasRows;
@@ -28,7 +28,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
     public TranscriptViewBehavior(
         Control owner,
         ScrollViewer scrollViewer,
-        ItemsControl itemsControl,
+        Control itemsControl,
         Button jumpToLatestButton,
         Func<bool> canLoadOlder,
         Func<object?, CancellationToken, Task<bool>> loadOlder,
@@ -42,7 +42,9 @@ internal sealed class TranscriptViewBehavior : IDisposable
         Action reachedLatest,
         Action<bool>? jumpVisibilityChanged = null,
         Action<TranscriptViewportAnchorData?>? viewportAnchorChanged = null,
-        Action<Exception>? pagingFailed = null)
+        Action<Exception>? pagingFailed = null,
+        Func<IEnumerable<(object Item, Control Visual)>>? enumerateRealizedAnchors = null,
+        Func<object, Control?>? realizeAnchor = null)
     {
         _owner = owner;
         _scrollViewer = scrollViewer;
@@ -68,7 +70,9 @@ internal sealed class TranscriptViewBehavior : IDisposable
             detachFromLatest,
             reachedLatest,
             viewportAnchorChanged,
-            pagingFailed);
+            pagingFailed,
+            enumerateRealizedAnchors,
+            realizeAnchor);
         _owner.Loaded += OnLoaded;
     }
 
@@ -146,7 +150,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
 
         if (!_jumpToLatestButton.IsVisible)
         {
-            _scrollCoordinator.QueueScrollToBottom();
+            _scrollCoordinator.QueueScrollToBottom(force: true);
             return;
         }
 
@@ -166,7 +170,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
         _scrollCoordinator.OnViewportContentChanged();
     }
 
-    public void ScrollToBottom() => _scrollCoordinator.QueueScrollToBottom();
+    public void ScrollToBottom() => _scrollCoordinator.QueueScrollToBottom(force: true);
 
     public void Dispose()
     {

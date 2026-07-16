@@ -9,13 +9,33 @@ public sealed partial class SubsessionsViewModel
         ISubsessionCheckpointReader checkpointReader,
         ISubsessionTranscriptPageReader transcriptReader,
         ISubsessionChangeNotifications changeNotifications)
-        : this(null, null, initialize: false)
+        : this(null, null)
     {
         SetRuntimePorts(sessionReader, checkpointReader, transcriptReader, changeNotifications);
-        _initialization = InitializeCoreAsync();
     }
 
-    public Task InitializeAsync() => _initialization;
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await EnsureInitializedAsync(null, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+    }
+
+    private Task EnsureInitializedAsync(
+        Guid? selectedSessionId,
+        CancellationToken cancellationToken)
+        => _initialization.RunAsync(
+            token => InitializeCoreAsync(selectedSessionId, token),
+            cancellationToken);
 
     internal void ReportTranscriptPagingFailure(Exception exception)
     {
@@ -25,16 +45,16 @@ public sealed partial class SubsessionsViewModel
         }
     }
 
-    private async Task InitializeCoreAsync()
+    private async Task InitializeCoreAsync(
+        Guid? selectedSessionId,
+        CancellationToken cancellationToken)
     {
-        try
+        if (_changeNotifications is ISubagentPresentationInitialization initialization)
         {
-            await ReloadSubsessionsAsync(null);
+            await initialization.InitializeAsync(cancellationToken);
         }
-        catch (Exception ex)
-        {
-            StatusText = ex.Message;
-        }
+
+        await ReloadSubsessionsAsync(selectedSessionId, cancellationToken);
     }
 
     public void Dispose()
@@ -45,6 +65,7 @@ public sealed partial class SubsessionsViewModel
         }
 
         _disposed = true;
+        _initialization.Dispose();
         if (_changeNotifications is not null)
         {
             _changeNotifications.SessionChanged -= OnSessionChanged;

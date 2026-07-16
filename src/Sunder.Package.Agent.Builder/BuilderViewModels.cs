@@ -28,7 +28,6 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
     private string _runtimeLogText = string.Empty;
     private bool _isBusy;
     private bool _isSetupComplete;
-    private bool _initialized;
     private bool _projectsLoaded;
     private bool _processedStartupAutoLoad;
     private bool _isCompactLayout;
@@ -410,16 +409,32 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
 
     public async ValueTask DisposeAsync()
     {
-        if (_disposed)
+        Task? initializationTask;
+        lock (_initializationSync)
         {
-            return;
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            initializationTask = _initializationTask;
         }
 
-        _disposed = true;
         _persistence.SaveFailed -= OnPersistenceSaveFailed;
         _statusVisibility.Dispose();
         _tasks.Dispose();
         _lifetime.Cancel();
+        if (initializationTask is not null)
+        {
+            try
+            {
+                await initializationTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+            {
+            }
+        }
         var projects = await _uiDispatcher.InvokeAsync(() =>
         {
             if (SelectedProject is not null)
@@ -428,23 +443,23 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
             }
 
             return _projectsLoaded ? CaptureProjects() : null;
-        });
+        }).ConfigureAwait(false);
         if (projects is not null)
         {
-            await _persistence.SaveNowAsync(projects, CancellationToken.None);
+            await _persistence.SaveNowAsync(projects, CancellationToken.None).ConfigureAwait(false);
         }
         if (_statusRefreshTask is not null)
         {
             try
             {
-                await _statusRefreshTask;
+                await _statusRefreshTask.ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
             {
             }
         }
 
-        await _persistence.DisposeAsync();
+        await _persistence.DisposeAsync().ConfigureAwait(false);
         _lifetime.Dispose();
     }
 

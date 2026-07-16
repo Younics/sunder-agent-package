@@ -9,7 +9,8 @@ using Sunder.Package.Agent.Shared.PackageViews;
 namespace Sunder.Package.Agent.PackageViews;
 
 public abstract class AgentTranscriptRowViewModel(Guid rowId, DateTimeOffset createdAtUtc, object anchorKey)
-    : ObservableObject
+    : ObservableObject,
+        ITranscriptAnchorItem
 {
     public Guid RowId { get; } = rowId;
 
@@ -111,6 +112,13 @@ public sealed class AgentTextTranscriptRowViewModel : AgentTranscriptRowViewMode
 
     public void ReplaceAttachments(IReadOnlyList<AgentTranscriptAttachmentViewModel> attachments)
     {
+        if (Attachments.Count == attachments.Count
+            && Attachments.Select(attachment => attachment.Metadata)
+                .SequenceEqual(attachments.Select(attachment => attachment.Metadata)))
+        {
+            return;
+        }
+
         Attachments.Clear();
         foreach (var attachment in attachments)
         {

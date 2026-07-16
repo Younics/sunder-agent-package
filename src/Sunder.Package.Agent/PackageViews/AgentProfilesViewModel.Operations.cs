@@ -227,41 +227,23 @@ public sealed partial class AgentProfilesViewModel
 
     private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
-        try
+        var initializationTask = _profileService is IAgentPresentationInitialization initialization
+            ? initialization.InitializeAsync(cancellationToken)
+            : Task.CompletedTask;
+        await Task.WhenAll(
+            initializationTask,
+            _profileService.ListInstalledLocalToolsAsync(cancellationToken)).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        Task reload = Task.CompletedTask;
+        await _uiDispatcher.InvokeAsync(() =>
         {
-            var initializationTask = _profileService is IAgentPresentationInitialization initialization
-                ? initialization.InitializeAsync(cancellationToken)
-                : Task.CompletedTask;
-            await Task.WhenAll(
-                initializationTask,
-                _profileService.ListInstalledLocalToolsAsync(cancellationToken)).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-            Task reload = Task.CompletedTask;
-            await _uiDispatcher.InvokeAsync(() =>
+            if (!_disposed)
             {
-                if (!_disposed)
-                {
-                    reload = ReloadProfilesAsync(selectProfileId: null);
-                }
-            }).ConfigureAwait(false);
-            await reload.WaitAsync(cancellationToken).ConfigureAwait(false);
-            await _uiDispatcher.InvokeAsync(() => _isInitialized = !_disposed).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            await _uiDispatcher.InvokeAsync(() =>
-            {
-                if (!_disposed)
-                {
-                    ClearEditor();
-                    SetStatus(ex.Message, AgentProfileStatusKind.Error);
-                }
-            }).ConfigureAwait(false);
-        }
+                reload = ReloadProfilesAsync(selectProfileId: null);
+            }
+        }).ConfigureAwait(false);
+        await reload.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await _uiDispatcher.InvokeAsync(() => _isInitialized = !_disposed).ConfigureAwait(false);
     }
 
     private async Task ReloadProfilesAsync(string? selectProfileId)

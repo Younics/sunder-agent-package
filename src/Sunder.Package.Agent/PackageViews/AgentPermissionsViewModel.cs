@@ -27,6 +27,37 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject, IDispo
             _runtimeAvailability.ConnectionStateChanged += OnRuntimeConnectionStateChanged;
         }
         TryReload();
+        if (_permissionService is IAgentPresentationInitialization initialization)
+        {
+            _tasks.Run(async cancellationToken =>
+            {
+                try
+                {
+                    await initialization.InitializeAsync(cancellationToken).ConfigureAwait(false);
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        if (!_disposed)
+                        {
+                            TryReload();
+                        }
+                    }, DispatcherPriority.Background);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        if (!_disposed)
+                        {
+                            StatusText = $"Agent Runtime is unavailable: {ex.Message}";
+                        }
+                    }, DispatcherPriority.Background);
+                }
+            });
+        }
     }
 
     public ObservableCollection<PermissionBoundaryRowViewModel> Rows { get; } = [];
@@ -89,15 +120,18 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject, IDispo
         }
     }
 
-    private void TryReload()
+    private bool TryReload()
     {
         try
         {
             Reload();
+            StatusText = string.Empty;
+            return true;
         }
         catch (Exception ex)
         {
             StatusText = $"Agent Runtime is unavailable: {ex.Message}";
+            return false;
         }
     }
 
@@ -113,10 +147,6 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject, IDispo
                 if (state == AgentRuntimeConnectionState.Connected)
                 {
                     TryReload();
-                    if (Rows.Count > 0)
-                    {
-                        StatusText = string.Empty;
-                    }
                 }
                 else if (state is AgentRuntimeConnectionState.Unavailable or AgentRuntimeConnectionState.Reconnecting)
                 {

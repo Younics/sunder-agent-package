@@ -7683,6 +7683,59 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public void SubsessionToolInvocationRow_OutputOnlyDetailsRemainExpandable()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var turnId = Guid.NewGuid();
+        var turn = new AgentTurnRecord(
+            turnId,
+            Guid.NewGuid(),
+            AgentMessageRole.Tool,
+            AgentTurnKind.ToolResult,
+            [],
+            now,
+            now);
+        var item = new AgentTurnItemRecord(
+            Guid.NewGuid(),
+            turnId,
+            0,
+            AgentTurnItemKind.ToolResult,
+            "subsession output",
+            "call-1",
+            "output_only",
+            "{}",
+            "Completed.",
+            null,
+            null,
+            false,
+            false,
+            null,
+            null);
+        var presentationServiceType = typeof(SubsessionToolInvocationRowViewModel).Assembly.GetType(
+            "Sunder.Package.Agent.Shared.PackageViews.TranscriptToolPresentationService",
+            throwOnError: true)!;
+        var presentationService = Activator.CreateInstance(
+            presentationServiceType,
+            [null])!;
+        var row = (SubsessionToolInvocationRowViewModel)Activator.CreateInstance(
+            typeof(SubsessionToolInvocationRowViewModel),
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            [turn, item, presentationService, null],
+            culture: null)!;
+
+        Assert.True(row.HasOutput);
+        Assert.False(row.HasMarkdownDetails);
+        Assert.True(row.HasDetails);
+        Assert.False(row.ShowDetails);
+
+        row.IsExpanded = true;
+
+        Assert.True(row.ShowDetails);
+        Assert.Same(row, row.ExpandedDetails);
+    }
+
+    [Fact]
     public async Task AgentChatViewModel_RestoresPersistedWorkspaceAndSession_WhenStillValid()
     {
         const string toolId = "fetch_page";

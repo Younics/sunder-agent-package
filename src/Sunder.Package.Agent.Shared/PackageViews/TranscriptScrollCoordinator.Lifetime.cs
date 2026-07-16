@@ -1,3 +1,5 @@
+using Avalonia.Input;
+
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
 internal sealed partial class TranscriptScrollCoordinator
@@ -12,6 +14,12 @@ internal sealed partial class TranscriptScrollCoordinator
         _disposed = true;
         _lifetimeCancellation.Cancel();
         _scrollViewer.PropertyChanged -= OnScrollViewerPropertyChanged;
+        _scrollViewer.RemoveHandler(InputElement.PointerWheelChangedEvent, OnUserPointerWheelChanged);
+        _scrollViewer.RemoveHandler(InputElement.PointerPressedEvent, OnUserPointerPressed);
+        _scrollViewer.RemoveHandler(InputElement.PointerMovedEvent, OnUserPointerMoved);
+        _scrollViewer.RemoveHandler(InputElement.PointerReleasedEvent, OnUserPointerReleased);
+        _scrollViewer.RemoveHandler(InputElement.KeyDownEvent, OnUserKeyDown);
+        _scrollViewer.RemoveHandler(InputElement.GotFocusEvent, OnDescendantGotFocus);
         _pendingAnchor = null;
         _pendingSettledScrollCompleted = null;
         _pendingBottomPlacementReleaseCompleted = null;

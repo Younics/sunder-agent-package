@@ -64,6 +64,11 @@ internal interface ISubsessionChangeNotifications
     event Action<Guid, AgentTurnRecord>? TurnChanged;
 }
 
+internal interface ISubagentPresentationInitialization
+{
+    Task InitializeAsync(CancellationToken cancellationToken = default);
+}
+
 internal sealed record SubsessionSessionCatalog(
     IReadOnlyList<AgentSessionRecord> Sessions,
     IReadOnlyList<AgentProfileRecord> Profiles);
@@ -146,6 +151,7 @@ internal sealed class SubagentAppRuntimeGateway :
     ISubsessionCheckpointReader,
     ISubsessionTranscriptPageReader,
     ISubsessionChangeNotifications,
+    ISubagentPresentationInitialization,
     IDisposable
 {
     private readonly IPackageRuntimeClient _client;
@@ -153,11 +159,28 @@ internal sealed class SubagentAppRuntimeGateway :
     private readonly object _runtimeSnapshotLock = new();
     private IReadOnlyList<ProviderCatalogOption>? _providers;
     private Task<SubagentProjection>? _runtimeSnapshot;
+    private Task<SubagentProjection>? _abandonedRuntimeSnapshot;
+    private Task? _observationTask;
     private int _disposed;
 
     public SubagentAppRuntimeGateway(IPackageRuntimeClient client)
     {
         _client = client;
+    }
+
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        lock (_runtimeSnapshotLock)
+        {
+            return _observationTask ??= StartObservingChangesAsync();
+        }
+    }
+
+    private async Task StartObservingChangesAsync()
+    {
+        await Task.Yield();
         _ = ObserveChangesAsync(_lifetime.Token);
     }
 
@@ -239,16 +262,66 @@ internal sealed class SubagentAppRuntimeGateway :
             AnchorCreatedAtUtc: afterCreatedAtUtc, AnchorTurnId: afterTurnId), cancellationToken)
             .ConfigureAwait(false)).Turns ?? [];
 
-    private Task<SubagentProjection> GetRuntimeSnapshotAsync(CancellationToken cancellationToken)
+    private async Task<SubagentProjection> GetRuntimeSnapshotAsync(CancellationToken cancellationToken)
     {
         Task<SubagentProjection> snapshot;
+        bool retryIfFaulted;
         lock (_runtimeSnapshotLock)
         {
+            if (_runtimeSnapshot is { IsFaulted: true } or { IsCanceled: true })
+            {
+                _ = _runtimeSnapshot.Exception;
+                _runtimeSnapshot = null;
+                _abandonedRuntimeSnapshot = null;
+            }
             snapshot = _runtimeSnapshot ??= InvokeAsync(
                 new(SubagentQueryKind.RuntimeCatalog),
                 _lifetime.Token);
+            retryIfFaulted = ReferenceEquals(_abandonedRuntimeSnapshot, snapshot);
         }
-        return snapshot.WaitAsync(cancellationToken);
+
+        try
+        {
+            var projection = await snapshot.WaitAsync(cancellationToken).ConfigureAwait(false);
+            lock (_runtimeSnapshotLock)
+            {
+                if (ReferenceEquals(_abandonedRuntimeSnapshot, snapshot))
+                {
+                    _abandonedRuntimeSnapshot = null;
+                }
+            }
+            return projection;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            lock (_runtimeSnapshotLock)
+            {
+                if (ReferenceEquals(_runtimeSnapshot, snapshot))
+                {
+                    _abandonedRuntimeSnapshot = snapshot;
+                }
+            }
+            throw;
+        }
+        catch
+        {
+            lock (_runtimeSnapshotLock)
+            {
+                if (ReferenceEquals(_runtimeSnapshot, snapshot))
+                {
+                    _runtimeSnapshot = null;
+                }
+                if (ReferenceEquals(_abandonedRuntimeSnapshot, snapshot))
+                {
+                    _abandonedRuntimeSnapshot = null;
+                }
+            }
+            if (retryIfFaulted)
+            {
+                return await GetRuntimeSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            }
+            throw;
+        }
     }
 
     private void InvalidateRuntimeSnapshot()
@@ -256,6 +329,7 @@ internal sealed class SubagentAppRuntimeGateway :
         lock (_runtimeSnapshotLock)
         {
             _runtimeSnapshot = null;
+            _abandonedRuntimeSnapshot = null;
         }
     }
 

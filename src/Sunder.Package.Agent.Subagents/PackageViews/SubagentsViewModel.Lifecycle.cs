@@ -2,16 +2,24 @@ namespace Sunder.Package.Agent.Subagents.PackageViews;
 
 public sealed partial class SubagentsViewModel
 {
-    public Task InitializeAsync() => _initialization;
-
-    private async Task InitializeCoreAsync()
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            await ReloadAsync(null);
+            await _initialization.RunAsync(InitializeCoreAsync, cancellationToken);
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (_initializationFailureStatus is not null
+                    && string.Equals(StatusText, _initializationFailureStatus, StringComparison.Ordinal))
+                {
+                    ClearStatus();
+                }
+                _initializationFailureStatus = null;
+            });
         }
-        catch (OperationCanceledException) when (_disposed)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            throw;
         }
         catch (Exception ex)
         {
@@ -19,10 +27,21 @@ public sealed partial class SubagentsViewModel
             {
                 if (!_disposed)
                 {
-                    SetStatus(ex.Message, SubagentStatusKind.Error);
+                    _initializationFailureStatus = ex.Message;
+                    SetStatus(_initializationFailureStatus, SubagentStatusKind.Error);
                 }
             });
         }
+    }
+
+    private async Task InitializeCoreAsync(CancellationToken cancellationToken)
+    {
+        if (_gateway is Runtime.ISubagentPresentationInitialization initialization)
+        {
+            await initialization.InitializeAsync(cancellationToken);
+        }
+
+        await ReloadAsync(null, cancellationToken);
     }
 
     public void Dispose()
@@ -34,6 +53,7 @@ public sealed partial class SubagentsViewModel
 
         _disposed = true;
         _loadVersion++;
+        _initialization.Dispose();
         _statusClear.Dispose();
         _tasks.Dispose();
         _operation.Dispose();

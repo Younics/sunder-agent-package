@@ -41,9 +41,11 @@ public sealed partial class AgentProfilesViewModel
         {
             return;
         }
-        if (state == Runtime.AgentRuntimeConnectionState.Connected && _isInitialized)
+        if (state == Runtime.AgentRuntimeConnectionState.Connected)
         {
-            RunOnUiThread(() => _tasks.Run(_ => ReloadProfilesSafelyAsync(SelectedProfile?.ProfileId)));
+            RunOnUiThread(() => _tasks.Run(cancellationToken => _isInitialized
+                ? ReloadProfilesSafelyAsync(SelectedProfile?.ProfileId)
+                : InitializeAsync(cancellationToken)));
         }
         else if (state is Runtime.AgentRuntimeConnectionState.Unavailable
                  or Runtime.AgentRuntimeConnectionState.Reconnecting)

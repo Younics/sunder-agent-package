@@ -747,6 +747,25 @@ public sealed class AgentRuntimeCorrectnessTests
         await gateway.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Empty(gateway.ListProfiles());
+        Assert.Equal(1, client.DashboardInvocationCount);
+    }
+
+    [Fact]
+    public async Task Gateway_RetriesSharedDashboardFaultedAfterCallerCancellation()
+    {
+        var client = new FaultAfterCanceledDashboardRuntimeClient();
+        using var gateway = new AgentAppRuntimeGateway(client);
+        using var cancellation = new CancellationTokenSource();
+        var canceledWaiter = gateway.InitializeAsync(cancellation.Token);
+        await client.DashboardStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceledWaiter);
+
+        client.ReleaseDashboard.TrySetResult();
+        await client.FirstDashboardCompleted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await gateway.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(2, client.DashboardInvocationCount);
     }
 
     [Fact]
@@ -757,6 +776,7 @@ public sealed class AgentRuntimeCorrectnessTests
         var workspaceChanges = 0;
         gateway.WorkspacesChanged += () => Interlocked.Increment(ref workspaceChanges);
 
+        await gateway.InitializeAsync();
         await WaitUntilAsync(() => client.LastDeliveredRevision == 2);
 
         Assert.True(client.AfterRevisions.Count >= 2);
@@ -764,6 +784,19 @@ public sealed class AgentRuntimeCorrectnessTests
         Assert.Equal(0, client.AfterRevisions[1]);
         Assert.Equal(2, client.LastDeliveredRevision);
         Assert.True(Volatile.Read(ref workspaceChanges) >= 2);
+    }
+
+    [Fact]
+    public async Task PermissionsViewModel_StartsRuntimeObservation()
+    {
+        var client = new PermissionRuntimeClient();
+        using var gateway = new AgentAppRuntimeGateway(client);
+        using var viewModel = new AgentPermissionsViewModel(gateway);
+
+        await WaitUntilAsync(() => client.SubscriptionCount > 0);
+
+        Assert.Single(viewModel.Rows);
+        Assert.Equal("test.mutate", viewModel.Rows[0].ActionId);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
@@ -1150,12 +1183,15 @@ public sealed class AgentRuntimeCorrectnessTests
     {
         private readonly TaskCompletionSource _dashboardRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private volatile bool _isAvailable = isAvailable;
+        private int _dashboardInvocationCount;
 
         public bool IsAvailable
         {
             get => _isAvailable;
             set => _isAvailable = value;
         }
+
+        public int DashboardInvocationCount => Volatile.Read(ref _dashboardInvocationCount);
 
         public void ReleaseDashboard() => _dashboardRelease.TrySetResult();
 
@@ -1172,7 +1208,12 @@ public sealed class AgentRuntimeCorrectnessTests
             }
             if (blockDashboard && ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
             {
+                Interlocked.Increment(ref _dashboardInvocationCount);
                 await _dashboardRelease.Task.WaitAsync(cancellationToken);
+            }
+            else if (ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
+            {
+                Interlocked.Increment(ref _dashboardInvocationCount);
             }
             if (ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
             {
@@ -1194,6 +1235,61 @@ public sealed class AgentRuntimeCorrectnessTests
             }
             yield return (TEvent)(object)new AgentRuntimeChange(0, AgentRuntimeChangeKind.Connected);
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
+    private sealed class FaultAfterCanceledDashboardRuntimeClient : IPackageRuntimeClient
+    {
+        private int _dashboardInvocationCount;
+
+        public bool IsAvailable => true;
+        public int DashboardInvocationCount => Volatile.Read(ref _dashboardInvocationCount);
+        public TaskCompletionSource DashboardStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseDashboard { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource FirstDashboardCompleted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            PackageRuntimeOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            if (!ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
+            {
+                throw new NotSupportedException(operation.OperationId);
+            }
+
+            var invocation = Interlocked.Increment(ref _dashboardInvocationCount);
+            if (invocation == 1)
+            {
+                DashboardStarted.TrySetResult();
+                try
+                {
+                    await ReleaseDashboard.Task.WaitAsync(cancellationToken);
+                    throw new InvalidOperationException("Injected dashboard failure.");
+                }
+                finally
+                {
+                    FirstDashboardCompleted.TrySetResult();
+                }
+            }
+
+            return (TResponse)(object)new AgentDashboardProjection(0, [], [], []);
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            PackageRuntimeStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
         }
     }
 
@@ -1584,6 +1680,60 @@ public sealed class AgentRuntimeCorrectnessTests
                 yield return (TEvent)(object)new AgentRuntimeChange(revision, AgentRuntimeChangeKind.Workspace);
             }
             yield return (TEvent)(object)new AgentRuntimeChange(2, AgentRuntimeChangeKind.Connected);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
+    private sealed class PermissionRuntimeClient : IPackageRuntimeClient
+    {
+        private int _subscriptionCount;
+
+        public bool IsAvailable => true;
+
+        public int SubscriptionCount => Volatile.Read(ref _subscriptionCount);
+
+        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            PackageRuntimeOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
+            {
+                return ValueTask.FromResult((TResponse)(object)new AgentDashboardProjection(0, [], [], []));
+            }
+            if (ReferenceEquals(operation, AgentRuntimeOperations.Permissions))
+            {
+                return ValueTask.FromResult((TResponse)(object)new AgentPermissionProjection(
+                    0,
+                    SessionState: null,
+                    [new AgentPermissionActionDescriptor(
+                        "test.mutate",
+                        "Mutate test state",
+                        "Mutates deterministic test state.",
+                        [new AgentPermissionBoundaryDescriptor(
+                            "test-boundary",
+                            "Test boundary",
+                            "Requires approval.",
+                            AgentPermissionDecision.Ask)])],
+                    Overrides: [],
+                    PendingRequests: []));
+            }
+
+            return ValueTask.FromException<TResponse>(new NotSupportedException(operation.OperationId));
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            PackageRuntimeStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            Interlocked.Increment(ref _subscriptionCount);
+            yield return (TEvent)(object)new AgentRuntimeChange(0, AgentRuntimeChangeKind.Connected);
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     }

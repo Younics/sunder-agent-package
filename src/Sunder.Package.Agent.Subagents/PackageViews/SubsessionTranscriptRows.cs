@@ -11,7 +11,8 @@ using Sunder.Sdk.Avalonia.Theming;
 namespace Sunder.Package.Agent.Subagents.PackageViews;
 
 public abstract class SubsessionTranscriptRowViewModel(Guid rowId, DateTimeOffset createdAtUtc, object anchorKey)
-    : ObservableObject
+    : ObservableObject,
+        ITranscriptAnchorItem
 {
     public Guid RowId { get; } = rowId;
 
@@ -206,6 +207,8 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
 
     public bool ShowDetails => IsExpanded && HasDetails;
 
+    public SubsessionToolInvocationRowViewModel? ExpandedDetails => ShowDetails ? this : null;
+
     public string ExpandGlyph => IsExpanded ? "▴" : "▾";
 
     public string ToolLabel
@@ -244,13 +247,13 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
         }
     }
 
-    public bool HasDetails => DetailMarkdownBuilder.Length > 0;
+    public bool HasDetails => HasMarkdownDetails || HasOutput || HasToolDiff;
 
     public bool HasHeaderDetail => !string.IsNullOrWhiteSpace(HeaderDetailText);
 
     public bool HasOutput => !string.IsNullOrWhiteSpace(OutputText);
 
-    public bool HasMarkdownDetails => HasDetails;
+    public bool HasMarkdownDetails => DetailMarkdownBuilder.Length > 0;
 
     public bool ShowMarkdownDetails => HasMarkdownDetails && (ToolDiff?.ShowMarkdownDetails ?? true);
 
@@ -265,6 +268,7 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
                 OnPropertyChanged(nameof(ToolDiffFiles));
                 OnPropertyChanged(nameof(ToolDiffSectionTitle));
                 OnPropertyChanged(nameof(ShowMarkdownDetails));
+                NotifyDetailAvailabilityChanged();
             }
         }
     }
@@ -284,6 +288,7 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
     partial void OnIsExpandedChanged(bool value)
     {
         OnPropertyChanged(nameof(ShowDetails));
+        OnPropertyChanged(nameof(ExpandedDetails));
         OnPropertyChanged(nameof(ExpandGlyph));
     }
 
@@ -304,10 +309,6 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
         }
 
         ApplyPresentationDetails(item);
-        OnPropertyChanged(nameof(HasDetails));
-        OnPropertyChanged(nameof(ShowDetails));
-        OnPropertyChanged(nameof(HasMarkdownDetails));
-        OnPropertyChanged(nameof(ShowMarkdownDetails));
     }
 
     private void ApplyPresentationDetails(AgentTurnItemRecord item)
@@ -329,10 +330,16 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
         DetailMarkdownBuilder.Append(presentation.DetailMarkdown?.Trim() ?? string.Empty);
         OutputText = presentation.OutputText?.Trim() ?? string.Empty;
         RefreshChildSessionLink();
-        OnPropertyChanged(nameof(HasDetails));
-        OnPropertyChanged(nameof(ShowDetails));
         OnPropertyChanged(nameof(HasMarkdownDetails));
         OnPropertyChanged(nameof(ShowMarkdownDetails));
+        NotifyDetailAvailabilityChanged();
+    }
+
+    private void NotifyDetailAvailabilityChanged()
+    {
+        OnPropertyChanged(nameof(HasDetails));
+        OnPropertyChanged(nameof(ShowDetails));
+        OnPropertyChanged(nameof(ExpandedDetails));
     }
 
     public void RefreshChildSessionLink()

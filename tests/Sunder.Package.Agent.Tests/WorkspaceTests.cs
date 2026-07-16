@@ -3005,6 +3005,99 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
+    public void AgentToolInvocationRowViewModel_DetailPredicatesIncludeEveryVisualKind()
+    {
+        var outputOnly = new AgentToolInvocationRowViewModel(
+            CreateToolTurn(),
+            CreateToolItem("output_only", "{}", textContent: "output"),
+            new AgentToolPresentationService());
+        var metadataOnly = new AgentToolInvocationRowViewModel(
+            CreateToolTurn(),
+            CreateToolItem(
+                "metadata_only",
+                "{}",
+                errorCode: "tool-failed",
+                backendId: "local"),
+            new AgentToolPresentationService());
+        var diffOnly = new AgentToolInvocationRowViewModel(
+            CreateToolTurn(),
+            CreateToolItem(
+                "edit",
+                JsonSerializer.Serialize(new
+                {
+                    path = "src/Foo.cs",
+                    oldString = "old",
+                    newString = "new",
+                })),
+            new AgentToolPresentationService());
+        diffOnly.DetailMarkdownBuilder.Clear();
+        var markdownOnly = new AgentToolInvocationRowViewModel(
+            CreateToolTurn(),
+            CreateToolItem("markdown_only", "{\"query\":\"details\"}"),
+            new AgentToolPresentationService());
+
+        Assert.True(outputOnly.HasOutput);
+        Assert.False(outputOnly.HasMarkdownDetails);
+        Assert.True(metadataOnly.HasMetadata);
+        Assert.False(metadataOnly.HasMarkdownDetails);
+        Assert.True(diffOnly.HasToolDiff);
+        Assert.False(diffOnly.HasMarkdownDetails);
+        Assert.True(markdownOnly.HasMarkdownDetails);
+        Assert.All(
+            new[] { outputOnly, metadataOnly, diffOnly, markdownOnly },
+            row =>
+            {
+                Assert.True(row.HasDetails);
+                row.IsExpanded = true;
+                Assert.True(row.ShowDetails);
+                Assert.Same(row, row.ExpandedDetails);
+            });
+    }
+
+    [Fact]
+    public void AgentTextTranscriptRowViewModel_UnchangedAttachmentsDoNotResetCollection()
+    {
+        var metadata = new AgentAttachmentMetadata(
+            Guid.NewGuid(),
+            "diagram.png",
+            "image/png",
+            AgentAttachmentKind.Image,
+            128,
+            "hash",
+            "attachments/diagram.png",
+            IsText: false,
+            WasTruncated: false);
+        var attachment = new AgentTranscriptAttachmentViewModel(metadata);
+        var row = new AgentTextTranscriptRowViewModel(
+            new AgentTurnRecord(
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                AgentMessageRole.User,
+                AgentTurnKind.Message,
+                [],
+                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow),
+            string.Empty,
+            [attachment]);
+        var collectionChanges = 0;
+        var propertyChanges = 0;
+        row.Attachments.CollectionChanged += (_, _) => collectionChanges++;
+        row.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(AgentTextTranscriptRowViewModel.HasAttachments))
+            {
+                propertyChanges++;
+            }
+        };
+
+        row.ReplaceAttachments([new AgentTranscriptAttachmentViewModel(metadata)]);
+
+        Assert.Same(attachment, Assert.Single(row.Attachments));
+        Assert.Equal(0, collectionChanges);
+        Assert.Equal(0, propertyChanges);
+    }
+
+    [Fact]
     public async Task AgentToolService_ListReadyRuntimeToolsAsync_OrdersToolsByPriorityDescending()
     {
         using var scope = TestScope.Create();
@@ -3172,7 +3265,9 @@ public sealed class WorkspaceTests
         string? resultSummary = null,
         AgentTurnItemKind kind = AgentTurnItemKind.ToolResult,
         bool isError = false,
-        string? presentationPayloadJson = null)
+        string? presentationPayloadJson = null,
+        string? errorCode = null,
+        string? backendId = null)
     {
         var turnId = Guid.NewGuid();
         return new AgentTurnItemRecord(
@@ -3189,8 +3284,8 @@ public sealed class WorkspaceTests
             SourcesJson: null,
             WasTruncated: false,
             IsError: isError,
-            ErrorCode: null,
-            BackendId: null,
+            ErrorCode: errorCode,
+            BackendId: backendId,
             PresentationPayloadJson: presentationPayloadJson);
     }
 

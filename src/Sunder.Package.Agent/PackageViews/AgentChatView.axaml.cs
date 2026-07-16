@@ -45,9 +45,14 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
     private readonly InlineRenameFocusCoordinator<AgentSessionListItemViewModel> _renameFocus;
     private readonly PresentationTaskScope _tasks;
     private readonly AdaptiveEditorStateCache<AgentChatEditorState> _editorStateCache = new();
+    private readonly Dictionary<string, double> _workspacePathTextWidths = new(StringComparer.Ordinal);
+    private readonly object _workspacePathLayoutSyncRoot = new();
     private IPackageNotificationService _notificationService = NullPackageNotificationService.Instance;
     private CancellationTokenSource? _navigationCancellation;
     private int _navigationGeneration;
+    private bool _workspacePathLayoutQueued;
+    private bool _workspacePathLayoutDirty;
+    private bool _headerLayoutInitialized;
     private bool _usesWideLayout;
     private bool _lastComposerExpanded;
     private bool _disposed;
@@ -81,7 +86,9 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
             () => ViewModel?.ResumeTranscriptFollowingLatestIfCaughtUp(),
             isVisible => ViewModel?.SetTranscriptJumpToLatestVisible(isVisible),
             anchor => ViewModel?.SetTranscriptViewportAnchor(anchor),
-            exception => ViewModel?.ReportTranscriptPagingFailure(exception));
+            exception => ViewModel?.ReportTranscriptPagingFailure(exception),
+            EnumerateRealizedTranscriptAnchors,
+            RealizeTranscriptAnchor);
         _renameFocus = new InlineRenameFocusCoordinator<AgentSessionListItemViewModel>(
             this,
             session => session.SessionId,
@@ -612,134 +619,4 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
         });
     }
 
-    private void ApplyHeaderLayout()
-    {
-        var useWideLayout = Bounds.Width >= WideHeaderMinimumWidth;
-        if (useWideLayout != _usesWideLayout)
-        {
-            CaptureComposerEditorState(_usesWideLayout, _lastComposerExpanded);
-            _usesWideLayout = useWideLayout;
-            QueueRestoreComposerEditorState();
-        }
-        HeaderWideLayout.IsVisible = useWideLayout;
-        HeaderNarrowLayout.IsVisible = !useWideLayout;
-        QueueWorkspacePathChipLayoutUpdate();
-    }
-
-    private void OnWorkspacePathRowSizeChanged(object? sender, SizeChangedEventArgs e)
-        => QueueWorkspacePathChipLayoutUpdate();
-
-    private void QueueWorkspacePathChipLayoutUpdate()
-        => _tasks.Run(async _ =>
-        {
-            await Dispatcher.UIThread.InvokeAsync(UpdateWorkspacePathChipLayout, DispatcherPriority.Loaded);
-        });
-
-    private void CaptureComposerEditorState(bool wide, bool expanded)
-    {
-        var textBox = expanded ? ExpandedComposerTextBox : CollapsedComposerTextBox;
-        _editorStateCache.Save(wide, expanded, new AgentChatEditorState(
-            textBox.CaretIndex,
-            textBox.SelectionStart,
-            textBox.SelectionEnd,
-            textBox.IsKeyboardFocusWithin));
-    }
-
-    private void QueueRestoreComposerEditorState()
-        => _tasks.Run(async cancellationToken =>
-        {
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                if (cancellationToken.IsCancellationRequested
-                    || !_editorStateCache.TryRestore(_usesWideLayout, _lastComposerExpanded, out var state))
-                {
-                    return;
-                }
-
-                var textBox = _lastComposerExpanded ? ExpandedComposerTextBox : CollapsedComposerTextBox;
-                var textLength = textBox.Text?.Length ?? 0;
-                textBox.CaretIndex = Math.Clamp(state.CaretIndex, 0, textLength);
-                textBox.SelectionStart = Math.Clamp(state.SelectionStart, 0, textLength);
-                textBox.SelectionEnd = Math.Clamp(state.SelectionEnd, 0, textLength);
-                if (state.HadFocus)
-                {
-                    textBox.Focus();
-                }
-            }, DispatcherPriority.Loaded);
-        });
-
-    private void UpdateWorkspacePathChipLayout()
-    {
-        var viewModel = _viewModel ?? DataContext as AgentChatViewModel;
-        if (viewModel is null)
-        {
-            return;
-        }
-
-        var labels = viewModel.WorkspacePathChipLabels;
-        var wideVisibleCount = CalculateVisibleWorkspacePathChipCount(labels, WideWorkspacePathRow.Bounds.Width);
-        var narrowVisibleCount = CalculateVisibleWorkspacePathChipCount(labels, NarrowWorkspacePathRow.Bounds.Width);
-        viewModel.UpdateWorkspacePathChipLayout(wideVisibleCount, narrowVisibleCount);
-    }
-
-    private static int CalculateVisibleWorkspacePathChipCount(IReadOnlyList<string> labels, double availableWidth)
-    {
-        if (labels.Count == 0)
-        {
-            return 0;
-        }
-
-        if (double.IsNaN(availableWidth) || double.IsInfinity(availableWidth) || availableWidth <= 0)
-        {
-            return labels.Count;
-        }
-
-        for (var count = labels.Count; count >= 0; count--)
-        {
-            var overflowCount = labels.Count - count;
-            var width = MeasureWorkspacePathChipsWidth(labels, count);
-            if (overflowCount > 0)
-            {
-                width += WorkspacePathOverflowSpacing + MeasureWorkspacePathOverflowWidth(overflowCount);
-            }
-
-            if (width <= availableWidth)
-            {
-                return count;
-            }
-        }
-
-        return 0;
-    }
-
-    private static double MeasureWorkspacePathChipsWidth(IReadOnlyList<string> labels, int count)
-    {
-        var width = 0d;
-        for (var index = 0; index < count; index++)
-        {
-            if (index > 0)
-            {
-                width += WorkspacePathChipSpacing;
-            }
-
-            width += MeasureWorkspacePathTextWidth(labels[index]) + WorkspacePathChipChromeWidth;
-        }
-
-        return width;
-    }
-
-    private static double MeasureWorkspacePathOverflowWidth(int overflowCount)
-        => MeasureWorkspacePathTextWidth($"+{overflowCount} more") + WorkspacePathOverflowChromeWidth;
-
-    private static double MeasureWorkspacePathTextWidth(string text)
-    {
-        var textBlock = new TextBlock
-        {
-            Text = text,
-            FontFamily = WorkspacePathChipFontFamily,
-            FontSize = WorkspacePathChipTextFontSize,
-        };
-        textBlock.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        return Math.Ceiling(textBlock.DesiredSize.Width);
-    }
 }

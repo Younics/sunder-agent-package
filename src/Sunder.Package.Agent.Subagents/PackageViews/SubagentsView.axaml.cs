@@ -4,10 +4,11 @@ using Avalonia.Input;
 using Avalonia.Threading;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Subagents.Models;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
 
-public partial class SubagentsView : UserControl, IDisposable
+public partial class SubagentsView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
     private readonly PresentationTaskScope _tasks = new();
@@ -53,6 +54,20 @@ public partial class SubagentsView : UserControl, IDisposable
         DataContext = null;
         _viewModel = null;
     }
+
+    public async ValueTask WarmupAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if ((_viewModel ?? DataContext as SubagentsViewModel) is { } viewModel)
+        {
+            await viewModel.InitializeAsync(cancellationToken);
+        }
+    }
+
+    public ValueTask OnNavigatedToAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
+        => WarmupAsync(cancellationToken);
 
     private void OnSubagentItemTapped(object? sender, TappedEventArgs e)
     {

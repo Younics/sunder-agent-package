@@ -65,6 +65,8 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
 
     public bool ShowDetails => IsExpanded && HasDetails;
 
+    public AgentToolInvocationRowViewModel? ExpandedDetails => ShowDetails ? this : null;
+
     public string ExpandGlyph => IsExpanded ? "▴" : "▾";
 
     [ObservableProperty]
@@ -139,7 +141,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
         }
     }
 
-    public bool HasDetails => DetailMarkdownBuilder.Length > 0;
+    public bool HasDetails => HasMarkdownDetails || HasOutput || HasToolDiff || HasMetadata;
 
     public bool HasHeaderDetail => !string.IsNullOrWhiteSpace(HeaderDetailText);
 
@@ -151,7 +153,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
 
     public bool HasMetadata => HasErrorCode || HasBackend;
 
-    public bool HasMarkdownDetails => HasDetails;
+    public bool HasMarkdownDetails => DetailMarkdownBuilder.Length > 0;
 
     public bool ShowMarkdownDetails => HasMarkdownDetails && (ToolDiff?.ShowMarkdownDetails ?? true);
 
@@ -166,6 +168,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
                 OnPropertyChanged(nameof(ToolDiffFiles));
                 OnPropertyChanged(nameof(ToolDiffSectionTitle));
                 OnPropertyChanged(nameof(ShowMarkdownDetails));
+                NotifyDetailAvailabilityChanged();
             }
         }
     }
@@ -202,6 +205,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
     partial void OnIsExpandedChanged(bool value)
     {
         OnPropertyChanged(nameof(ShowDetails));
+        OnPropertyChanged(nameof(ExpandedDetails));
         OnPropertyChanged(nameof(ExpandGlyph));
     }
 
@@ -222,10 +226,6 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
         }
 
         ApplyPresentationDetails(item);
-        OnPropertyChanged(nameof(HasDetails));
-        OnPropertyChanged(nameof(ShowDetails));
-        OnPropertyChanged(nameof(HasMarkdownDetails));
-        OnPropertyChanged(nameof(ShowMarkdownDetails));
         OnPropertyChanged(nameof(IsFailed));
         OnPropertyChanged(nameof(IsRunning));
         OnPropertyChanged(nameof(IsCompleted));
@@ -253,10 +253,16 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
         ErrorCodeText = item.ErrorCode ?? string.Empty;
         BackendText = item.BackendId ?? string.Empty;
         RefreshChildSessionLink();
-        OnPropertyChanged(nameof(HasDetails));
-        OnPropertyChanged(nameof(ShowDetails));
         OnPropertyChanged(nameof(HasMarkdownDetails));
         OnPropertyChanged(nameof(ShowMarkdownDetails));
+        NotifyDetailAvailabilityChanged();
+    }
+
+    private void NotifyDetailAvailabilityChanged()
+    {
+        OnPropertyChanged(nameof(HasDetails));
+        OnPropertyChanged(nameof(ShowDetails));
+        OnPropertyChanged(nameof(ExpandedDetails));
     }
 
     public void RefreshChildSessionLink()
