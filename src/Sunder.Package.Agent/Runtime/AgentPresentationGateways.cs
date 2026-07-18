@@ -77,6 +77,11 @@ public interface IAgentSessionGateway
     AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId);
 }
 
+public interface IAgentTurnMutationGateway
+{
+    event Action<AgentTurnMutation>? TurnMutated;
+}
+
 public interface IAgentPermissionGateway
 {
     AgentSessionPermissionState GetSessionState(Guid sessionId);

@@ -123,6 +123,30 @@ public sealed partial class AgentLocalStore
             ALTER TABLE AgentPendingPermissionRequests
                 ADD COLUMN ExecutionSnapshotJson TEXT NOT NULL DEFAULT '';
             """),
+        SqlMigration(
+            8,
+            "turn-content-revisions",
+            """
+            ALTER TABLE AgentTurns ADD COLUMN ContentRevision INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE AgentTurns ADD COLUMN IsStreaming INTEGER NOT NULL DEFAULT 0;
+            """),
+        SqlMigration(
+            9,
+            "turn-run-ownership",
+            """
+            ALTER TABLE AgentTurns ADD COLUMN RunId TEXT NULL;
+            ALTER TABLE AgentTurns ADD COLUMN RunRevision INTEGER NULL;
+
+            UPDATE AgentTurns
+            SET ContentRevision = ContentRevision + 1,
+                IsStreaming = 0
+            WHERE IsStreaming = 1
+              AND RunId IS NULL;
+
+            CREATE INDEX IX_AgentTurns_StreamingRun
+                ON AgentTurns (SessionId, RunId, RunRevision)
+                WHERE IsStreaming = 1;
+            """),
     ];
 
     private void ApplySchemaMigrations()

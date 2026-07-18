@@ -13,49 +13,88 @@ internal sealed partial class TranscriptScrollCoordinator
     private long _interactionRevision;
     private long _tailFollowInteractionRevision;
     private long _bottomPlacementInteractionRevision;
-    private long _scrollToBottomInteractionRevision;
     private long _forceScrollToBottomInteractionRevision;
     private Point? _touchScrollStart;
+    private ScrollViewer? _touchNestedScrollViewer;
     private bool _touchScrollRecognized;
+    private bool _userScrollPending;
+    private bool _pendingUserScrollCanResumeFollowing;
+    private bool _scrollBarInteractionActive;
+    private double _lastObservedOffsetY;
+    private UserScrollDirection _pendingUserScrollDirection;
+    private UserScrollDirection _lastUserScrollDirection;
     private Task _focusBringIntoViewOperation = Task.CompletedTask;
 
-    private void OnUserScrollInput(bool detachFromLatest)
+    private bool IsFollowingTail => !_userDetached && _isFollowingLatest();
+
+    private void OnUserScrollInput(
+        UserScrollDirection direction,
+        bool canResumeFollowing = true)
     {
         _interactionRevision++;
+        _loadNewerResumeInteractionRevision = -1;
         _pendingAnchor = null;
-        if (detachFromLatest)
+        _userScrollPending = true;
+        _pendingUserScrollCanResumeFollowing = canResumeFollowing;
+        _pendingUserScrollDirection = direction;
+        if (direction == UserScrollDirection.TowardHistory)
         {
-            SetShouldAutoScroll(false);
-            _onDetachedFromLatest?.Invoke();
+            DetachFromLatestForUser();
         }
-        else if (_shouldAutoScroll)
+        else if (direction == UserScrollDirection.TowardTail && IsFollowingTail)
         {
             _tailFollowInteractionRevision = _interactionRevision;
         }
 
         CancelBottomPlacementLockForUserInteraction();
+        QueuePendingUserScrollEvaluation(_interactionRevision);
     }
 
     private void OnUserPointerWheelChanged(object? sender, PointerWheelEventArgs eventArgs)
-        => OnUserScrollInput(detachFromLatest: eventArgs.Delta.Y > 0);
-
-    private void OnUserPointerPressed(object? sender, PointerPressedEventArgs eventArgs)
     {
-        if (eventArgs.Pointer.Type == PointerType.Touch)
+        if (Math.Abs(eventArgs.Delta.Y) <= 0.001)
         {
-            _touchScrollStart = eventArgs.GetPosition(_scrollViewer);
-            _touchScrollRecognized = false;
             return;
         }
 
-        if (IsScrollBarInput(eventArgs))
+        if (CanNestedScrollViewerConsume(eventArgs, eventArgs.Delta.Y))
         {
-            OnUserScrollInput(detachFromLatest: true);
+            return;
+        }
+
+        OnUserScrollInput(eventArgs.Delta.Y > 0
+            ? UserScrollDirection.TowardHistory
+            : UserScrollDirection.TowardTail);
+    }
+
+    private void OnUserPointerPressed(object? sender, PointerPressedEventArgs eventArgs)
+    {
+        if (FindScrollBarOwner(eventArgs) is { } scrollBarOwner)
+        {
+            if (ReferenceEquals(scrollBarOwner, _scrollViewer))
+            {
+                _scrollBarInteractionActive = true;
+                OnUserScrollInput(UserScrollDirection.None);
+            }
+            return;
+        }
+
+        if (eventArgs.Pointer.Type == PointerType.Touch)
+        {
+            _touchScrollStart = eventArgs.GetPosition(_scrollViewer);
+            _touchNestedScrollViewer = FindNestedScrollViewer(eventArgs);
+            _touchScrollRecognized = false;
+            return;
         }
     }
 
     private void OnUserKeyDown(object? sender, KeyEventArgs eventArgs)
     {
+        if (IsControlActivationOrEditingKey(eventArgs))
+        {
+            return;
+        }
+
         if (eventArgs.Key is Key.Up
             or Key.Down
             or Key.PageUp
@@ -66,12 +105,25 @@ internal sealed partial class TranscriptScrollCoordinator
         {
             var movesUp = eventArgs.Key is Key.Up or Key.PageUp or Key.Home
                 || eventArgs.Key == Key.Space && eventArgs.KeyModifiers.HasFlag(KeyModifiers.Shift);
-            OnUserScrollInput(detachFromLatest: movesUp);
+            OnUserScrollInput(movesUp
+                ? UserScrollDirection.TowardHistory
+                : UserScrollDirection.TowardTail);
         }
     }
 
     private void OnUserPointerMoved(object? sender, PointerEventArgs eventArgs)
     {
+        if (FindScrollBarOwner(eventArgs) is { } scrollBarOwner)
+        {
+            var properties = eventArgs.GetCurrentPoint(_scrollViewer).Properties;
+            if (ReferenceEquals(scrollBarOwner, _scrollViewer) && properties.IsLeftButtonPressed)
+            {
+                _scrollBarInteractionActive = true;
+                OnUserScrollInput(UserScrollDirection.None);
+            }
+            return;
+        }
+
         if (eventArgs.Pointer.Type == PointerType.Touch)
         {
             if (_touchScrollRecognized || _touchScrollStart is not { } start)
@@ -85,15 +137,17 @@ internal sealed partial class TranscriptScrollCoordinator
                 return;
             }
 
-            _touchScrollRecognized = true;
-            OnUserScrollInput(detachFromLatest: delta.Y > 0);
-            return;
-        }
+            if (_touchNestedScrollViewer is { } nestedViewer
+                && CanScrollViewerConsume(nestedViewer, delta.Y))
+            {
+                return;
+            }
 
-        var properties = eventArgs.GetCurrentPoint(_scrollViewer).Properties;
-        if (properties.IsLeftButtonPressed && IsScrollBarInput(eventArgs))
-        {
-            OnUserScrollInput(detachFromLatest: true);
+            _touchScrollRecognized = true;
+            OnUserScrollInput(delta.Y > 0
+                ? UserScrollDirection.TowardHistory
+                : UserScrollDirection.TowardTail);
+            return;
         }
     }
 
@@ -102,8 +156,11 @@ internal sealed partial class TranscriptScrollCoordinator
         if (eventArgs.Pointer.Type == PointerType.Touch)
         {
             _touchScrollStart = null;
+            _touchNestedScrollViewer = null;
             _touchScrollRecognized = false;
         }
+
+        _scrollBarInteractionActive = false;
     }
 
     private void OnDescendantGotFocus(object? sender, FocusChangedEventArgs eventArgs)
@@ -116,12 +173,26 @@ internal sealed partial class TranscriptScrollCoordinator
             return;
         }
 
+        var interactionRevision = _interactionRevision;
         var operation = Dispatcher.UIThread.InvokeAsync(
             () =>
             {
-                if (!_disposed && control.IsAttachedToVisualTree())
+                if (!_disposed
+                    && interactionRevision == _interactionRevision
+                    && control.IsAttachedToVisualTree()
+                    && control.IsFocused)
                 {
+                    var previousOffset = _scrollViewer.Offset.Y;
                     control.BringIntoView();
+                    var offsetDelta = _scrollViewer.Offset.Y - previousOffset;
+                    if (Math.Abs(offsetDelta) > 0.01)
+                    {
+                        OnUserScrollInput(
+                            offsetDelta < 0
+                                ? UserScrollDirection.TowardHistory
+                                : UserScrollDirection.TowardTail,
+                            canResumeFollowing: false);
+                    }
                 }
             },
             DispatcherPriority.Input,
@@ -133,20 +204,189 @@ internal sealed partial class TranscriptScrollCoordinator
     private static async Task AwaitDispatcherOperationAsync(DispatcherOperation operation)
         => await operation;
 
-    private static bool IsScrollBarInput(RoutedEventArgs eventArgs)
-        => eventArgs.Source is Visual source
-            && (source is ScrollBar || source.GetVisualAncestors().OfType<ScrollBar>().Any());
-
-    private void SetShouldAutoScroll(bool value)
+    private static ScrollViewer? FindScrollBarOwner(RoutedEventArgs eventArgs)
     {
-        _shouldAutoScroll = value;
-        if (value)
+        if (eventArgs.Source is not Visual source)
         {
-            _tailFollowInteractionRevision = _interactionRevision;
+            return null;
         }
+
+        var scrollBar = source as ScrollBar
+                        ?? source.GetVisualAncestors().OfType<ScrollBar>().FirstOrDefault();
+        return scrollBar?.GetVisualAncestors().OfType<ScrollViewer>().FirstOrDefault();
+    }
+
+    private static bool IsControlActivationOrEditingKey(KeyEventArgs eventArgs)
+    {
+        if (eventArgs.Source is not Visual source)
+        {
+            return false;
+        }
+
+        var sourceAndAncestors = source.GetVisualAncestors().Prepend(source);
+        return sourceAndAncestors.Any(control => control is TextBox)
+               || eventArgs.Key == Key.Space
+               && sourceAndAncestors.Any(control => control is Button or ToggleButton);
+    }
+
+    private bool CanNestedScrollViewerConsume(RoutedEventArgs eventArgs, double scrollDeltaY)
+        => FindNestedScrollViewer(eventArgs) is { } nestedViewer
+           && CanScrollViewerConsume(nestedViewer, scrollDeltaY);
+
+    private ScrollViewer? FindNestedScrollViewer(RoutedEventArgs eventArgs)
+    {
+        if (eventArgs.Source is not Visual source)
+        {
+            return null;
+        }
+
+        var nestedViewer = (source as ScrollViewer ?? source.GetVisualAncestors().OfType<ScrollViewer>().FirstOrDefault());
+        return nestedViewer is null || ReferenceEquals(nestedViewer, _scrollViewer)
+            ? null
+            : nestedViewer;
+    }
+
+    internal static bool CanScrollViewerConsume(ScrollViewer scrollViewer, double scrollDeltaY)
+    {
+        var maxOffsetY = Math.Max(0, scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        return scrollDeltaY > 0
+            ? scrollViewer.Offset.Y > TrueBottomEpsilon
+            : scrollViewer.Offset.Y < maxOffsetY - TrueBottomEpsilon;
+    }
+
+    private UserScrollResolution ResolveUserScrollDirection(double offsetDelta)
+    {
+        var isUserScroll = _userScrollPending || _scrollBarInteractionActive || _touchScrollRecognized;
+        var hintedDirection = _pendingUserScrollDirection;
+        var canResumeFollowing = _pendingUserScrollCanResumeFollowing
+                                 || _scrollBarInteractionActive
+                                 || _touchScrollRecognized;
+        _userScrollPending = false;
+        _pendingUserScrollCanResumeFollowing = false;
+        _pendingUserScrollDirection = UserScrollDirection.None;
+        if (!isUserScroll)
+        {
+            return new UserScrollResolution(UserScrollDirection.None, false);
+        }
+
+        if (offsetDelta < -0.01)
+        {
+            return new UserScrollResolution(UserScrollDirection.TowardHistory, canResumeFollowing);
+        }
+
+        if (offsetDelta > 0.01)
+        {
+            return new UserScrollResolution(UserScrollDirection.TowardTail, canResumeFollowing);
+        }
+
+        return new UserScrollResolution(hintedDirection, canResumeFollowing);
+    }
+
+    private void QueuePendingUserScrollEvaluation(long interactionRevision)
+    {
+        var operation = Dispatcher.UIThread.InvokeAsync(
+            () =>
+            {
+                if (_disposed
+                    || interactionRevision != _interactionRevision
+                    || !_userScrollPending)
+                {
+                    return;
+                }
+
+                var direction = _pendingUserScrollDirection;
+                var canResumeFollowing = _pendingUserScrollCanResumeFollowing;
+                _userScrollPending = false;
+                _pendingUserScrollCanResumeFollowing = false;
+                _pendingUserScrollDirection = UserScrollDirection.None;
+                if (direction == UserScrollDirection.TowardHistory)
+                {
+                    _lastUserScrollDirection = direction;
+                    _suppressEdgeLoadsUntilNextScroll = false;
+                    _isOlderEdgeArmed = true;
+                    QueueLoadOlderRowsIfNearTop();
+                    UpdateJumpToLatestVisibility();
+                    return;
+                }
+
+                if (direction != UserScrollDirection.TowardTail || !canResumeFollowing)
+                {
+                    return;
+                }
+
+                _lastUserScrollDirection = direction;
+                _suppressEdgeLoadsUntilNextScroll = false;
+                if (_hasNewerRows())
+                {
+                    QueueLoadNewerRows(resumeFollowingWhenCaughtUp: IsAtBottom());
+                }
+                else
+                {
+                    TryResumeFollowingAtBottom();
+                }
+
+                UpdateJumpToLatestVisibility();
+            },
+            DispatcherPriority.Input);
+        _userScrollEvaluationOperation = ObservePagingOperationAsync(
+            AwaitDispatcherOperationAsync(operation));
+    }
+
+    private bool DetachFromLatestForUser()
+    {
+        if (_userDetached)
+        {
+            return true;
+        }
+
+        var wasFollowingTail = IsFollowingTail;
+        _userDetached = true;
+        if (wasFollowingTail
+            && _onDetachedFromLatest is not null
+            && !_onDetachedFromLatest())
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private void PrepareToFollowTail()
+    {
+        _userDetached = false;
+        _tailFollowInteractionRevision = _interactionRevision;
+    }
+
+    private bool ResumeFollowingLatest()
+    {
+        var wasUserDetached = _userDetached;
+        _userDetached = false;
+        if (!_isFollowingLatest()
+            && _onReachedLatest is not null
+            && !_onReachedLatest())
+        {
+            _userDetached = wasUserDetached;
+            return false;
+        }
+
+        _tailFollowInteractionRevision = _interactionRevision;
+        return true;
+    }
+
+    private void InvalidatePendingScrollOperations()
+    {
+        _interactionRevision++;
+        _pagingContextRevision++;
+        _loadNewerResumeInteractionRevision = -1;
+        _pendingAnchor = null;
+        _pendingScrollToBottomRequest = null;
+        CancelBottomPlacementLockForUserInteraction();
     }
 
     private void CancelBottomPlacementLockForUserInteraction()
+        => CancelBottomPlacementLock(invokeCompletion: true);
+
+    private void CancelBottomPlacementLock(bool invokeCompletion)
     {
         if (!_bottomPlacementLockActive)
         {
@@ -159,6 +399,20 @@ internal sealed partial class TranscriptScrollCoordinator
         _pendingBottomPlacementReleaseCompleted = null;
         _pendingSettledScrollCompleted = null;
         UpdateJumpToLatestVisibility();
-        callback?.Invoke();
+        if (invokeCompletion)
+        {
+            callback?.Invoke();
+        }
     }
+
+    private enum UserScrollDirection
+    {
+        None,
+        TowardHistory,
+        TowardTail,
+    }
+
+    private readonly record struct UserScrollResolution(
+        UserScrollDirection Direction,
+        bool CanResumeFollowing);
 }

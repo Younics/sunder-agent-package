@@ -9,7 +9,7 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentChatViewModel
 {
-    private void RefreshTranscript()
+    private void RefreshTranscript(bool forceReplacement = false)
     {
         var displayedSession = DisplayedSession;
         if (displayedSession is null)
@@ -21,7 +21,9 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        var ticket = _timeline.BeginInitialLoad(displayedSession.SessionId);
+        var ticket = _timeline.BeginInitialLoad(
+            displayedSession.SessionId,
+            forceReplacement);
         StatusText = "Loading transcript...";
         _backgroundTasks.Run(_ => RefreshTranscriptAsync(displayedSession, ticket));
     }
@@ -95,7 +97,8 @@ public sealed partial class AgentChatViewModel
                 linkedCancellation.Token.ThrowIfCancellationRequested();
                 return page.Turns;
             },
-            protectedAnchorKey);
+            protectedAnchorKey,
+            cancellationToken);
         if (loaded)
         {
             ApplyRunActivityState();
@@ -106,7 +109,8 @@ public sealed partial class AgentChatViewModel
 
     public async Task<bool> LoadNewerTranscriptRowsAsync(
         object? protectedAnchorKey = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool resumeFollowingWhenCaughtUp = true)
     {
         var loaded = await _timeline.LoadNewerAsync(
             async (sessionId, afterCreatedAt, afterTurnId, limit, pageCancellationToken) =>
@@ -125,9 +129,14 @@ public sealed partial class AgentChatViewModel
                 linkedCancellation.Token.ThrowIfCancellationRequested();
                 return page.Turns;
             },
-            protectedAnchorKey);
+            protectedAnchorKey,
+            cancellationToken);
         if (loaded)
         {
+            if (resumeFollowingWhenCaughtUp)
+            {
+                _timeline.ResumeFollowingLatestIfCaughtUp();
+            }
             _runActivity.NotifyFollowStateChanged();
             ApplyRunActivityState();
         }
@@ -145,27 +154,48 @@ public sealed partial class AgentChatViewModel
 
     [RelayCommand]
     private void JumpToLatestTranscript()
+        => RequestTranscriptTailFollow(DisplayedTranscriptSessionId);
+
+    private void RequestTranscriptTailFollow(Guid? sessionId)
     {
-        if (_timeline.RequestJumpToLatest())
+        if (sessionId is not { } targetSessionId
+            || DisplayedTranscriptSessionId != targetSessionId
+            || !_timeline.RequestJumpToLatest())
+        {
+            return;
+        }
+
+        _runActivity.NotifyFollowStateChanged();
+        ApplyRunActivityState();
+        TranscriptTailFollowRequested?.Invoke(targetSessionId);
+        if (_timeline.HasNewerRows)
         {
             RefreshTranscript();
         }
     }
 
-    public void DetachTranscriptFromLatest()
+    public bool DetachTranscriptFromLatest()
     {
-        _timeline.DetachFromLatest();
-        _runActivity.NotifyFollowStateChanged();
+        if (_timeline.DetachFromLatest())
+        {
+            _runActivity.NotifyFollowStateChanged();
+            return true;
+        }
+
+        return false;
     }
 
-    public void ResumeTranscriptFollowingLatestIfCaughtUp()
+    public bool ResumeTranscriptFollowingLatestIfCaughtUp()
     {
         if (_timeline.ResumeFollowingLatestIfCaughtUp())
         {
             _runActivity.NotifyFollowStateChanged();
             ApplyRunActivityState();
             _timeline.NotifyRowsChanged();
+            return true;
         }
+
+        return false;
     }
 
     internal void SetTranscriptJumpToLatestVisible(bool isVisible)
@@ -176,6 +206,11 @@ public sealed partial class AgentChatViewModel
 
     internal TranscriptViewportAnchorData? TranscriptViewportAnchor
         => _timeline.ViewportAnchor;
+
+    internal bool IsTranscriptFollowingLatest => _timeline.IsFollowingLatest;
+
+    internal void SetTranscriptPresentationActive(bool isActive)
+        => _activityTicker.SetEnabled(isActive);
 
     internal void SetTranscriptRowExpanded(AgentTranscriptRowViewModel row, bool isExpanded)
         => _timeline.SetRowExpanded(row, isExpanded);
@@ -197,6 +232,24 @@ public sealed partial class AgentChatViewModel
         });
     }
 
+    private void OnTurnMutated(AgentTurnMutation mutation)
+    {
+        if (!_isInitialized)
+        {
+            return;
+        }
+
+        RunOnUiThread(() =>
+        {
+            var result = _timeline.ApplyLiveMutation(mutation);
+            if (result == TranscriptLiveTurnResult.ReloadRequired
+                && DisplayedTranscriptSessionId == mutation.SessionId)
+            {
+                RefreshTranscript();
+            }
+        });
+    }
+
     private void OnTranscriptReset(Guid sessionId)
     {
         if (!_isInitialized)
@@ -208,7 +261,7 @@ public sealed partial class AgentChatViewModel
         {
             if (DisplayedSession?.SessionId == sessionId)
             {
-                RefreshTranscript();
+                RefreshTranscript(forceReplacement: true);
             }
         });
     }
@@ -296,7 +349,7 @@ public sealed partial class AgentChatViewModel
     }
 
     private void RefreshVisibleChildSessionLinks()
-        => _timeline.Projector.RefreshRelatedRows();
+        => _timeline.RefreshRelatedRows();
 
     private IReadOnlyList<AgentChildSessionLinkViewModel> ResolveChildSessionLinksFromStore(
         AgentTurnRecord turn,

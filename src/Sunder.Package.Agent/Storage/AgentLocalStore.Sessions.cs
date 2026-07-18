@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 
 namespace Sunder.Package.Agent.Storage;
 
@@ -152,23 +153,34 @@ public sealed partial class AgentLocalStore
     }
 
     public AgentRunCheckpointRecord SaveCheckpoint(Guid sessionId, long runRevision, AgentRunStatus status, string? summary)
+        => SaveCheckpointWithCompletedTurns(sessionId, runRevision, status, summary).Checkpoint;
+
+    internal AgentCheckpointPersistenceResult SaveCheckpointWithCompletedTurns(
+        Guid sessionId,
+        long runRevision,
+        AgentRunStatus status,
+        string? summary)
     {
         var checkpoint = new AgentRunCheckpointRecord(Guid.NewGuid(), sessionId, runRevision, status, summary, DateTimeOffset.UtcNow);
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
         InsertCheckpoint(connection, transaction, checkpoint);
-        if (HasDurableRun(connection, transaction, sessionId, runRevision)
-            && !ProjectCheckpointToRun(connection, transaction, checkpoint))
+        var runKey = GetDurableRunKey(connection, transaction, sessionId, runRevision);
+        if (runKey is not null && !ProjectCheckpointToRun(connection, transaction, checkpoint))
         {
             transaction.Rollback();
             throw new InvalidOperationException(
                 $"Run '{sessionId}:{runRevision}' rejected the illegal or stale transition to '{status}'.");
         }
 
+        var completedStreamingTurns = runKey is { } key && IsFinishedRunStatus(status)
+            ? CompleteStreamingTextTurns(connection, transaction, key, checkpoint.CreatedAtUtc)
+            : [];
+
         TouchSessionForCheckpoint(connection, transaction, checkpoint);
         transaction.Commit();
-        return checkpoint;
+        return new AgentCheckpointPersistenceResult(checkpoint, completedStreamingTurns);
     }
 
     public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId)
@@ -598,7 +610,7 @@ public sealed partial class AgentLocalStore
         return command.ExecuteNonQuery() == 1;
     }
 
-    private static bool HasDurableRun(
+    private static AgentDurableRunKey? GetDurableRunKey(
         SqliteConnection connection,
         SqliteTransaction transaction,
         Guid sessionId,
@@ -606,10 +618,12 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT 1 FROM AgentRuns WHERE SessionId = $sessionId AND RunRevision = $runRevision LIMIT 1;";
+        command.CommandText = "SELECT RunId FROM AgentRuns WHERE SessionId = $sessionId AND RunRevision = $runRevision LIMIT 1;";
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
         command.Parameters.AddWithValue("$runRevision", runRevision);
-        return command.ExecuteScalar() is not null;
+        return command.ExecuteScalar() is string runId
+            ? new AgentDurableRunKey(Guid.Parse(runId), sessionId, runRevision)
+            : null;
     }
 
     private static void TouchSessionForCheckpoint(

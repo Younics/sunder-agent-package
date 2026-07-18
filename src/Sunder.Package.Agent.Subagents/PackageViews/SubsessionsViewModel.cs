@@ -44,6 +44,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         IPackageExtensionCatalog? extensionCatalog,
         TimeSpan? activityQuietDelay = null)
     {
+        _activityTicker.SetEnabled(false);
         _extensionCatalog = extensionCatalog;
         var toolPresentation = new TranscriptToolPresentationService(() =>
             extensionCatalog?.GetExtensions(PackageExtensionPoints.ToolSources)
@@ -66,7 +67,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             () => IsSelectedSubsessionRunActive,
             () => _timeline.IsFollowingLatest,
             activityQuietDelay);
-        _timeline.RowsChanging += () => TranscriptChanging?.Invoke();
+        _timeline.RowsChanging += isPageApplication => TranscriptChanging?.Invoke(isPageApplication);
         _timeline.RowsChanged += OnTimelineRowsChanged;
         _timeline.PropertyChanged += OnTimelinePropertyChanged;
         _timeline.TurnProjected += OnTimelineTurnProjected;
@@ -84,7 +85,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     public event Action? TranscriptChanged;
 
-    public event Action? TranscriptChanging;
+    public event Action<bool>? TranscriptChanging;
 
     public bool IsListActive => !IsDetailActive;
 
@@ -115,6 +116,8 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     public bool IsLoadingNewerTranscriptRows => _timeline.IsLoadingNewer;
 
     public bool IsTranscriptLoading => _timeline.IsInitialLoading;
+
+    internal bool IsTranscriptFollowingLatest => _timeline.IsFollowingLatest;
 
     public bool CanLoadOlderTranscriptRows => _timeline.CanLoadOlder && SelectedSubsession is not null;
 
@@ -279,20 +282,28 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         }
     }
 
-    public void DetachTranscriptFromLatest()
+    public bool DetachTranscriptFromLatest()
     {
-        _timeline.DetachFromLatest();
-        _runActivity.NotifyFollowStateChanged();
+        if (_timeline.DetachFromLatest())
+        {
+            _runActivity.NotifyFollowStateChanged();
+            return true;
+        }
+
+        return false;
     }
 
-    public void ResumeTranscriptFollowingLatestIfCaughtUp()
+    public bool ResumeTranscriptFollowingLatestIfCaughtUp()
     {
         if (_timeline.ResumeFollowingLatestIfCaughtUp())
         {
             _runActivity.NotifyFollowStateChanged();
             ApplyRunActivityState();
             _timeline.NotifyRowsChanged();
+            return true;
         }
+
+        return false;
     }
 
     internal void SetTranscriptJumpToLatestVisible(bool isVisible)
@@ -300,6 +311,11 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     internal void SetTranscriptViewportAnchor(TranscriptViewportAnchorData? anchor)
         => _timeline.SetViewportAnchor(anchor);
+
+    internal TranscriptViewportAnchorData? TranscriptViewportAnchor => _timeline.ViewportAnchor;
+
+    internal void SetTranscriptPresentationActive(bool isActive)
+        => _activityTicker.SetEnabled(isActive);
 
     internal void SetTranscriptRowExpanded(
         SubsessionTranscriptRowViewModel row,
@@ -572,7 +588,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             _timeline.NotifyRowsChanged();
         }
 
-        _timeline.Projector.RefreshRelatedRows();
+        _timeline.RefreshRelatedRows();
     }
 
     private void OnTurnChanged(Guid sessionId, AgentTurnRecord turn)

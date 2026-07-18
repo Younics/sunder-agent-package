@@ -73,13 +73,14 @@ internal interface ITranscriptRowFactory<TRow> where TRow : class
     void DisposeRow(TRow row);
 }
 
-internal sealed class TranscriptRowProjector<TRow> where TRow : class
+internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
 {
     private readonly ObservableCollection<TRow> _rows;
     private readonly ITranscriptRowFactory<TRow> _factory;
     private readonly Dictionary<Guid, TRow> _messageRowsByTurnId = [];
     private readonly Dictionary<string, TRow> _toolRowsByKey = new(StringComparer.Ordinal);
     private readonly AgentTranscriptTurnWindow _turnWindow;
+    private readonly int _turnCapacity;
     private TRow? _activityRow;
 
     public TranscriptRowProjector(
@@ -89,6 +90,7 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
     {
         _rows = rows;
         _factory = factory;
+        _turnCapacity = turnCapacity;
         _turnWindow = new AgentTranscriptTurnWindow(turnCapacity);
     }
 
@@ -107,10 +109,22 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
     public int ApplyTurn(
         AgentTurnRecord turn,
         TranscriptInsertMode insertMode,
-        int prependIndex = 0)
+        int prependIndex = 0,
+        bool replaceOnEqualTimestamp = true)
     {
         var insertedRows = 0;
-        var isNewTurn = !_turnWindow.Contains(turn.TurnId);
+        var previousTurn = _turnWindow.OrderedTurns()
+            .FirstOrDefault(item => item.TurnId == turn.TurnId);
+        if (previousTurn is not null
+            && IsStaleTurn(previousTurn, turn, replaceOnEqualTimestamp))
+        {
+            return 0;
+        }
+
+        var previouslyKnownToolKeys = previousTurn?.Items
+            .Where(item => item.Kind is AgentTurnItemKind.ToolCall or AgentTurnItemKind.ToolResult)
+            .Select(item => CreateToolKey(previousTurn, item))
+            .ToHashSet(StringComparer.Ordinal) ?? [];
         _turnWindow.AddOrUpdate(turn);
 
         switch (turn.Kind)
@@ -119,7 +133,8 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
                 foreach (var item in turn.Items.Where(item => item.Kind == AgentTurnItemKind.ToolCall))
                 {
                     var key = CreateToolKey(turn, item);
-                    if (_toolRowsByKey.ContainsKey(key))
+                    if (_toolRowsByKey.ContainsKey(key)
+                        || previouslyKnownToolKeys.Contains(key))
                     {
                         continue;
                     }
@@ -139,11 +154,12 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
                     var key = CreateToolKey(turn, item);
                     if (_toolRowsByKey.TryGetValue(key, out var existingToolRow))
                     {
+                        RowsChanging?.Invoke();
                         _factory.ApplyToolResult(existingToolRow, turn, item, DescribeTool(turn, item));
                         continue;
                     }
 
-                    if (!isNewTurn && _toolRowsByKey.ContainsKey(key))
+                    if (previouslyKnownToolKeys.Contains(key))
                     {
                         continue;
                     }
@@ -161,6 +177,7 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
                 var projection = DescribeMessage(turn);
                 if (_messageRowsByTurnId.TryGetValue(turn.TurnId, out var existingMessageRow))
                 {
+                    RowsChanging?.Invoke();
                     _factory.UpdateMessage(existingMessageRow, turn, projection);
                     break;
                 }
@@ -177,7 +194,18 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
                 break;
         }
 
+        TrimTurnWindow(insertMode == TranscriptInsertMode.Append
+            ? AgentTranscriptTrimDirection.Oldest
+            : AgentTranscriptTrimDirection.Newest);
+
         return insertedRows;
+    }
+
+    public bool CanApplyTurn(AgentTurnRecord turn, bool replaceOnEqualTimestamp = true)
+    {
+        var previousTurn = _turnWindow.OrderedTurns()
+            .FirstOrDefault(item => item.TurnId == turn.TurnId);
+        return previousTurn is null || !IsStaleTurn(previousTurn, turn, replaceOnEqualTimestamp);
     }
 
     public int ApplyTurns(
@@ -217,23 +245,40 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
         var retainedTurns = _turnWindow.OrderedTurns()
             .Where(turn => retainedTurnIds.Contains(turn.TurnId))
             .ToArray();
-        if (retainedTurns.Length == _turnWindow.Count)
+        var retainedAnchorKeys = retainedRows
+            .Select(_factory.GetAnchorKey)
+            .ToHashSet();
+        var firstRetainedIndex = retainedRows.Length == 0
+            ? -1
+            : Array.FindIndex(visibleRows, row => ReferenceEquals(row, retainedRows[0]));
+        var lastRetainedIndex = retainedRows.Length == 0
+            ? -1
+            : Array.FindLastIndex(visibleRows, row => ReferenceEquals(row, retainedRows[^1]));
+        Rebuild(retainedTurns, retainedAnchorKeys);
+        if (retainedRows.Length == 0)
         {
-            return TranscriptTrimResult.None;
+            return trimDirection == AgentTranscriptTrimDirection.Oldest
+                ? TranscriptTrimResult.Oldest
+                : TranscriptTrimResult.Newest;
         }
 
-        Rebuild(retainedTurns);
-        return trimDirection == AgentTranscriptTrimDirection.Oldest
-            ? TranscriptTrimResult.Oldest
-            : TranscriptTrimResult.Newest;
+        var result = TranscriptTrimResult.None;
+        if (firstRetainedIndex > 0)
+        {
+            result |= TranscriptTrimResult.Oldest;
+        }
+        if (lastRetainedIndex >= 0 && lastRetainedIndex < visibleRows.Length - 1)
+        {
+            result |= TranscriptTrimResult.Newest;
+        }
+        return result;
     }
 
-    public void SetActivity(string text, bool isReasoning, bool isVisible)
+    public bool SetActivity(string text, bool isReasoning, bool isVisible)
     {
         if (!isVisible)
         {
-            RemoveActivity();
-            return;
+            return RemoveActivity();
         }
 
         var projection = DescribeActivity(text, isReasoning);
@@ -243,9 +288,10 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
             _activityRow = _factory.CreateActivity(projection);
             _rows.Add(_activityRow);
             RowCreated?.Invoke(_activityRow);
-            return;
+            return true;
         }
 
+        RowsChanging?.Invoke();
         _factory.UpdateActivity(_activityRow, projection);
         var index = _rows.IndexOf(_activityRow);
         if (index >= 0 && index != _rows.Count - 1)
@@ -258,13 +304,15 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
             RowsChanging?.Invoke();
             _rows.Add(_activityRow);
         }
+
+        return true;
     }
 
-    public void RemoveActivity()
+    public bool RemoveActivity()
     {
         if (_activityRow is null)
         {
-            return;
+            return false;
         }
 
         if (_rows.IndexOf(_activityRow) is var index && index >= 0)
@@ -275,6 +323,7 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
 
         _factory.DisposeRow(_activityRow);
         _activityRow = null;
+        return true;
     }
 
     public bool CanApplyHistoricalTurnUpdate(AgentTurnRecord turn)
@@ -283,11 +332,53 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
                item.Kind is AgentTurnItemKind.ToolCall or AgentTurnItemKind.ToolResult
                && _toolRowsByKey.ContainsKey(CreateToolKey(turn, item)));
 
-    public void RefreshRelatedRows()
+    public bool RefreshRelatedRows()
     {
+        if (_toolRowsByKey.Count > 0)
+        {
+            RowsChanging?.Invoke();
+        }
+
         foreach (var row in _toolRowsByKey.Values)
         {
             _factory.RefreshRelatedRows(row);
+        }
+
+        return _toolRowsByKey.Count > 0;
+    }
+
+    public void ReorderRowsChronologically()
+    {
+        var turnIndices = _turnWindow.OrderedTurns()
+            .Select((turn, index) => (turn.TurnId, index))
+            .ToDictionary(item => item.TurnId, item => item.index);
+        var currentRows = _rows
+            .Where(row => !ReferenceEquals(row, _activityRow))
+            .ToArray();
+        var desiredRows = currentRows
+            .Select((row, index) => (Row: row, CurrentIndex: index))
+            .OrderBy(item => turnIndices.TryGetValue(_factory.GetRowId(item.Row), out var turnIndex)
+                ? turnIndex
+                : _factory.GetResultTurnId(item.Row) is { } resultTurnId
+                  && turnIndices.TryGetValue(resultTurnId, out var resultIndex)
+                    ? resultIndex
+                    : int.MaxValue)
+            .ThenBy(item => item.CurrentIndex)
+            .Select(item => item.Row)
+            .ToArray();
+        if (currentRows.SequenceEqual(desiredRows, ReferenceEqualityComparer.Instance))
+        {
+            return;
+        }
+
+        RowsChanging?.Invoke();
+        for (var targetIndex = 0; targetIndex < desiredRows.Length; targetIndex++)
+        {
+            var currentIndex = _rows.IndexOf(desiredRows[targetIndex]);
+            if (currentIndex != targetIndex)
+            {
+                _rows.Move(currentIndex, targetIndex);
+            }
         }
     }
 
@@ -312,6 +403,23 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
         _toolRowsByKey.Clear();
         _turnWindow.Reset();
         _rows.Clear();
+    }
+
+    public void ReconcileAuthoritativeTurns(IReadOnlyList<AgentTurnRecord> turns)
+    {
+        var anchorKeys = turns
+            .SelectMany(turn => turn.Kind switch
+            {
+                AgentTurnKind.ToolCall => turn.Items
+                    .Where(item => item.Kind == AgentTurnItemKind.ToolCall)
+                    .Select(item => DescribeTool(turn, item).AnchorKey),
+                AgentTurnKind.ToolResult => turn.Items
+                    .Where(item => item.Kind == AgentTurnItemKind.ToolResult)
+                    .Select(item => DescribeTool(turn, item).AnchorKey),
+                _ => [DescribeMessage(turn).AnchorKey],
+            })
+            .ToHashSet();
+        Rebuild(turns, anchorKeys);
     }
 
     public static AgentTurnRecord[] SelectLatestTurns(
@@ -376,13 +484,28 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
     }
 
     public static string ExtractTextContent(AgentTurnRecord turn)
-        => string.Join("\n\n", turn.Items
-            .Where(item => item.Kind == AgentTurnItemKind.Text
-                           && !string.IsNullOrWhiteSpace(item.TextContent))
-            .Select(item => item.TextContent!.Trim()));
+        => string.Concat(turn.Items
+            .Where(item => item.Kind == AgentTurnItemKind.Text)
+            .OrderBy(item => item.SequenceNumber)
+            .Select(item => item.TextContent ?? string.Empty));
+
+    private static bool IsStaleTurn(
+        AgentTurnRecord previousTurn,
+        AgentTurnRecord turn,
+        bool replaceOnEqualTimestamp)
+    {
+        if (previousTurn.ContentRevision != turn.ContentRevision)
+        {
+            return previousTurn.ContentRevision > turn.ContentRevision;
+        }
+
+        return previousTurn.UpdatedAtUtc > turn.UpdatedAtUtc
+               || !replaceOnEqualTimestamp && previousTurn.UpdatedAtUtc == turn.UpdatedAtUtc;
+    }
 
     private void InsertRow(TRow row, TranscriptInsertMode insertMode, int prependIndex)
     {
+        RowsChanging?.Invoke();
         if (insertMode == TranscriptInsertMode.Prepend)
         {
             _rows.Insert(Math.Clamp(prependIndex, 0, _rows.Count), row);
@@ -414,7 +537,36 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
         return retainedTurnIds;
     }
 
-    private void Rebuild(IReadOnlyList<AgentTurnRecord> turns)
+    private void TrimTurnWindow(AgentTranscriptTrimDirection direction)
+    {
+        if (_turnWindow.Count <= _turnCapacity)
+        {
+            return;
+        }
+
+        var orderedTurns = _turnWindow.OrderedTurns();
+        var overflowCount = orderedTurns.Length - _turnCapacity;
+        var protectedTurnIds = BuildRetainedTurnIdSet(
+            _rows.Where(row => !ReferenceEquals(row, _activityRow)));
+        var trimCandidates = direction == AgentTranscriptTrimDirection.Oldest
+            ? orderedTurns
+            : orderedTurns.Reverse();
+        var trimmedTurnIds = trimCandidates
+            .OrderBy(turn => protectedTurnIds.Contains(turn.TurnId) ? 1 : 0)
+            .Take(overflowCount)
+            .Select(turn => turn.TurnId)
+            .ToHashSet();
+
+        _turnWindow.Reset();
+        foreach (var retainedTurn in orderedTurns.Where(turn => !trimmedTurnIds.Contains(turn.TurnId)))
+        {
+            _turnWindow.AddOrUpdate(retainedTurn);
+        }
+    }
+
+    private void Rebuild(
+        IReadOnlyList<AgentTurnRecord> turns,
+        IReadOnlySet<object> retainedAnchorKeys)
     {
         RowsChanging?.Invoke();
         var activityRow = _activityRow;
@@ -439,6 +591,7 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
             AddRetainedTurnRows(
                 turn,
                 retainedTurnIds,
+                retainedAnchorKeys,
                 oldMessageRows,
                 oldToolRows,
                 desiredRows);
@@ -455,6 +608,7 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
     private void AddRetainedTurnRows(
         AgentTurnRecord turn,
         IReadOnlySet<Guid> retainedTurnIds,
+        IReadOnlySet<object> retainedAnchorKeys,
         IReadOnlyDictionary<Guid, TRow> oldMessageRows,
         IReadOnlyDictionary<string, TRow> oldToolRows,
         ICollection<TRow> desiredRows)
@@ -465,19 +619,26 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
                 foreach (var item in turn.Items.Where(item => item.Kind == AgentTurnItemKind.ToolCall))
                 {
                     var key = CreateToolKey(turn, item);
-                    if (_toolRowsByKey.ContainsKey(key))
+                    var toolProjection = DescribeTool(turn, item);
+                    if (!retainedAnchorKeys.Contains(toolProjection.AnchorKey)
+                        || _toolRowsByKey.ContainsKey(key))
                     {
                         continue;
                     }
 
-                    var row = oldToolRows.TryGetValue(key, out var existingRow)
-                              && _factory.GetRowId(existingRow) == turn.TurnId
-                              && (_factory.GetResultTurnId(existingRow) is not { } resultId
-                                  || retainedTurnIds.Contains(resultId))
-                        ? existingRow
-                        : _factory.CreateTool(turn, item, DescribeTool(turn, item));
+                    var reuseExisting = oldToolRows.TryGetValue(key, out var existingRow)
+                                        && _factory.GetRowId(existingRow) == turn.TurnId
+                                        && (_factory.GetResultTurnId(existingRow) is not { } resultId
+                                            || retainedTurnIds.Contains(resultId));
+                    var row = reuseExisting
+                        ? existingRow!
+                        : _factory.CreateTool(turn, item, toolProjection);
                     _toolRowsByKey[key] = row;
                     desiredRows.Add(row);
+                    if (!reuseExisting)
+                    {
+                        RowCreated?.Invoke(row);
+                    }
                 }
 
                 break;
@@ -486,24 +647,45 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
                 foreach (var item in turn.Items.Where(item => item.Kind == AgentTurnItemKind.ToolResult))
                 {
                     var key = CreateToolKey(turn, item);
-                    if (_toolRowsByKey.TryGetValue(key, out var existingToolRow))
+                    var toolProjection = DescribeTool(turn, item);
+                    if (!retainedAnchorKeys.Contains(toolProjection.AnchorKey))
                     {
-                        _factory.ApplyToolResult(existingToolRow, turn, item, DescribeTool(turn, item));
                         continue;
                     }
 
-                    var row = oldToolRows.TryGetValue(key, out var existingRow)
-                              && _factory.GetRowId(existingRow) == turn.TurnId
-                        ? existingRow
-                        : _factory.CreateTool(turn, item, DescribeTool(turn, item));
+                    if (_toolRowsByKey.TryGetValue(key, out var existingToolRow))
+                    {
+                        _factory.ApplyToolResult(existingToolRow, turn, item, toolProjection);
+                        continue;
+                    }
+
+                    var reuseExisting = oldToolRows.TryGetValue(key, out var existingRow)
+                                        && (_factory.GetRowId(existingRow) == turn.TurnId
+                                            || _factory.GetResultTurnId(existingRow) == turn.TurnId);
+                    var row = reuseExisting
+                        ? existingRow!
+                        : _factory.CreateTool(turn, item, toolProjection);
+                    if (reuseExisting)
+                    {
+                        _factory.ApplyToolResult(row, turn, item, toolProjection);
+                    }
                     _toolRowsByKey[key] = row;
                     desiredRows.Add(row);
+                    if (!reuseExisting)
+                    {
+                        RowCreated?.Invoke(row);
+                    }
                 }
 
                 break;
 
             default:
                 var projection = DescribeMessage(turn);
+                if (!retainedAnchorKeys.Contains(projection.AnchorKey))
+                {
+                    break;
+                }
+
                 if (oldMessageRows.TryGetValue(turn.TurnId, out var existingMessageRow))
                 {
                     _factory.UpdateMessage(existingMessageRow, turn, projection);
@@ -528,6 +710,7 @@ internal sealed class TranscriptRowProjector<TRow> where TRow : class
         {
             if (!desiredRowSet.Contains(_rows[index]))
             {
+                _factory.DisposeRow(_rows[index]);
                 _rows.RemoveAt(index);
             }
         }
@@ -579,9 +762,10 @@ internal enum TranscriptInsertMode
     Prepend,
 }
 
+[Flags]
 internal enum TranscriptTrimResult
 {
-    None,
-    Oldest,
-    Newest,
+    None = 0,
+    Oldest = 1,
+    Newest = 2,
 }

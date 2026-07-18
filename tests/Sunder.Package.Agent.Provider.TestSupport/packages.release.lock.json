@@ -15,7 +15,7 @@
         "type": "Direct",
         "requested": "[1.1.0, )",
         "resolved": "1.1.0",
-        "contentHash": "l8wtwpQD0/G7tYhznF6sRv3iwl4hVWt/iVYmaUYsZjhYeyRWEJjB1dz5NRhgx4e31HvF6YuzP7hhY1IFidVKHQ==",
+        "contentHash": "RcbCpd502dU15IXoe5Foy+CggGz0YRveS/bZzaT6Om5MNwQx1hPP1W/kxHWNHzoU2kTqMmIvjBMjhvfklSeZBA==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.8"
@@ -25,7 +25,7 @@
         "type": "Direct",
         "requested": "[1.1.0, )",
         "resolved": "1.1.0",
-        "contentHash": "CTY0Ope+XXbu6WXQcyWLoJ8OSdMDmRl+/dTaWbutS5B3dh62D7iMDy3vaYww5hCkSjTMtPIDvUAWeGMJjsyQ0w==",
+        "contentHash": "Ll9JC6upeJQZvycp4thigSxxibvqTTOnTbnn6V2dpnuqQjSIF4Yc+RV3tyqpB/tiGW0rU0UmHuRdeuR9bqHshg==",
         "dependencies": {
           "Avalonia": "12.0.3",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",

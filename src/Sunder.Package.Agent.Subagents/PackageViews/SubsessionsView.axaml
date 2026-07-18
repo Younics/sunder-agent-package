@@ -222,9 +222,10 @@
           <Border Grid.Column="1"
                   MinWidth="0"
                   Classes="message-bubble">
-            <md:MarkdownRenderer MarkdownBuilder="{Binding MarkdownBuilder}"
-                                 MinWidth="0"
-                                 HorizontalAlignment="Stretch" />
+            <shared:StreamingMarkdownPresenter MarkdownBuilder="{Binding MarkdownBuilder}"
+                                               MinWidth="0"
+                                               HorizontalAlignment="Stretch"
+                                               Rendered="TranscriptMarkdown_OnRendered" />
           </Border>
         </Grid>
         <Grid ColumnDefinitions="*"
@@ -233,9 +234,10 @@
               IsVisible="{Binding IsUser}">
           <Border Classes="message-bubble user"
                   MinWidth="0">
-            <md:MarkdownRenderer MarkdownBuilder="{Binding MarkdownBuilder}"
-                                 MinWidth="0"
-                                 HorizontalAlignment="Stretch" />
+            <shared:StreamingMarkdownPresenter MarkdownBuilder="{Binding MarkdownBuilder}"
+                                               MinWidth="0"
+                                               HorizontalAlignment="Stretch"
+                                               Rendered="TranscriptMarkdown_OnRendered" />
           </Border>
         </Grid>
       </Grid>

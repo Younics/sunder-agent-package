@@ -13,6 +13,7 @@ internal sealed partial class TranscriptScrollCoordinator
 
         _disposed = true;
         _lifetimeCancellation.Cancel();
+        _presentationPagingCancellation.Cancel();
         _scrollViewer.PropertyChanged -= OnScrollViewerPropertyChanged;
         _scrollViewer.RemoveHandler(InputElement.PointerWheelChangedEvent, OnUserPointerWheelChanged);
         _scrollViewer.RemoveHandler(InputElement.PointerPressedEvent, OnUserPointerPressed);
@@ -24,6 +25,7 @@ internal sealed partial class TranscriptScrollCoordinator
         _pendingSettledScrollCompleted = null;
         _pendingBottomPlacementReleaseCompleted = null;
         _setViewportAnchor?.Invoke(null);
+        _presentationPagingCancellation.Dispose();
         _lifetimeCancellation.Dispose();
     }
 }

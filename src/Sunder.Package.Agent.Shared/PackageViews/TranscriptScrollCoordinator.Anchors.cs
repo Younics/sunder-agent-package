@@ -30,11 +30,13 @@ internal sealed partial class TranscriptScrollCoordinator
             return;
         }
 
-        _isRestoringAnchor = true;
+        await _anchorRestorationGate.WaitAsync(cancellationToken);
         try
         {
+            _isRestoringAnchor = true;
             var previousExtentHeight = -1d;
-            for (var pass = 0; pass < 4; pass++)
+            var stablePasses = 0;
+            for (var pass = 0; pass < AnchorRestorationMaxRenderPasses; pass++)
             {
                 await YieldForRenderedContent(cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
@@ -47,9 +49,30 @@ internal sealed partial class TranscriptScrollCoordinator
                     return;
                 }
 
-                RestoreScrollAnchor(anchor);
+                if (TryRealizeAnchorVisual(anchor))
+                {
+                    await YieldForRenderedContent(cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (_disposed || anchor.InteractionRevision != _interactionRevision)
+                    {
+                        return;
+                    }
+                }
+
+                var anchorWasStable = RestoreScrollAnchor(anchor);
                 var extentHeight = _scrollViewer.Extent.Height;
-                if (pass > 0 && Math.Abs(extentHeight - previousExtentHeight) < 0.5)
+                if (pass > 0
+                    && anchorWasStable
+                    && Math.Abs(extentHeight - previousExtentHeight) < 0.5)
+                {
+                    stablePasses++;
+                }
+                else
+                {
+                    stablePasses = 0;
+                }
+
+                if (stablePasses >= AnchorRestorationStableRenderPasses)
                 {
                     break;
                 }
@@ -60,6 +83,7 @@ internal sealed partial class TranscriptScrollCoordinator
         finally
         {
             _isRestoringAnchor = false;
+            _anchorRestorationGate.Release();
         }
     }
 
@@ -80,57 +104,77 @@ internal sealed partial class TranscriptScrollCoordinator
         }
     }
 
-    private void RestoreScrollAnchor(ScrollAnchor anchor)
+    private bool RestoreScrollAnchor(ScrollAnchor anchor)
     {
         if (anchor.InteractionRevision != _interactionRevision)
         {
-            return;
+            return true;
         }
 
-        if (anchor.Mode == ScrollAnchorMode.LiveTranscriptMutation && anchor.WasNearBottom)
+        if (anchor.Mode == ScrollAnchorMode.LiveTranscriptMutation
+            && anchor.WasFollowingTail
+            && IsFollowingTail)
         {
+            var previousOffset = _scrollViewer.Offset.Y;
             ScrollToBottom();
-            return;
+            return Math.Abs(_scrollViewer.Offset.Y - previousOffset) < 0.5;
         }
 
+        var realizedAnchorTops = EnumerateRowAnchorVisuals()
+            .Select(pair => TryGetTop(pair.Visual, out var top)
+                ? (pair.Item, Top: (double?)top)
+                : (pair.Item, Top: null))
+            .Where(pair => pair.Top is not null)
+            .GroupBy(pair => pair.Item)
+            .ToDictionary(group => group.Key, group => group.First().Top!.Value);
         foreach (var itemAnchor in anchor.Items)
         {
-            if (!TryGetItemTop(itemAnchor.Item, out var currentTop)
-                && (_realizeAnchor?.Invoke(itemAnchor.Item) is not { } realizedAnchor
-                    || !TryGetTop(realizedAnchor, out currentTop)))
+            if (!realizedAnchorTops.TryGetValue(itemAnchor.Item, out var currentTop))
             {
                 continue;
             }
 
-            SetProgrammaticOffset(CalculateRestoredOffset(
+            var restoredOffset = CalculateRestoredOffset(
                 _scrollViewer.Offset.Y,
                 currentTop,
-                itemAnchor.Top));
-            SetShouldAutoScroll(IsNearBottom() && !_hasNewerRows());
+                itemAnchor.Top);
+            var anchorWasStable = Math.Abs(
+                _scrollViewer.Offset.Y - Math.Clamp(restoredOffset, 0, MaxOffsetY())) < 0.5;
+            SetProgrammaticOffset(restoredOffset);
             UpdateJumpToLatestVisibility();
-            return;
+            return anchorWasStable;
         }
 
-        SetProgrammaticOffset(anchor.Mode == ScrollAnchorMode.LiveTranscriptMutation
+        var fallbackOffset = anchor.Mode == ScrollAnchorMode.LiveTranscriptMutation
             ? MaxOffsetY() - anchor.DistanceFromBottom
             : anchor.Mode == ScrollAnchorMode.OlderRowsMutation
                 ? anchor.OffsetY + Math.Max(0, _scrollViewer.Extent.Height - anchor.ExtentHeight)
-                : anchor.OffsetY);
-        SetShouldAutoScroll(IsNearBottom() && !_hasNewerRows());
+                : anchor.OffsetY;
+        var fallbackWasStable = Math.Abs(
+            _scrollViewer.Offset.Y - Math.Clamp(fallbackOffset, 0, MaxOffsetY())) < 0.5;
+        SetProgrammaticOffset(fallbackOffset);
         UpdateJumpToLatestVisibility();
+        return fallbackWasStable;
     }
 
     private ScrollAnchor CaptureScrollAnchor(ScrollAnchorMode mode)
     {
         var distanceFromBottom = DistanceFromBottom();
-        var itemAnchors = CaptureItemAnchors();
-        _setViewportAnchor?.Invoke(new TranscriptViewportAnchorData(
-            CaptureCurrentScrollAnchorKey(),
-            _scrollViewer.Offset.Y,
-            distanceFromBottom));
+        var wasFollowingTail = mode == ScrollAnchorMode.LiveTranscriptMutation && IsFollowingTail;
+        var itemAnchors = wasFollowingTail ? [] : CaptureItemAnchors();
+        if (!wasFollowingTail)
+        {
+            var viewportAnchor = CaptureCurrentViewportAnchor(itemAnchors);
+            _setViewportAnchor?.Invoke(new TranscriptViewportAnchorData(
+                viewportAnchor?.Item,
+                _scrollViewer.Offset.Y,
+                distanceFromBottom,
+                viewportAnchor?.Top));
+        }
+
         return new ScrollAnchor(
             mode,
-            mode == ScrollAnchorMode.LiveTranscriptMutation && IsNearBottom(),
+            wasFollowingTail,
             distanceFromBottom,
             _scrollViewer.Offset.Y,
             _scrollViewer.Extent.Height,
@@ -138,7 +182,21 @@ internal sealed partial class TranscriptScrollCoordinator
             itemAnchors);
     }
 
+    private void CaptureViewportAnchor()
+    {
+        var itemAnchors = CaptureItemAnchors();
+        var viewportAnchor = CaptureCurrentViewportAnchor(itemAnchors);
+        _setViewportAnchor?.Invoke(new TranscriptViewportAnchorData(
+            viewportAnchor?.Item,
+            _scrollViewer.Offset.Y,
+            DistanceFromBottom(),
+            viewportAnchor?.Top));
+    }
+
     private object? CaptureCurrentScrollAnchorKey()
+        => CaptureCurrentViewportAnchor()?.Item;
+
+    private ItemAnchor? CaptureCurrentViewportAnchor(IReadOnlyList<ItemAnchor>? itemAnchors = null)
     {
         if (_scrollViewer.CurrentAnchor is Visual currentAnchor)
         {
@@ -146,11 +204,45 @@ internal sealed partial class TranscriptScrollCoordinator
                                ?? currentAnchor.GetVisualAncestors().OfType<TranscriptRowPresenter>().FirstOrDefault();
             if (rowPresenter?.AnchorKey is { } currentAnchorKey)
             {
-                return currentAnchorKey;
+                var captured = itemAnchors?.FirstOrDefault(item => Equals(item.Item, currentAnchorKey));
+                if (captured is not null)
+                {
+                    return captured;
+                }
+
+                if (TryGetTop(rowPresenter, out var top))
+                {
+                    return new ItemAnchor(
+                        currentAnchorKey,
+                        top,
+                        top + rowPresenter.Bounds.Height);
+                }
             }
         }
 
-        return CaptureItemAnchors().FirstOrDefault()?.Item;
+        return (itemAnchors ?? CaptureItemAnchors()).FirstOrDefault();
+    }
+
+    private bool TryRealizeAnchorVisual(ScrollAnchor anchor)
+    {
+        if (_realizeAnchorVisual is null)
+        {
+            return false;
+        }
+
+        var realizedItems = EnumerateRowAnchorVisuals()
+            .Select(pair => pair.Item)
+            .ToHashSet();
+        foreach (var itemAnchor in anchor.Items)
+        {
+            if (!realizedItems.Contains(itemAnchor.Item)
+                && _realizeAnchorVisual(itemAnchor.Item) is not null)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private IReadOnlyList<ItemAnchor> CaptureItemAnchors()
@@ -183,25 +275,6 @@ internal sealed partial class TranscriptScrollCoordinator
             .ToArray();
     }
 
-    private bool TryGetItemTop(object item, out double top)
-    {
-        top = 0;
-        if (_itemsControl is null)
-        {
-            return false;
-        }
-
-        foreach (var (candidateItem, visual) in EnumerateRowAnchorVisuals())
-        {
-            if (Equals(candidateItem, item) && TryGetTop(visual, out top))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private IEnumerable<(object Item, Control Visual)> EnumerateRowAnchorVisuals()
     {
         if (_itemsControl is null)
@@ -221,17 +294,20 @@ internal sealed partial class TranscriptScrollCoordinator
                 }
             }
         }
-
-        foreach (var visual in _itemsControl.GetVisualDescendants().OfType<TranscriptRowPresenter>())
+        else
         {
-            if (visual.AnchorKey is not { } item)
+            foreach (var visual in _itemsControl.GetVisualDescendants().OfType<TranscriptRowPresenter>())
             {
-                continue;
-            }
+                if (visual.AnchorKey is not { } item)
+                {
+                    continue;
+                }
 
-            if (!visualsByItem.TryGetValue(item, out var current) || IsBetterItemAnchorVisual(visual, current))
-            {
-                visualsByItem[item] = visual;
+                if (!visualsByItem.TryGetValue(item, out var current)
+                    || IsBetterItemAnchorVisual(visual, current))
+                {
+                    visualsByItem[item] = visual;
+                }
             }
         }
 

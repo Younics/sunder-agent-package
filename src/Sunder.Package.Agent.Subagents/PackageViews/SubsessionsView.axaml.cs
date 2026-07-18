@@ -40,17 +40,23 @@ public partial class SubsessionsView : UserControl, IDisposable, IPackageViewWar
             (anchor, cancellationToken) => ViewModel?.LoadOlderTranscriptRowsAsync(anchor, cancellationToken)
                                            ?? Task.FromResult(false),
             () => ViewModel?.CanLoadNewerTranscriptRows == true,
-            (anchor, cancellationToken) => ViewModel?.LoadNewerTranscriptRowsAsync(anchor, cancellationToken)
-                                           ?? Task.FromResult(false),
+            (anchor, cancellationToken) => ViewModel?.LoadNewerTranscriptRowsAsync(
+                                                anchor,
+                                                cancellationToken,
+                                                resumeFollowingWhenCaughtUp: false)
+                                            ?? Task.FromResult(false),
             () => ViewModel?.HasNewerTranscriptRows == true,
+            () => ViewModel?.IsTranscriptFollowingLatest != false,
             () => ViewModel?.IsTranscriptLoading == true,
             () => ViewModel?.Messages.Count > 0,
             () => ViewModel?.HasSelectedSubsession == true,
-            () => ViewModel?.DetachTranscriptFromLatest(),
-            () => ViewModel?.ResumeTranscriptFollowingLatestIfCaughtUp(),
+            () => ViewModel?.DetachTranscriptFromLatest() == true,
+            () => ViewModel?.ResumeTranscriptFollowingLatestIfCaughtUp() == true,
             isVisible => ViewModel?.SetTranscriptJumpToLatestVisible(isVisible),
             anchor => ViewModel?.SetTranscriptViewportAnchor(anchor),
-            exception => ViewModel?.ReportTranscriptPagingFailure(exception));
+            () => ViewModel?.TranscriptViewportAnchor,
+            exception => ViewModel?.ReportTranscriptPagingFailure(exception),
+            presentationStateChanged: isActive => ViewModel?.SetTranscriptPresentationActive(isActive));
     }
 
     public SubsessionsView(SubsessionsViewModel viewModel)
@@ -134,12 +140,13 @@ public partial class SubsessionsView : UserControl, IDisposable, IPackageViewWar
         viewModel?.ActivateSubsession(subsession);
     }
 
-    private void OnTranscriptChanging()
-        => _transcriptBehavior.OnTranscriptChanging(
-            ViewModel?.IsLoadingOlderTranscriptRows == true
-            || ViewModel?.IsLoadingNewerTranscriptRows == true);
+    private void OnTranscriptChanging(bool isPageApplication)
+        => _transcriptBehavior.OnTranscriptChanging(isPageApplication);
 
     private void OnTranscriptChanged() => _transcriptBehavior.OnTranscriptChanged();
+
+    private void TranscriptMarkdown_OnRendered(object? sender, EventArgs e)
+        => _transcriptBehavior.OnRenderedContentChanged();
 
     private void JumpToLatestTranscript_OnClick(object? sender, RoutedEventArgs e)
     {

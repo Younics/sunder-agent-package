@@ -1,1 +1,39 @@
 #nullable enable
+override Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Equals(object? obj) -> bool
+override Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.GetHashCode() -> int
+override Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.ToString() -> string!
+Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoopRuntime.CompleteAssistantTurn(Sunder.Package.Agent.Contracts.Models.AgentTurnRecord! assistantTurn) -> Sunder.Package.Agent.Contracts.Models.AgentTurnRecord!
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentTurnMutation!
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.AgentTurnMutation(System.Guid SessionId, System.Guid TurnId, long ContentRevision, Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind Kind, int BaseContentLength, string? Text, System.DateTimeOffset UpdatedAtUtc, Sunder.Package.Agent.Contracts.Models.AgentTurnRecord? Turn = null, long RuntimeRevision = 0) -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.BaseContentLength.get -> int
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.BaseContentLength.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.ContentRevision.get -> long
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.ContentRevision.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Deconstruct(out System.Guid SessionId, out System.Guid TurnId, out long ContentRevision, out Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind Kind, out int BaseContentLength, out string? Text, out System.DateTimeOffset UpdatedAtUtc, out Sunder.Package.Agent.Contracts.Models.AgentTurnRecord? Turn, out long RuntimeRevision) -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Equals(Sunder.Package.Agent.Contracts.Models.AgentTurnMutation? other) -> bool
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Kind.get -> Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Kind.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.RuntimeRevision.get -> long
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.RuntimeRevision.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.SessionId.get -> System.Guid
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.SessionId.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Text.get -> string?
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Text.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Turn.get -> Sunder.Package.Agent.Contracts.Models.AgentTurnRecord?
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Turn.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.TurnId.get -> System.Guid
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.TurnId.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.UpdatedAtUtc.get -> System.DateTimeOffset
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.UpdatedAtUtc.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind.Add = 0 -> Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind.Append = 1 -> Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind.Complete = 3 -> Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind.Replace = 2 -> Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind
+Sunder.Package.Agent.Contracts.Models.AgentTurnRecord.ContentRevision.get -> long
+Sunder.Package.Agent.Contracts.Models.AgentTurnRecord.ContentRevision.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnRecord.IsStreaming.get -> bool
+Sunder.Package.Agent.Contracts.Models.AgentTurnRecord.IsStreaming.init -> void
+static Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.operator !=(Sunder.Package.Agent.Contracts.Models.AgentTurnMutation? left, Sunder.Package.Agent.Contracts.Models.AgentTurnMutation? right) -> bool
+static Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.operator ==(Sunder.Package.Agent.Contracts.Models.AgentTurnMutation? left, Sunder.Package.Agent.Contracts.Models.AgentTurnMutation? right) -> bool

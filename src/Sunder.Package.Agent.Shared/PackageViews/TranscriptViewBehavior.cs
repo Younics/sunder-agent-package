@@ -1,7 +1,7 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Threading;
-using Sunder.Package.Agent.Shared.Presentation;
-
+using Avalonia.VisualTree;
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
 internal sealed class TranscriptViewBehavior : IDisposable
@@ -13,16 +13,21 @@ internal sealed class TranscriptViewBehavior : IDisposable
     private readonly Func<bool> _isInitialLoading;
     private readonly Func<bool> _hasRows;
     private readonly Func<bool> _hasTranscriptSelection;
+    private readonly Func<bool> _isFollowingLatest;
+    private readonly Func<TranscriptViewportAnchorData?>? _getViewportAnchor;
+    private readonly Action<bool>? _presentationStateChanged;
     private readonly TranscriptScrollCoordinator _scrollCoordinator;
-    private readonly PresentationTaskScope _tasks = new();
+    private readonly List<Visual> _visibilitySources = [];
     private bool _changedBeforeScrollReady;
     private bool _initialPlacementPending = true;
     private bool _initialPlacementQueued;
-    private bool _initialVisibilityRetryQueued;
     private int _initialPlacementVersion;
     private TaskCompletionSource _initialPresentation = CreatePresentationCompletion();
     private CancellationTokenSource? _initialPlacementCancellation;
+    private CancellationTokenRegistration? _initialPlacementCancellationRegistration;
+    private Task _initialPlacementCancellationOperation = Task.CompletedTask;
     private bool _loaded;
+    private bool _presentationActive = true;
     private bool _disposed;
 
     public TranscriptViewBehavior(
@@ -35,16 +40,19 @@ internal sealed class TranscriptViewBehavior : IDisposable
         Func<bool> canLoadNewer,
         Func<object?, CancellationToken, Task<bool>> loadNewer,
         Func<bool> hasNewer,
+        Func<bool> isFollowingLatest,
         Func<bool> isInitialLoading,
         Func<bool> hasRows,
         Func<bool> hasTranscriptSelection,
-        Action detachFromLatest,
-        Action reachedLatest,
+        Func<bool> detachFromLatest,
+        Func<bool> reachedLatest,
         Action<bool>? jumpVisibilityChanged = null,
         Action<TranscriptViewportAnchorData?>? viewportAnchorChanged = null,
+        Func<TranscriptViewportAnchorData?>? getViewportAnchor = null,
         Action<Exception>? pagingFailed = null,
         Func<IEnumerable<(object Item, Control Visual)>>? enumerateRealizedAnchors = null,
-        Func<object, Control?>? realizeAnchor = null)
+        Func<object, Control?>? realizeAnchorVisual = null,
+        Action<bool>? presentationStateChanged = null)
     {
         _owner = owner;
         _scrollViewer = scrollViewer;
@@ -53,6 +61,9 @@ internal sealed class TranscriptViewBehavior : IDisposable
         _isInitialLoading = isInitialLoading;
         _hasRows = hasRows;
         _hasTranscriptSelection = hasTranscriptSelection;
+        _isFollowingLatest = isFollowingLatest;
+        _getViewportAnchor = getViewportAnchor;
+        _presentationStateChanged = presentationStateChanged;
         _scrollViewer.Opacity = 0;
         _scrollCoordinator = new TranscriptScrollCoordinator(
             scrollViewer,
@@ -62,6 +73,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
             canLoadNewer,
             loadNewer,
             hasNewer,
+            isFollowingLatest,
             isVisible =>
             {
                 jumpToLatestButton.IsVisible = isVisible;
@@ -72,14 +84,31 @@ internal sealed class TranscriptViewBehavior : IDisposable
             viewportAnchorChanged,
             pagingFailed,
             enumerateRealizedAnchors,
-            realizeAnchor);
+            realizeAnchorVisual);
         _owner.Loaded += OnLoaded;
+        _owner.AttachedToVisualTree += OnPresentationStateChanged;
+        _owner.DetachedFromVisualTree += OnPresentationStateChanged;
+        _scrollViewer.AttachedToVisualTree += OnPresentationStateChanged;
+        _scrollViewer.DetachedFromVisualTree += OnPresentationStateChanged;
+        RefreshVisibilitySubscriptions();
     }
 
     public void OnTranscriptChanging(bool isPaging)
     {
-        if (_disposed || _initialPlacementPending || _isInitialLoading())
+        if (_disposed || _initialPlacementPending)
         {
+            return;
+        }
+
+        if (!_loaded || !_presentationActive)
+        {
+            _changedBeforeScrollReady = true;
+            return;
+        }
+
+        if (_isInitialLoading())
+        {
+            _scrollCoordinator.BeginTranscriptReplacementMutation();
             return;
         }
 
@@ -118,14 +147,13 @@ internal sealed class TranscriptViewBehavior : IDisposable
             return;
         }
 
+        _initialPlacementVersion++;
+
+        _initialPlacementCancellationRegistration?.Dispose();
+        _initialPlacementCancellationRegistration = null;
         _initialPlacementCancellation?.Cancel();
         _initialPlacementCancellation?.Dispose();
         _initialPlacementCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-
-        if (!_initialPlacementPending || _initialPlacementQueued)
-        {
-            _initialPlacementVersion++;
-        }
 
         if (_initialPresentation.Task.IsCompleted || _initialPlacementQueued)
         {
@@ -134,8 +162,17 @@ internal sealed class TranscriptViewBehavior : IDisposable
 
         _initialPlacementPending = true;
         _initialPlacementQueued = false;
-        _initialVisibilityRetryQueued = false;
         _scrollViewer.Opacity = 0;
+        _scrollCoordinator.BeginInitialPlacement();
+        var version = _initialPlacementVersion;
+        var placementCancellationToken = _initialPlacementCancellation.Token;
+        _initialPlacementCancellationRegistration = placementCancellationToken.Register(() =>
+        {
+            _initialPlacementCancellationOperation = AwaitDispatcherOperationAsync(
+                Dispatcher.UIThread.InvokeAsync(
+                    () => CancelInitialPlacement(version, placementCancellationToken),
+                    DispatcherPriority.Background));
+        });
     }
 
     public Task WaitForInitialPresentationAsync(CancellationToken cancellationToken = default)
@@ -172,6 +209,18 @@ internal sealed class TranscriptViewBehavior : IDisposable
 
     public void ScrollToBottom() => _scrollCoordinator.QueueScrollToBottom(force: true);
 
+    public void FollowLatestFromExplicitIntent()
+        => _scrollCoordinator.QueueScrollToBottom(force: true);
+
+    public void OnRenderedContentChanged()
+    {
+        if (!_disposed && _loaded && _presentationActive && !_initialPlacementPending)
+        {
+            _scrollCoordinator.BeginTranscriptMutation();
+            _scrollCoordinator.OnTranscriptChanged();
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -180,19 +229,108 @@ internal sealed class TranscriptViewBehavior : IDisposable
         }
 
         _disposed = true;
+        _initialPlacementCancellationRegistration?.Dispose();
+        _initialPlacementCancellationRegistration = null;
         _initialPlacementCancellation?.Cancel();
         _initialPlacementCancellation?.Dispose();
         _initialPlacementCancellation = null;
         _initialPresentation.TrySetCanceled();
         _owner.Loaded -= OnLoaded;
-        _tasks.Dispose();
+        _owner.AttachedToVisualTree -= OnPresentationStateChanged;
+        _owner.DetachedFromVisualTree -= OnPresentationStateChanged;
+        _scrollViewer.AttachedToVisualTree -= OnPresentationStateChanged;
+        _scrollViewer.DetachedFromVisualTree -= OnPresentationStateChanged;
+        ClearVisibilitySubscriptions();
+        _presentationStateChanged?.Invoke(false);
         _scrollCoordinator.Dispose();
     }
 
     private void OnLoaded(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        => RefreshPresentationState();
+
+    private void OnPresentationStateChanged(object? sender, EventArgs e)
     {
-        _loaded = true;
-        HandleTranscriptReady();
+        RefreshVisibilitySubscriptions();
+        RefreshPresentationState();
+    }
+
+    private void OnVisibilitySourcePropertyChanged(
+        object? sender,
+        AvaloniaPropertyChangedEventArgs e)
+    {
+        if (e.Property == Visual.IsVisibleProperty)
+        {
+            RefreshPresentationState();
+        }
+    }
+
+    private void RefreshVisibilitySubscriptions()
+    {
+        ClearVisibilitySubscriptions();
+        var sources = new HashSet<Visual>();
+        sources.Add(_owner);
+        sources.UnionWith(_owner.GetVisualAncestors());
+        sources.Add(_scrollViewer);
+        sources.UnionWith(_scrollViewer.GetVisualAncestors());
+        foreach (var source in sources)
+        {
+            source.PropertyChanged += OnVisibilitySourcePropertyChanged;
+            _visibilitySources.Add(source);
+        }
+    }
+
+    private void ClearVisibilitySubscriptions()
+    {
+        foreach (var source in _visibilitySources)
+        {
+            source.PropertyChanged -= OnVisibilitySourcePropertyChanged;
+        }
+        _visibilitySources.Clear();
+    }
+
+    private void RefreshPresentationState()
+    {
+        var isOwnerActive = _owner.IsAttachedToVisualTree() && _owner.IsEffectivelyVisible;
+        var isPresentationActive = isOwnerActive
+                                   && _scrollViewer.IsAttachedToVisualTree()
+                                   && _scrollViewer.IsEffectivelyVisible;
+        var ownerChanged = _loaded != isOwnerActive;
+        var presentationChanged = _presentationActive != isPresentationActive;
+        if (!ownerChanged && !presentationChanged)
+        {
+            return;
+        }
+
+        _loaded = isOwnerActive;
+        if (presentationChanged)
+        {
+            _presentationActive = isPresentationActive;
+            _scrollCoordinator.SetPresentationActive(isPresentationActive);
+            if (!isPresentationActive && _initialPlacementPending)
+            {
+                _initialPlacementQueued = false;
+                _changedBeforeScrollReady = true;
+            }
+            _presentationStateChanged?.Invoke(isPresentationActive);
+            if (isPresentationActive && !_isFollowingLatest())
+            {
+                var viewportAnchor = _getViewportAnchor?.Invoke();
+                _scrollCoordinator.RestoreViewportAnchor(viewportAnchor);
+                if (viewportAnchor is null)
+                {
+                    _scrollCoordinator.ReevaluatePagingEdges();
+                }
+            }
+        }
+
+        if (isOwnerActive)
+        {
+            HandleTranscriptReady();
+        }
+        else
+        {
+            _changedBeforeScrollReady = true;
+        }
     }
 
     private void HandleTranscriptReady()
@@ -213,6 +351,12 @@ internal sealed class TranscriptViewBehavior : IDisposable
     {
         if (_isInitialLoading())
         {
+            if (!_isFollowingLatest())
+            {
+                _changedBeforeScrollReady = true;
+                return true;
+            }
+
             if (!_initialPlacementPending)
             {
                 MarkInitialPlacementPending();
@@ -231,10 +375,9 @@ internal sealed class TranscriptViewBehavior : IDisposable
             CompleteInitialPlacement(_initialPlacementVersion);
             return true;
         }
-
-        if (!_scrollViewer.IsVisible)
+        if (!_presentationActive)
         {
-            QueueVisibilityRetry();
+            _changedBeforeScrollReady = true;
             return true;
         }
 
@@ -245,37 +388,17 @@ internal sealed class TranscriptViewBehavior : IDisposable
 
         _initialPlacementQueued = true;
         var version = _initialPlacementVersion;
+        var placementCancellationToken = _initialPlacementCancellation?.Token ?? default;
         _scrollViewer.Opacity = 0;
         _scrollCoordinator.QueueScrollToBottomAfterLayoutSettles(
-            () => CompleteInitialPlacement(version),
-            _initialPlacementCancellation?.Token ?? default);
+            () => CompleteInitialPlacement(version, placementCancellationToken),
+            placementCancellationToken);
         return true;
     }
 
-    private void QueueVisibilityRetry()
-    {
-        if (_initialVisibilityRetryQueued)
-        {
-            return;
-        }
-
-        _initialVisibilityRetryQueued = true;
-        _tasks.Run(async cancellationToken =>
-        {
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                if (_disposed || cancellationToken.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                _initialVisibilityRetryQueued = false;
-                HandleTranscriptReady();
-            }, DispatcherPriority.Loaded);
-        });
-    }
-
-    private void CompleteInitialPlacement(int version)
+    private void CompleteInitialPlacement(
+        int version,
+        CancellationToken cancellationToken = default)
     {
         if (_disposed || version != _initialPlacementVersion)
         {
@@ -284,12 +407,41 @@ internal sealed class TranscriptViewBehavior : IDisposable
 
         _initialPlacementPending = false;
         _initialPlacementQueued = false;
-        _initialVisibilityRetryQueued = false;
         _scrollViewer.Opacity = 1;
         _initialPlacementCancellation?.Dispose();
         _initialPlacementCancellation = null;
-        _initialPresentation.TrySetResult();
+        _initialPlacementCancellationRegistration?.Dispose();
+        _initialPlacementCancellationRegistration = null;
+        if (cancellationToken.IsCancellationRequested)
+        {
+            _initialPresentation.TrySetCanceled(cancellationToken);
+        }
+        else
+        {
+            _initialPresentation.TrySetResult();
+        }
     }
+
+    private void CancelInitialPlacement(int version, CancellationToken cancellationToken)
+    {
+        if (_disposed || version != _initialPlacementVersion || !_initialPlacementPending)
+        {
+            return;
+        }
+
+        _initialPlacementVersion++;
+        _initialPlacementPending = false;
+        _initialPlacementQueued = false;
+        _scrollViewer.Opacity = 1;
+        _initialPlacementCancellationRegistration?.Dispose();
+        _initialPlacementCancellationRegistration = null;
+        _initialPlacementCancellation?.Dispose();
+        _initialPlacementCancellation = null;
+        _initialPresentation.TrySetCanceled(cancellationToken);
+    }
+
+    private static async Task AwaitDispatcherOperationAsync(DispatcherOperation operation)
+        => await operation;
 
     private static TaskCompletionSource CreatePresentationCompletion()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);

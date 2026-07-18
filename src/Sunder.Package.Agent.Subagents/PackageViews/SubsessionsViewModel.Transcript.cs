@@ -28,7 +28,8 @@ public sealed partial class SubsessionsViewModel
                     limit,
                     linkedCancellation.Token);
             },
-            protectedAnchorKey);
+            protectedAnchorKey,
+            cancellationToken);
         if (loaded)
         {
             ApplyRunActivityState();
@@ -38,7 +39,8 @@ public sealed partial class SubsessionsViewModel
 
     public async Task<bool> LoadNewerTranscriptRowsAsync(
         object? protectedAnchorKey = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool resumeFollowingWhenCaughtUp = true)
     {
         var transcriptReader = _transcriptReader;
         if (transcriptReader is null)
@@ -59,9 +61,14 @@ public sealed partial class SubsessionsViewModel
                     limit,
                     linkedCancellation.Token);
             },
-            protectedAnchorKey);
+            protectedAnchorKey,
+            cancellationToken);
         if (loaded)
         {
+            if (resumeFollowingWhenCaughtUp)
+            {
+                _timeline.ResumeFollowingLatestIfCaughtUp();
+            }
             _runActivity.NotifyFollowStateChanged();
             ApplyRunActivityState();
         }

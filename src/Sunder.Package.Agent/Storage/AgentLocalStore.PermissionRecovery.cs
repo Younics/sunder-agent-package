@@ -44,7 +44,10 @@ public sealed partial class AgentLocalStore
         return command.ExecuteNonQuery() == 1;
     }
 
-    internal bool ExpireActivePermissionRequest(Guid sessionId, string requestId, string summary)
+    internal AgentPermissionExpirationResult ExpireActivePermissionRequest(
+        Guid sessionId,
+        string requestId,
+        string summary)
     {
         using var connection = CreateConnection();
         connection.Open();
@@ -54,7 +57,7 @@ public sealed partial class AgentLocalStore
                 or AgentPendingPermissionStatus.Claimed))
         {
             transaction.Rollback();
-            return false;
+            return new AgentPermissionExpirationResult(false);
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -66,6 +69,7 @@ public sealed partial class AgentLocalStore
             ? "Run stopped after approved tool execution started; the external mutation outcome is ambiguous and will not be retried."
             : summary;
         AgentRunCheckpointRecord? checkpoint = null;
+        IReadOnlyList<AgentCompletedStreamingTurn> completedStreamingTurns = [];
         if (!string.IsNullOrWhiteSpace(request.ContinuationToken)
             && TryFinalizePermissionRun(
                 connection,
@@ -73,8 +77,9 @@ public sealed partial class AgentLocalStore
                 request,
                 AgentRunStatus.Interrupted,
                 terminalSummary,
-                now))
+                now) is { } completed)
         {
+            completedStreamingTurns = completed;
             checkpoint = new AgentRunCheckpointRecord(
                 Guid.NewGuid(),
                 sessionId,
@@ -105,7 +110,7 @@ public sealed partial class AgentLocalStore
             if (command.ExecuteNonQuery() != 1)
             {
                 transaction.Rollback();
-                return false;
+                return new AgentPermissionExpirationResult(false);
             }
         }
 
@@ -116,10 +121,16 @@ public sealed partial class AgentLocalStore
         }
 
         transaction.Commit();
-        return true;
+        return new AgentPermissionExpirationResult(
+            true,
+            checkpoint is null
+                ? null
+                : new AgentCheckpointPersistenceResult(
+                    checkpoint,
+                    completedStreamingTurns));
     }
 
-    internal AgentRunTransitionResult? TryStopRunAndActivePermissions(
+    internal AgentRunStopPersistenceResult? TryStopRunAndActivePermissions(
         AgentDurableRunKey key,
         long expectedEpoch,
         string summary)
@@ -128,6 +139,11 @@ public sealed partial class AgentLocalStore
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
         var now = DateTimeOffset.UtcNow;
+        var completedStreamingTurns = CompleteStreamingTextTurns(
+            connection,
+            transaction,
+            key,
+            now);
         using (var command = connection.CreateCommand())
         {
             command.Transaction = transaction;
@@ -145,7 +161,12 @@ public sealed partial class AgentLocalStore
                   AND RunRevision = $runRevision
                   AND Epoch = $expectedEpoch
                   AND Status IN ('Preparing', 'Idle', 'Running', 'WaitingForApproval')
-                  AND FinishedAtUtc IS NULL;
+                  AND FinishedAtUtc IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM AgentRuns newer
+                      WHERE newer.SessionId = AgentRuns.SessionId
+                        AND newer.RunRevision > AgentRuns.RunRevision);
                 """;
             command.Parameters.AddWithValue("$updatedAtUtc", now.ToString("O"));
             command.Parameters.AddWithValue("$runId", key.RunId.ToString());
@@ -195,7 +216,9 @@ public sealed partial class AgentLocalStore
         TouchSessionForCheckpoint(connection, transaction, checkpoint);
         var run = GetRun(connection, transaction, key.RunId)!;
         transaction.Commit();
-        return new AgentRunTransitionResult(run, checkpoint);
+        return new AgentRunStopPersistenceResult(
+            new AgentRunTransitionResult(run, checkpoint),
+            completedStreamingTurns);
     }
 
     private void RecoverInterruptedPermissionClaims()
@@ -286,6 +309,14 @@ public sealed partial class AgentLocalStore
             runCommand.Parameters.AddWithValue("$sessionId", request.SessionId.ToString());
             runCommand.Parameters.AddWithValue("$runRevision", request.RunRevision);
             runChanged = runCommand.ExecuteNonQuery() == 1;
+            if (runChanged)
+            {
+                CompleteStreamingTextTurns(
+                    connection,
+                    transaction,
+                    new AgentDurableRunKey(request.RunId, request.SessionId, request.RunRevision),
+                    now);
+            }
         }
 
         using (var requestCommand = connection.CreateCommand())

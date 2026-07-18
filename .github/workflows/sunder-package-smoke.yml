@@ -64,10 +64,24 @@ jobs:
 
       - name: Runtime clean lifecycle smoke for complete package family
         working-directory: sunder-core
+        shell: bash
         env:
           SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/smoke
-        run: dotnet test tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-restore --filter FullyQualifiedName~AgentPackageReleaseSmokeTests
+        run: |
+          set -euo pipefail
+          test_fqn="Sunder.Runtime.Host.Tests.AgentPackageReleaseSmokeTests.ReleaseArchives_InstallActivateUnloadReloadAndReinstallAsOneFamily"
+          discovered="$(dotnet test tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --list-tests --filter "FullyQualifiedName=$test_fqn")"
+          printf '%s\n' "$discovered"
+          grep -Fqx "    $test_fqn" <<< "$discovered"
+          dotnet test tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
 
       - name: App UI snapshot activation gate
         working-directory: sunder-core
-        run: dotnet test tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-restore --filter FullyQualifiedName~ApplyPackageDeltaAsync_WhenPackageReloads_DeletesOldSnapshotAfterDetach
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_fqn="Sunder.App.Tests.PackageViewHostServiceTests.ApplyPackageGenerationAsync_CommitsReplacementBeforeRetiringDetachedGeneration"
+          discovered="$(dotnet test tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --list-tests --filter "FullyQualifiedName=$test_fqn")"
+          printf '%s\n' "$discovered"
+          grep -Fqx "    $test_fqn" <<< "$discovered"
+          dotnet test tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"

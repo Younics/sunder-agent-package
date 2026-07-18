@@ -78,10 +78,14 @@ public sealed partial class AgentLocalStore
         return AttachItems(turns, items);
     }
 
-    private static AgentTurnRecord? GetTurn(SqliteConnection connection, Guid turnId)
+    private static AgentTurnRecord? GetTurn(
+        SqliteConnection connection,
+        Guid turnId,
+        SqliteTransaction? transaction = null)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc FROM AgentTurns WHERE TurnId = $id;";
+        command.Transaction = transaction;
+        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming FROM AgentTurns WHERE TurnId = $id;";
         command.Parameters.AddWithValue("$id", turnId.ToString());
 
         using var reader = command.ExecuteReader();
@@ -91,14 +95,14 @@ public sealed partial class AgentLocalStore
         }
 
         var turn = ReadTurnHeader(reader);
-        var items = ListTurnItemsForTurns(connection, [turnId]);
+        var items = ListTurnItemsForTurns(connection, [turnId], transaction);
         return AttachItems([turn], items).Single();
     }
 
     private static IReadOnlyList<AgentTurnRecord> ListTurnHeadersForSession(SqliteConnection connection, Guid sessionId, bool descending)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc FROM AgentTurns WHERE SessionId = $sessionId ORDER BY CreatedAtUtc {(descending ? "DESC" : "ASC")}, TurnId {(descending ? "DESC" : "ASC")};";
+        command.CommandText = $"SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming FROM AgentTurns WHERE SessionId = $sessionId ORDER BY CreatedAtUtc {(descending ? "DESC" : "ASC")}, TurnId {(descending ? "DESC" : "ASC")};";
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
 
         using var reader = command.ExecuteReader();
@@ -119,7 +123,7 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc FROM AgentTurns WHERE SessionId = $sessionId ORDER BY CreatedAtUtc DESC, TurnId DESC LIMIT $limit;";
+        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming FROM AgentTurns WHERE SessionId = $sessionId ORDER BY CreatedAtUtc DESC, TurnId DESC LIMIT $limit;";
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
         command.Parameters.AddWithValue("$limit", Math.Max(0, limit));
 
@@ -142,7 +146,7 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc
+            SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming
             FROM AgentTurns
             WHERE SessionId = $sessionId
               AND (CreatedAtUtc < $beforeCreatedAtUtc OR (CreatedAtUtc = $beforeCreatedAtUtc AND TurnId < $beforeTurnId))
@@ -173,7 +177,7 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc
+            SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming
             FROM AgentTurns
             WHERE SessionId = $sessionId
               AND (CreatedAtUtc > $afterCreatedAtUtc OR (CreatedAtUtc = $afterCreatedAtUtc AND TurnId > $afterTurnId))
@@ -198,7 +202,7 @@ public sealed partial class AgentLocalStore
     private static IReadOnlyList<AgentTurnRecord> ListRecentTurnHeaders(SqliteConnection connection, int limit)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc FROM AgentTurns ORDER BY CreatedAtUtc DESC, TurnId DESC LIMIT $limit;";
+        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming FROM AgentTurns ORDER BY CreatedAtUtc DESC, TurnId DESC LIMIT $limit;";
         command.Parameters.AddWithValue("$limit", limit);
 
         using var reader = command.ExecuteReader();
@@ -291,7 +295,11 @@ public sealed partial class AgentLocalStore
             Enum.Parse<AgentTurnKind>(reader.GetString(3), ignoreCase: true),
             [],
             DateTimeOffset.Parse(reader.GetString(4)),
-            DateTimeOffset.Parse(reader.GetString(5)));
+            DateTimeOffset.Parse(reader.GetString(5)))
+        {
+            ContentRevision = reader.GetInt64(6),
+            IsStreaming = reader.GetInt64(7) != 0,
+        };
 
     private static AgentTurnItemRecord ReadTurnItem(SqliteDataReader reader)
         => new(

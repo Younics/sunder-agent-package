@@ -83,6 +83,14 @@ internal sealed partial class AgentAppRuntimeGateway
         {
             _workspaceSessions.Clear();
             _knownSessions.Clear();
+            var retainedStreamingTurns = _knownTurns.Values
+                .Where(turn => turn.IsStreaming)
+                .ToArray();
+            _knownTurns.Clear();
+            foreach (var turn in retainedStreamingTurns)
+            {
+                CacheTurnCore(turn);
+            }
             if (snapshot.SelectedWorkspace is not null)
             {
                 var workspaceItems = snapshot.WorkspaceSessions.ToList();
@@ -91,6 +99,10 @@ internal sealed partial class AgentAppRuntimeGateway
                 {
                     _knownSessions[item.Session.SessionId] = item;
                 }
+            }
+            foreach (var turn in snapshot.InitialTranscript.Turns)
+            {
+                CacheTurnCore(turn);
             }
             _revision = Math.Max(_revision, snapshot.Revision);
         }

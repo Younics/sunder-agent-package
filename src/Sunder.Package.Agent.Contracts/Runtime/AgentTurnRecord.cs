@@ -7,4 +7,9 @@ public sealed record AgentTurnRecord(
     AgentTurnKind Kind,
     IReadOnlyList<AgentTurnItemRecord> Items,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset UpdatedAtUtc);
+    DateTimeOffset UpdatedAtUtc)
+{
+    public long ContentRevision { get; init; } = 1;
+
+    public bool IsStreaming { get; init; }
+}

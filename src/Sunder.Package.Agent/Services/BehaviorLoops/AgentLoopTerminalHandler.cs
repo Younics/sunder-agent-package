@@ -21,6 +21,7 @@ internal sealed class AgentLoopTerminalHandler
                 assistantTurnState.Turn = host.UpsertAssistantTurn(
                     assistantTurnState.Turn,
                     "No visible assistant response was produced.");
+                assistantTurnState.Turn = host.CompleteAssistantTurn(assistantTurnState.Turn);
             }
 
             var emptyCheckpoint = host.SaveCheckpoint(
@@ -40,6 +41,7 @@ internal sealed class AgentLoopTerminalHandler
         }
 
         assistantTurnState.Turn = host.UpsertAssistantTurn(assistantTurnState.Turn, responseContent);
+        assistantTurnState.Turn = host.CompleteAssistantTurn(assistantTurnState.Turn);
         host.LogEvent(
             PackageLogLevel.Information,
             "assistant.response.completed",
@@ -75,6 +77,7 @@ internal sealed class AgentLoopTerminalHandler
         CancellationToken cancellationToken)
     {
         assistantTurnState.Turn = host.UpsertAssistantTurn(assistantTurnState.Turn, visibleContent);
+        assistantTurnState.Turn = host.CompleteAssistantTurn(assistantTurnState.Turn);
         var checkpoint = host.SaveCheckpoint(AgentRunStatus.Failed, checkpointSummary);
         await host.PublishLifecycleEventAsync(
             AgentLifecycleEventKind.RunFailed,
@@ -109,6 +112,7 @@ internal sealed class AgentLoopTerminalHandler
         var interruptedTurn = host.UpsertAssistantTurn(
             assistantTurnState.Turn,
             $"### Provider connection interrupted\n\nThe provider connection was interrupted after retrying. You can retry or continue this session.\n\n{message}");
+        interruptedTurn = host.CompleteAssistantTurn(interruptedTurn);
         assistantTurnState.Turn = interruptedTurn;
         var checkpoint = host.SaveCheckpoint(
             AgentRunStatus.Interrupted,

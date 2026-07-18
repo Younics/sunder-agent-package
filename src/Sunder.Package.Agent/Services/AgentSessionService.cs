@@ -9,7 +9,7 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.Services;
 
 public sealed partial class AgentSessionService(AgentLocalStore store, IPackageExtensionCatalog? extensionCatalog = null)
-    : IAgentSessionGateway
+    : IAgentSessionGateway, IAgentTurnMutationGateway
 {
     private readonly AgentLocalStore _store = store;
     private readonly IPackageExtensionCatalog? _extensionCatalog = extensionCatalog;
@@ -17,6 +17,8 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
     public event Action<Guid>? SessionChanged;
 
     public event Action<Guid, AgentTurnRecord>? TurnChanged;
+
+    public event Action<AgentTurnMutation>? TurnMutated;
 
     public event Action<Guid>? TranscriptReset;
 
@@ -183,18 +185,24 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
         AgentRunStatus status,
         string? summary)
     {
+        AgentRunTransitionResult? transition;
         lock (lease.SyncRoot)
         {
-            var transition = _store.TryTransitionRun(lease.Key, lease.Epoch, status, summary);
+            transition = _store.TryTransitionRun(lease.Key, lease.Epoch, status, summary);
             if (transition is null)
             {
                 return null;
             }
 
             lease.AdvanceTo(transition.Run.Epoch);
-            NotifySessionChanged(lease.Key.SessionId);
-            return transition;
+            EnqueueLeaseNotification(
+                lease,
+                () => NotifyCompletedStreamingTurnsAndSessionChanged(
+                    lease.Key.SessionId,
+                    transition.CompletedStreamingTurns));
         }
+        DrainLeaseNotifications(lease);
+        return transition;
     }
 
     internal AgentRunStartPersistenceResult? TryStartRun(
@@ -220,20 +228,24 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
             }
 
             lease.AdvanceTo(result.Transition.Run.Epoch);
+            EnqueueLeaseNotification(
+                lease,
+                () => NotifyRunStartChanged(
+                    lease.Key.SessionId,
+                    result.UserTurn,
+                    result.Rollback is not null));
         }
+        DrainLeaseNotifications(lease);
 
         var cleanupFailures = DeleteExternalSessionData(result.Rollback?.DeletedSessionIds ?? []);
         if (result.Rollback is not null)
         {
-            NotifyTranscriptReset(lease.Key.SessionId);
             foreach (var deletedSessionId in result.Rollback.DeletedSessionIds)
             {
                 NotifySessionChanged(deletedSessionId);
             }
         }
 
-        NotifyTurnChanged(lease.Key.SessionId, result.UserTurn);
-        NotifySessionChanged(lease.Key.SessionId);
         if (cleanupFailures.Count > 0)
         {
             throw new AgentRunStartCleanupException(cleanupFailures);
@@ -246,9 +258,10 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
         AgentDurableRunLease lease,
         string summary)
     {
+        AgentRunStopPersistenceResult? transition;
         lock (lease.SyncRoot)
         {
-            var transition = _store.TryStopRunAndActivePermissions(
+            transition = _store.TryStopRunAndActivePermissions(
                 lease.Key,
                 lease.Epoch,
                 summary);
@@ -257,10 +270,15 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
                 return null;
             }
 
-            lease.AdvanceTo(transition.Run.Epoch);
-            NotifySessionChanged(lease.Key.SessionId);
-            return transition;
+            lease.AdvanceTo(transition.Transition.Run.Epoch);
+            EnqueueLeaseNotification(
+                lease,
+                () => NotifyCompletedStreamingTurnsAndSessionChanged(
+                    lease.Key.SessionId,
+                    transition.CompletedStreamingTurns));
         }
+        DrainLeaseNotifications(lease);
+        return transition.Transition;
     }
 
     internal AgentRunSuspensionResult? SuspendRun(
@@ -268,9 +286,10 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
         AgentRunSuspension suspension,
         string? summary)
     {
+        AgentRunSuspensionResult? result;
         lock (lease.SyncRoot)
         {
-            var result = _store.SuspendRun(
+            result = _store.SuspendRun(
                 lease.Key,
                 lease.Epoch,
                 suspension,
@@ -278,11 +297,13 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
             if (result is not null)
             {
                 lease.AdvanceTo(lease.Epoch + 1);
-                NotifySessionChanged(lease.Key.SessionId);
+                EnqueueLeaseNotification(
+                    lease,
+                    () => NotifySessionChanged(lease.Key.SessionId));
             }
-
-            return result;
         }
+        DrainLeaseNotifications(lease);
+        return result;
     }
 
     internal AgentRunSuspensionResult? SuspendRun(
@@ -296,9 +317,10 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
         string continuationToken,
         AgentChildJoinTaskResult completedTask)
     {
+        AgentChildJoinTransitionResult result;
         lock (lease.SyncRoot)
         {
-            var result = _store.CompleteChildJoinTask(
+            result = _store.CompleteChildJoinTask(
                 lease.Key,
                 lease.Epoch,
                 continuationToken,
@@ -306,11 +328,13 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
             if (result.Epoch is { } epoch)
             {
                 lease.AdvanceTo(epoch);
-                NotifySessionChanged(lease.Key.SessionId);
+                EnqueueLeaseNotification(
+                    lease,
+                    () => NotifySessionChanged(lease.Key.SessionId));
             }
-
-            return result;
         }
+        DrainLeaseNotifications(lease);
+        return result;
     }
 
     internal AgentChildJoinTransitionResult CompleteChildJoinTask(
@@ -324,9 +348,10 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
         AgentDurableRunLease lease,
         string continuationToken)
     {
+        AgentParentContinuationDispatchResult? result;
         lock (lease.SyncRoot)
         {
-            var result = _store.TryClaimParentContinuationWork(
+            result = _store.TryClaimParentContinuationWork(
                 workId,
                 lease.Key,
                 lease.Epoch,
@@ -334,11 +359,13 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
             if (result is not null && result.Run.Epoch > lease.Epoch)
             {
                 lease.AdvanceTo(result.Run.Epoch);
-                NotifySessionChanged(lease.Key.SessionId);
+                EnqueueLeaseNotification(
+                    lease,
+                    () => NotifySessionChanged(lease.Key.SessionId));
             }
-
-            return result;
         }
+        DrainLeaseNotifications(lease);
+        return result;
     }
 
     internal bool MarkParentContinuationExecutionStarted(string workId)
@@ -362,7 +389,18 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
     public AgentTurnRecord UpdateTextTurn(Guid turnId, string content)
     {
         var turn = _store.UpdateTextTurn(turnId, content);
-        NotifyTurnChanged(turn.SessionId, turn);
+        NotifyTurnChanged(
+            turn.SessionId,
+            turn,
+            new AgentTurnMutation(
+                turn.SessionId,
+                turn.TurnId,
+                turn.ContentRevision,
+                AgentTurnMutationKind.Replace,
+                BaseContentLength: 0,
+                content,
+                turn.UpdatedAtUtc,
+                turn));
         return turn;
     }
 
@@ -371,31 +409,65 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
         Guid turnId,
         string content)
     {
-        AgentTurnRecord? turn;
+        AgentTurnWriteResult? result;
         lock (lease.SyncRoot)
         {
-            turn = _store.TryUpdateTextTurn(
+            result = _store.TryUpdateTextTurn(
                 lease.Key,
                 lease.Epoch,
                 turnId,
                 content);
+            if (result is not null)
+            {
+                EnqueueLeaseNotification(lease, () => NotifyTurnChanged(
+                    lease.Key.SessionId,
+                    result.Turn,
+                    CreateTurnMutation(result)));
+            }
         }
 
-        if (turn is null)
+        if (result is null)
         {
             throw new AgentRunTranscriptWriteRejectedException();
         }
 
-        NotifyTurnChanged(lease.Key.SessionId, turn);
-        NotifySessionChanged(lease.Key.SessionId);
-        return turn;
+        DrainLeaseNotifications(lease);
+        return result.Turn;
+    }
+
+    internal AgentTurnRecord CompleteTextTurn(
+        AgentDurableRunLease lease,
+        Guid turnId)
+    {
+        AgentTurnWriteResult? result;
+        lock (lease.SyncRoot)
+        {
+            result = _store.TryCompleteTextTurn(
+                lease.Key,
+                lease.Epoch,
+                turnId);
+            if (result is not null)
+            {
+                EnqueueLeaseNotification(lease, () => NotifyTurnChanged(
+                    lease.Key.SessionId,
+                    result.Turn,
+                    CreateTurnMutation(result)));
+            }
+        }
+
+        if (result is null)
+        {
+            throw new AgentRunTranscriptWriteRejectedException();
+        }
+
+        DrainLeaseNotifications(lease);
+        return result.Turn;
     }
 
     public AgentTurnRecord AppendToolCallTurn(Guid sessionId, AgentMessageRole role, string callId, string toolId, string argumentsJson)
     {
         var turn = _store.AppendToolCallTurn(sessionId, role, callId, toolId, argumentsJson);
-        NotifyTurnChanged(sessionId, turn);
-        NotifySessionChanged(sessionId);
+        NotifyTurnAndSessionChanged(sessionId, turn);
         return turn;
     }
 
@@ -416,6 +488,12 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
                 callId,
                 toolId,
                 argumentsJson);
+            if (turn is not null)
+            {
+                EnqueueLeaseNotification(
+                    lease,
+                    () => NotifyTurnAndSessionChanged(lease.Key.SessionId, turn));
+            }
         }
 
         if (turn is null)
@@ -423,8 +501,7 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
             throw new AgentRunTranscriptWriteRejectedException();
         }
 
-        NotifyTurnChanged(lease.Key.SessionId, turn);
-        NotifySessionChanged(lease.Key.SessionId);
+        DrainLeaseNotifications(lease);
         return turn;
     }
 
@@ -457,8 +534,7 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
             errorCode,
             backendId,
             presentationPayloadJson);
-        NotifyTurnChanged(sessionId, turn);
-        NotifySessionChanged(sessionId);
+        NotifyTurnAndSessionChanged(sessionId, turn);
         return turn;
     }
 
@@ -495,6 +571,12 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
                 errorCode,
                 backendId,
                 presentationPayloadJson);
+            if (turn is not null)
+            {
+                EnqueueLeaseNotification(
+                    lease,
+                    () => NotifyTurnAndSessionChanged(lease.Key.SessionId, turn));
+            }
         }
 
         if (turn is null)
@@ -502,16 +584,47 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
             throw new AgentRunTranscriptWriteRejectedException();
         }
 
-        NotifyTurnChanged(lease.Key.SessionId, turn);
-        NotifySessionChanged(lease.Key.SessionId);
+        DrainLeaseNotifications(lease);
         return turn;
     }
 
     public AgentRunCheckpointRecord SaveCheckpoint(Guid sessionId, long runRevision, AgentRunStatus status, string? summary)
     {
-        var checkpoint = _store.SaveCheckpoint(sessionId, runRevision, status, summary);
-        NotifySessionChanged(sessionId);
-        return checkpoint;
+        var result = _store.SaveCheckpointWithCompletedTurns(
+            sessionId,
+            runRevision,
+            status,
+            summary);
+        NotifyCompletedStreamingTurnsAndSessionChanged(
+            sessionId,
+            result.CompletedStreamingTurns);
+        return result.Checkpoint;
+    }
+
+    internal void PublishCommittedCheckpoint(AgentCheckpointPersistenceResult result)
+    {
+        NotifyCompletedStreamingTurnsAndSessionChanged(
+            result.Checkpoint.SessionId,
+            result.CompletedStreamingTurns);
+    }
+
+    internal void PublishCommittedSessionChanged(Guid sessionId)
+        => NotifySessionChanged(sessionId);
+
+    internal void PublishCommittedPermissionDecision(
+        AgentCheckpointPersistenceResult finalization,
+        AgentTurnRecord toolResultTurn)
+    {
+        QueueSessionNotification(finalization.Checkpoint.SessionId, () =>
+        {
+            DispatchCompletedStreamingTurns(
+                finalization.Checkpoint.SessionId,
+                finalization.CompletedStreamingTurns);
+            DispatchTurnChanged(
+                finalization.Checkpoint.SessionId,
+                toolResultTurn);
+            DispatchSessionChanged(finalization.Checkpoint.SessionId);
+        });
     }
 
     internal AgentDurableRunRecord ReserveRun(Guid sessionId, string profileId, string userMessage)
@@ -543,87 +656,4 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
         return checkpoint;
     }
 
-    private void NotifySessionChanged(Guid sessionId)
-    {
-        var handlers = SessionChanged;
-        if (handlers is null)
-        {
-            return;
-        }
-
-        foreach (Action<Guid> handler in handlers.GetInvocationList())
-        {
-            try
-            {
-                handler(sessionId);
-            }
-            catch
-            {
-                // UI or extension listeners must not break persisted agent state changes.
-            }
-        }
-    }
-
-    private void NotifyTurnChanged(Guid sessionId, AgentTurnRecord turn)
-    {
-        var handlers = TurnChanged;
-        if (handlers is null)
-        {
-            return;
-        }
-
-        foreach (Action<Guid, AgentTurnRecord> handler in handlers.GetInvocationList())
-        {
-            try
-            {
-                handler(sessionId, turn);
-            }
-            catch
-            {
-                // UI or extension listeners must not break persisted agent turn changes.
-            }
-        }
-    }
-
-    private void NotifyTranscriptReset(Guid sessionId)
-    {
-        var handlers = TranscriptReset;
-        if (handlers is null)
-        {
-            return;
-        }
-
-        foreach (Action<Guid> handler in handlers.GetInvocationList())
-        {
-            try
-            {
-                handler(sessionId);
-            }
-            catch
-            {
-                // UI or extension listeners must not break persisted agent state changes.
-            }
-        }
-    }
-
-    private void NotifyRunActivityChanged(Guid sessionId, AgentRunActivityUpdate activity)
-    {
-        var handlers = RunActivityChanged;
-        if (handlers is null)
-        {
-            return;
-        }
-
-        foreach (Action<Guid, AgentRunActivityUpdate> handler in handlers.GetInvocationList())
-        {
-            try
-            {
-                handler(sessionId, activity);
-            }
-            catch
-            {
-                // Live activity listeners must not break agent execution.
-            }
-        }
-    }
 }

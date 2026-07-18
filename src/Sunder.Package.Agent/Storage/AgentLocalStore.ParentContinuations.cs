@@ -245,6 +245,11 @@ public sealed partial class AgentLocalStore
             runCommand.Parameters.AddWithValue("$runRevision", work.ParentRunKey.RunRevision);
             if (runCommand.ExecuteNonQuery() == 1)
             {
+                CompleteStreamingTextTurns(
+                    connection,
+                    transaction,
+                    work.ParentRunKey,
+                    now);
                 var checkpoint = new AgentRunCheckpointRecord(
                     Guid.NewGuid(),
                     work.ParentRunKey.SessionId,

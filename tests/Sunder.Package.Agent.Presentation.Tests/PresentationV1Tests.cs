@@ -65,16 +65,28 @@ public sealed class PresentationV1Tests
     [AvaloniaFact]
     public async Task ActivityTicker_UsesOneOwnedClockAndStopsOnDisposal()
     {
-        var ticker = new ActivityTicker(TimeSpan.FromMilliseconds(5));
+        using var ticker = new ActivityTicker(TimeSpan.FromMilliseconds(5));
         var ticks = 0;
         var firstTick = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource? resumedTick = null;
         ticker.Tick += () =>
         {
             Interlocked.Increment(ref ticks);
             firstTick.TrySetResult();
+            resumedTick?.TrySetResult();
         };
 
         await firstTick.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+        ticker.SetEnabled(false);
+        var ticksWhilePaused = Volatile.Read(ref ticks);
+        await Task.Delay(30, TestContext.Current.CancellationToken);
+        Assert.Equal(ticksWhilePaused, Volatile.Read(ref ticks));
+
+        resumedTick = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ticker.SetEnabled(true);
+        await resumedTick.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+        Assert.True(Volatile.Read(ref ticks) > ticksWhilePaused);
+
         ticker.Dispose();
         var ticksAtDisposal = Volatile.Read(ref ticks);
         await Task.Delay(30, TestContext.Current.CancellationToken);

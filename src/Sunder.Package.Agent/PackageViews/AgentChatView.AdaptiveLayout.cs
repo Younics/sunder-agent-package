@@ -6,9 +6,9 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public partial class AgentChatView
 {
-    private void ApplyHeaderLayout()
+    private void ApplyHeaderLayout(double? availableWidth = null)
     {
-        var useWideLayout = Bounds.Width >= WideHeaderMinimumWidth;
+        var useWideLayout = (availableWidth ?? Bounds.Width) >= WideHeaderMinimumWidth;
         if (!_headerLayoutInitialized || useWideLayout != _usesWideLayout)
         {
             if (_headerLayoutInitialized)

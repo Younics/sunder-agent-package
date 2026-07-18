@@ -4,15 +4,52 @@ namespace Sunder.Package.Agent.Shared.PackageViews;
 
 internal sealed partial class TranscriptScrollCoordinator
 {
-    internal Task PendingPagingOperations
-        => Task.WhenAll(
-            _loadOlderOperation,
-            _loadNewerOperation,
-            _settledScrollOperation,
-            _bottomPlacementReleaseOperation,
-            _restoreAnchorOperation,
-            _scrollToBottomOperation,
-            _focusBringIntoViewOperation);
+    internal Task PendingPagingOperations => WaitForPendingOperationsAsync();
+
+    public void ReevaluatePagingEdges()
+    {
+        if (_disposed
+            || !_presentationActive
+            || _restoreAnchorPending
+            || _isRestoringAnchor
+            || _pendingAnchor is not null)
+        {
+            return;
+        }
+
+        QueueLoadOlderRowsIfNearTop();
+        QueueLoadNewerRowsIfAtBottom(requireActualBottom: false);
+    }
+
+    private async Task WaitForPendingOperationsAsync()
+    {
+        while (true)
+        {
+            var operations = new[]
+            {
+                _loadOlderOperation,
+                _loadNewerOperation,
+                _settledScrollOperation,
+                _bottomPlacementReleaseOperation,
+                _restoreAnchorOperation,
+                _scrollToBottomOperation,
+                _focusBringIntoViewOperation,
+                _userScrollEvaluationOperation,
+            };
+            await Task.WhenAll(operations);
+            if (ReferenceEquals(operations[0], _loadOlderOperation)
+                && ReferenceEquals(operations[1], _loadNewerOperation)
+                && ReferenceEquals(operations[2], _settledScrollOperation)
+                && ReferenceEquals(operations[3], _bottomPlacementReleaseOperation)
+                && ReferenceEquals(operations[4], _restoreAnchorOperation)
+                && ReferenceEquals(operations[5], _scrollToBottomOperation)
+                && ReferenceEquals(operations[6], _focusBringIntoViewOperation)
+                && ReferenceEquals(operations[7], _userScrollEvaluationOperation))
+            {
+                return;
+            }
+        }
+    }
 
     private async Task RestorePendingAnchorAsync(CancellationToken cancellationToken)
     {
@@ -23,25 +60,41 @@ internal sealed partial class TranscriptScrollCoordinator
         finally
         {
             _restoreAnchorPending = false;
+            if (!_disposed && _presentationActive && _pendingAnchor is not null)
+            {
+                QueueRestoreScrollAnchor();
+            }
+            else
+            {
+                ReevaluatePagingEdges();
+            }
         }
     }
 
     private async Task LoadOlderRowsAsync(
         ScrollAnchor anchor,
         long interactionRevision,
+        long pagingContextRevision,
         CancellationToken cancellationToken)
     {
         var loaded = false;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (interactionRevision != _interactionRevision
+                || pagingContextRevision != _pagingContextRevision)
+            {
+                return;
+            }
             _pendingAnchor = null;
             var protectedAnchorKey = CaptureCurrentScrollAnchorKey();
             loaded = await _loadOlderRowsAsync(protectedAnchorKey, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            if (loaded)
+            if (loaded
+                && interactionRevision == _interactionRevision
+                && pagingContextRevision == _pagingContextRevision)
             {
-                SetShouldAutoScroll(false);
+                _userDetached = true;
                 UpdateJumpToLatestVisibility();
             }
         }
@@ -50,7 +103,10 @@ internal sealed partial class TranscriptScrollCoordinator
         }
         catch (Exception ex)
         {
-            ReportPagingFailure(ex);
+            if (pagingContextRevision == _pagingContextRevision)
+            {
+                ReportPagingFailure(ex);
+            }
         }
         finally
         {
@@ -58,7 +114,9 @@ internal sealed partial class TranscriptScrollCoordinator
             {
                 if (!cancellationToken.IsCancellationRequested && !_disposed)
                 {
-                    if (loaded && ShouldRestoreOlderRowsAnchor(
+                    if (loaded
+                        && pagingContextRevision == _pagingContextRevision
+                        && ShouldRestoreOlderRowsAnchor(
                             interactionRevision,
                             _interactionRevision))
                     {
@@ -72,7 +130,10 @@ internal sealed partial class TranscriptScrollCoordinator
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (!_disposed && loaded)
+                    if (!_disposed
+                        && loaded
+                        && interactionRevision == _interactionRevision
+                        && pagingContextRevision == _pagingContextRevision)
                     {
                         _suppressEdgeLoadsUntilNextScroll = true;
                     }
@@ -83,10 +144,18 @@ internal sealed partial class TranscriptScrollCoordinator
             }
             catch (Exception ex)
             {
-                ReportPagingFailure(ex);
+                if (pagingContextRevision == _pagingContextRevision)
+                {
+                    ReportPagingFailure(ex);
+                }
             }
             finally
             {
+                if (ShouldRearmPagingEdge(loaded, interactionRevision, _interactionRevision))
+                {
+                    _isOlderEdgeArmed = true;
+                }
+                _activePageInteractionRevision = -1;
                 _loadOlderPending = false;
             }
         }
@@ -99,22 +168,28 @@ internal sealed partial class TranscriptScrollCoordinator
 
     private async Task LoadNewerRowsAsync(
         ScrollAnchor anchor,
-        bool wasAtBottom,
+        bool wasFollowingTail,
         long interactionRevision,
+        long pagingContextRevision,
         CancellationToken cancellationToken)
     {
         var loaded = false;
+        var continueToLatest = false;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (interactionRevision != _interactionRevision
+                || pagingContextRevision != _pagingContextRevision)
+            {
+                return;
+            }
             _pendingAnchor = null;
             var protectedAnchorKey = CaptureCurrentScrollAnchorKey();
             loaded = await _loadNewerRowsAsync(protectedAnchorKey, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            UpdateJumpToLatestVisibility();
-            if (!loaded || !_hasNewerRows() || !IsNearLoadBottom())
+            if (pagingContextRevision == _pagingContextRevision)
             {
-                NotifyReachedLatestIfCaughtUp();
+                UpdateJumpToLatestVisibility();
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -122,7 +197,10 @@ internal sealed partial class TranscriptScrollCoordinator
         }
         catch (Exception ex)
         {
-            ReportPagingFailure(ex);
+            if (pagingContextRevision == _pagingContextRevision)
+            {
+                ReportPagingFailure(ex);
+            }
         }
         finally
         {
@@ -130,15 +208,17 @@ internal sealed partial class TranscriptScrollCoordinator
             {
                 if (!cancellationToken.IsCancellationRequested && !_disposed)
                 {
-                    if (loaded && interactionRevision == _interactionRevision)
+                    if (loaded
+                        && interactionRevision == _interactionRevision
+                        && pagingContextRevision == _pagingContextRevision)
                     {
-                        if (wasAtBottom)
+                        if (wasFollowingTail)
                         {
                             await YieldForRenderedContent(cancellationToken);
                             cancellationToken.ThrowIfCancellationRequested();
                             if (!_disposed && interactionRevision == _interactionRevision)
                             {
-                                ScrollToBottom();
+                                ScrollToBottom(resumeFollowing: true);
                             }
                         }
                         else
@@ -154,9 +234,20 @@ internal sealed partial class TranscriptScrollCoordinator
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (!_disposed && loaded)
+                    if (!_disposed
+                        && loaded
+                        && pagingContextRevision == _pagingContextRevision)
                     {
-                        _suppressEdgeLoadsUntilNextScroll = true;
+                        if (_loadNewerResumeInteractionRevision == _interactionRevision
+                            && !_hasNewerRows())
+                        {
+                            ScrollToBottom(resumeFollowing: true);
+                        }
+                        if (interactionRevision == _interactionRevision
+                            && !_hasNewerRows())
+                        {
+                            _suppressEdgeLoadsUntilNextScroll = true;
+                        }
                     }
                 }
             }
@@ -165,11 +256,34 @@ internal sealed partial class TranscriptScrollCoordinator
             }
             catch (Exception ex)
             {
-                ReportPagingFailure(ex);
+                if (pagingContextRevision == _pagingContextRevision)
+                {
+                    ReportPagingFailure(ex);
+                }
             }
             finally
             {
+                var tailIntentIsCurrent = pagingContextRevision == _pagingContextRevision
+                                          && _loadNewerResumeInteractionRevision == _interactionRevision;
+                continueToLatest = loaded
+                                   && tailIntentIsCurrent
+                                   && _hasNewerRows()
+                                   && _canLoadNewerRows();
+                if (continueToLatest
+                    || ShouldRearmPagingEdge(loaded, interactionRevision, _interactionRevision))
+                {
+                    _isNewerEdgeArmed = true;
+                }
+                _activePageInteractionRevision = -1;
+                if (!continueToLatest)
+                {
+                    _loadNewerResumeInteractionRevision = -1;
+                }
                 _loadNewerPending = false;
+                if (continueToLatest)
+                {
+                    QueueLoadNewerRows(resumeFollowingWhenCaughtUp: true);
+                }
             }
         }
     }
@@ -202,6 +316,12 @@ internal sealed partial class TranscriptScrollCoordinator
             }
         }
     }
+
+    internal static bool ShouldRearmPagingEdge(
+        bool loaded,
+        long queuedInteractionRevision,
+        long currentInteractionRevision)
+        => !loaded || queuedInteractionRevision != currentInteractionRevision;
 
     private void ReportPagingFailure(Exception exception)
     {

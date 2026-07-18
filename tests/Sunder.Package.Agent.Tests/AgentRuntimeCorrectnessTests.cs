@@ -2,6 +2,7 @@ extern alias AgentCore;
 
 using System.Runtime.CompilerServices;
 using System.Collections.Concurrent;
+using System.Reflection;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Runtime;
@@ -51,10 +52,11 @@ public sealed class AgentRuntimeCorrectnessTests
             1,
             AgentRunStatus.Completed,
             "Snapshot complete.");
+        var transcriptContent = new string('x', 10_000);
         sessions.AppendTextTurn(
             rootSession.SessionId,
             AgentMessageRole.Assistant,
-            "Initial transcript.");
+            transcriptContent);
         permissions.SetSessionUnrestrictedMode(rootSession.SessionId, true);
         await selections.SaveSelectedProfileIdAsync("missing-profile");
         await selections.SaveSelectedWorkspaceIdAsync("missing-workspace");
@@ -80,7 +82,9 @@ public sealed class AgentRuntimeCorrectnessTests
         Assert.DoesNotContain(
             typeof(AgentChatPermissionProjection).GetProperties(),
             property => property.Name is "Actions" or "Overrides");
-        Assert.Equal("Initial transcript.", Assert.Single(snapshot.InitialTranscript.Turns).Items[0].TextContent);
+        var transcriptItem = Assert.Single(snapshot.InitialTranscript.Turns).Items[0];
+        Assert.Equal(transcriptContent, transcriptItem.TextContent);
+        Assert.False(transcriptItem.WasTruncated);
         Assert.Equal("missing-profile", await selections.GetSelectedProfileIdAsync());
         Assert.Equal("missing-workspace", await selections.GetSelectedWorkspaceIdAsync());
         Assert.NotEqual(
@@ -658,6 +662,228 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     [Fact]
+    public void RuntimeChangeKind_PreservesV1WireValuesAndAppendsMutation()
+    {
+        Assert.Equal(0, (int)AgentRuntimeChangeKind.Connected);
+        Assert.Equal(6, (int)AgentRuntimeChangeKind.Turn);
+        Assert.Equal(7, (int)AgentRuntimeChangeKind.TranscriptReset);
+        Assert.Equal(8, (int)AgentRuntimeChangeKind.RunActivity);
+        Assert.Equal(9, (int)AgentRuntimeChangeKind.Permission);
+        Assert.Equal(10, (int)AgentRuntimeChangeKind.TurnMutation);
+    }
+
+    [Fact]
+    public void Gateway_TurnChangedReconstructsAppendAndCompletionMutations()
+    {
+        using var gateway = new AgentAppRuntimeGateway(new ToggleRuntimeClient(isAvailable: true));
+        var changes = new List<AgentTurnRecord>();
+        gateway.TurnChanged += (_, turn) => changes.Add(turn);
+        var sessionId = Guid.NewGuid();
+        var turnId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var turn = new AgentTurnRecord(
+            turnId,
+            sessionId,
+            AgentMessageRole.Assistant,
+            AgentTurnKind.Message,
+            [new AgentTurnItemRecord(
+                Guid.NewGuid(),
+                turnId,
+                0,
+                AgentTurnItemKind.Text,
+                "first",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                false,
+                null,
+                null)],
+            now,
+            now)
+        {
+            ContentRevision = 1,
+            IsStreaming = true,
+        };
+        var apply = typeof(AgentAppRuntimeGateway).GetMethod(
+            "ApplyCurrentChange",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        apply.Invoke(gateway, [new AgentRuntimeChange(
+            1,
+            AgentRuntimeChangeKind.TurnMutation,
+            SessionId: sessionId,
+            TurnMutation: new AgentTurnMutation(
+                sessionId,
+                turnId,
+                1,
+                AgentTurnMutationKind.Add,
+                0,
+                null,
+                now,
+                turn))]);
+        apply.Invoke(gateway, [new AgentRuntimeChange(
+            2,
+            AgentRuntimeChangeKind.TurnMutation,
+            SessionId: sessionId,
+            TurnMutation: new AgentTurnMutation(
+                sessionId,
+                turnId,
+                2,
+                AgentTurnMutationKind.Append,
+                "first".Length,
+                " second",
+                now.AddSeconds(1)))]);
+        apply.Invoke(gateway, [new AgentRuntimeChange(
+            3,
+            AgentRuntimeChangeKind.TurnMutation,
+            SessionId: sessionId,
+            TurnMutation: new AgentTurnMutation(
+                sessionId,
+                turnId,
+                3,
+                AgentTurnMutationKind.Complete,
+                "first second".Length,
+                null,
+                now.AddSeconds(2)))]);
+
+        Assert.Equal(3, changes.Count);
+        Assert.Equal("first", Assert.Single(changes[0].Items).TextContent);
+        Assert.Equal("first second", Assert.Single(changes[1].Items).TextContent);
+        Assert.True(changes[1].IsStreaming);
+        Assert.Equal("first second", Assert.Single(changes[2].Items).TextContent);
+        Assert.False(changes[2].IsStreaming);
+    }
+
+    [Fact]
+    public void Gateway_ChatSnapshotPreservesOtherSessionStreamingReconstruction()
+    {
+        using var gateway = new AgentAppRuntimeGateway(new ToggleRuntimeClient(isAvailable: true));
+        var sessionId = Guid.NewGuid();
+        var turnId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var streamingTurn = new AgentTurnRecord(
+            turnId,
+            sessionId,
+            AgentMessageRole.Assistant,
+            AgentTurnKind.Message,
+            [new AgentTurnItemRecord(
+                Guid.NewGuid(),
+                turnId,
+                0,
+                AgentTurnItemKind.Text,
+                "first",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                false,
+                null,
+                null)],
+            now,
+            now)
+        {
+            ContentRevision = 1,
+            IsStreaming = true,
+        };
+        var apply = typeof(AgentAppRuntimeGateway).GetMethod(
+            "ApplyCurrentChange",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        apply.Invoke(gateway, [new AgentRuntimeChange(
+            1,
+            AgentRuntimeChangeKind.TurnMutation,
+            SessionId: sessionId,
+            TurnMutation: new AgentTurnMutation(
+                sessionId,
+                turnId,
+                1,
+                AgentTurnMutationKind.Add,
+                0,
+                null,
+                now,
+                streamingTurn))]);
+        var applySnapshot = typeof(AgentAppRuntimeGateway).GetMethod(
+            "ApplyChatSnapshotCache",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        applySnapshot.Invoke(gateway, [CreateChatSnapshot(1)]);
+        var changedTurns = new List<AgentTurnRecord>();
+        gateway.TurnChanged += (_, turn) => changedTurns.Add(turn);
+
+        apply.Invoke(gateway, [new AgentRuntimeChange(
+            2,
+            AgentRuntimeChangeKind.TurnMutation,
+            SessionId: sessionId,
+            TurnMutation: new AgentTurnMutation(
+                sessionId,
+                turnId,
+                2,
+                AgentTurnMutationKind.Append,
+                "first".Length,
+                " second",
+                now.AddSeconds(1))) ]);
+
+        var changed = Assert.Single(changedTurns);
+        Assert.Equal("first second", Assert.Single(changed.Items).TextContent);
+    }
+
+    [Fact]
+    public void Gateway_StaleReplacementDoesNotRaiseCompatibilityTurnChanged()
+    {
+        using var gateway = new AgentAppRuntimeGateway(new ToggleRuntimeClient(isAvailable: true));
+        var sessionId = Guid.NewGuid();
+        var turnId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var current = new AgentTurnRecord(
+            turnId,
+            sessionId,
+            AgentMessageRole.Assistant,
+            AgentTurnKind.Message,
+            [],
+            now,
+            now)
+        {
+            ContentRevision = 2,
+            IsStreaming = true,
+        };
+        var stale = current with
+        {
+            ContentRevision = 1,
+            UpdatedAtUtc = now.AddSeconds(-1),
+        };
+        var cacheTurn = typeof(AgentAppRuntimeGateway).GetMethod(
+            "CacheTurn",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        cacheTurn.Invoke(gateway, [current]);
+        var changedCount = 0;
+        gateway.TurnChanged += (_, _) => changedCount++;
+        var apply = typeof(AgentAppRuntimeGateway).GetMethod(
+            "ApplyCurrentChange",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        apply.Invoke(gateway, [new AgentRuntimeChange(
+            1,
+            AgentRuntimeChangeKind.TurnMutation,
+            SessionId: sessionId,
+            TurnMutation: new AgentTurnMutation(
+                sessionId,
+                turnId,
+                1,
+                AgentTurnMutationKind.Replace,
+                0,
+                null,
+                stale.UpdatedAtUtc,
+                stale))]);
+
+        Assert.Equal(0, changedCount);
+    }
+
+    [Fact]
     public async Task ChangeHub_ReplaysAfterRevision()
     {
         using var runtime = ChangeHubRuntime.Create();
@@ -673,6 +899,40 @@ public sealed class AgentRuntimeCorrectnessTests
         Assert.Equal(firstRevision + 1, subscription.Current.Revision);
         Assert.True(await subscription.MoveNextAsync());
         Assert.Equal(AgentRuntimeChangeKind.Connected, subscription.Current.Kind);
+    }
+
+    [Fact]
+    public async Task ChangeHub_PreservesV1TurnsAndNegotiatesCompactMutations()
+    {
+        using var runtime = ChangeHubRuntime.Create();
+        var workspace = runtime.Workspaces.CreateWorkspace("compatibility");
+        var session = runtime.Sessions.CreateSession(
+            "compatibility",
+            workspaceId: workspace.WorkspaceId);
+        var revision = runtime.Hub.Revision;
+        await using var legacy = runtime.Hub.SubscribeAsync(
+            new AgentChangeSubscription(revision)).GetAsyncEnumerator();
+        await using var current = runtime.Hub.SubscribeAsync(
+            new AgentChangeSubscription(revision, SupportsTurnMutations: true)).GetAsyncEnumerator();
+        Assert.True(await legacy.MoveNextAsync());
+        Assert.Equal(AgentRuntimeChangeKind.Connected, legacy.Current.Kind);
+        Assert.True(await current.MoveNextAsync());
+        Assert.Equal(AgentRuntimeChangeKind.Connected, current.Current.Kind);
+
+        var turn = runtime.Sessions.AppendTextTurn(
+            session.SessionId,
+            AgentMessageRole.Assistant,
+            "stream compatibility");
+
+        Assert.True(await legacy.MoveNextAsync());
+        Assert.Equal(AgentRuntimeChangeKind.Turn, legacy.Current.Kind);
+        Assert.Equal(turn.TurnId, legacy.Current.Turn?.TurnId);
+        Assert.Equal("stream compatibility", legacy.Current.Turn?.Items.Single().TextContent);
+        Assert.Null(legacy.Current.TurnMutation);
+        Assert.True(await current.MoveNextAsync());
+        Assert.Equal(AgentRuntimeChangeKind.TurnMutation, current.Current.Kind);
+        Assert.Null(current.Current.Turn);
+        Assert.Equal(turn.TurnId, current.Current.TurnMutation?.TurnId);
     }
 
     [Fact]
@@ -1142,14 +1402,17 @@ public sealed class AgentRuntimeCorrectnessTests
 
         private ChangeHubRuntime(
             RegressionTestPackageScope scope,
+            AgentSessionService sessions,
             AgentWorkspaceService workspaces,
             AgentRuntimeChangeHub hub)
         {
             _scope = scope;
+            Sessions = sessions;
             Workspaces = workspaces;
             Hub = hub;
         }
 
+        public AgentSessionService Sessions { get; }
         public AgentWorkspaceService Workspaces { get; }
         public AgentRuntimeChangeHub Hub { get; }
 
@@ -1168,7 +1431,11 @@ public sealed class AgentRuntimeCorrectnessTests
                 executionTargets,
                 catalog);
             var profiles = new AgentProfileService(store, tools, catalog);
-            return new ChangeHubRuntime(scope, workspaces, new AgentRuntimeChangeHub(profiles, workspaces, sessions));
+            return new ChangeHubRuntime(
+                scope,
+                sessions,
+                workspaces,
+                new AgentRuntimeChangeHub(profiles, workspaces, sessions));
         }
 
         public void Dispose()

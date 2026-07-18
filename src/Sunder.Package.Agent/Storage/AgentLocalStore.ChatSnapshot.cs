@@ -423,7 +423,6 @@ public sealed partial class AgentLocalStore
                 .Take(ChatSnapshotTurnItemLimit)
                 .Select(item => item with
                 {
-                    TextContent = TruncateNullable(item.TextContent, 8192),
                     ArgumentsJson = BoundJson(item.ArgumentsJson, 4096),
                     ResultSummary = TruncateNullable(item.ResultSummary, 4096),
                     StructuredPayloadJson = BoundJson(item.StructuredPayloadJson, 4096),
@@ -432,7 +431,6 @@ public sealed partial class AgentLocalStore
                     PresentationPayloadJson = BoundJson(item.PresentationPayloadJson, 4096),
                     WasTruncated = item.WasTruncated
                                    || turn.Items.Count > ChatSnapshotTurnItemLimit
-                                   || WasTruncated(item.TextContent, 8192)
                                    || WasTruncated(item.ArgumentsJson, 4096)
                                    || WasTruncated(item.StructuredPayloadJson, 4096)
                                    || WasTruncated(item.SourcesJson, 4096)

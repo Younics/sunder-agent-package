@@ -21,9 +21,9 @@
       },
       "LiveMarkdown.Avalonia": {
         "type": "Direct",
-        "requested": "[2.0.1, )",
-        "resolved": "2.0.1",
-        "contentHash": "kPtQn0tSuz7LZGGviPIJeYvHNpRZmY6yGe6Np9mmSmSr+OxLiA2fWCtjhQo8sWvx4AZNNtPFFUh4YDmIWZKNgA==",
+        "requested": "[2.2.0, )",
+        "resolved": "2.2.0",
+        "contentHash": "YS8CuVSe/RlEUZZF4j0vH0EvGDazJ0vW6Qud0rSjsfobYRB7oxlHgBAbZduG58MB27w4JDwxOPp87MXYLgCY+A==",
         "dependencies": {
           "Avalonia": "12.0.0",
           "Markdig": "1.1.2",
@@ -35,13 +35,13 @@
         "type": "Direct",
         "requested": "[1.1.0, )",
         "resolved": "1.1.0",
-        "contentHash": "7xFF/CaxghNeAkTRr5vHBWJIn+YPcB4o5W1yNvxAGTFkKiesn/RmUQ70sQhA0a/r+qWi2kBTx2kswnI7VSpr0w=="
+        "contentHash": "sIQei2Kw2pZqPcbdIU/jbaB5NnagiljQNr8qrEMBKiwZD79a3X6w++Oy4uNgK0kQlXkz4JMEmfHhUFpbX3Kc1g=="
       },
       "Sunder.Sdk": {
         "type": "Direct",
         "requested": "[1.1.0, )",
         "resolved": "1.1.0",
-        "contentHash": "l8wtwpQD0/G7tYhznF6sRv3iwl4hVWt/iVYmaUYsZjhYeyRWEJjB1dz5NRhgx4e31HvF6YuzP7hhY1IFidVKHQ==",
+        "contentHash": "RcbCpd502dU15IXoe5Foy+CggGz0YRveS/bZzaT6Om5MNwQx1hPP1W/kxHWNHzoU2kTqMmIvjBMjhvfklSeZBA==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.8"
@@ -51,7 +51,7 @@
         "type": "Direct",
         "requested": "[1.1.0, )",
         "resolved": "1.1.0",
-        "contentHash": "CTY0Ope+XXbu6WXQcyWLoJ8OSdMDmRl+/dTaWbutS5B3dh62D7iMDy3vaYww5hCkSjTMtPIDvUAWeGMJjsyQ0w==",
+        "contentHash": "Ll9JC6upeJQZvycp4thigSxxibvqTTOnTbnn6V2dpnuqQjSIF4Yc+RV3tyqpB/tiGW0rU0UmHuRdeuR9bqHshg==",
         "dependencies": {
           "Avalonia": "12.0.3",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
@@ -62,7 +62,7 @@
         "type": "Direct",
         "requested": "[1.1.0, )",
         "resolved": "1.1.0",
-        "contentHash": "4eOSpVgAbm/9n4/O4yJqUFWkzE7tiNveDFPNuA0gXQT14g6Ev7W3UE+jt/T6wgc8o3UQvsb8sb3VoewP8gQ8IQ==",
+        "contentHash": "Cgm0DdQ7uzCqtJoi0EeBr8IOsZPsXbguPD6yJaavrddO+ijMA14nPiuivmQj/yXl2VRphDFztyj7xYc9NAJgRg==",
         "dependencies": {
           "Sunder.Sdk": "1.1.0"
         }

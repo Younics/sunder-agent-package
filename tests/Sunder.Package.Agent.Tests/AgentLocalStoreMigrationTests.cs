@@ -14,6 +14,7 @@ public sealed class AgentLocalStoreMigrationTests
     [InlineData(5)]
     [InlineData(6)]
     [InlineData(7)]
+    [InlineData(8)]
     public void HistoricalSchemaFixture_UpgradesToCurrentSchema(int historicalVersion)
     {
         using var scope = RegressionTestPackageScope.Create();
@@ -23,11 +24,15 @@ public sealed class AgentLocalStoreMigrationTests
         var store = new AgentLocalStore(scope.Context);
 
         using var connection = OpenDatabase(store.DatabasePath);
-        Assert.Equal(7L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
-        Assert.Equal(7L, ExecuteInt64(connection, "SELECT MAX(Version) FROM SchemaMigrations;"));
-        Assert.Equal(7L, ExecuteInt64(connection,
+        Assert.Equal(9L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
+        Assert.Equal(9L, ExecuteInt64(connection, "SELECT MAX(Version) FROM SchemaMigrations;"));
+        Assert.Equal(9L, ExecuteInt64(connection,
             "SELECT COUNT(*) FROM SchemaMigrations WHERE length(Checksum) = 64;"));
         Assert.True(ColumnExists(connection, "AgentPendingPermissionRequests", "ExecutionSnapshotJson"));
+        Assert.True(ColumnExists(connection, "AgentTurns", "ContentRevision"));
+        Assert.True(ColumnExists(connection, "AgentTurns", "IsStreaming"));
+        Assert.True(ColumnExists(connection, "AgentTurns", "RunId"));
+        Assert.True(ColumnExists(connection, "AgentTurns", "RunRevision"));
         Assert.True(TableExists(connection, "AgentParentContinuationWork"));
     }
 
@@ -58,6 +63,37 @@ public sealed class AgentLocalStoreMigrationTests
         Assert.False(ColumnExists(verification, "AgentPendingPermissionRequests", "ExecutionSnapshotJson"));
     }
 
+    [Fact]
+    public void VersionEightMigrationFinalizesUnownedStreamingTurns()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var databasePath = GetDatabasePath(scope);
+        CreateHistoricalFixture(databasePath, 8);
+        var turnId = Guid.NewGuid();
+        using (var connection = OpenDatabase(databasePath))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "INSERT INTO AgentTurns (TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming) VALUES ($turnId, $sessionId, 'Assistant', 'Message', $now, $now, 5, 1);";
+            command.Parameters.AddWithValue("$turnId", turnId.ToString());
+            command.Parameters.AddWithValue("$sessionId", Guid.NewGuid().ToString());
+            command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+            command.ExecuteNonQuery();
+        }
+
+        var store = new AgentLocalStore(scope.Context);
+
+        using var verification = OpenDatabase(store.DatabasePath);
+        using var select = verification.CreateCommand();
+        select.CommandText = "SELECT ContentRevision, IsStreaming, RunId, RunRevision FROM AgentTurns WHERE TurnId = $turnId;";
+        select.Parameters.AddWithValue("$turnId", turnId.ToString());
+        using var reader = select.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(6, reader.GetInt64(0));
+        Assert.Equal(0, reader.GetInt64(1));
+        Assert.True(reader.IsDBNull(2));
+        Assert.True(reader.IsDBNull(3));
+    }
+
     [Theory]
     [InlineData("name")]
     [InlineData("checksum")]
@@ -74,7 +110,7 @@ public sealed class AgentLocalStoreMigrationTests
             {
                 "name" => "UPDATE SchemaMigrations SET Name = 'renamed' WHERE Version = 3;",
                 "checksum" => "UPDATE SchemaMigrations SET Checksum = 'tampered' WHERE Version = 4;",
-                "newer" => "INSERT INTO SchemaMigrations VALUES (8, 'future', 'future', '2026-01-01T00:00:00Z');",
+                "newer" => "INSERT INTO SchemaMigrations VALUES (10, 'future', 'future', '2026-01-01T00:00:00Z');",
                 "unknown" => "UPDATE SchemaMigrations SET Version = 0 WHERE Version = 1;",
                 _ => throw new ArgumentOutOfRangeException(nameof(corruption)),
             };
@@ -109,7 +145,7 @@ public sealed class AgentLocalStoreMigrationTests
 
         using var verification = OpenDatabase(store.DatabasePath);
         Assert.True(ColumnExists(verification, "SchemaMigrations", "Checksum"));
-        Assert.Equal(7L, ExecuteInt64(verification,
+        Assert.Equal(9L, ExecuteInt64(verification,
             "SELECT COUNT(*) FROM SchemaMigrations WHERE length(Checksum) = 64;"));
     }
 

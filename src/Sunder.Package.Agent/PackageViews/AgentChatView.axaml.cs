@@ -76,19 +76,25 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
             (anchor, cancellationToken) => ViewModel?.LoadOlderTranscriptRowsAsync(anchor, cancellationToken)
                                            ?? Task.FromResult(false),
             () => ViewModel?.CanLoadNewerTranscriptRows == true,
-            (anchor, cancellationToken) => ViewModel?.LoadNewerTranscriptRowsAsync(anchor, cancellationToken)
-                                           ?? Task.FromResult(false),
+            (anchor, cancellationToken) => ViewModel?.LoadNewerTranscriptRowsAsync(
+                                                anchor,
+                                                cancellationToken,
+                                                resumeFollowingWhenCaughtUp: false)
+                                            ?? Task.FromResult(false),
             () => ViewModel?.HasNewerTranscriptRows == true,
+            () => ViewModel?.IsTranscriptFollowingLatest != false,
             () => ViewModel?.IsTranscriptLoading == true,
             () => ViewModel?.Messages.Count > 0,
             () => ViewModel is { ShowSetupInstructions: false },
-            () => ViewModel?.DetachTranscriptFromLatest(),
-            () => ViewModel?.ResumeTranscriptFollowingLatestIfCaughtUp(),
+            () => ViewModel?.DetachTranscriptFromLatest() == true,
+            () => ViewModel?.ResumeTranscriptFollowingLatestIfCaughtUp() == true,
             isVisible => ViewModel?.SetTranscriptJumpToLatestVisible(isVisible),
             anchor => ViewModel?.SetTranscriptViewportAnchor(anchor),
+            () => ViewModel?.TranscriptViewportAnchor,
             exception => ViewModel?.ReportTranscriptPagingFailure(exception),
-            EnumerateRealizedTranscriptAnchors,
-            RealizeTranscriptAnchor);
+            enumerateRealizedAnchors: EnumerateRealizedTranscriptAnchors,
+            realizeAnchorVisual: RealizeTranscriptAnchor,
+            presentationStateChanged: isActive => ViewModel?.SetTranscriptPresentationActive(isActive));
         _renameFocus = new InlineRenameFocusCoordinator<AgentSessionListItemViewModel>(
             this,
             session => session.SessionId,
@@ -153,6 +159,7 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
         {
             _viewModel.TranscriptChanging -= OnTranscriptChanging;
             _viewModel.TranscriptChanged -= OnTranscriptChanged;
+            _viewModel.TranscriptTailFollowRequested -= OnTranscriptTailFollowRequested;
             _viewModel.PropertyChanging -= OnViewModelPropertyChanging;
             _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
             _viewModel.Dispose();
@@ -169,12 +176,14 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
         _viewModel = viewModel;
         _viewModel.TranscriptChanging += OnTranscriptChanging;
         _viewModel.TranscriptChanged += OnTranscriptChanged;
+        _viewModel.TranscriptTailFollowRequested += OnTranscriptTailFollowRequested;
         _viewModel.PropertyChanging += OnViewModelPropertyChanging;
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         DataContext = _viewModel;
     }
 
-    private void OnSizeChanged(object? sender, SizeChangedEventArgs e) => ApplyHeaderLayout();
+    private void OnSizeChanged(object? sender, SizeChangedEventArgs e)
+        => _transcriptBehavior.MutateViewport(() => ApplyHeaderLayout(e.NewSize.Width));
 
     private void OnViewModelPropertyChanging(object? sender, PropertyChangingEventArgs e)
     {
@@ -243,18 +252,22 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
             return;
         }
 
-        if (!viewModel.HasNewerTranscriptRows)
-        {
-            _transcriptBehavior.ScrollToBottom();
-            return;
-        }
-
         if (viewModel.JumpToLatestTranscriptCommand.CanExecute(null))
         {
-            _transcriptBehavior.JumpToLatest(
-                () => viewModel.JumpToLatestTranscriptCommand.Execute(null));
+            viewModel.JumpToLatestTranscriptCommand.Execute(null);
         }
     }
+
+    private void OnTranscriptTailFollowRequested(Guid sessionId)
+    {
+        if (ViewModel?.DisplayedTranscriptSessionId == sessionId)
+        {
+            _transcriptBehavior.FollowLatestFromExplicitIntent();
+        }
+    }
+
+    private void TranscriptMarkdown_OnRendered(object? sender, EventArgs e)
+        => _transcriptBehavior.OnRenderedContentChanged();
 
     private ValueTask PublishClipboardNotificationAsync(string title, string message, PackageNotificationSeverity severity)
         => _notificationService.PublishAsync(new PackageNotificationRequest(
@@ -600,10 +613,8 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
 
     private void OnTranscriptChanged() => _transcriptBehavior.OnTranscriptChanged();
 
-    private void OnTranscriptChanging()
-        => _transcriptBehavior.OnTranscriptChanging(
-            ViewModel?.IsLoadingOlderTranscriptRows == true
-            || ViewModel?.IsLoadingNewerTranscriptRows == true);
+    private void OnTranscriptChanging(bool isPageApplication)
+        => _transcriptBehavior.OnTranscriptChanging(isPageApplication);
 
     private void ToolStepHeader_OnClick(object? sender, RoutedEventArgs e)
     {

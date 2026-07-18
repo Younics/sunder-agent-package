@@ -180,6 +180,12 @@ public sealed partial class AgentLocalStore
                 continue;
             }
 
+            CompleteStreamingTextTurns(
+                connection,
+                transaction,
+                key,
+                now);
+
             var checkpoint = new AgentRunCheckpointRecord(
                 Guid.NewGuid(),
                 key.SessionId,
@@ -274,6 +280,10 @@ public sealed partial class AgentLocalStore
             }
         }
 
+        var completedStreamingTurns = isTerminal
+            ? CompleteStreamingTextTurns(connection, transaction, key, now)
+            : [];
+
         var checkpoint = new AgentRunCheckpointRecord(
             Guid.NewGuid(),
             key.SessionId,
@@ -285,7 +295,10 @@ public sealed partial class AgentLocalStore
         TouchSessionForCheckpoint(connection, transaction, checkpoint);
         var run = GetRun(connection, transaction, key.RunId)
             ?? throw new InvalidOperationException("The transitioned durable run could not be reloaded.");
-        return new AgentRunTransitionResult(run, checkpoint);
+        return new AgentRunTransitionResult(run, checkpoint)
+        {
+            CompletedStreamingTurns = completedStreamingTurns,
+        };
     }
 
     internal AgentRunSuspensionResult? SuspendRun(

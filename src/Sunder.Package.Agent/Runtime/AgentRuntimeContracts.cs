@@ -211,8 +211,23 @@ internal sealed record AgentPermissionProjection(
 internal sealed record AgentAttachmentReadRequest(AgentAttachmentMetadata Metadata);
 internal sealed record AgentAttachmentReadResult(byte[] Content);
 
-internal sealed record AgentChangeSubscription(long AfterRevision = 0);
-internal enum AgentRuntimeChangeKind { Connected, ResnapshotRequired, Profile, Catalog, Workspace, Session, Turn, TranscriptReset, RunActivity, Permission }
+internal sealed record AgentChangeSubscription(
+    long AfterRevision = 0,
+    bool SupportsTurnMutations = false);
+internal enum AgentRuntimeChangeKind
+{
+    Connected = 0,
+    ResnapshotRequired = 1,
+    Profile = 2,
+    Catalog = 3,
+    Workspace = 4,
+    Session = 5,
+    Turn = 6,
+    TranscriptReset = 7,
+    RunActivity = 8,
+    Permission = 9,
+    TurnMutation = 10,
+}
 internal sealed record AgentRuntimeChange(
     long Revision,
     AgentRuntimeChangeKind Kind,
@@ -223,4 +238,5 @@ internal sealed record AgentRuntimeChange(
     AgentWorkspaceRecord? Workspace = null,
     AgentSessionSnapshot? Session = null,
     AgentTurnRecord? Turn = null,
+    AgentTurnMutation? TurnMutation = null,
     AgentRunActivityUpdate? RunActivity = null);

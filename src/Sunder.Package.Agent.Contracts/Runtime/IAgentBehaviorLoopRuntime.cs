@@ -32,6 +32,8 @@ public interface IAgentBehaviorLoopRuntime
 
     AgentTurnRecord UpsertAssistantTurn(AgentTurnRecord? assistantTurn, string content);
 
+    AgentTurnRecord CompleteAssistantTurn(AgentTurnRecord assistantTurn) => assistantTurn;
+
     ValueTask PublishLifecycleEventAsync(
         AgentLifecycleEventKind kind,
         AgentRunStatus status,

@@ -37,6 +37,37 @@ public sealed class CodexResponsesStreamParserTests
     }
 
     [Fact]
+    public async Task ParseAsync_TextDeltas_PreserveWhitespaceAndSplitMarkdownChunks()
+    {
+        using var response = CreateSseResponse("""
+            data: {"type":"response.output_text.delta","delta":"##"}
+
+            data: {"type":"response.output_text.delta","delta":" "}
+
+            data: {"type":"response.output_text.delta","delta":"Heading"}
+
+            data: {"type":"response.output_text.delta","delta":"\n"}
+
+            data: {"type":"response.output_text.delta","delta":"\n"}
+
+            data: {"type":"response.output_text.delta","delta":"-"}
+
+            data: {"type":"response.output_text.delta","delta":" "}
+
+            data: {"type":"response.output_text.delta","delta":"item"}
+
+            data: {"type":"response.completed","response":{"id":"resp-1","status":"completed"}}
+
+            """);
+
+        var updates = await ReadUpdatesAsync(response);
+        string[] expectedChunks = ["##", " ", "Heading", "\n", "\n", "-", " ", "item"];
+
+        Assert.Equal(expectedChunks, updates.Select(update => update.Text));
+        Assert.Equal("## Heading\n\n- item", string.Concat(updates.Select(update => update.Text)));
+    }
+
+    [Fact]
     public async Task ParseAsync_FunctionCall_YieldsFunctionCallContent()
     {
         using var response = CreateSseResponse("""

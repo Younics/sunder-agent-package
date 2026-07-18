@@ -10,7 +10,7 @@ namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
 internal sealed class AgentStreamingTurnWriter(AgentLoopTerminalHandler terminalHandler)
 {
-    private static readonly TimeSpan AssistantStreamFlushInterval = TimeSpan.FromMilliseconds(150);
+    private static readonly TimeSpan AssistantStreamFlushInterval = TimeSpan.FromMilliseconds(50);
     private readonly AgentLoopTerminalHandler _terminalHandler = terminalHandler;
 
     public AgentStreamingTurnState BeginCycle(
@@ -22,16 +22,21 @@ internal sealed class AgentStreamingTurnWriter(AgentLoopTerminalHandler terminal
 
     public void ResetForRetry(AgentStreamingTurnState state)
     {
-        if (state.AssistantTurnState.Turn is not null && state.Content.Length > 0)
+        lock (state.SyncRoot)
         {
-            state.AssistantTurnState.Turn = state.Host.UpsertAssistantTurn(
-                state.AssistantTurnState.Turn,
-                string.Empty);
-        }
+            if (state.AssistantTurnState.Turn is not null && state.Content.Length > 0)
+            {
+                state.AssistantTurnState.Turn = state.Host.UpsertAssistantTurn(
+                    state.AssistantTurnState.Turn,
+                    string.Empty);
+            }
 
-        state.Content.Clear();
-        state.ToolCalls.Clear();
-        state.LastAssistantFlushElapsed = TimeSpan.MinValue;
+            state.Content.Clear();
+            state.PersistedContentLength = 0;
+            state.ToolCalls.Clear();
+            state.LastAssistantFlushElapsed = TimeSpan.MinValue;
+            state.SuppressPendingFlush = false;
+        }
     }
 
     public async Task WriteAttemptAsync(
@@ -41,48 +46,76 @@ internal sealed class AgentStreamingTurnWriter(AgentLoopTerminalHandler terminal
         ChatOptions chatOptions,
         CancellationToken cancellationToken)
     {
-        await foreach (var streamUpdate in chatClient.GetStreamingResponseAsync(
-                           promptMessages,
-                           chatOptions,
-                           cancellationToken))
+        using var flushCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var flushTask = FlushPendingTextAsync(state, flushCancellation.Token);
+        var protocolLeakDetected = false;
+        try
         {
-            if (!state.Host.IsCurrentRun())
+            await foreach (var streamUpdate in chatClient.GetStreamingResponseAsync(
+                               promptMessages,
+                               chatOptions,
+                               cancellationToken))
             {
-                state.TerminalResult = new AgentBehaviorLoopResult(
-                    state.Context.RunningCheckpoint,
-                    AgentBehaviorLoopCompletionKind.Interrupted);
-                return;
-            }
+                if (!state.Host.IsCurrentRun())
+                {
+                    state.TerminalResult = new AgentBehaviorLoopResult(
+                        state.Context.RunningCheckpoint,
+                        AgentBehaviorLoopCompletionKind.Interrupted);
+                    return;
+                }
 
-            foreach (var functionCall in streamUpdate.Contents.OfType<FunctionCallContent>())
-            {
-                state.ToolCalls.Add(functionCall);
-            }
+                foreach (var functionCall in streamUpdate.Contents.OfType<FunctionCallContent>())
+                {
+                    state.ToolCalls.Add(functionCall);
+                }
 
-            foreach (var reasoningContent in streamUpdate.Contents.OfType<TextReasoningContent>())
-            {
-                state.ReasoningActivity.Append(reasoningContent.Text, state.LoopStopwatch.Elapsed);
-            }
+                foreach (var reasoningContent in streamUpdate.Contents.OfType<TextReasoningContent>())
+                {
+                    state.ReasoningActivity.Append(reasoningContent.Text, state.LoopStopwatch.Elapsed);
+                }
 
-            if (string.IsNullOrEmpty(streamUpdate.Text))
-            {
-                continue;
-            }
+                if (string.IsNullOrEmpty(streamUpdate.Text))
+                {
+                    continue;
+                }
 
-            state.Content.Append(streamUpdate.Text);
-            if (AgentVisibleResponseGuard.ContainsProtocolLeak(state.Content.ToString()))
-            {
-                await BlockProtocolLeakAsync(state, cancellationToken);
-                return;
-            }
+                var containsProtocolLeak = false;
+                lock (state.SyncRoot)
+                {
+                    state.Content.Append(streamUpdate.Text);
+                    containsProtocolLeak = AgentVisibleResponseGuard.ContainsProtocolLeak(state.Content.ToString());
+                    if (containsProtocolLeak)
+                    {
+                        state.SuppressPendingFlush = true;
+                    }
+                    if (!containsProtocolLeak && ShouldFlushAssistantStream(state))
+                    {
+                        FlushAssistantStream(state);
+                    }
+                }
 
-            if (ShouldFlushAssistantStream(state))
-            {
-                state.AssistantTurnState.Turn = state.Host.UpsertAssistantTurn(
-                    state.AssistantTurnState.Turn,
-                    state.Content.ToString());
-                state.LastAssistantFlushElapsed = state.LoopStopwatch.Elapsed;
+                if (containsProtocolLeak)
+                {
+                    protocolLeakDetected = true;
+                    break;
+                }
             }
+        }
+        finally
+        {
+            flushCancellation.Cancel();
+            try
+            {
+                await flushTask;
+            }
+            catch (OperationCanceledException) when (flushCancellation.IsCancellationRequested)
+            {
+            }
+        }
+
+        if (protocolLeakDetected)
+        {
+            await BlockProtocolLeakAsync(state, cancellationToken);
         }
     }
 
@@ -97,11 +130,12 @@ internal sealed class AgentStreamingTurnWriter(AgentLoopTerminalHandler terminal
                 state.TerminalResult);
         }
 
-        if (state.Content.Length > 0)
+        lock (state.SyncRoot)
         {
-            state.AssistantTurnState.Turn = state.Host.UpsertAssistantTurn(
-                state.AssistantTurnState.Turn,
-                state.Content.ToString());
+            if (state.Content.Length > state.PersistedContentLength)
+            {
+                FlushAssistantStream(state);
+            }
         }
 
         return new AgentProviderCycleResult(
@@ -135,6 +169,34 @@ internal sealed class AgentStreamingTurnWriter(AgentLoopTerminalHandler terminal
         => state.AssistantTurnState.Turn is null
            || state.LastAssistantFlushElapsed == TimeSpan.MinValue
            || state.LoopStopwatch.Elapsed - state.LastAssistantFlushElapsed >= AssistantStreamFlushInterval;
+
+    private static void FlushAssistantStream(AgentStreamingTurnState state)
+    {
+        state.AssistantTurnState.Turn = state.Host.UpsertAssistantTurn(
+            state.AssistantTurnState.Turn,
+            state.Content.ToString());
+        state.PersistedContentLength = state.Content.Length;
+        state.LastAssistantFlushElapsed = state.LoopStopwatch.Elapsed;
+    }
+
+    private static async Task FlushPendingTextAsync(
+        AgentStreamingTurnState state,
+        CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(AssistantStreamFlushInterval);
+        while (await timer.WaitForNextTickAsync(cancellationToken))
+        {
+            lock (state.SyncRoot)
+            {
+                if (state.Host.IsCurrentRun()
+                    && !state.SuppressPendingFlush
+                    && state.Content.Length > state.PersistedContentLength)
+                {
+                    FlushAssistantStream(state);
+                }
+            }
+        }
+    }
 }
 
 internal sealed class AgentStreamingTurnState(
@@ -153,11 +215,17 @@ internal sealed class AgentStreamingTurnState(
 
     public StringBuilder Content { get; } = new();
 
+    public object SyncRoot { get; } = new();
+
     public List<FunctionCallContent> ToolCalls { get; } = [];
 
     public ReasoningActivityReporter ReasoningActivity { get; } = new(host as IAgentRunActivitySink);
 
     public TimeSpan LastAssistantFlushElapsed { get; set; } = TimeSpan.MinValue;
+
+    public int PersistedContentLength { get; set; }
+
+    public bool SuppressPendingFlush { get; set; }
 
     public AgentBehaviorLoopResult? TerminalResult { get; set; }
 }

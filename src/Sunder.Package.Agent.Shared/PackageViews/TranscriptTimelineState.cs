@@ -5,35 +5,32 @@ using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
-internal readonly record struct TranscriptViewportAnchorData(
-    object? AnchorKey,
-    double OffsetY,
-    double DistanceFromBottom);
-
-internal readonly record struct TranscriptLoadTicket(
-    Guid SessionId,
-    OperationGeneration Generation);
-
-internal sealed class TranscriptTimelineState<TRow> : INotifyPropertyChanged, IDisposable
+internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyChanged, IDisposable
     where TRow : class
 {
     private readonly TranscriptRowProjector<TRow> _projector;
     private readonly OperationState _initialOperation = new();
     private readonly OperationState _pageOperation = new();
     private readonly Dictionary<Guid, AgentTurnRecord> _pendingTurnsById = [];
+    private readonly Dictionary<Guid, long> _pendingTurnSequencesById = [];
     private readonly HashSet<object> _expandedAnchorKeys = [];
     private readonly int _initialTurnLimit;
     private readonly int _pageSize;
     private readonly int _visibleRowLimit;
+    private readonly int _pendingTurnLimit;
     private bool _hasOlderRows;
     private bool _hasNewerRows;
     private bool _isLoadingOlder;
     private bool _isLoadingNewer;
     private bool _isInitialLoading;
     private bool _isReplacingRows;
+    private bool _isApplyingPageRows;
     private bool _isFollowingLatest = true;
     private bool _isJumpToLatestVisible;
+    private bool _pendingTurnsOverflowed;
     private bool _disposed;
+    private long _pendingOverflowRevision;
+    private long _pendingTurnSequence;
     private Guid? _sessionId;
     private object? _selectedAnchorKey;
     private TranscriptViewportAnchorData? _viewportAnchor;
@@ -48,13 +45,14 @@ internal sealed class TranscriptTimelineState<TRow> : INotifyPropertyChanged, ID
         _initialTurnLimit = initialTurnLimit;
         _pageSize = pageSize;
         _visibleRowLimit = visibleRowLimit;
+        _pendingTurnLimit = Math.Max(pageSize * 2, visibleRowLimit * 2);
         _projector.RowsChanging += OnRowsChanging;
         _projector.RowCreated += OnRowCreated;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    public event Action? RowsChanging;
+    public event Action<bool>? RowsChanging;
 
     public event Action? RowsChanged;
 
@@ -90,9 +88,20 @@ internal sealed class TranscriptTimelineState<TRow> : INotifyPropertyChanged, ID
 
     public TranscriptRowProjector<TRow> Projector => _projector;
 
-    public TranscriptLoadTicket BeginInitialLoad(Guid sessionId)
+    internal int PendingTurnCount => _pendingTurnsById.Count;
+
+    public TranscriptLoadTicket BeginInitialLoad(
+        Guid sessionId,
+        bool forceReplacement = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        var sameSession = _sessionId == sessionId;
+        var preserveReaderState = sameSession && !IsFollowingLatest;
+        var preserveWindow = sameSession;
+        var reconcileAuthoritative = sameSession
+                                     && (forceReplacement || !preserveReaderState);
+        var pendingTurnSequence = _pendingTurnSequence;
+        var pendingOverflowRevision = _pendingOverflowRevision;
         _pageOperation.CancelCurrent();
         var generation = _initialOperation.Begin("Loading transcript");
         _sessionId = sessionId;
@@ -100,18 +109,41 @@ internal sealed class TranscriptTimelineState<TRow> : INotifyPropertyChanged, ID
         _isInitialLoading = true;
         _isLoadingOlder = false;
         _isLoadingNewer = false;
-        _isFollowingLatest = true;
+        if (preserveReaderState)
+        {
+            RowsChanging?.Invoke(false);
+        }
+        _isFollowingLatest = !preserveReaderState;
         _isJumpToLatestVisible = false;
-        _hasOlderRows = false;
-        _hasNewerRows = false;
-        _pendingTurnsById.Clear();
-        _expandedAnchorKeys.Clear();
-        _selectedAnchorKey = null;
-        _viewportAnchor = null;
-        _projector.Reset();
+        if (!preserveWindow)
+        {
+            _hasOlderRows = false;
+            _hasNewerRows = false;
+            ClearPendingTurns();
+            _pendingTurnsOverflowed = false;
+        }
+        if (!preserveReaderState)
+        {
+            _expandedAnchorKeys.Clear();
+            _selectedAnchorKey = null;
+            _viewportAnchor = null;
+        }
+        if (!preserveWindow)
+        {
+            _projector.Reset();
+        }
         NotifyAllState();
-        RowsChanged?.Invoke();
-        return new TranscriptLoadTicket(sessionId, generation);
+        if (!preserveReaderState)
+        {
+            RowsChanged?.Invoke();
+        }
+        return new TranscriptLoadTicket(
+            sessionId,
+            generation,
+            preserveWindow,
+            reconcileAuthoritative,
+            pendingTurnSequence,
+            pendingOverflowRevision);
     }
 
     public bool TryCompleteInitialLoad(
@@ -125,16 +157,132 @@ internal sealed class TranscriptTimelineState<TRow> : INotifyPropertyChanged, ID
         }
 
         var orderedTurns = TranscriptRowProjector<TRow>.OrderTurns(turns);
-        foreach (var turn in TranscriptRowProjector<TRow>.SelectLatestTurns(orderedTurns, _initialTurnLimit))
+        if (ticket.ReconcileAuthoritative)
         {
-            _projector.ApplyTurn(turn, TranscriptInsertMode.Append);
-            TurnProjected?.Invoke(turn, true, false);
+            var authoritativeSelectedTurns = TranscriptRowProjector<TRow>.SelectLatestTurns(
+                orderedTurns,
+                _initialTurnLimit);
+            var pendingTurns = _pendingTurnsById.Values
+                .Where(turn => turn.SessionId == ticket.SessionId
+                               && _pendingTurnSequencesById.GetValueOrDefault(turn.TurnId) > ticket.PendingTurnSequence)
+                .ToArray();
+            var supersededPendingTurnIds = _pendingTurnsById.Values
+                .Where(turn => turn.SessionId == ticket.SessionId
+                               && _pendingTurnSequencesById.GetValueOrDefault(turn.TurnId) <= ticket.PendingTurnSequence)
+                .Select(turn => turn.TurnId)
+                .ToArray();
+            foreach (var turnId in supersededPendingTurnIds)
+            {
+                RemovePendingTurn(turnId);
+            }
+            if (_pendingOverflowRevision == ticket.PendingOverflowRevision)
+            {
+                _pendingTurnsOverflowed = false;
+            }
+            var authoritativeTurnIds = authoritativeSelectedTurns
+                .Select(turn => turn.TurnId)
+                .ToHashSet();
+            var pendingTurnsToReconcile = IsFollowingLatest
+                ? pendingTurns
+                : pendingTurns
+                    .Where(turn => authoritativeTurnIds.Contains(turn.TurnId));
+            var authoritativeTurns = SelectFreshestTurns(
+                authoritativeSelectedTurns.Concat(pendingTurnsToReconcile));
+            foreach (var turn in authoritativeTurns)
+            {
+                RemovePendingTurn(turn.TurnId);
+            }
+            _projector.ReconcileAuthoritativeTurns(authoritativeTurns);
+            SetHasOlderRows(hasOlderRows ?? orderedTurns.Length > _initialTurnLimit);
+            SetHasNewerRows(_pendingTurnsOverflowed || _pendingTurnsById.Count > 0);
+            ApplyTrim(AgentTranscriptTrimDirection.Oldest);
+            PruneExpandedAnchorKeys();
+            _isInitialLoading = false;
+            _isReplacingRows = false;
+            _initialOperation.TryComplete(ticket.Generation);
+            NotifyLoadingState();
+            RowsChanged?.Invoke();
+            return true;
         }
 
-        ApplyPendingTurns(ticket.SessionId);
+        if (ticket.PreserveWindow)
+        {
+            var newestLoadedAt = _projector.TurnWindow.NewestCreatedAtUtc;
+            var newestLoadedTurnId = _projector.TurnWindow.NewestTurnId;
+            var hasNewerSnapshotRows = false;
+            foreach (var turn in orderedTurns)
+            {
+                if (_projector.CanApplyHistoricalTurnUpdate(turn))
+                {
+                    _projector.ApplyTurn(
+                        turn,
+                        TranscriptInsertMode.Append,
+                        replaceOnEqualTimestamp: false);
+                }
+                else if (newestLoadedAt is null
+                         || turn.CreatedAtUtc > newestLoadedAt
+                         || turn.CreatedAtUtc == newestLoadedAt
+                         && newestLoadedTurnId is { } newestId
+                         && turn.TurnId.CompareTo(newestId) > 0)
+                {
+                    QueuePendingTurn(turn, replaceOnEqualTimestamp: false);
+                    hasNewerSnapshotRows = true;
+                }
+            }
+
+            ApplyPendingHistoricalUpdates(ticket.SessionId);
+            ApplyTrim(
+                AgentTranscriptTrimDirection.Oldest,
+                _viewportAnchor?.AnchorKey);
+            SetHasNewerRows(
+                HasNewerRows
+                || hasNewerSnapshotRows
+                || _pendingTurnsOverflowed
+                || _pendingTurnsById.Count > 0);
+            _isInitialLoading = false;
+            _isReplacingRows = false;
+            _initialOperation.TryComplete(ticket.Generation);
+            NotifyLoadingState();
+            RowsChanged?.Invoke();
+            return true;
+        }
+
+        var selectedTurns = TranscriptRowProjector<TRow>.SelectLatestTurns(orderedTurns, _initialTurnLimit);
+        var pendingTurnsById = IsFollowingLatest
+            ? _pendingTurnsById.Values
+                .Where(turn => turn.SessionId == ticket.SessionId)
+                .ToDictionary(turn => turn.TurnId)
+            : new Dictionary<Guid, AgentTurnRecord>();
+        var turnsToProject = IsFollowingLatest
+            ? SelectFreshestTurns(pendingTurnsById.Values.Concat(selectedTurns))
+            : selectedTurns;
+        foreach (var turn in turnsToProject)
+        {
+            RemovePendingTurn(turn.TurnId);
+            _projector.ApplyTurn(turn, TranscriptInsertMode.Append);
+            TurnProjected?.Invoke(
+                turn,
+                true,
+                pendingTurnsById.TryGetValue(turn.TurnId, out var pendingTurn)
+                && ReferenceEquals(turn, pendingTurn));
+        }
+
         SetHasOlderRows(hasOlderRows ?? orderedTurns.Length > _initialTurnLimit);
-        SetHasNewerRows(false);
+        if (IsFollowingLatest)
+        {
+            SetHasNewerRows(_pendingTurnsOverflowed);
+        }
+        else
+        {
+            ApplyPendingHistoricalUpdates(ticket.SessionId);
+            if (_projector.TurnWindow.NewestTurnId is null && !_pendingTurnsOverflowed)
+            {
+                ApplyPendingTurns(ticket.SessionId, scheduleQuietTimer: false);
+            }
+            SetHasNewerRows(_pendingTurnsOverflowed || _pendingTurnsById.Count > 0);
+        }
         ApplyTrim(AgentTranscriptTrimDirection.Oldest);
+        PruneExpandedAnchorKeys();
         _isInitialLoading = false;
         _isReplacingRows = false;
         _initialOperation.TryComplete(ticket.Generation);
@@ -152,6 +300,30 @@ internal sealed class TranscriptTimelineState<TRow> : INotifyPropertyChanged, ID
 
         _isInitialLoading = false;
         _isReplacingRows = false;
+        ApplyPendingHistoricalUpdates(ticket.SessionId);
+        if (IsFollowingLatest)
+        {
+            if (_pendingTurnsOverflowed)
+            {
+                SetHasNewerRows(true);
+            }
+            else
+            {
+                ApplyPendingTurns(ticket.SessionId);
+            }
+        }
+        else if (_pendingTurnsOverflowed
+                 || _pendingTurnsById.Values.Any(turn => turn.SessionId == ticket.SessionId))
+        {
+            if (_projector.TurnWindow.NewestTurnId is null && !_pendingTurnsOverflowed)
+            {
+                ApplyPendingTurns(ticket.SessionId, scheduleQuietTimer: false);
+            }
+            SetHasNewerRows(_pendingTurnsOverflowed || _pendingTurnsById.Count > 0);
+        }
+        ApplyTrim(
+            AgentTranscriptTrimDirection.Oldest,
+            IsFollowingLatest ? null : _viewportAnchor?.AnchorKey);
         _initialOperation.TryComplete(ticket.Generation, severity: OperationSeverity.Error);
         NotifyLoadingState();
         RowsChanged?.Invoke();
@@ -171,143 +343,14 @@ internal sealed class TranscriptTimelineState<TRow> : INotifyPropertyChanged, ID
         _isJumpToLatestVisible = false;
         _hasOlderRows = false;
         _hasNewerRows = false;
-        _pendingTurnsById.Clear();
+        ClearPendingTurns();
+        _pendingTurnsOverflowed = false;
         _expandedAnchorKeys.Clear();
         _selectedAnchorKey = null;
         _viewportAnchor = null;
         _projector.Reset();
         NotifyAllState();
         RowsChanged?.Invoke();
-    }
-
-    public async Task<bool> LoadOlderAsync(
-        Func<Guid, DateTimeOffset, Guid, int, CancellationToken, Task<IReadOnlyList<AgentTurnRecord>>> loader,
-        object? protectedAnchorKey = null)
-    {
-        if (!CanLoadOlder
-            || SessionId is not { } sessionId
-            || _projector.TurnWindow.OldestCreatedAtUtc is not { } beforeCreatedAt
-            || _projector.TurnWindow.OldestTurnId is not { } beforeTurnId)
-        {
-            return false;
-        }
-
-        DetachFromLatest();
-        SetViewportAnchor(new TranscriptViewportAnchorData(protectedAnchorKey, 0, 0));
-        var generation = _pageOperation.Begin("Loading older transcript rows");
-        _isLoadingOlder = true;
-        NotifyLoadingState();
-
-        IReadOnlyList<AgentTurnRecord> turns;
-        try
-        {
-            turns = await loader(
-                sessionId,
-                beforeCreatedAt,
-                beforeTurnId,
-                _pageSize + 1,
-                generation.CancellationToken);
-        }
-        catch (OperationCanceledException) when (generation.CancellationToken.IsCancellationRequested)
-        {
-            return false;
-        }
-        finally
-        {
-            if (_pageOperation.TryComplete(generation))
-            {
-                _isLoadingOlder = false;
-                NotifyLoadingState();
-            }
-        }
-
-        if (SessionId != sessionId || generation.CancellationToken.IsCancellationRequested)
-        {
-            return false;
-        }
-
-        if (turns.Count == 0)
-        {
-            SetHasOlderRows(false);
-            return false;
-        }
-
-        var orderedTurns = TranscriptRowProjector<TRow>.OrderTurns(turns);
-        _projector.ApplyTurns(
-            TranscriptRowProjector<TRow>.SelectLatestTurns(orderedTurns, _pageSize),
-            TranscriptInsertMode.Prepend);
-        SetHasOlderRows(orderedTurns.Length > _pageSize);
-        ApplyTrim(AgentTranscriptTrimDirection.Newest, protectedAnchorKey);
-        RowsChanged?.Invoke();
-        return true;
-    }
-
-    public async Task<bool> LoadNewerAsync(
-        Func<Guid, DateTimeOffset, Guid, int, CancellationToken, Task<IReadOnlyList<AgentTurnRecord>>> loader,
-        object? protectedAnchorKey = null)
-    {
-        if (!CanLoadNewer
-            || SessionId is not { } sessionId
-            || _projector.TurnWindow.NewestCreatedAtUtc is not { } afterCreatedAt
-            || _projector.TurnWindow.NewestTurnId is not { } afterTurnId)
-        {
-            return false;
-        }
-
-        SetViewportAnchor(new TranscriptViewportAnchorData(protectedAnchorKey, 0, 0));
-        var generation = _pageOperation.Begin("Loading newer transcript rows");
-        _isLoadingNewer = true;
-        NotifyLoadingState();
-
-        IReadOnlyList<AgentTurnRecord> turns;
-        try
-        {
-            turns = await loader(
-                sessionId,
-                afterCreatedAt,
-                afterTurnId,
-                _pageSize + 1,
-                generation.CancellationToken);
-        }
-        catch (OperationCanceledException) when (generation.CancellationToken.IsCancellationRequested)
-        {
-            return false;
-        }
-        finally
-        {
-            if (_pageOperation.TryComplete(generation))
-            {
-                _isLoadingNewer = false;
-                NotifyLoadingState();
-            }
-        }
-
-        if (SessionId != sessionId || generation.CancellationToken.IsCancellationRequested)
-        {
-            return false;
-        }
-
-        var orderedTurns = TranscriptRowProjector<TRow>.OrderTurns(turns);
-        if (orderedTurns.Length > 0)
-        {
-            foreach (var turn in orderedTurns.Take(_pageSize))
-            {
-                _projector.ApplyTurn(turn, TranscriptInsertMode.Append);
-                _pendingTurnsById.Remove(turn.TurnId);
-            }
-        }
-
-        SetHasNewerRows(orderedTurns.Length > _pageSize);
-        ApplyTrim(AgentTranscriptTrimDirection.Oldest, protectedAnchorKey);
-        if (!HasNewerRows)
-        {
-            ApplyPendingTurns(sessionId);
-            ApplyTrim(AgentTranscriptTrimDirection.Oldest, protectedAnchorKey);
-            ResumeFollowingLatestIfCaughtUp();
-        }
-
-        RowsChanged?.Invoke();
-        return orderedTurns.Length > 0 || !HasNewerRows;
     }
 
     public TranscriptLiveTurnResult ApplyLiveTurn(AgentTurnRecord turn)
@@ -319,18 +362,44 @@ internal sealed class TranscriptTimelineState<TRow> : INotifyPropertyChanged, ID
 
         if (IsInitialLoading)
         {
-            _pendingTurnsById[turn.TurnId] = turn;
+            QueuePendingTurn(turn);
             return TranscriptLiveTurnResult.Buffered;
+        }
+
+        if (_projector.CanApplyHistoricalTurnUpdate(turn))
+        {
+            if (!_projector.CanApplyTurn(turn))
+            {
+                return TranscriptLiveTurnResult.Ignored;
+            }
+
+            _projector.ApplyTurn(turn, TranscriptInsertMode.Append);
+            TurnProjected?.Invoke(turn, true, IsFollowingLatest);
+            ApplyTrim(
+                AgentTranscriptTrimDirection.Oldest,
+                IsFollowingLatest ? null : _viewportAnchor?.AnchorKey);
+            RowsChanged?.Invoke();
+            return TranscriptLiveTurnResult.Applied;
         }
 
         if (!IsFollowingLatest)
         {
+            if (_projector.TurnWindow.NewestTurnId is null)
+            {
+                _projector.ApplyTurn(turn, TranscriptInsertMode.Append);
+                TurnProjected?.Invoke(turn, true, false);
+                ApplyTrim(AgentTranscriptTrimDirection.Oldest);
+                RowsChanged?.Invoke();
+                return TranscriptLiveTurnResult.Applied;
+            }
+
             QueueDetachedTurn(turn);
             return TranscriptLiveTurnResult.Buffered;
         }
 
-        if (HasNewerRows && !_projector.CanApplyHistoricalTurnUpdate(turn))
+        if (HasNewerRows)
         {
+            QueuePendingTurn(turn);
             SetHasNewerRows(true);
             RowsChanged?.Invoke();
             return TranscriptLiveTurnResult.Buffered;
@@ -343,26 +412,16 @@ internal sealed class TranscriptTimelineState<TRow> : INotifyPropertyChanged, ID
         return TranscriptLiveTurnResult.Applied;
     }
 
-    public void ApplyActivity(string text, bool isReasoning, bool isVisible)
-    {
-        if (!IsFollowingLatest && !IsReplacingRows)
-        {
-            return;
-        }
-
-        _projector.SetActivity(text, isReasoning, isVisible);
-        ApplyTrim(AgentTranscriptTrimDirection.Oldest);
-    }
-
-    public void DetachFromLatest()
+    public bool DetachFromLatest()
     {
         if (!IsFollowingLatest || IsReplacingRows || IsInitialLoading || SessionId is null)
         {
-            return;
+            return false;
         }
 
         _isFollowingLatest = false;
         OnPropertyChanged(nameof(IsFollowingLatest));
+        return true;
     }
 
     public bool ResumeFollowingLatestIfCaughtUp()
@@ -409,6 +468,18 @@ internal sealed class TranscriptTimelineState<TRow> : INotifyPropertyChanged, ID
 
         _viewportAnchor = anchor;
         OnPropertyChanged(nameof(ViewportAnchor));
+    }
+
+    private void PreserveViewportAnchor(object? protectedAnchorKey)
+    {
+        if (protectedAnchorKey is null)
+        {
+            return;
+        }
+
+        SetViewportAnchor(_viewportAnchor is { } anchor
+            ? anchor with { AnchorKey = protectedAnchorKey }
+            : new TranscriptViewportAnchorData(protectedAnchorKey, 0, 0));
     }
 
     public void SelectRow(TRow? row)
@@ -460,44 +531,34 @@ internal sealed class TranscriptTimelineState<TRow> : INotifyPropertyChanged, ID
         => SessionId == ticket.SessionId
            && _initialOperation.TryReport(ticket.Generation);
 
-    private void ApplyPendingTurns(Guid sessionId)
-    {
-        var turns = _pendingTurnsById.Values
-            .Where(turn => turn.SessionId == sessionId)
-            .OrderBy(turn => turn.CreatedAtUtc)
-            .ThenBy(turn => turn.TurnId)
-            .ToArray();
-        foreach (var turn in turns)
-        {
-            _pendingTurnsById.Remove(turn.TurnId);
-            _projector.ApplyTurn(turn, TranscriptInsertMode.Append);
-            TurnProjected?.Invoke(turn, true, true);
-        }
-    }
-
-    private void QueueDetachedTurn(AgentTurnRecord turn)
-    {
-        var shouldNotify = !HasNewerRows;
-        _pendingTurnsById[turn.TurnId] = turn;
-        SetHasNewerRows(true);
-        if (shouldNotify)
-        {
-            RowsChanged?.Invoke();
-        }
-    }
-
     private void ApplyTrim(
         AgentTranscriptTrimDirection direction,
         object? protectedAnchorKey = null)
     {
-        switch (_projector.EnforceLimit(_visibleRowLimit, direction, protectedAnchorKey))
+        var result = _projector.EnforceLimit(_visibleRowLimit, direction, protectedAnchorKey);
+        if (result != TranscriptTrimResult.None)
         {
-            case TranscriptTrimResult.Oldest:
-                SetHasOlderRows(true);
-                break;
-            case TranscriptTrimResult.Newest:
-                SetHasNewerRows(true);
-                break;
+            PruneExpandedAnchorKeys();
+        }
+
+        if (result.HasFlag(TranscriptTrimResult.Oldest))
+        {
+            SetHasOlderRows(true);
+        }
+        if (result.HasFlag(TranscriptTrimResult.Newest))
+        {
+            SetHasNewerRows(true);
+        }
+    }
+
+    private void PruneExpandedAnchorKeys()
+    {
+        var retainedKeys = _projector.Rows
+            .Select(_projector.GetAnchorKey)
+            .ToHashSet();
+        if (_expandedAnchorKeys.RemoveWhere(key => !retainedKeys.Contains(key)) > 0)
+        {
+            OnPropertyChanged(nameof(ExpandedAnchorKeys));
         }
     }
 
@@ -505,7 +566,7 @@ internal sealed class TranscriptTimelineState<TRow> : INotifyPropertyChanged, ID
     {
         if (!IsReplacingRows)
         {
-            RowsChanging?.Invoke();
+            RowsChanging?.Invoke(_isApplyingPageRows);
         }
     }
 
@@ -574,4 +635,5 @@ internal enum TranscriptLiveTurnResult
     Ignored,
     Buffered,
     Applied,
+    ReloadRequired,
 }

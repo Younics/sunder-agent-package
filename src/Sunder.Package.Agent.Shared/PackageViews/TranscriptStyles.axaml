@@ -20,6 +20,21 @@
     <Setter Property="CodeBlockColorTheme" Value="AtomOneDark" />
   </Style>
 
+  <Style Selector="shared|StreamingMarkdownPresenter">
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+  </Style>
+
+  <Style Selector="SelectableTextBlock.markdown-fallback">
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+    <Setter Property="LineHeight" Value="22" />
+    <Setter Property="SelectionBrush" Value="{DynamicResource Sunder.Brush.Selection}" />
+    <Setter Property="SelectionForegroundBrush" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+  </Style>
+
   <Style Selector="md|MarkdownTextBlock">
     <Setter Property="MinWidth" Value="0" />
     <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
@@ -99,7 +114,7 @@
     <Setter Property="Margin" Value="0,12,0,14" />
     <Setter Property="MinWidth" Value="0" />
     <Setter Property="HorizontalAlignment" Value="Stretch" />
-    <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
+    <Setter Property="HorizontalScrollBarVisibility" Value="Auto" />
     <Setter Property="VerticalScrollBarVisibility" Value="Disabled" />
   </Style>
 

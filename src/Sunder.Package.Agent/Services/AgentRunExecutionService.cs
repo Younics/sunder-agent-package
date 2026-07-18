@@ -26,10 +26,11 @@ internal sealed class AgentRunExecutionService(
     internal async Task<AgentRunCheckpointRecord> ExecuteAsync(AgentRunStarted started)
     {
         var plan = started.Plan;
+        AgentBehaviorLoopHost? host = null;
         try
         {
             var executionBinding = ResolveExecutionBinding(plan.Workspace);
-            var host = _behaviorLoopHostFactory.Create(
+            host = _behaviorLoopHostFactory.Create(
                 plan.Provider,
                 plan.Session,
                 plan.Profile,
@@ -56,6 +57,7 @@ internal sealed class AgentRunExecutionService(
                 BuildContext(started, executionBinding),
                 host,
                 started.RunCancellationToken).ConfigureAwait(false);
+            host.TryCompleteOpenAssistantTurn();
             loopResult = ResolveStoppedOrInterruptedRunResult(plan, loopResult);
             _runEventLogger.LogRunCompletion(
                 plan.RunKey.SessionId,
@@ -67,6 +69,7 @@ internal sealed class AgentRunExecutionService(
         }
         catch (OperationCanceledException)
         {
+            host?.TryCompleteOpenAssistantTurn();
             _runEventLogger.LogRunEvent(
                 PackageLogLevel.Warning,
                 plan.RunKey.SessionId,
@@ -75,17 +78,18 @@ internal sealed class AgentRunExecutionService(
                 "run.canceled",
                 "Agent run was canceled.",
                 ElapsedMilliseconds(plan));
-            return GetStoppedOrInterruptedCheckpoint(plan)
+            return GetTerminalCheckpoint(plan)
                 ?? _sessionService.TryTransitionRun(
                     plan.RunHandle.DurableLease!,
                     AgentRunStatus.Interrupted,
                     "Agent run was canceled after provider execution started.")?.Checkpoint
-                ?? GetStoppedOrInterruptedCheckpoint(plan)
+                ?? GetTerminalCheckpoint(plan)
                 ?? started.InterruptedCheckpoint
                 ?? started.RunningCheckpoint;
         }
         catch (Exception ex)
         {
+            host?.TryCompleteOpenAssistantTurn();
             return await HandleFailureAsync(started, ex).ConfigureAwait(false);
         }
         finally
@@ -128,7 +132,9 @@ internal sealed class AgentRunExecutionService(
         var plan = started.Plan;
         if (!IsCurrent(plan))
         {
-            return started.InterruptedCheckpoint ?? started.RunningCheckpoint;
+            return GetTerminalCheckpoint(plan)
+                   ?? started.InterruptedCheckpoint
+                   ?? started.RunningCheckpoint;
         }
 
         AgentTurnRecord assistantTurn;
@@ -138,16 +144,19 @@ internal sealed class AgentRunExecutionService(
                 plan.RunHandle.DurableLease!,
                 AgentMessageRole.Assistant,
                 $"### Agent run failed\n\n{exception.Message}");
+            assistantTurn = _sessionService.CompleteTextTurn(
+                plan.RunHandle.DurableLease!,
+                assistantTurn.TurnId);
         }
         catch (AgentRunTranscriptWriteRejectedException)
         {
-            return GetStoppedOrInterruptedCheckpoint(plan) ?? started.RunningCheckpoint;
+            return GetTerminalCheckpoint(plan) ?? started.RunningCheckpoint;
         }
         var failedCheckpoint = _sessionService.TryTransitionRun(
                                    plan.RunHandle.DurableLease!,
                                    AgentRunStatus.Failed,
                                    exception.Message)?.Checkpoint
-                               ?? GetStoppedOrInterruptedCheckpoint(plan)
+                                ?? GetTerminalCheckpoint(plan)
                                ?? started.RunningCheckpoint;
         _runEventLogger.LogRunEvent(
             PackageLogLevel.Error,
@@ -180,7 +189,7 @@ internal sealed class AgentRunExecutionService(
         if (loopResult.Checkpoint.Status == AgentRunStatus.Running
             && loopResult.CompletionKind == AgentBehaviorLoopCompletionKind.Interrupted)
         {
-            var interrupted = GetStoppedOrInterruptedCheckpoint(plan)
+            var interrupted = GetTerminalCheckpoint(plan)
                 ?? _sessionService.TryTransitionRun(
                     plan.RunHandle.DurableLease!,
                     AgentRunStatus.Interrupted,
@@ -198,20 +207,23 @@ internal sealed class AgentRunExecutionService(
             return loopResult;
         }
 
-        var replacement = GetStoppedOrInterruptedCheckpoint(plan);
+        var replacement = GetTerminalCheckpoint(plan);
         return replacement is null
             ? loopResult
             : new AgentBehaviorLoopResult(replacement, ToCompletionKind(replacement.Status));
     }
 
-    private AgentRunCheckpointRecord? GetStoppedOrInterruptedCheckpoint(AgentRunPlan plan)
+    private AgentRunCheckpointRecord? GetTerminalCheckpoint(AgentRunPlan plan)
     {
         var latest = _sessionService.GetLatestCheckpoint(
             plan.RunKey.SessionId,
             plan.RunKey.RunRevision);
         return latest is not null
             && latest.RunRevision == plan.RunKey.RunRevision
-            && latest.Status is AgentRunStatus.Stopped or AgentRunStatus.Interrupted
+            && latest.Status is AgentRunStatus.Completed
+                or AgentRunStatus.Failed
+                or AgentRunStatus.Stopped
+                or AgentRunStatus.Interrupted
                 ? latest
                 : null;
     }

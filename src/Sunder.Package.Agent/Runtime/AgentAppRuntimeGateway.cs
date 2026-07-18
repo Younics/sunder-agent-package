@@ -27,6 +27,7 @@ internal sealed partial class AgentAppRuntimeGateway :
     IAgentProfileGateway,
     IAgentWorkspaceGateway,
     IAgentSessionGateway,
+    IAgentTurnMutationGateway,
     IAgentPermissionGateway,
     IAgentRunGateway,
     IAgentAttachmentGateway,
@@ -51,6 +52,7 @@ internal sealed partial class AgentAppRuntimeGateway :
     private readonly ConcurrentDictionary<string, Lazy<Task<AgentCatalogProjection>>> _catalogs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<AgentSessionSnapshot>> _workspaceSessions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<Guid, AgentSessionSnapshot> _knownSessions = [];
+    private readonly Dictionary<Guid, AgentTurnRecord> _knownTurns = [];
     private AgentDashboardProjection? _dashboard;
     private Task<AgentDashboardProjection>? _dashboardLoad;
     private Task<AgentDashboardProjection>? _abandonedDashboardLoad;
@@ -81,6 +83,7 @@ internal sealed partial class AgentAppRuntimeGateway :
     public event Action? WorkspacesChanged;
     public event Action<Guid>? SessionChanged;
     public event Action<Guid, AgentTurnRecord>? TurnChanged;
+    public event Action<AgentTurnMutation>? TurnMutated;
     public event Action<Guid>? TranscriptReset;
     public event Action<Guid, AgentRunActivityUpdate>? RunActivityChanged;
     public event Action<AgentChatSnapshotProjection>? ChatSnapshotReloaded;
@@ -446,7 +449,14 @@ internal sealed partial class AgentAppRuntimeGateway :
     public async Task<AgentTranscriptPage> LoadTranscriptPageAsync(
         AgentTranscriptPageRequest request,
         CancellationToken cancellationToken = default)
-        => await InvokeAsync(AgentRuntimeOperations.Transcript, request, cancellationToken).ConfigureAwait(false);
+    {
+        var page = await InvokeAsync(
+            AgentRuntimeOperations.Transcript,
+            request,
+            cancellationToken).ConfigureAwait(false);
+        CacheTurns(page.Turns);
+        return page;
+    }
 
     public IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets() => GetCatalog().ExecutionTargets;
     public async Task<IReadOnlyList<AgentExecutionTargetDescriptor>> ListTargetsAsync(
@@ -551,7 +561,11 @@ internal sealed partial class AgentAppRuntimeGateway :
         catch { _catalogs.TryRemove(key, out _); throw; }
     }
     private AgentTranscriptPage ReadTranscript(AgentTranscriptPageRequest request)
-        => Invoke(AgentRuntimeOperations.Transcript, request);
+    {
+        var page = Invoke(AgentRuntimeOperations.Transcript, request);
+        CacheTurns(page.Turns);
+        return page;
+    }
     private AgentPermissionProjection ReadPermissions(Guid? sessionId)
         => Invoke(AgentRuntimeOperations.Permissions,
             new AgentPermissionCommand(AgentPermissionCommandKind.Read, sessionId));
@@ -649,6 +663,7 @@ internal sealed partial class AgentAppRuntimeGateway :
             _dashboardLoad = null;
             _workspaceSessions.Clear();
             _knownSessions.Clear();
+            _knownTurns.Clear();
             _globalPermissions = null;
         }
         _catalogs.Clear();
@@ -678,6 +693,7 @@ internal sealed partial class AgentAppRuntimeGateway :
     private void RemoveCachedSessionCore(Guid sessionId)
     {
         _knownSessions.Remove(sessionId);
+        RemoveCachedTurnsCore(sessionId);
         foreach (var workspaceItems in _workspaceSessions.Values)
         {
             workspaceItems.RemoveAll(item => item.Session.SessionId == sessionId);

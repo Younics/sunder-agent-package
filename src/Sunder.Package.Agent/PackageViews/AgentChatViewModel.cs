@@ -23,6 +23,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private readonly IAgentProfileGateway _profileService;
     private readonly IAgentWorkspaceGateway _workspaceService;
     private readonly IAgentSessionGateway _sessionService;
+    private readonly IAgentTurnMutationGateway? _turnMutationGateway;
     private readonly IAgentPermissionGateway _permissionService;
     private readonly IAgentAttachmentGateway? _attachmentService;
     private readonly IAgentRunGateway _runCoordinator;
@@ -73,9 +74,11 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         IAgentAttachmentGateway? attachmentService = null
     )
     {
+        _activityTicker.SetEnabled(false);
         _profileService = profileService;
         _workspaceService = workspaceService;
         _sessionService = sessionService;
+        _turnMutationGateway = sessionService as IAgentTurnMutationGateway;
         _permissionService = permissionService;
         _attachmentService = attachmentService;
         _runCoordinator = runCoordinator;
@@ -115,7 +118,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             () => IsDisplayedSessionRunActive,
             () => _timeline.IsFollowingLatest,
             activityQuietDelay);
-        _timeline.RowsChanging += () => TranscriptChanging?.Invoke();
+        _timeline.RowsChanging += isPageApplication => TranscriptChanging?.Invoke(isPageApplication);
         _timeline.RowsChanged += () => TranscriptChanged?.Invoke();
         _timeline.PropertyChanged += OnTimelinePropertyChanged;
         _timeline.TurnProjected += OnTimelineTurnProjected;
@@ -124,7 +127,14 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _profileService.ProfileChanged += OnProfilesChanged;
         _workspaceService.WorkspacesChanged += OnWorkspacesChanged;
         _sessionService.SessionChanged += OnSessionChanged;
-        _sessionService.TurnChanged += OnTurnChanged;
+        if (_turnMutationGateway is not null)
+        {
+            _turnMutationGateway.TurnMutated += OnTurnMutated;
+        }
+        else
+        {
+            _sessionService.TurnChanged += OnTurnChanged;
+        }
         _sessionService.TranscriptReset += OnTranscriptReset;
         _sessionService.RunActivityChanged += OnRunActivityChanged;
     }
@@ -148,7 +158,9 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
     public event Action? TranscriptChanged;
 
-    public event Action? TranscriptChanging;
+    public event Action<bool>? TranscriptChanging;
+
+    public event Action<Guid>? TranscriptTailFollowRequested;
 
     internal bool IsInitialized => _isInitialized;
 
@@ -373,7 +385,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         var sessionId = selectedSession.SessionId;
         var workspaceId = workspace.WorkspaceId;
         var draftSnapshot = DraftMessage;
-        var message = draftSnapshot.Trim();
+        var message = draftSnapshot;
         var attachments = PendingAttachments
             .Select(attachment => attachment.UploadRequest)
             .ToArray();
@@ -447,6 +459,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                 return;
             }
 
+            RequestTranscriptTailFollow(sessionId);
             ClearSubmittedComposerState(selectedSession, submission);
 
             if (submission.RollbackTurnId is { } anchorTurnId)
@@ -656,7 +669,14 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _profileService.ProfileChanged -= OnProfilesChanged;
         _workspaceService.WorkspacesChanged -= OnWorkspacesChanged;
         _sessionService.SessionChanged -= OnSessionChanged;
-        _sessionService.TurnChanged -= OnTurnChanged;
+        if (_turnMutationGateway is not null)
+        {
+            _turnMutationGateway.TurnMutated -= OnTurnMutated;
+        }
+        else
+        {
+            _sessionService.TurnChanged -= OnTurnChanged;
+        }
         _sessionService.TranscriptReset -= OnTranscriptReset;
         _sessionService.RunActivityChanged -= OnRunActivityChanged;
         _workspaceWarmupCts?.Cancel();

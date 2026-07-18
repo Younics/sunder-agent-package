@@ -67,10 +67,17 @@ internal enum AgentPendingPermissionClaimOutcome
 internal sealed record AgentPendingPermissionDecisionResult(
     AgentPendingPermissionDecisionOutcome Outcome,
     AgentPendingPermissionRequestRecord? Request = null,
-    AgentRunCheckpointRecord? Checkpoint = null)
+    AgentCheckpointPersistenceResult? Finalization = null,
+    AgentTurnRecord? ToolResultTurn = null)
 {
     public bool IsDecided => Outcome == AgentPendingPermissionDecisionOutcome.Decided;
+
+    public AgentRunCheckpointRecord? Checkpoint => Finalization?.Checkpoint;
 }
+
+internal sealed record AgentPermissionExpirationResult(
+    bool Changed,
+    AgentCheckpointPersistenceResult? Finalization = null);
 
 internal enum AgentPendingPermissionDecisionOutcome
 {

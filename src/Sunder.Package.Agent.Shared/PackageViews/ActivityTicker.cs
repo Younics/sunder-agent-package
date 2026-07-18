@@ -21,6 +21,8 @@ internal sealed class NullActivityTicker : IActivityTicker
 internal sealed class ActivityTicker : IActivityTicker, IDisposable
 {
     private readonly DispatcherTimer _timer;
+    private Action? _tick;
+    private bool _isEnabled = true;
     private bool _disposed;
 
     public ActivityTicker(TimeSpan? interval = null)
@@ -30,10 +32,33 @@ internal sealed class ActivityTicker : IActivityTicker, IDisposable
             Interval = interval ?? TimeSpan.FromMilliseconds(420),
         };
         _timer.Tick += OnTimerTick;
-        _timer.Start();
     }
 
-    public event Action? Tick;
+    public event Action? Tick
+    {
+        add
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _tick += value;
+            UpdateTimerState();
+        }
+        remove
+        {
+            _tick -= value;
+            UpdateTimerState();
+        }
+    }
+
+    public void SetEnabled(bool isEnabled)
+    {
+        if (_disposed || _isEnabled == isEnabled)
+        {
+            return;
+        }
+
+        _isEnabled = isEnabled;
+        UpdateTimerState();
+    }
 
     public void Dispose()
     {
@@ -45,8 +70,20 @@ internal sealed class ActivityTicker : IActivityTicker, IDisposable
         _disposed = true;
         _timer.Stop();
         _timer.Tick -= OnTimerTick;
-        Tick = null;
+        _tick = null;
     }
 
-    private void OnTimerTick(object? sender, EventArgs e) => Tick?.Invoke();
+    private void UpdateTimerState()
+    {
+        if (!_disposed && _isEnabled && _tick is not null)
+        {
+            _timer.Start();
+        }
+        else
+        {
+            _timer.Stop();
+        }
+    }
+
+    private void OnTimerTick(object? sender, EventArgs e) => _tick?.Invoke();
 }

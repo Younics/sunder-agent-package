@@ -365,6 +365,66 @@ public sealed class AnthropicProviderTests
             string.Join(",", logger.EventNames));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StreamingTextDeltas_PreserveWhitespaceAndSplitMarkdownChunks(bool useFastMode)
+    {
+        var handler = new CapturingHandler(_ => SseResponse(
+            """
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"##"}}
+
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" "}}
+
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Heading"}}
+
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n"}}
+
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n"}}
+
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-"}}
+
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" "}}
+
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"item"}}
+
+            event: message_delta
+            data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}
+
+            event: message_stop
+            data: {"type":"message_stop"}
+
+            """));
+        var client = CreateChatClient(handler);
+        var options = useFastMode
+            ? new ChatOptions
+            {
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    [AgentChatModelOptionKeys.SpeedOptionId] = "fast",
+                },
+            }
+            : null;
+
+        var updates = await ReadUpdatesAsync(
+            client,
+            [new ChatMessage(ChatRole.User, "Render Markdown.")],
+            options);
+        var textUpdates = ContentUpdates(updates);
+        string[] expectedChunks = ["##", " ", "Heading", "\n", "\n", "-", " ", "item"];
+
+        Assert.Equal(expectedChunks, textUpdates.Select(update => update.Text));
+        Assert.Equal("## Heading\n\n- item", string.Concat(textUpdates.Select(update => update.Text)));
+    }
+
     [Fact]
     public async Task ToolResponse_RejectsMalformedArgumentValue()
     {

@@ -47,10 +47,11 @@ public sealed class AgentPermissionResumeCoordinator(
         {
             if (claim.Outcome == AgentPendingPermissionClaimOutcome.InvalidSuspension)
             {
-                _permissionService.ExpireActiveRequest(
+                var expiration = _permissionService.ExpireActiveRequest(
                     sessionId,
                     requestId,
                     "The permission request no longer matches the current suspended run.");
+                PublishPermissionFinalization(expiration.Finalization);
             }
 
             return _sessionService.GetLatestCheckpoint(sessionId);
@@ -68,11 +69,13 @@ public sealed class AgentPermissionResumeCoordinator(
             var summary = ex is OperationCanceledException
                 ? "Approved permission resume was canceled before execution ownership was established."
                 : $"Approved permission resume failed before execution ownership was established: {ex.Message}";
-            var checkpoint = _permissionService.FinalizeClaimedRequest(
+            var finalization = _permissionService.FinalizeClaimedRequest(
                 pending,
                 AgentPendingPermissionStatus.Failed,
                 runStatus,
                 summary);
+            PublishPermissionFinalization(finalization);
+            var checkpoint = finalization?.Checkpoint;
             if (checkpoint is null)
             {
                 _permissionService.CompleteClaimedRequest(
@@ -110,11 +113,15 @@ public sealed class AgentPermissionResumeCoordinator(
             AgentPendingPermissionStatus status,
             AgentRunStatus runStatus,
             string summary)
-            => _permissionService.FinalizeClaimedRequest(
+        {
+            var finalization = _permissionService.FinalizeClaimedRequest(
                 pending,
                 status,
                 runStatus,
                 summary);
+            PublishPermissionFinalization(finalization);
+            return finalization?.Checkpoint;
+        }
 
         var session = _sessionService.GetSession(sessionId);
         if (session is null)
@@ -545,26 +552,17 @@ public sealed class AgentPermissionResumeCoordinator(
                 requestId,
                 "Permission request denied.");
         }
-        if (!decision.IsDecided || decision.Request is not { } pending)
+        if (!decision.IsDecided || decision.Request is null)
         {
             return _sessionService.GetLatestCheckpoint(sessionId);
         }
 
+        var finalization = decision.Finalization
+            ?? throw new InvalidOperationException("The denied permission suspension did not produce a finalization result.");
+        var toolResultTurn = decision.ToolResultTurn
+            ?? throw new InvalidOperationException("The denied permission suspension did not produce a tool result.");
+        _sessionService.PublishCommittedPermissionDecision(finalization, toolResultTurn);
         var session = _sessionService.GetSession(sessionId);
-        _sessionService.AppendToolResultTurn(
-            sessionId,
-            pending.CallId,
-            pending.ToolId ?? string.Empty,
-            pending.ArgumentsJson,
-            $"Permission denied: tool '{pending.ToolId}' was not executed.",
-            "Permission request denied.",
-            structuredPayloadJson: null,
-            sourcesJson: null,
-            wasTruncated: false,
-            isError: true,
-            errorCode: "permission-denied",
-            backendId: null
-        );
         var stoppedCheckpoint = decision.Checkpoint
             ?? _sessionService.GetLatestCheckpoint(sessionId)
             ?? throw new InvalidOperationException("The denied permission suspension did not produce a checkpoint.");
@@ -584,6 +582,14 @@ public sealed class AgentPermissionResumeCoordinator(
         string.IsNullOrWhiteSpace(workspaceId)
             ? null
             : _workspaceService.GetWorkspace(workspaceId.Trim());
+
+    private void PublishPermissionFinalization(AgentCheckpointPersistenceResult? finalization)
+    {
+        if (finalization is not null)
+        {
+            _sessionService.PublishCommittedCheckpoint(finalization);
+        }
+    }
 
     private AgentProfileRecord? ResolveProfile(string? profileId) =>
         string.IsNullOrWhiteSpace(profileId) ? null : _profileService.GetProfile(profileId);

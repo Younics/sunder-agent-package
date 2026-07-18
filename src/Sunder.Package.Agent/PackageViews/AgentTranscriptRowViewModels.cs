@@ -104,7 +104,8 @@ public sealed class AgentTextTranscriptRowViewModel : AgentTranscriptRowViewMode
         }
         else
         {
-            MarkdownBuilder = new ObservableStringBuilder().Append(content);
+            MarkdownBuilder.Clear();
+            MarkdownBuilder.Append(content);
         }
 
         OnPropertyChanged(nameof(HasContent));

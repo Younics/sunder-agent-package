@@ -140,14 +140,17 @@ public sealed class AgentPermissionService(
                request.RequestId,
                request.ClaimToken);
 
-    internal AgentRunCheckpointRecord? FinalizeClaimedRequest(
+    internal AgentCheckpointPersistenceResult? FinalizeClaimedRequest(
         AgentPendingPermissionRequestRecord request,
         AgentPendingPermissionStatus status,
         AgentRunStatus runStatus,
         string summary)
         => _store.FinalizeClaimedPermissionRequest(request, status, runStatus, summary);
 
-    internal bool ExpireActiveRequest(Guid sessionId, string requestId, string summary)
+    internal AgentPermissionExpirationResult ExpireActiveRequest(
+        Guid sessionId,
+        string requestId,
+        string summary)
         => _store.ExpireActivePermissionRequest(sessionId, requestId, summary);
 
     public void DeletePendingRequest(Guid sessionId, string requestId)

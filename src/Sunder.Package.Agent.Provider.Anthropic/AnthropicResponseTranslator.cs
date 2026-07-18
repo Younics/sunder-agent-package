@@ -182,7 +182,7 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
                 continue;
             }
 
-            if (string.IsNullOrWhiteSpace(content.Text))
+            if (string.IsNullOrEmpty(content.Text))
             {
                 continue;
             }
@@ -250,7 +250,7 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
             return new AnthropicStreamingContent(ReasoningText: thinking.Thinking);
         }
 
-        return delta.Delta.TryPickText(out var text) && !string.IsNullOrWhiteSpace(text.Text)
+        return delta.Delta.TryPickText(out var text) && !string.IsNullOrEmpty(text.Text)
             ? new AnthropicStreamingContent(Text: text.Text)
             : new AnthropicStreamingContent(UnsupportedEventKind: delta.Delta.GetType().Name);
     }
@@ -284,7 +284,7 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
             return new AnthropicStreamingContent(ReasoningText: thinking.Thinking);
         }
 
-        return delta.Delta.TryPickText(out var text) && !string.IsNullOrWhiteSpace(text.Text)
+        return delta.Delta.TryPickText(out var text) && !string.IsNullOrEmpty(text.Text)
             ? new AnthropicStreamingContent(Text: text.Text)
             : new AnthropicStreamingContent(UnsupportedEventKind: delta.Delta.GetType().Name);
     }

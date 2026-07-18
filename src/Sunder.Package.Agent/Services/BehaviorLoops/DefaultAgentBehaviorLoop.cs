@@ -107,6 +107,10 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
                         cancellationToken);
                 }
 
+                if (assistantTurnState.Turn is { } toolPreamble)
+                {
+                    assistantTurnState.Turn = host.CompleteAssistantTurn(toolPreamble);
+                }
                 var toolCycle = await _toolCycleCoordinator.RunCycleAsync(
                     host,
                     context,

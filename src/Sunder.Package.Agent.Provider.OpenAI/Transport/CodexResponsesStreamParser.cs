@@ -120,7 +120,7 @@ internal static class CodexResponsesStreamParser
                 switch (eventType)
                 {
                     case "response.output_text.delta":
-                        if (TryGetStringProperty(root, "delta", out var delta))
+                        if (TryGetString(root, "delta") is { Length: > 0 } delta)
                         {
                             partialTextCharacters += delta.Length;
                             yield return ProviderResponseUpdates.CreateText(

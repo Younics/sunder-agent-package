@@ -1,3 +1,5 @@
+using Sunder.Package.Agent.Contracts.Models;
+
 namespace Sunder.Package.Agent.Runtime;
 
 internal sealed partial class AgentAppRuntimeGateway
@@ -65,7 +67,10 @@ internal sealed partial class AgentAppRuntimeGateway
                     : AgentRuntimeConnectionState.Reconnecting);
                 await foreach (var change in _transport.SubscribeAsync(
                                    AgentRuntimeOperations.Changes,
-                                   new AgentChangeSubscription(_revision), cancellationToken))
+                                   new AgentChangeSubscription(
+                                       _revision,
+                                       SupportsTurnMutations: true),
+                                   cancellationToken))
                 {
                     if (!IsCurrentObservation(generation)) return;
                     var requiresSnapshot = ApplyChange(change, generation);
@@ -151,10 +156,39 @@ internal sealed partial class AgentAppRuntimeGateway
                 break;
             case AgentRuntimeChangeKind.Turn:
                 if (change.SessionId is { } turnSessionId && change.Turn is { } turn)
+                {
+                    CacheTurn(turn);
                     Raise(TurnChanged, turnSessionId, turn);
+                    Raise(TurnMutated, new AgentTurnMutation(
+                        turnSessionId,
+                        turn.TurnId,
+                        turn.ContentRevision,
+                        AgentTurnMutationKind.Add,
+                        BaseContentLength: 0,
+                        Text: null,
+                        turn.UpdatedAtUtc,
+                        turn,
+                        change.Revision));
+                }
+                break;
+            case AgentRuntimeChangeKind.TurnMutation:
+                if (change.TurnMutation is { } mutation)
+                {
+                    mutation = mutation with { RuntimeRevision = change.Revision };
+                    var changedTurn = ApplyTurnMutationToCache(mutation);
+                    Raise(TurnMutated, mutation);
+                    if (changedTurn is not null)
+                    {
+                        Raise(TurnChanged, mutation.SessionId, changedTurn);
+                    }
+                }
                 break;
             case AgentRuntimeChangeKind.TranscriptReset:
-                if (change.SessionId is { } resetSessionId) Raise(TranscriptReset, resetSessionId);
+                if (change.SessionId is { } resetSessionId)
+                {
+                    RemoveCachedTurns(resetSessionId);
+                    Raise(TranscriptReset, resetSessionId);
+                }
                 break;
             case AgentRuntimeChangeKind.RunActivity:
                 if (change.SessionId is { } activitySessionId && change.RunActivity is { } activity)

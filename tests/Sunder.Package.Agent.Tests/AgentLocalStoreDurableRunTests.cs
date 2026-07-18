@@ -36,6 +36,8 @@ public sealed class AgentLocalStoreDurableRunTests
                 (5L, "permission-claim-recovery"),
                 (6L, "parent-continuation-work"),
                 (7L, "permission-execution-snapshot"),
+                (8L, "turn-content-revisions"),
+                (9L, "turn-run-ownership"),
             ],
             migrations.Select(static migration => (migration.Version, migration.Name)));
         Assert.All(migrations, migration => Assert.Matches("^[0-9a-f]{64}$", migration.Checksum));
@@ -214,6 +216,184 @@ public sealed class AgentLocalStoreDurableRunTests
         var checkpoint = recovered.GetLatestCheckpoint(session.SessionId);
         Assert.Equal(AgentRunStatus.Interrupted, checkpoint?.Status);
         Assert.Equal(run.Key.RunRevision, checkpoint?.RunRevision);
+    }
+
+    [Fact]
+    public void StartupRecovery_CompletesStreamingAssistantTurns()
+    {
+        using var scope = DurableRunTestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var session = CreateSession(store);
+        var run = store.ReserveRun(session.SessionId, "profile.test", "orphaned stream");
+        var running = Assert.IsType<AgentRunTransitionResult>(store.TryTransitionRun(
+            run.Key,
+            run.Epoch,
+            AgentRunStatus.Running,
+            "Running."));
+        var turn = Assert.IsType<AgentTurnRecord>(store.TryAppendTextTurn(
+            run.Key,
+            running.Run.Epoch,
+            AgentMessageRole.Assistant,
+            "partial"));
+        Assert.True(turn.IsStreaming);
+
+        var recovered = new AgentLocalStore(scope.Context);
+
+        var recoveredTurn = Assert.IsType<AgentTurnRecord>(recovered.GetTurn(turn.TurnId));
+        Assert.False(recoveredTurn.IsStreaming);
+        Assert.Equal(turn.ContentRevision + 1, recoveredTurn.ContentRevision);
+    }
+
+    [Fact]
+    public void StopRun_CompletesStreamingAssistantTurns()
+    {
+        using var scope = DurableRunTestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var session = CreateSession(store);
+        var run = store.ReserveRun(session.SessionId, "profile.test", "stopped stream");
+        var running = Assert.IsType<AgentRunTransitionResult>(store.TryTransitionRun(
+            run.Key,
+            run.Epoch,
+            AgentRunStatus.Running,
+            "Running."));
+        var turn = Assert.IsType<AgentTurnRecord>(store.TryAppendTextTurn(
+            run.Key,
+            running.Run.Epoch,
+            AgentMessageRole.Assistant,
+            "partial"));
+
+        var stopped = Assert.IsType<AgentRunStopPersistenceResult>(store.TryStopRunAndActivePermissions(
+            run.Key,
+            running.Run.Epoch,
+            "Stopped."));
+
+        var completed = Assert.Single(stopped.CompletedStreamingTurns);
+        Assert.Equal(turn.TurnId, completed.Turn.TurnId);
+        Assert.Equal("partial".Length, completed.ContentLength);
+        Assert.False(Assert.IsType<AgentTurnRecord>(store.GetTurn(turn.TurnId)).IsStreaming);
+    }
+
+    [Fact]
+    public void TerminalTransition_CompletesOnlyTurnsOwnedByThatRun()
+    {
+        using var scope = DurableRunTestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var session = CreateSession(store);
+        var firstRun = store.ReserveRun(session.SessionId, "profile.test", "first");
+        var firstRunning = Assert.IsType<AgentRunTransitionResult>(store.TryTransitionRun(
+            firstRun.Key,
+            firstRun.Epoch,
+            AgentRunStatus.Running,
+            "First running."));
+        var firstTurn = Assert.IsType<AgentTurnRecord>(store.TryAppendTextTurn(
+            firstRun.Key,
+            firstRunning.Run.Epoch,
+            AgentMessageRole.Assistant,
+            "first partial"));
+        var secondRun = store.ReserveRun(session.SessionId, "profile.test", "second");
+        var secondRunning = Assert.IsType<AgentRunTransitionResult>(store.TryTransitionRun(
+            secondRun.Key,
+            secondRun.Epoch,
+            AgentRunStatus.Running,
+            "Second running."));
+        var secondTurn = Assert.IsType<AgentTurnRecord>(store.TryAppendTextTurn(
+            secondRun.Key,
+            secondRunning.Run.Epoch,
+            AgentMessageRole.Assistant,
+            "second partial"));
+
+        var interrupted = Assert.IsType<AgentRunTransitionResult>(store.TryTransitionRun(
+            firstRun.Key,
+            firstRunning.Run.Epoch,
+            AgentRunStatus.Interrupted,
+            "First superseded."));
+
+        var completed = Assert.Single(interrupted.CompletedStreamingTurns);
+        Assert.Equal(firstTurn.TurnId, completed.Turn.TurnId);
+        Assert.False(Assert.IsType<AgentTurnRecord>(store.GetTurn(firstTurn.TurnId)).IsStreaming);
+        Assert.True(Assert.IsType<AgentTurnRecord>(store.GetTurn(secondTurn.TurnId)).IsStreaming);
+    }
+
+    [Fact]
+    public async Task ReentrantStopFromTurnCallbackDoesNotDeadlockOrReorderMutations()
+    {
+        using var scope = DurableRunTestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var session = CreateSession(store);
+        var service = new AgentSessionService(store);
+        var reserved = store.ReserveRun(session.SessionId, "profile.test", "reentrant stop");
+        var lease = new AgentDurableRunLease(reserved);
+        Assert.NotNull(service.TryTransitionRun(
+            lease,
+            AgentRunStatus.Running,
+            "Running."));
+        var mutationKinds = new List<AgentTurnMutationKind>();
+        var stopCompletedInsideCallback = false;
+        Task<AgentRunTransitionResult?>? stop = null;
+        service.TurnMutated += mutation => mutationKinds.Add(mutation.Kind);
+        service.TurnChanged += (_, turn) =>
+        {
+            if (!turn.IsStreaming || stop is not null)
+            {
+                return;
+            }
+
+            stop = Task.Run(() => service.TryStopRun(lease, "Stopped from callback."));
+            stopCompletedInsideCallback = SpinWait.SpinUntil(
+                () => stop.IsCompleted,
+                TimeSpan.FromSeconds(2));
+        };
+
+        var streamingTurn = service.AppendTextTurn(
+            lease,
+            AgentMessageRole.Assistant,
+            "partial");
+
+        Assert.True(stopCompletedInsideCallback);
+        Assert.NotNull(await stop!);
+        Assert.Equal(
+            [AgentTurnMutationKind.Add, AgentTurnMutationKind.Complete],
+            mutationKinds);
+        Assert.False(Assert.IsType<AgentTurnRecord>(store.GetTurn(streamingTurn.TurnId)).IsStreaming);
+    }
+
+    [Fact]
+    public void RollbackRunStart_NotifiesResetBeforeReplacementTurn()
+    {
+        using var scope = DurableRunTestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var session = CreateSession(store);
+        var anchor = store.AppendTextTurn(
+            session.SessionId,
+            AgentMessageRole.User,
+            "original request");
+        store.AppendTextTurn(
+            session.SessionId,
+            AgentMessageRole.Assistant,
+            "original response");
+        var service = new AgentSessionService(store);
+        var lease = new AgentDurableRunLease(
+            store.ReserveRun(session.SessionId, "profile.test", "replacement request"));
+        var notifications = new List<string>();
+        service.TranscriptReset += _ => notifications.Add("reset");
+        service.TurnMutated += mutation =>
+        {
+            if (mutation.Kind == AgentTurnMutationKind.Add)
+            {
+                notifications.Add("add");
+            }
+        };
+
+        var result = service.TryStartRun(
+            lease,
+            "replacement request",
+            [],
+            anchor.TurnId,
+            "Running.");
+
+        Assert.NotNull(result);
+        Assert.Equal(["reset", "add"], notifications);
+        Assert.Equal("replacement request", Assert.Single(result!.UserTurn.Items).TextContent);
     }
 
     [Theory]

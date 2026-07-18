@@ -38,6 +38,40 @@ public sealed class AgentStreamingTurnWriterTests
     }
 
     [Fact]
+    public async Task WriteAttemptAsync_FlushesPendingTextWhileProviderIsPaused()
+    {
+        var host = new RecordingBehaviorLoopRuntime();
+        var writer = new AgentStreamingTurnWriter(new AgentLoopTerminalHandler());
+        var state = writer.BeginCycle(
+            host,
+            CreateContext(),
+            new AgentAssistantTurnState(),
+            Stopwatch.StartNew());
+        var pauseObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var chatClient = new PausingChatClient(() =>
+        {
+            if (host.PersistedContents.Count >= 2)
+            {
+                pauseObserved.TrySetResult();
+            }
+        });
+
+        var writeTask = writer.WriteAttemptAsync(
+            state,
+            chatClient,
+            [],
+            new ChatOptions(),
+            CancellationToken.None);
+        await pauseObserved.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(["first", "first second"], host.PersistedContents);
+        chatClient.Release();
+        await writeTask;
+        writer.CompleteCycle(state);
+        Assert.Equal(["first", "first second"], host.PersistedContents);
+    }
+
+    [Fact]
     public async Task ProviderCycleRunner_DisposesEachCycleClientAndRecreatesForNextCycle()
     {
         var firstClient = new DisposableChatClient("first");
@@ -241,6 +275,42 @@ public sealed class AgentStreamingTurnWriterTests
             AgentTurnRecord? assistantTurn,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
+    }
+
+    private sealed class PausingChatClient(Action onPoll) : IChatClient
+    {
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ChatClientMetadata Metadata { get; } = new("Pausing test");
+
+        public void Release() => _release.TrySetResult();
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "first");
+            yield return new ChatResponseUpdate(ChatRole.Assistant, " second");
+            while (!_release.Task.IsCompleted)
+            {
+                onPoll();
+                await Task.Delay(10, cancellationToken);
+            }
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null)
+            => serviceKey is null && serviceType.IsInstanceOfType(this) ? this : null;
+
+        public void Dispose()
+        {
+        }
     }
 
     private sealed class DisposableChatClient(string text) : IChatClient

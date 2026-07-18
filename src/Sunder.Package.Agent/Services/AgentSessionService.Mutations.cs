@@ -15,8 +15,7 @@ public sealed partial class AgentSessionService
     public AgentTurnRecord AppendTextTurn(Guid sessionId, AgentMessageRole role, string content)
     {
         var turn = _store.AppendTextTurn(sessionId, role, content);
-        NotifyTurnChanged(sessionId, turn);
-        NotifySessionChanged(sessionId);
+        NotifyTurnAndSessionChanged(sessionId, turn);
         return turn;
     }
 
@@ -29,6 +28,12 @@ public sealed partial class AgentSessionService
         lock (lease.SyncRoot)
         {
             turn = _store.TryAppendTextTurn(lease.Key, lease.Epoch, role, content);
+            if (turn is not null)
+            {
+                EnqueueLeaseNotification(
+                    lease,
+                    () => NotifyTurnAndSessionChanged(lease.Key.SessionId, turn));
+            }
         }
 
         if (turn is null)
@@ -36,8 +41,7 @@ public sealed partial class AgentSessionService
             throw new AgentRunTranscriptWriteRejectedException();
         }
 
-        NotifyTurnChanged(lease.Key.SessionId, turn);
-        NotifySessionChanged(lease.Key.SessionId);
+        DrainLeaseNotifications(lease);
         return turn;
     }
 
@@ -48,8 +52,7 @@ public sealed partial class AgentSessionService
         IReadOnlyList<AgentStoredAttachment> attachments)
     {
         var turn = _store.AppendUserTurn(sessionId, role, content, attachments);
-        NotifyTurnChanged(sessionId, turn);
-        NotifySessionChanged(sessionId);
+        NotifyTurnAndSessionChanged(sessionId, turn);
         return turn;
     }
 
@@ -64,8 +67,7 @@ public sealed partial class AgentSessionService
     {
         var result = _store.RollbackTranscript(sessionId, anchorTurnId);
         var cleanupFailures = DeleteExternalSessionData(result.DeletedSessionIds);
-        NotifyTranscriptReset(sessionId);
-        NotifySessionChanged(sessionId);
+        NotifyTranscriptResetAndSessionChanged(sessionId);
         foreach (var deletedSessionId in result.DeletedSessionIds)
         {
             NotifySessionChanged(deletedSessionId);

@@ -39,7 +39,8 @@ public sealed partial class AgentLocalStore
             AgentTurnKind.Message,
             content,
             now,
-            now);
+            now,
+            isStreaming: true);
         return AppendTurn(
             turn,
             runKey,
@@ -72,7 +73,7 @@ public sealed partial class AgentLocalStore
             return null;
         }
 
-        InsertTurn(connection, transaction, turn);
+        InsertTurn(connection, transaction, turn, runKey: runKey);
         TouchSession(connection, turn.SessionId, null, null, transaction);
         transaction.Commit();
         return turn;
@@ -148,94 +149,6 @@ public sealed partial class AgentLocalStore
             transaction);
 
         return new AgentTranscriptRollbackResult(sessionId, anchorTurnId, deletedTurnIds, deletedSessionIds);
-    }
-
-    public AgentTranscriptMessageRecord UpdateMessageContent(Guid messageId, string content)
-    {
-        return ProjectTurnToTranscriptMessage(UpdateTextTurn(messageId, content));
-    }
-
-    public AgentTurnRecord UpdateTextTurn(Guid messageId, string content)
-    {
-        using var connection = CreateConnection();
-        connection.Open();
-
-        var existingTurn = GetTurn(connection, messageId) ?? throw new InvalidOperationException($"Message '{messageId}' was not found.");
-        if (!CanUpdateProjectedMessage(existingTurn))
-        {
-            throw new InvalidOperationException($"Turn '{messageId}' does not support in-place text updates.");
-        }
-
-        var updatedAtUtc = DateTimeOffset.UtcNow;
-        using var transaction = connection.BeginTransaction();
-
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "UPDATE AgentTurns SET UpdatedAtUtc = $updatedAtUtc WHERE TurnId = $id;";
-        command.Parameters.AddWithValue("$updatedAtUtc", updatedAtUtc.ToString("O"));
-        command.Parameters.AddWithValue("$id", messageId.ToString());
-        command.ExecuteNonQuery();
-
-        using var updateItem = connection.CreateCommand();
-        updateItem.Transaction = transaction;
-        updateItem.CommandText = "UPDATE AgentTurnItems SET TextContent = $content WHERE TurnId = $turnId AND SequenceNumber = 0;";
-        updateItem.Parameters.AddWithValue("$content", content);
-        updateItem.Parameters.AddWithValue("$turnId", messageId.ToString());
-        updateItem.ExecuteNonQuery();
-
-        TouchSession(connection, existingTurn.SessionId, null, null, transaction);
-        transaction.Commit();
-
-        return GetTurn(connection, messageId) ?? throw new InvalidOperationException($"Turn '{messageId}' was not found after update.");
-    }
-
-    internal AgentTurnRecord? TryUpdateTextTurn(
-        AgentDurableRunKey runKey,
-        long expectedEpoch,
-        Guid turnId,
-        string content)
-    {
-        BeforeFencedTranscriptTransaction?.Invoke(AgentTranscriptMutationKind.AssistantText);
-        using var connection = CreateConnection();
-        connection.Open();
-        using var transaction = connection.BeginTransaction(deferred: false);
-        if (!CanMutateTranscript(connection, transaction, runKey, expectedEpoch))
-        {
-            transaction.Rollback();
-            return null;
-        }
-
-        var updatedAtUtc = DateTimeOffset.UtcNow;
-        using (var command = connection.CreateCommand())
-        {
-            command.Transaction = transaction;
-            command.CommandText = "UPDATE AgentTurns SET UpdatedAtUtc = $updatedAtUtc WHERE TurnId = $turnId AND SessionId = $sessionId AND Role = 'Assistant' AND Kind = 'Message';";
-            command.Parameters.AddWithValue("$updatedAtUtc", updatedAtUtc.ToString("O"));
-            command.Parameters.AddWithValue("$turnId", turnId.ToString());
-            command.Parameters.AddWithValue("$sessionId", runKey.SessionId.ToString());
-            if (command.ExecuteNonQuery() != 1)
-            {
-                transaction.Rollback();
-                return null;
-            }
-        }
-
-        using (var command = connection.CreateCommand())
-        {
-            command.Transaction = transaction;
-            command.CommandText = "UPDATE AgentTurnItems SET TextContent = $content WHERE TurnId = $turnId AND SequenceNumber = 0 AND Kind = 'Text';";
-            command.Parameters.AddWithValue("$content", content);
-            command.Parameters.AddWithValue("$turnId", turnId.ToString());
-            if (command.ExecuteNonQuery() != 1)
-            {
-                transaction.Rollback();
-                return null;
-            }
-        }
-
-        TouchSession(connection, runKey.SessionId, null, null, transaction);
-        transaction.Commit();
-        return GetTurn(connection, turnId);
     }
 
     public AgentTurnRecord AppendToolCallTurn(
@@ -398,7 +311,7 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc FROM AgentTurns WHERE TurnId = $turnId;";
+        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming FROM AgentTurns WHERE TurnId = $turnId;";
         command.Parameters.AddWithValue("$turnId", turnId.ToString());
         using var reader = command.ExecuteReader();
         return reader.Read()
@@ -410,6 +323,10 @@ public sealed partial class AgentLocalStore
                 [],
                 DateTimeOffset.Parse(reader.GetString(4)),
                 DateTimeOffset.Parse(reader.GetString(5)))
+            {
+                ContentRevision = reader.GetInt64(6),
+                IsStreaming = reader.GetInt64(7) != 0,
+            }
             : null;
     }
 
@@ -709,17 +626,22 @@ public sealed partial class AgentLocalStore
         SqliteConnection connection,
         SqliteTransaction? transaction,
         AgentTurnRecord turn,
-        bool ignoreConflicts = false)
+        bool ignoreConflicts = false,
+        AgentDurableRunKey? runKey = null)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"INSERT {(ignoreConflicts ? "OR IGNORE " : string.Empty)}INTO AgentTurns (TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc) VALUES ($id, $sessionId, $role, $kind, $created, $updated);";
+        command.CommandText = $"INSERT {(ignoreConflicts ? "OR IGNORE " : string.Empty)}INTO AgentTurns (TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision) VALUES ($id, $sessionId, $role, $kind, $created, $updated, $contentRevision, $isStreaming, $runId, $runRevision);";
         command.Parameters.AddWithValue("$id", turn.TurnId.ToString());
         command.Parameters.AddWithValue("$sessionId", turn.SessionId.ToString());
         command.Parameters.AddWithValue("$role", turn.Role.ToString());
         command.Parameters.AddWithValue("$kind", turn.Kind.ToString());
         command.Parameters.AddWithValue("$created", turn.CreatedAtUtc.ToString("O"));
         command.Parameters.AddWithValue("$updated", turn.UpdatedAtUtc.ToString("O"));
+        command.Parameters.AddWithValue("$contentRevision", turn.ContentRevision);
+        command.Parameters.AddWithValue("$isStreaming", turn.IsStreaming ? 1 : 0);
+        command.Parameters.AddWithValue("$runId", runKey is { } key ? key.RunId.ToString() : DBNull.Value);
+        command.Parameters.AddWithValue("$runRevision", runKey is { } ownedKey ? ownedKey.RunRevision : DBNull.Value);
         command.ExecuteNonQuery();
 
         foreach (var item in turn.Items.OrderBy(item => item.SequenceNumber))
@@ -765,3 +687,9 @@ internal enum AgentTranscriptMutationKind
     ToolResult = 2,
     UserRunStart = 3,
 }
+
+internal sealed record AgentTurnWriteResult(
+    AgentTurnRecord Turn,
+    AgentTurnMutationKind MutationKind,
+    int BaseContentLength,
+    string? Text);

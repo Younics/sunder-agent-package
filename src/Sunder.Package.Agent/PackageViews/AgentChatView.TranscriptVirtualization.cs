@@ -33,9 +33,10 @@ public partial class AgentChatView
 
         for (var index = 0; index < messages.Count; index++)
         {
-            if (Equals(messages[index].AnchorKey, anchorKey))
+            if (messages[index] is ITranscriptAnchorItem anchorItem
+                && Equals(anchorItem.AnchorKey, anchorKey))
             {
-                return TranscriptItemsControl.GetOrCreateElement(index);
+                return TranscriptItemsControl.GetOrCreateElement(index) as Control;
             }
         }
 

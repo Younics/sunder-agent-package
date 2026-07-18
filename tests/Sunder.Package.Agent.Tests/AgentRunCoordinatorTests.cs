@@ -37,6 +37,46 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class AgentRunCoordinatorTests
 {
     [Fact]
+    public async Task QueueUserMessageAsync_PublishesRevisionedAssistantMutations()
+    {
+        const string toolId = "fetch_page";
+        var provider = new ScriptedProvider((_, _) =>
+        [
+            Delta("## Heading"),
+            Delta("\n\n- item"),
+        ]);
+        using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        var mutations = new List<AgentTurnMutation>();
+        runtime.SessionService.TurnMutated += mutation => mutations.Add(mutation);
+
+        await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "render markdown",
+            runtime.CurrentWorkspaceId,
+            []);
+
+        var assistantTurnId = mutations
+            .First(mutation => mutation.Turn?.Role == AgentMessageRole.Assistant)
+            .TurnId;
+        var assistantMutations = mutations
+            .Where(mutation => mutation.TurnId == assistantTurnId)
+            .ToArray();
+        Assert.Equal(
+            [AgentTurnMutationKind.Add, AgentTurnMutationKind.Append, AgentTurnMutationKind.Complete],
+            assistantMutations.Select(mutation => mutation.Kind));
+        Assert.Equal([1L, 2L, 3L], assistantMutations.Select(mutation => mutation.ContentRevision));
+        Assert.Equal("\n\n- item", assistantMutations[1].Text);
+        Assert.Equal("## Heading\n\n- item".Length, assistantMutations[2].BaseContentLength);
+        var storedTurn = runtime.SessionService.ListTurns(sessionId)
+            .Single(turn => turn.Role == AgentMessageRole.Assistant);
+        Assert.Equal(3, storedTurn.ContentRevision);
+        Assert.False(storedTurn.IsStreaming);
+        Assert.Equal("## Heading\n\n- item", Assert.Single(storedTurn.Items).TextContent);
+    }
+
+    [Fact]
     public async Task AgentSystemPromptComposer_ComposeAsync_RendersContributorBlocksAndToolInstructions()
     {
         var catalog = new TestExtensionCatalog();
@@ -259,6 +299,38 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task QueueUserMessageAsync_CompletesVisibleToolPreambleBeforeNextCycle()
+    {
+        const string toolId = "fetch_page";
+        var provider = new ScriptedProvider(
+            (request, requestIndex) => requestIndex switch
+            {
+                1 =>
+                [
+                    Delta("I'll fetch that now."),
+                    ToolRequest("call-1", toolId, "{\"url\":\"https://example.com\"}"),
+                ],
+                2 => [AssertAndComplete(request, toolId, "call-1")],
+                _ => throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}."),
+            });
+        using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Fetch the page.",
+            runtime.CurrentWorkspaceId);
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        var assistantTurns = runtime.SessionService.ListTurns(sessionId)
+            .Where(turn => turn.Role == AgentMessageRole.Assistant)
+            .ToArray();
+        Assert.Contains(assistantTurns, turn => RenderTurnText(turn) == "I'll fetch that now.");
+        Assert.All(assistantTurns, turn => Assert.False(turn.IsStreaming));
+    }
+
+    [Fact]
     public async Task QueueUserMessageAsync_PassesToolContentBeforeStructuredPayloadIntoNextProviderRequest()
     {
         const string toolId = "structured_tool";
@@ -410,6 +482,7 @@ public sealed class AgentRunCoordinatorTests
             turn => turn.Role == AgentMessageRole.Assistant
         );
         var assistantText = RenderTurnText(assistantTurn);
+        Assert.False(assistantTurn.IsStreaming);
         Assert.Contains("Assistant response blocked", assistantText, StringComparison.Ordinal);
         Assert.DoesNotContain("assistant to=functions.webfetch", assistantText, StringComparison.Ordinal);
         Assert.DoesNotContain("https://example.com", assistantText, StringComparison.Ordinal);
@@ -441,6 +514,7 @@ public sealed class AgentRunCoordinatorTests
             turn => turn.Role == AgentMessageRole.Assistant
         );
         var assistantText = RenderTurnText(assistantTurn);
+        Assert.False(assistantTurn.IsStreaming);
         Assert.Contains("Assistant response blocked", assistantText, StringComparison.Ordinal);
         Assert.DoesNotContain("function=apply_patch", assistantText, StringComparison.Ordinal);
         Assert.DoesNotContain("*** Begin Patch", assistantText, StringComparison.Ordinal);
@@ -4211,10 +4285,21 @@ public sealed class AgentRunCoordinatorTests
                 childSession.RootSessionId
             )
         );
+        var observedPendingCounts = new List<int>();
+        runtime.SessionService.SessionChanged += changedSessionId =>
+        {
+            if (changedSessionId == childSession.SessionId)
+            {
+                observedPendingCounts.Add(
+                    runtime.PermissionService.ListPendingRequests(changedSessionId).Count);
+            }
+        };
 
         await runtime.RunCoordinator.StopAsync(parentSessionId);
 
         Assert.Empty(runtime.PermissionService.ListPendingRequests(childSession.SessionId));
+        Assert.Contains(1, observedPendingCounts);
+        Assert.Equal(0, observedPendingCounts[^1]);
         Assert.Equal(
             AgentRunStatus.Stopped,
             runtime.SessionService.GetLatestCheckpoint(childSession.SessionId)!.Status
@@ -4289,6 +4374,80 @@ public sealed class AgentRunCoordinatorTests
         Assert.Equal(AgentRunStatus.Completed, completedCheckpoint.Status);
         Assert.Equal(2, provider.Requests.Count);
         Assert.Equal(0, toolSource.ExecutionCount);
+    }
+
+    [Fact]
+    public async Task DenyPendingPermission_PublishesCompletionBeforeToolResult()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")));
+        var sessionId = await runtime.CreateSessionAsync("approval_tool");
+        var run = runtime.Store.ReserveRun(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Use the approval tool.");
+        var lease = new AgentDurableRunLease(run);
+        Assert.NotNull(runtime.SessionService.TryTransitionRun(
+            lease,
+            AgentRunStatus.Running,
+            "Running."));
+        var streamingTurn = runtime.SessionService.AppendTextTurn(
+            lease,
+            AgentMessageRole.Assistant,
+            "partial preamble");
+        var request = new AgentPendingPermissionRequestRecord(
+            Guid.NewGuid().ToString("N"),
+            sessionId,
+            run.Key.RunId,
+            run.Key.RunRevision,
+            runtime.CurrentProfileId,
+            Guid.NewGuid(),
+            "Use the approval tool.",
+            "call-1",
+            "approval_action",
+            "approval_boundary",
+            "Approve tool use.",
+            "approval_tool",
+            "{}",
+            null,
+            null,
+            runtime.CurrentWorkspaceId,
+            null,
+            null,
+            null,
+            true,
+            DateTimeOffset.UtcNow,
+            ExecutionFingerprint: new string('a', 64));
+        Assert.NotNull(runtime.PermissionService.SavePendingRequestAndSuspendRun(request, lease));
+        var mutations = new List<AgentTurnMutation>();
+        runtime.SessionService.TurnMutated += mutation =>
+        {
+            mutations.Add(mutation);
+            if (mutation.Kind == AgentTurnMutationKind.Complete)
+            {
+                runtime.SessionService.AppendTextTurn(
+                    sessionId,
+                    AgentMessageRole.User,
+                    "reentrant message");
+            }
+        };
+
+        var checkpoint = await runtime.RunCoordinator.DenyPendingPermissionAsync(
+            sessionId,
+            request.RequestId);
+
+        Assert.Equal(AgentRunStatus.Stopped, checkpoint?.Status);
+        Assert.Equal(
+            [
+                AgentTurnMutationKind.Complete,
+                AgentTurnMutationKind.Add,
+                AgentTurnMutationKind.Add,
+            ],
+            mutations.Select(mutation => mutation.Kind));
+        Assert.Equal(streamingTurn.TurnId, mutations[0].TurnId);
+        Assert.False(Assert.IsType<AgentTurnRecord>(runtime.Store.GetTurn(streamingTurn.TurnId)).IsStreaming);
+        Assert.Equal(AgentTurnKind.ToolResult, mutations[1].Turn?.Kind);
+        Assert.Equal(AgentTurnKind.Message, mutations[2].Turn?.Kind);
     }
 
     [Fact]
@@ -8063,6 +8222,32 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task AgentChatViewModel_SendMessage_PreservesMarkdownWhitespaceExactly()
+    {
+        const string toolId = "fetch_page";
+        const string markdown = "    indented code\n\n## Heading\n\n- item\n";
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId));
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator);
+        await viewModel.InitializeAsync();
+        viewModel.SelectedSession = viewModel.Sessions.Single(session => session.SessionId == sessionId);
+        viewModel.DraftMessage = markdown;
+
+        await viewModel.SendMessageCommand.ExecuteAsync(null);
+
+        var userTurn = runtime.SessionService.ListTurns(sessionId)
+            .Single(turn => turn.Role == AgentMessageRole.User);
+        Assert.Equal(markdown, Assert.Single(userTurn.Items).TextContent);
+    }
+
+    [Fact]
     public async Task AgentChatViewModel_LoadsRecentTranscriptWindowAndOlderRowsOnDemand()
     {
         const string toolId = "fetch_page";
@@ -8515,6 +8700,40 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task AgentChatViewModel_AcceptedSendRequestsTailFollowBeforeProjectingResponse()
+    {
+        const string toolId = "fetch_page";
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("followed response")),
+            new TestTool(toolId));
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        runtime.SessionService.AppendTextTurn(sessionId, AgentMessageRole.User, "initial message");
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator);
+        await viewModel.InitializeAsync();
+        Assert.True(viewModel.DetachTranscriptFromLatest());
+        var requestedSessionIds = new List<Guid>();
+        viewModel.TranscriptTailFollowRequested += requestedSessionIds.Add;
+        viewModel.DraftMessage = "new message";
+
+        await viewModel.SendMessageCommand.ExecuteAsync(null);
+
+        Assert.Equal([sessionId], requestedSessionIds);
+        Assert.True(viewModel.IsTranscriptFollowingLatest);
+        Assert.False(viewModel.HasNewerTranscriptRows);
+        Assert.Contains(
+            viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>(),
+            row => row.Content == "new message");
+        Assert.Contains(
+            viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>(),
+            row => row.Content == "followed response");
+    }
+
+    [Fact]
     public async Task AgentChatViewModel_JumpToLatestReloadsDetachedTranscriptAndResumesLiveRows()
     {
         const string toolId = "fetch_page";
@@ -8613,7 +8832,7 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public void AgentTextTranscriptRowViewModel_ReplacesMarkdownBuilder_ForNonPrefixUpdate()
+    public void AgentTextTranscriptRowViewModel_PreservesMarkdownBuilder_ForNonPrefixUpdate()
     {
         var now = DateTimeOffset.UtcNow;
         var turn = new AgentTurnRecord(
@@ -8646,7 +8865,8 @@ public sealed class AgentRunCoordinatorTests
 
         row.UpdateContent("replacement");
 
-        Assert.NotSame(markdownBuilder, row.MarkdownBuilder);
+        Assert.Same(markdownBuilder, row.MarkdownBuilder);
+        Assert.Equal("replacement", row.MarkdownBuilder.ToString());
         Assert.Equal("replacement", row.Content);
     }
 

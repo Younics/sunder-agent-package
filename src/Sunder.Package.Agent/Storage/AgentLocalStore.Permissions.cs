@@ -535,7 +535,7 @@ public sealed partial class AgentLocalStore
         return command.ExecuteNonQuery() == 1;
     }
 
-    internal AgentRunCheckpointRecord? FinalizeClaimedPermissionRequest(
+    internal AgentCheckpointPersistenceResult? FinalizeClaimedPermissionRequest(
         AgentPendingPermissionRequestRecord request,
         AgentPendingPermissionStatus status,
         AgentRunStatus runStatus,
@@ -554,13 +554,14 @@ public sealed partial class AgentLocalStore
         using var transaction = connection.BeginTransaction(deferred: false);
         var now = DateTimeOffset.UtcNow;
 
-        if (!TryFinalizePermissionRun(
+        var completedStreamingTurns = TryFinalizePermissionRun(
                 connection,
                 transaction,
                 request,
                 runStatus,
                 summary,
-                now))
+                now);
+        if (completedStreamingTurns is null)
         {
             transaction.Rollback();
             return null;
@@ -605,7 +606,7 @@ public sealed partial class AgentLocalStore
         InsertCheckpoint(connection, transaction, checkpoint);
         TouchSessionForCheckpoint(connection, transaction, checkpoint);
         transaction.Commit();
-        return checkpoint;
+        return new AgentCheckpointPersistenceResult(checkpoint, completedStreamingTurns);
     }
 
     internal AgentPendingPermissionDecisionResult TryDenyPendingPermissionRequest(
@@ -644,14 +645,16 @@ public sealed partial class AgentLocalStore
             && !string.IsNullOrWhiteSpace(existing.ContinuationToken))
         {
             var now = DateTimeOffset.UtcNow;
-            var checkpoint = status == AgentPendingPermissionStatus.Denied
-                && TryFinalizePermissionRun(
+            var completedStreamingTurns = status == AgentPendingPermissionStatus.Denied
+                ? TryFinalizePermissionRun(
                     connection,
                     transaction,
                     existing,
                     AgentRunStatus.Stopped,
                     summary,
                     now)
+                : null;
+            var checkpoint = completedStreamingTurns is not null
                     ? new AgentRunCheckpointRecord(
                         Guid.NewGuid(),
                         sessionId,
@@ -683,6 +686,31 @@ public sealed partial class AgentLocalStore
                 command.Parameters.AddWithValue("$continuationToken", existing.ContinuationToken);
                 if (command.ExecuteNonQuery() == 1)
                 {
+                    var toolResultTurn = CreateToolResultTurn(
+                        Guid.NewGuid(),
+                        sessionId,
+                        existing.CallId,
+                        existing.ToolId ?? string.Empty,
+                        existing.ArgumentsJson,
+                        $"Permission denied: tool '{existing.ToolId}' was not executed.",
+                        summary,
+                        structuredPayloadJson: null,
+                        sourcesJson: null,
+                        wasTruncated: false,
+                        isError: true,
+                        errorCode: "permission-denied",
+                        backendId: null,
+                        presentationPayloadJson: null,
+                        now,
+                        now);
+                    InsertTurn(
+                        connection,
+                        transaction,
+                        toolResultTurn,
+                        runKey: new AgentDurableRunKey(
+                            existing.RunId,
+                            existing.SessionId,
+                            existing.RunRevision));
                     InsertCheckpoint(connection, transaction, checkpoint);
                     TouchSessionForCheckpoint(connection, transaction, checkpoint);
                     transaction.Commit();
@@ -694,7 +722,10 @@ public sealed partial class AgentLocalStore
                             DecidedAtUtc = now,
                             DecisionSummary = summary,
                         },
-                        checkpoint);
+                        new AgentCheckpointPersistenceResult(
+                            checkpoint,
+                            completedStreamingTurns!),
+                        toolResultTurn);
                 }
             }
         }

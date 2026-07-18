@@ -34,7 +34,7 @@ internal sealed class AgentRuntimeChangeHub :
         profiles.SelectableCapabilitiesChanged += OnCatalogChanged;
         workspaces.WorkspacesChanged += OnWorkspacesChanged;
         sessions.SessionChanged += OnSessionChanged;
-        sessions.TurnChanged += OnTurnChanged;
+        sessions.TurnMutated += OnTurnMutated;
         sessions.TranscriptReset += OnTranscriptReset;
         sessions.RunActivityChanged += OnRunActivityChanged;
     }
@@ -49,12 +49,14 @@ internal sealed class AgentRuntimeChangeHub :
         AgentChangeSubscription request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var subscriber = new Subscriber(Channel.CreateBounded<AgentRuntimeChange>(new BoundedChannelOptions(SubscriberCapacity)
-        {
-            SingleReader = true,
-            SingleWriter = false,
-            FullMode = BoundedChannelFullMode.Wait,
-        }));
+        var subscriber = new Subscriber(
+            Channel.CreateBounded<AgentRuntimeChange>(new BoundedChannelOptions(SubscriberCapacity)
+            {
+                SingleReader = true,
+                SingleWriter = false,
+                FullMode = BoundedChannelFullMode.Wait,
+            }),
+            request.SupportsTurnMutations);
         AgentRuntimeChange[] replay;
         AgentRuntimeChange? reset = null;
         long subscribedRevision;
@@ -85,7 +87,7 @@ internal sealed class AgentRuntimeChangeHub :
             {
                 foreach (var change in replay)
                 {
-                    yield return change;
+                    yield return ProjectForSubscriber(change, subscriber.SupportsTurnMutations);
                 }
                 yield return new AgentRuntimeChange(subscribedRevision, AgentRuntimeChangeKind.Connected);
             }
@@ -134,6 +136,14 @@ internal sealed class AgentRuntimeChangeHub :
         => Publish(new AgentRuntimeChange(
             0, AgentRuntimeChangeKind.Turn, SessionId: sessionId, Turn: turn));
 
+    private void OnTurnMutated(AgentTurnMutation mutation)
+        => Publish(new AgentRuntimeChange(
+            0,
+            AgentRuntimeChangeKind.TurnMutation,
+            SessionId: mutation.SessionId,
+            Turn: _sessions.GetTurn(mutation.TurnId) ?? mutation.Turn,
+            TurnMutation: mutation));
+
     private void OnTranscriptReset(Guid sessionId)
         => Publish(new AgentRuntimeChange(
             0, AgentRuntimeChangeKind.TranscriptReset, SessionId: sessionId));
@@ -154,7 +164,8 @@ internal sealed class AgentRuntimeChangeHub :
             }
             foreach (var subscriber in _subscribers.Values)
             {
-                if (!subscriber.Channel.Writer.TryWrite(change))
+                var projected = ProjectForSubscriber(change, subscriber.SupportsTurnMutations);
+                if (!subscriber.Channel.Writer.TryWrite(projected))
                 {
                     subscriber.Overflowed = true;
                     subscriber.Channel.Writer.TryComplete();
@@ -163,13 +174,31 @@ internal sealed class AgentRuntimeChangeHub :
         }
     }
 
+    private static AgentRuntimeChange ProjectForSubscriber(
+        AgentRuntimeChange change,
+        bool supportsTurnMutations)
+    {
+        if (change.Kind != AgentRuntimeChangeKind.TurnMutation)
+        {
+            return change;
+        }
+
+        return supportsTurnMutations
+            ? change with { Turn = null }
+            : change with
+            {
+                Kind = AgentRuntimeChangeKind.Turn,
+                TurnMutation = null,
+            };
+    }
+
     public void Dispose()
     {
         _profiles.ProfileChanged -= OnProfileChanged;
         _profiles.SelectableCapabilitiesChanged -= OnCatalogChanged;
         _workspaces.WorkspacesChanged -= OnWorkspacesChanged;
         _sessions.SessionChanged -= OnSessionChanged;
-        _sessions.TurnChanged -= OnTurnChanged;
+        _sessions.TurnMutated -= OnTurnMutated;
         _sessions.TranscriptReset -= OnTranscriptReset;
         _sessions.RunActivityChanged -= OnRunActivityChanged;
         lock (_gate)
@@ -182,9 +211,12 @@ internal sealed class AgentRuntimeChangeHub :
         }
     }
 
-    private sealed class Subscriber(Channel<AgentRuntimeChange> channel)
+    private sealed class Subscriber(
+        Channel<AgentRuntimeChange> channel,
+        bool supportsTurnMutations)
     {
         public Channel<AgentRuntimeChange> Channel { get; } = channel;
+        public bool SupportsTurnMutations { get; } = supportsTurnMutations;
         public bool Overflowed { get; set; }
     }
 }

@@ -81,7 +81,8 @@ public sealed class SubsessionTextTranscriptRowViewModel : SubsessionTranscriptR
         }
         else
         {
-            MarkdownBuilder = new ObservableStringBuilder().Append(content);
+            MarkdownBuilder.Clear();
+            MarkdownBuilder.Append(content);
         }
 
         OnPropertyChanged(nameof(HasContent));

@@ -125,6 +125,111 @@ public sealed class AgentPermissionStoreTests
         }
     }
 
+    [Theory]
+    [InlineData("deny")]
+    [InlineData("claimed-finalize")]
+    [InlineData("expire")]
+    public void PermissionTerminalPaths_ReturnOrderedCompletedStreamingTurns(string terminalPath)
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var workspace = new AgentWorkspaceService(store).CreateWorkspace("Permission completion");
+        var session = store.CreateSession("Session", workspaceId: workspace.WorkspaceId);
+        var run = store.ReserveRun(session.SessionId, "profile", "message");
+        var running = Assert.IsType<AgentRunTransitionResult>(store.TryTransitionRun(
+            run.Key,
+            run.Epoch,
+            AgentRunStatus.Running,
+            "Running."));
+        var first = Assert.IsType<AgentTurnRecord>(store.TryAppendTextTurn(
+            run.Key,
+            running.Run.Epoch,
+            AgentMessageRole.Assistant,
+            "first partial"));
+        var second = Assert.IsType<AgentTurnRecord>(store.TryAppendTextTurn(
+            run.Key,
+            running.Run.Epoch,
+            AgentMessageRole.Assistant,
+            "second partial"));
+        using (var connection = OpenDatabase(store.DatabasePath))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE AgentTurns
+                SET CreatedAtUtc = CASE TurnId
+                    WHEN $firstTurnId THEN $firstCreatedAtUtc
+                    ELSE $secondCreatedAtUtc
+                END
+                WHERE TurnId IN ($firstTurnId, $secondTurnId);
+                """;
+            command.Parameters.AddWithValue("$firstTurnId", first.TurnId.ToString());
+            command.Parameters.AddWithValue("$secondTurnId", second.TurnId.ToString());
+            command.Parameters.AddWithValue("$firstCreatedAtUtc", "2026-01-01T00:00:00.0000000+00:00");
+            command.Parameters.AddWithValue("$secondCreatedAtUtc", "2026-01-01T00:00:01.0000000+00:00");
+            command.ExecuteNonQuery();
+        }
+        var request = Assert.IsType<AgentPendingPermissionRequestRecord>(
+            store.SavePendingPermissionRequestAndSuspendRun(
+                CreateRequest(session.SessionId, run.Key.RunId, run.Key.RunRevision),
+                running.Run.Epoch));
+
+        AgentCheckpointPersistenceResult finalization;
+        switch (terminalPath)
+        {
+            case "deny":
+                var decision = store.TryDenyPendingPermissionRequest(
+                    session.SessionId,
+                    request.RequestId,
+                    "Denied.");
+                finalization = Assert.IsType<AgentCheckpointPersistenceResult>(decision.Finalization);
+                var toolResultTurn = Assert.IsType<AgentTurnRecord>(decision.ToolResultTurn);
+                Assert.Equal(AgentTurnKind.ToolResult, toolResultTurn.Kind);
+                Assert.Equal("permission-denied", Assert.Single(toolResultTurn.Items).ErrorCode);
+                Assert.NotNull(store.GetTurn(toolResultTurn.TurnId));
+                var repeatedDecision = store.TryDenyPendingPermissionRequest(
+                    session.SessionId,
+                    request.RequestId,
+                    "Denied again.");
+                Assert.Equal(
+                    AgentPendingPermissionDecisionOutcome.AlreadyDecided,
+                    repeatedDecision.Outcome);
+                Assert.Null(repeatedDecision.ToolResultTurn);
+                Assert.Single(
+                    store.ListTurns(session.SessionId),
+                    turn => turn.Kind == AgentTurnKind.ToolResult);
+                break;
+            case "claimed-finalize":
+                var claim = store.TryClaimPendingPermissionRequest(
+                    session.SessionId,
+                    request.RequestId);
+                finalization = Assert.IsType<AgentCheckpointPersistenceResult>(
+                    store.FinalizeClaimedPermissionRequest(
+                        Assert.IsType<AgentPendingPermissionRequestRecord>(claim.Request),
+                        AgentPendingPermissionStatus.Failed,
+                        AgentRunStatus.Failed,
+                        "Failed."));
+                break;
+            case "expire":
+                var expiration = store.ExpireActivePermissionRequest(
+                    session.SessionId,
+                    request.RequestId,
+                    "Expired.");
+                Assert.True(expiration.Changed);
+                finalization = Assert.IsType<AgentCheckpointPersistenceResult>(expiration.Finalization);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(terminalPath));
+        }
+
+        Assert.Equal(
+            [first.TurnId, second.TurnId],
+            finalization.CompletedStreamingTurns.Select(item => item.Turn.TurnId));
+        Assert.Equal(
+            ["first partial".Length, "second partial".Length],
+            finalization.CompletedStreamingTurns.Select(item => item.ContentLength));
+        Assert.All(finalization.CompletedStreamingTurns, item => Assert.False(item.Turn.IsStreaming));
+    }
+
     [Fact]
     public void StartupRecovery_PreservesUnexpiredUnconsumedClaim()
     {

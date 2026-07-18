@@ -12,7 +12,8 @@ public sealed partial class AgentLocalStore
         AgentTurnKind kind,
         string content,
         DateTimeOffset createdAtUtc,
-        DateTimeOffset updatedAtUtc)
+        DateTimeOffset updatedAtUtc,
+        bool isStreaming = false)
         => new(
             turnId,
             sessionId,
@@ -37,7 +38,10 @@ public sealed partial class AgentLocalStore
                     null)
             ],
             createdAtUtc,
-            updatedAtUtc);
+            updatedAtUtc)
+        {
+            IsStreaming = isStreaming,
+        };
 
     private static AgentTurnRecord CreateMessageTurn(
         Guid turnId,

@@ -21,11 +21,17 @@ internal sealed record AgentDurableRunRecord(
 
 internal sealed class AgentDurableRunLease(AgentDurableRunRecord run)
 {
+    private readonly Queue<Action> _notificationQueue = [];
+
     public AgentDurableRunKey Key { get; } = run.Key;
 
     public long Epoch { get; private set; } = run.Epoch;
 
     internal object SyncRoot { get; } = new();
+
+    internal bool IsDispatchingNotifications { get; set; }
+
+    internal Queue<Action> NotificationQueue => _notificationQueue;
 
     internal void AdvanceTo(long epoch)
     {
@@ -40,7 +46,22 @@ internal sealed class AgentDurableRunLease(AgentDurableRunRecord run)
 
 internal sealed record AgentRunTransitionResult(
     AgentDurableRunRecord Run,
-    AgentRunCheckpointRecord Checkpoint);
+    AgentRunCheckpointRecord Checkpoint)
+{
+    public IReadOnlyList<AgentCompletedStreamingTurn> CompletedStreamingTurns { get; init; } = [];
+}
+
+internal sealed record AgentRunStopPersistenceResult(
+    AgentRunTransitionResult Transition,
+    IReadOnlyList<AgentCompletedStreamingTurn> CompletedStreamingTurns);
+
+internal readonly record struct AgentCompletedStreamingTurn(
+    AgentTurnRecord Turn,
+    int ContentLength);
+
+internal sealed record AgentCheckpointPersistenceResult(
+    AgentRunCheckpointRecord Checkpoint,
+    IReadOnlyList<AgentCompletedStreamingTurn> CompletedStreamingTurns);
 
 internal sealed record AgentRunStartPersistenceResult(
     AgentRunTransitionResult Transition,

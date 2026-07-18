@@ -136,10 +136,18 @@ public sealed class AgentRunStopCoordinator(
             summary);
         foreach (var request in _permissionService.ListPendingRequests(session.SessionId))
         {
-            _permissionService.ExpireActiveRequest(
+            var expiration = _permissionService.ExpireActiveRequest(
                 session.SessionId,
                 request.RequestId,
                 "Permission request expired because the run was stopped.");
+            if (expiration.Finalization is not null)
+            {
+                _sessionService.PublishCommittedCheckpoint(expiration.Finalization);
+            }
+            else if (expiration.Changed)
+            {
+                _sessionService.PublishCommittedSessionChanged(session.SessionId);
+            }
         }
 
         return checkpoint;

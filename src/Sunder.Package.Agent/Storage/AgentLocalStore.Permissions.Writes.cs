@@ -40,7 +40,7 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$executionSnapshotJson", record.ExecutionSnapshotJson);
     }
 
-    private static bool TryFinalizePermissionRun(
+    private static IReadOnlyList<AgentCompletedStreamingTurn>? TryFinalizePermissionRun(
         SqliteConnection connection,
         SqliteTransaction transaction,
         AgentPendingPermissionRequestRecord request,
@@ -52,7 +52,7 @@ public sealed partial class AgentLocalStore
         var run = GetRun(connection, transaction, request.RunId);
         if (run?.Key != new AgentDurableRunKey(request.RunId, request.SessionId, request.RunRevision))
         {
-            return false;
+            return null;
         }
 
         using var command = connection.CreateCommand();
@@ -83,6 +83,17 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$runRevision", request.RunRevision);
         command.Parameters.AddWithValue("$expectedEpoch", run.Epoch);
         command.Parameters.AddWithValue("$continuationToken", request.ContinuationToken!);
-        return command.ExecuteNonQuery() == 1;
+        if (command.ExecuteNonQuery() != 1)
+        {
+            return null;
+        }
+
+        return IsFinishedRunStatus(runStatus)
+            ? CompleteStreamingTextTurns(
+                connection,
+                transaction,
+                run.Key,
+                now)
+            : [];
     }
 }

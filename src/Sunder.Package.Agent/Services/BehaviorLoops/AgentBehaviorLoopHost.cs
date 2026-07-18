@@ -51,6 +51,7 @@ internal sealed partial class AgentBehaviorLoopHost(
     private IReadOnlyDictionary<string, AgentToolDescriptor>? _availableToolsById;
     private readonly Dictionary<string, AgentToolResult> _readOnlyToolResultCache = new(StringComparer.Ordinal);
     private readonly object _readOnlyToolResultCacheSync = new();
+    private readonly Dictionary<Guid, AgentTurnRecord> _openAssistantTurns = [];
 
     public bool IsCurrentRun() => _isCurrentRun();
 
@@ -186,6 +187,11 @@ internal sealed partial class AgentBehaviorLoopHost(
 
     public AgentRunCheckpointRecord SaveCheckpoint(AgentRunStatus status, string? summary)
     {
+        if (status is AgentRunStatus.Completed or AgentRunStatus.Failed or AgentRunStatus.Interrupted or AgentRunStatus.Stopped)
+        {
+            CompleteOpenAssistantTurn();
+        }
+
         var transition = _sessionService.TryTransitionRun(_runLease, status, summary);
         if (transition is not null)
         {
@@ -269,26 +275,6 @@ internal sealed partial class AgentBehaviorLoopHost(
             // Logging must never interrupt agent execution.
         }
     }
-
-    public AgentTurnRecord UpsertAssistantTurn(AgentTurnRecord? assistantTurn, string content)
-    {
-        if (assistantTurn is null)
-        {
-            return _sessionService.AppendTextTurn(
-                _runLease,
-                AgentMessageRole.Assistant,
-                content);
-        }
-
-        return string.Equals(RenderTextContent(assistantTurn), content, StringComparison.Ordinal)
-            ? assistantTurn
-            : _sessionService.UpdateTextTurn(_runLease, assistantTurn.TurnId, content);
-    }
-
-    private static string RenderTextContent(AgentTurnRecord turn)
-        => string.Join("\n\n", turn.Items
-            .Where(item => item.Kind == AgentTurnItemKind.Text && !string.IsNullOrWhiteSpace(item.TextContent))
-            .Select(item => item.TextContent!.Trim()));
 
     public ValueTask PublishLifecycleEventAsync(
         AgentLifecycleEventKind kind,
@@ -391,6 +377,7 @@ internal sealed partial class AgentBehaviorLoopHost(
             if (permissionEvaluation.Decision == AgentPermissionDecision.Deny)
             {
                 var deniedTurn = UpsertAssistantTurn(assistantTurn, $"### Permission denied\n\n{permissionRequest.Summary}");
+                deniedTurn = CompleteAssistantTurn(deniedTurn);
                 var deniedCheckpoint = SaveCheckpoint(AgentRunStatus.Failed, permissionEvaluation.Reason);
                 await PublishLifecycleEventAsync(
                     AgentLifecycleEventKind.RunFailed,

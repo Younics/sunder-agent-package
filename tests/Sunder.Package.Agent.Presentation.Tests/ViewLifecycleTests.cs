@@ -841,6 +841,9 @@ public sealed class ViewLifecycleTests
         await Task.Delay(50);
 
         Assert.Equal(updatesAfterCancellation, layoutUpdates);
+        Assert.Equal(1d, transcript.Opacity);
+        await Task.Run(async () => await view.OnNavigatedToAsync(context));
+        Assert.Equal(1d, transcript.Opacity);
         window.Close();
     }
 

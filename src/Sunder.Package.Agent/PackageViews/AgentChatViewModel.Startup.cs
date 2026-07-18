@@ -367,7 +367,9 @@ public sealed partial class AgentChatViewModel
         var replacedTranscript = forceReplacement || _timeline.SessionId != DisplayedSession.SessionId;
         if (replacedTranscript)
         {
-            var ticket = _timeline.BeginInitialLoad(DisplayedSession.SessionId);
+            var ticket = _timeline.BeginInitialLoad(
+                DisplayedSession.SessionId,
+                forceReplacement);
             _timeline.TryCompleteInitialLoad(
                 ticket,
                 snapshot.InitialTranscript.Turns,
@@ -380,6 +382,7 @@ public sealed partial class AgentChatViewModel
             foreach (var turn in snapshot.InitialTranscript.Turns)
             {
                 if (!currentTurns.TryGetValue(turn.TurnId, out var current)
+                    || current.ContentRevision != turn.ContentRevision
                     || current.UpdatedAtUtc != turn.UpdatedAtUtc)
                 {
                     _timeline.ApplyLiveTurn(turn);
