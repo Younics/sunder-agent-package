@@ -23,6 +23,7 @@ internal sealed partial class AgentAppRuntimeGateway
                 cancellationToken).ConfigureAwait(false);
             lock (_observationLock)
             {
+                _runtimeInstanceId = snapshot.RuntimeInstanceId;
                 if (generation == _chatSnapshotLoadGeneration)
                 {
                     _pendingChatSnapshotRequest = request;

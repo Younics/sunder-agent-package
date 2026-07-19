@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using LiveMarkdown.Avalonia;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
@@ -17,10 +18,13 @@ internal sealed partial class TranscriptScrollCoordinator
     private Point? _touchScrollStart;
     private ScrollViewer? _touchNestedScrollViewer;
     private bool _touchScrollRecognized;
+    private bool _scrollGestureActive;
     private bool _userScrollPending;
+    private bool _captureViewportAnchorOnScrollChanged;
     private bool _pendingUserScrollCanResumeFollowing;
     private bool _scrollBarInteractionActive;
     private double _lastObservedOffsetY;
+    private long _viewportAnchorCaptureInteractionRevision;
     private UserScrollDirection _pendingUserScrollDirection;
     private UserScrollDirection _lastUserScrollDirection;
     private Task _focusBringIntoViewOperation = Task.CompletedTask;
@@ -34,6 +38,7 @@ internal sealed partial class TranscriptScrollCoordinator
         _interactionRevision++;
         _loadNewerResumeInteractionRevision = -1;
         _pendingAnchor = null;
+        _captureViewportAnchorOnScrollChanged = false;
         _userScrollPending = true;
         _pendingUserScrollCanResumeFollowing = canResumeFollowing;
         _pendingUserScrollDirection = direction;
@@ -65,6 +70,29 @@ internal sealed partial class TranscriptScrollCoordinator
         OnUserScrollInput(eventArgs.Delta.Y > 0
             ? UserScrollDirection.TowardHistory
             : UserScrollDirection.TowardTail);
+    }
+
+    private void OnUserScrollGesture(object? sender, ScrollGestureEventArgs eventArgs)
+    {
+        if (Math.Abs(eventArgs.Delta.Y) <= 0.001
+            || CanNestedScrollViewerConsume(eventArgs, -eventArgs.Delta.Y))
+        {
+            return;
+        }
+
+        _scrollGestureActive = true;
+        OnUserScrollInput(UserScrollDirection.None);
+    }
+
+    private void OnUserScrollGestureEnded(object? sender, ScrollGestureEndedEventArgs eventArgs)
+    {
+        if (!_scrollGestureActive)
+        {
+            return;
+        }
+
+        _scrollGestureActive = false;
+        RequestViewportAnchorCapture();
     }
 
     private void OnUserPointerPressed(object? sender, PointerPressedEventArgs eventArgs)
@@ -192,6 +220,7 @@ internal sealed partial class TranscriptScrollCoordinator
                                 ? UserScrollDirection.TowardHistory
                                 : UserScrollDirection.TowardTail,
                             canResumeFollowing: false);
+                        RequestViewportAnchorCapture();
                     }
                 }
             },
@@ -229,6 +258,14 @@ internal sealed partial class TranscriptScrollCoordinator
                && sourceAndAncestors.Any(control => control is Button or ToggleButton);
     }
 
+    private bool HasActiveTextSelection()
+        => _scrollViewer.GetVisualDescendants()
+               .OfType<MarkdownRenderer>()
+               .Any(renderer => renderer.CanCopy)
+           || _scrollViewer.GetVisualDescendants()
+               .OfType<SelectableTextBlock>()
+               .Any(block => !string.IsNullOrEmpty(block.SelectedText));
+
     private bool CanNestedScrollViewerConsume(RoutedEventArgs eventArgs, double scrollDeltaY)
         => FindNestedScrollViewer(eventArgs) is { } nestedViewer
            && CanScrollViewerConsume(nestedViewer, scrollDeltaY);
@@ -256,11 +293,15 @@ internal sealed partial class TranscriptScrollCoordinator
 
     private UserScrollResolution ResolveUserScrollDirection(double offsetDelta)
     {
-        var isUserScroll = _userScrollPending || _scrollBarInteractionActive || _touchScrollRecognized;
+        var isUserScroll = _userScrollPending
+                           || _scrollBarInteractionActive
+                           || _touchScrollRecognized
+                           || _scrollGestureActive;
         var hintedDirection = _pendingUserScrollDirection;
         var canResumeFollowing = _pendingUserScrollCanResumeFollowing
-                                 || _scrollBarInteractionActive
-                                 || _touchScrollRecognized;
+                                  || _scrollBarInteractionActive
+                                  || _touchScrollRecognized
+                                  || _scrollGestureActive;
         _userScrollPending = false;
         _pendingUserScrollCanResumeFollowing = false;
         _pendingUserScrollDirection = UserScrollDirection.None;
@@ -341,6 +382,7 @@ internal sealed partial class TranscriptScrollCoordinator
 
         var wasFollowingTail = IsFollowingTail;
         _userDetached = true;
+        _anchorHost?.SetFollowingTail(false);
         if (wasFollowingTail
             && _onDetachedFromLatest is not null
             && !_onDetachedFromLatest())
@@ -355,6 +397,11 @@ internal sealed partial class TranscriptScrollCoordinator
     {
         _userDetached = false;
         _tailFollowInteractionRevision = _interactionRevision;
+        if (_anchorHost is not null)
+        {
+            _pendingAnchor = null;
+        }
+        _anchorHost?.SetFollowingTail(true);
     }
 
     private bool ResumeFollowingLatest()
@@ -370,7 +417,14 @@ internal sealed partial class TranscriptScrollCoordinator
         }
 
         _tailFollowInteractionRevision = _interactionRevision;
+        _anchorHost?.SetFollowingTail(true);
         return true;
+    }
+
+    private void RequestViewportAnchorCapture()
+    {
+        _captureViewportAnchorOnScrollChanged = true;
+        _viewportAnchorCaptureInteractionRevision = _interactionRevision;
     }
 
     private void InvalidatePendingScrollOperations()
@@ -380,6 +434,7 @@ internal sealed partial class TranscriptScrollCoordinator
         _loadNewerResumeInteractionRevision = -1;
         _pendingAnchor = null;
         _pendingScrollToBottomRequest = null;
+        _captureViewportAnchorOnScrollChanged = false;
         CancelBottomPlacementLockForUserInteraction();
     }
 

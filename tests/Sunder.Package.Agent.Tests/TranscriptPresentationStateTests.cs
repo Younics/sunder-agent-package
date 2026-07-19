@@ -72,6 +72,151 @@ public sealed class TranscriptPresentationStateTests
     }
 
     [Fact]
+    public void Timeline_StreamingAppendAndCompletionDoNotPublishStructuralRowChanges()
+    {
+        using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
+        var sessionId = Guid.NewGuid();
+        var turnId = Guid.NewGuid();
+        var initialTurn = CreateMessageTurn(
+            sessionId,
+            turnId,
+            "start",
+            DateTimeOffset.UnixEpoch,
+            DateTimeOffset.UnixEpoch) with
+        {
+            ContentRevision = 1,
+            IsStreaming = true,
+        };
+        var load = timeline.BeginInitialLoad(sessionId);
+        Assert.True(timeline.TryCompleteInitialLoad(load, [initialTurn]));
+        var row = Assert.Single(timeline.Projector.Rows);
+        var changingCount = 0;
+        var changedCount = 0;
+        timeline.RowsChanging += _ => changingCount++;
+        timeline.RowsChanged += () => changedCount++;
+
+        Assert.Equal(CorePresentation.TranscriptLiveTurnResult.Applied, timeline.ApplyLiveMutation(
+            new AgentTurnMutation(
+                sessionId,
+                turnId,
+                ContentRevision: 2,
+                AgentTurnMutationKind.Append,
+                BaseContentLength: 5,
+                Text: " appended",
+                DateTimeOffset.UnixEpoch.AddSeconds(1))));
+        Assert.Equal(CorePresentation.TranscriptLiveTurnResult.Applied, timeline.ApplyLiveMutation(
+            new AgentTurnMutation(
+                sessionId,
+                turnId,
+                ContentRevision: 3,
+                AgentTurnMutationKind.Complete,
+                BaseContentLength: "start appended".Length,
+                Text: null,
+                DateTimeOffset.UnixEpoch.AddSeconds(2))));
+
+        Assert.Same(row, Assert.Single(timeline.Projector.Rows));
+        Assert.Equal("start appended", row.Content);
+        Assert.Equal(0, changingCount);
+        Assert.Equal(0, changedCount);
+    }
+
+    [Fact]
+    public void Timeline_FirstStreamingAppendPublishesPairedStructuralRowChange()
+    {
+        using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
+        var sessionId = Guid.NewGuid();
+        var turnId = Guid.NewGuid();
+        var initialTurn = CreateMessageTurn(
+            sessionId,
+            turnId,
+            string.Empty,
+            DateTimeOffset.UnixEpoch,
+            DateTimeOffset.UnixEpoch) with
+        {
+            ContentRevision = 1,
+            IsStreaming = true,
+        };
+        var load = timeline.BeginInitialLoad(sessionId);
+        Assert.True(timeline.TryCompleteInitialLoad(load, [initialTurn]));
+        Assert.Empty(timeline.Projector.Rows);
+        var changingCount = 0;
+        var changedCount = 0;
+        timeline.RowsChanging += _ => changingCount++;
+        timeline.RowsChanged += () => changedCount++;
+
+        var result = timeline.ApplyLiveMutation(new AgentTurnMutation(
+            sessionId,
+            turnId,
+            ContentRevision: 2,
+            AgentTurnMutationKind.Append,
+            BaseContentLength: 0,
+            Text: "first token",
+            DateTimeOffset.UnixEpoch.AddSeconds(1)));
+
+        Assert.Equal(CorePresentation.TranscriptLiveTurnResult.Applied, result);
+        Assert.Equal("first token", Assert.Single(timeline.Projector.Rows).Content);
+        Assert.Equal(1, changingCount);
+        Assert.Equal(1, changedCount);
+    }
+
+    [Fact]
+    public void Timeline_ProjectionCallbackStartsIndependentReplacementLoad()
+    {
+        using var timeline = CreateTimeline(initialLimit: 10, pageSize: 5, visibleLimit: 10);
+        var sessionId = Guid.NewGuid();
+        var turn = CreateTurns(sessionId, 0, 1)[0];
+        CorePresentation.TranscriptLoadTicket? replacementTicket = null;
+        timeline.TurnProjected += (_, _, _) =>
+        {
+            replacementTicket ??= timeline.BeginInitialLoad(sessionId, forceReplacement: true);
+        };
+        var initialTicket = timeline.BeginInitialLoad(sessionId);
+
+        Assert.True(timeline.TryCompleteInitialLoad(initialTicket, [turn]));
+
+        Assert.NotNull(replacementTicket);
+        Assert.True(timeline.IsInitialLoading);
+        Assert.True(timeline.TryCompleteInitialLoad(replacementTicket.Value, [turn]));
+    }
+
+    [Fact]
+    public void Timeline_ReapplyingIdenticalActivityDoesNotPublishRowChanges()
+    {
+        using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
+        var sessionId = Guid.NewGuid();
+        var load = timeline.BeginInitialLoad(sessionId);
+        Assert.True(timeline.TryCompleteInitialLoad(load, []));
+        timeline.ApplyActivity("Thinking", isReasoning: false, isVisible: true);
+        var activityRow = Assert.Single(timeline.Projector.Rows);
+        var changingCount = 0;
+        var changedCount = 0;
+        timeline.RowsChanging += _ => changingCount++;
+        timeline.RowsChanged += () => changedCount++;
+
+        timeline.ApplyActivity("Thinking", isReasoning: false, isVisible: true);
+
+        Assert.Same(activityRow, Assert.Single(timeline.Projector.Rows));
+        Assert.Equal(0, changingCount);
+        Assert.Equal(0, changedCount);
+    }
+
+    [Fact]
+    public void Timeline_DetachingRemovesTransientActivityRow()
+    {
+        using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
+        var sessionId = Guid.NewGuid();
+        var load = timeline.BeginInitialLoad(sessionId);
+        Assert.True(timeline.TryCompleteInitialLoad(load, []));
+        timeline.ApplyActivity("Thinking", isReasoning: false, isVisible: true);
+        Assert.Single(timeline.Projector.Rows);
+
+        Assert.True(timeline.DetachFromLatest());
+        timeline.ApplyActivity("Thinking", isReasoning: false, isVisible: false);
+
+        Assert.Empty(timeline.Projector.Rows);
+    }
+
+    [Fact]
     public void Timeline_RequiresReloadWhenMutationRevisionHasGap()
     {
         using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
@@ -243,6 +388,65 @@ public sealed class TranscriptPresentationStateTests
         Assert.True(timeline.TryCompleteInitialLoad(load, [toolTurn]));
 
         Assert.Equal(4, timeline.Projector.Rows.Count);
+    }
+
+    [Fact]
+    public void Timeline_FollowingLatestUsesBoundedOverflowBeforeTrimmingLiveRows()
+    {
+        using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
+        var sessionId = Guid.NewGuid();
+        var load = timeline.BeginInitialLoad(sessionId);
+        Assert.True(timeline.TryCompleteInitialLoad(load, CreateTurns(sessionId, 0, 4)));
+        var removalCount = 0;
+        timeline.Projector.Rows.CollectionChanged += (_, eventArgs) =>
+        {
+            if (eventArgs.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Remove)
+            {
+                removalCount++;
+            }
+        };
+
+        foreach (var turn in CreateTurns(sessionId, 4, 2))
+        {
+            Assert.Equal(CorePresentation.TranscriptLiveTurnResult.Applied, timeline.ApplyLiveTurn(turn));
+        }
+
+        Assert.Equal(6, timeline.Projector.Rows.Count);
+        Assert.Equal(0, removalCount);
+
+        Assert.Equal(
+            CorePresentation.TranscriptLiveTurnResult.Applied,
+            timeline.ApplyLiveTurn(CreateTurns(sessionId, 6, 1).Single()));
+
+        Assert.Equal(4, timeline.Projector.Rows.Count);
+        Assert.True(removalCount > 0);
+        Assert.Equal(
+            ["message-3", "message-4", "message-5", "message-6"],
+            timeline.Projector.Rows.Select(row => row.Content));
+    }
+
+    [Fact]
+    public void Timeline_DetachingNormalizesBoundedLiveOverflow()
+    {
+        using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
+        var sessionId = Guid.NewGuid();
+        var load = timeline.BeginInitialLoad(sessionId);
+        Assert.True(timeline.TryCompleteInitialLoad(load, CreateTurns(sessionId, 0, 4)));
+        foreach (var turn in CreateTurns(sessionId, 4, 2))
+        {
+            Assert.Equal(CorePresentation.TranscriptLiveTurnResult.Applied, timeline.ApplyLiveTurn(turn));
+        }
+        var rowsChanged = 0;
+        timeline.RowsChanged += () => rowsChanged++;
+
+        Assert.True(timeline.DetachFromLatest());
+
+        Assert.Equal(4, timeline.Projector.Rows.Count);
+        Assert.Equal(1, rowsChanged);
+        Assert.True(timeline.HasOlderRows);
+        Assert.Equal(
+            ["message-2", "message-3", "message-4", "message-5"],
+            timeline.Projector.Rows.Select(row => row.Content));
     }
 
     [Theory]
@@ -417,6 +621,81 @@ public sealed class TranscriptPresentationStateTests
             createdAt.AddSeconds(2))]));
 
         Assert.Equal("fresh", Assert.Single(timeline.Projector.Rows).Content);
+    }
+
+    [Fact]
+    public void Timeline_AuthoritativeTurnInsertsChronologicallyAndIgnoresMatchingLateAdd()
+    {
+        using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 6);
+        var sessionId = Guid.NewGuid();
+        var first = CreateMessageTurn(
+            sessionId,
+            Guid.NewGuid(),
+            "first",
+            DateTimeOffset.UnixEpoch,
+            DateTimeOffset.UnixEpoch);
+        var third = CreateMessageTurn(
+            sessionId,
+            Guid.NewGuid(),
+            "third",
+            DateTimeOffset.UnixEpoch.AddSeconds(2),
+            DateTimeOffset.UnixEpoch.AddSeconds(2));
+        var load = timeline.BeginInitialLoad(sessionId);
+        Assert.True(timeline.TryCompleteInitialLoad(load, [first, third]));
+        var middle = CreateMessageTurn(
+            sessionId,
+            Guid.NewGuid(),
+            "middle",
+            DateTimeOffset.UnixEpoch.AddSeconds(1),
+            DateTimeOffset.UnixEpoch.AddSeconds(1));
+
+        Assert.Equal(
+            CorePresentation.TranscriptLiveTurnResult.Applied,
+            timeline.ApplyAuthoritativeTurn(middle));
+        Assert.Equal(
+            ["first", "middle", "third"],
+            timeline.Projector.Rows.Select(row => row.Content).ToArray());
+        var retainedRows = timeline.Projector.Rows.ToArray();
+        var changingCount = 0;
+        var changedCount = 0;
+        timeline.RowsChanging += _ => changingCount++;
+        timeline.RowsChanged += () => changedCount++;
+
+        Assert.Equal(
+            CorePresentation.TranscriptLiveTurnResult.Ignored,
+            timeline.ApplyLiveTurn(middle));
+        Assert.Equal(0, changingCount);
+        Assert.Equal(0, changedCount);
+        Assert.True(retainedRows.SequenceEqual(
+            timeline.Projector.Rows,
+            ReferenceEqualityComparer.Instance));
+    }
+
+    [Fact]
+    public void Timeline_AuthoritativeTurnOlderThanRetainedWindowStaysOutsideWindow()
+    {
+        using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
+        var sessionId = Guid.NewGuid();
+        var load = timeline.BeginInitialLoad(sessionId);
+        Assert.True(timeline.TryCompleteInitialLoad(
+            load,
+            CreateTurns(sessionId, 10, 4),
+            hasOlderRows: true));
+        var retainedRows = timeline.Projector.Rows.ToArray();
+        var oldTurn = CreateMessageTurn(
+            sessionId,
+            Guid.NewGuid(),
+            "outside",
+            DateTimeOffset.UnixEpoch,
+            DateTimeOffset.UnixEpoch);
+
+        Assert.Equal(
+            CorePresentation.TranscriptLiveTurnResult.OutsideWindow,
+            timeline.ApplyAuthoritativeTurn(oldTurn));
+        Assert.True(retainedRows.SequenceEqual(
+            timeline.Projector.Rows,
+            ReferenceEqualityComparer.Instance));
+        Assert.DoesNotContain(timeline.Projector.Rows, row => row.Content == "outside");
     }
 
     [Fact]
@@ -1083,6 +1362,147 @@ public sealed class TranscriptPresentationStateTests
         composer.RollbackTurnId = null;
         Assert.False(composer.RestoreUncommitted(submission, sessionId));
         Assert.Empty(composer.Text);
+    }
+
+    [Fact]
+    public void Composer_CommitsOnlyCorrelatedAuthoritativeUserTurn()
+    {
+        var composer = new CoreViews.AgentComposerState { Text = "expected message" };
+        var sessionId = Guid.NewGuid();
+        var submission = Assert.IsType<CoreViews.AgentComposerSubmission>(
+            composer.TryBeginSubmission(sessionId));
+        var unrelatedTurn = CreateMessageTurn(
+            sessionId,
+            Guid.NewGuid(),
+            "expected message",
+            submission.StartedAtUtc.AddSeconds(1),
+            submission.StartedAtUtc.AddSeconds(1));
+
+        Assert.Null(composer.CommitAuthoritativeUserTurn(unrelatedTurn));
+        Assert.False(submission.IsCommitted);
+
+        var matchingTurn = CreateMessageTurn(
+            sessionId,
+            submission.UserTurnId,
+            "expected message",
+            submission.StartedAtUtc.AddSeconds(1),
+            submission.StartedAtUtc.AddSeconds(1));
+        Assert.Same(submission, composer.CommitAuthoritativeUserTurn(matchingTurn));
+        Assert.True(submission.IsCommitted);
+    }
+
+    [Fact]
+    public void Composer_CorrelatedTurnMatchesCanonicalizedPersistedText()
+    {
+        var composer = new CoreViews.AgentComposerState { Text = "   " };
+        var sessionId = Guid.NewGuid();
+        var submission = Assert.IsType<CoreViews.AgentComposerSubmission>(
+            composer.TryBeginSubmission(sessionId));
+        var matchingTurn = CreateMessageTurn(
+            sessionId,
+            submission.UserTurnId,
+            string.Empty,
+            submission.StartedAtUtc.AddSeconds(1),
+            submission.StartedAtUtc.AddSeconds(1));
+
+        Assert.Same(submission, composer.CommitAuthoritativeUserTurn(matchingTurn));
+    }
+
+    [Fact]
+    public void Composer_LegacySubmissionMatchesAuthoritativePayload()
+    {
+        var composer = new CoreViews.AgentComposerState { Text = "legacy message" };
+        var sessionId = Guid.NewGuid();
+        var submission = Assert.IsType<CoreViews.AgentComposerSubmission>(
+            composer.TryBeginSubmission(
+                sessionId,
+                "legacy message",
+                [],
+                rollbackTurnId: null,
+                existingTurnIds: new HashSet<Guid>(),
+                useUserTurnCorrelation: false));
+        var matchingTurn = CreateMessageTurn(
+            sessionId,
+            Guid.NewGuid(),
+            "legacy message",
+            submission.StartedAtUtc.AddSeconds(1),
+            submission.StartedAtUtc.AddSeconds(1));
+
+        Assert.Same(submission, composer.CommitAuthoritativeUserTurn(matchingTurn));
+    }
+
+    [Fact]
+    public void Composer_LegacyWhitespaceMatchesCanonicalEmptyText()
+    {
+        var composer = new CoreViews.AgentComposerState { Text = "   " };
+        var sessionId = Guid.NewGuid();
+        var submission = Assert.IsType<CoreViews.AgentComposerSubmission>(
+            composer.TryBeginSubmission(
+                sessionId,
+                "   ",
+                [],
+                rollbackTurnId: null,
+                existingTurnIds: new HashSet<Guid>(),
+                useUserTurnCorrelation: false));
+        var matchingTurn = CreateMessageTurn(
+            sessionId,
+            Guid.NewGuid(),
+            string.Empty,
+            submission.StartedAtUtc.AddSeconds(1),
+            submission.StartedAtUtc.AddSeconds(1));
+
+        Assert.Same(submission, composer.CommitAuthoritativeUserTurn(matchingTurn));
+    }
+
+    [Fact]
+    public void ComposerSubmission_CompletionHandshakeIsOrderIndependent()
+    {
+        var composer = new CoreViews.AgentComposerState { Text = "first" };
+        var first = Assert.IsType<CoreViews.AgentComposerSubmission>(
+            composer.TryBeginSubmission(Guid.NewGuid()));
+
+        Assert.False(first.Commit());
+        Assert.True(first.CompleteCommand());
+        Assert.True(first.IsComplete);
+
+        var second = Assert.IsType<CoreViews.AgentComposerSubmission>(
+            new CoreViews.AgentComposerState { Text = "second" }
+                .TryBeginSubmission(Guid.NewGuid()));
+
+        Assert.False(second.CompleteCommand());
+        Assert.True(second.Commit());
+        Assert.True(second.IsComplete);
+
+        var third = Assert.IsType<CoreViews.AgentComposerSubmission>(
+            new CoreViews.AgentComposerState { Text = "third" }
+                .TryBeginSubmission(Guid.NewGuid()));
+        var commitObservedCompletion = false;
+        var commandObservedCompletion = false;
+        Parallel.Invoke(
+            () => commitObservedCompletion = third.Commit(),
+            () => commandObservedCompletion = third.CompleteCommand());
+
+        Assert.True(commitObservedCompletion || commandObservedCompletion);
+        Assert.True(third.IsComplete);
+    }
+
+    [Fact]
+    public void Composer_ExplicitSubmissionSnapshotIgnoresLaterEdits()
+    {
+        var composer = new CoreViews.AgentComposerState { Text = "first draft" };
+        var sessionId = Guid.NewGuid();
+        var submission = Assert.IsType<CoreViews.AgentComposerSubmission>(
+            composer.TryBeginSubmission(
+                sessionId,
+                "sent draft",
+                [],
+                rollbackTurnId: null,
+                existingTurnIds: new HashSet<Guid>()));
+
+        composer.Text = "edited while transcript loaded";
+
+        Assert.Equal("sent draft", submission.Text);
+        Assert.Equal("edited while transcript loaded", composer.Text);
     }
 
     private static CorePresentation.TranscriptTimelineState<TestRow> CreateTimeline(

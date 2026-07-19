@@ -112,6 +112,21 @@ internal sealed partial class AgentAppRuntimeGateway
 
     private bool ApplyCurrentChange(AgentRuntimeChange change)
     {
+        if (!string.IsNullOrWhiteSpace(change.RuntimeInstanceId))
+        {
+            var runtimeChanged = !string.IsNullOrWhiteSpace(_runtimeInstanceId)
+                                 && !string.Equals(
+                                     _runtimeInstanceId,
+                                     change.RuntimeInstanceId,
+                                     StringComparison.Ordinal);
+            _runtimeInstanceId = change.RuntimeInstanceId;
+            if (runtimeChanged)
+            {
+                _revision = change.Revision;
+                InvalidateAll();
+                return true;
+            }
+        }
         if (change.Kind is AgentRuntimeChangeKind.ResnapshotRequired)
         {
             _revision = change.Revision;
@@ -238,6 +253,7 @@ internal sealed partial class AgentAppRuntimeGateway
                     {
                         return;
                     }
+                    _runtimeInstanceId = snapshot.RuntimeInstanceId;
                     ApplyChatSnapshotCache(snapshot);
                 }
                 Raise(ChatSnapshotReloaded, snapshot);

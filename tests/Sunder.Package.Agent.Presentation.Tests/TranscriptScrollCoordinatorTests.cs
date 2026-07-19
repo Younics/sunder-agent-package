@@ -4,6 +4,8 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Threading;
+using LiveMarkdown.Avalonia;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Xunit;
 
@@ -11,6 +13,190 @@ namespace Sunder.Package.Agent.Presentation.Tests;
 
 public sealed class TranscriptScrollCoordinatorTests
 {
+    [Fact]
+    public void RunActivityState_QuietExpiryWhileDetachedShowsAfterResume()
+    {
+        var isFollowingLatest = false;
+        using var state = new AgentRunActivityState(
+            isRunActive: () => true,
+            isFollowingLatest: () => isFollowingLatest,
+            quietDelay: TimeSpan.Zero);
+        var turnId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var turn = new AgentTurnRecord(
+            turnId,
+            Guid.NewGuid(),
+            AgentMessageRole.Assistant,
+            AgentTurnKind.Message,
+            [
+                new AgentTurnItemRecord(
+                    Guid.NewGuid(),
+                    turnId,
+                    0,
+                    AgentTurnItemKind.Text,
+                    "response",
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    null,
+                    null),
+            ],
+            now,
+            now);
+
+        state.TrackTurn(turn, scheduleQuietTimer: true);
+        Assert.False(state.ShouldShow);
+
+        isFollowingLatest = true;
+        state.NotifyFollowStateChanged();
+
+        Assert.True(state.ShouldShow);
+    }
+
+    [AvaloniaFact]
+    public async Task AnchorHost_ForwardsOnlyTailWhileFollowingAndRowsWhileReading()
+    {
+        var row = new Border { Height = 600 };
+        var tail = new Border
+        {
+            Height = 1,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom,
+        };
+        var host = new TranscriptScrollAnchorHost { Children = { row, tail } };
+        host.SetTailAnchor(tail);
+        ((IScrollAnchorProvider)host).RegisterAnchorCandidate(row);
+        var scrollViewer = new ScrollViewer { Content = host };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        scrollViewer.Offset = new Vector(0, scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+
+        Assert.Same(tail, scrollViewer.CurrentAnchor);
+
+        host.SetFollowingTail(false);
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+
+        Assert.Same(row, scrollViewer.CurrentAnchor);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task AnchorHost_UnregistersRecycledRowsAndReattachesTailCandidate()
+    {
+        var row = new Border { Height = 600 };
+        var tail = new Border
+        {
+            Height = 1,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom,
+        };
+        var host = new TranscriptScrollAnchorHost { Children = { row, tail } };
+        var provider = (IScrollAnchorProvider)host;
+        host.SetTailAnchor(tail);
+        provider.RegisterAnchorCandidate(row);
+        host.SetFollowingTail(false);
+        var scrollViewer = new ScrollViewer { Content = host };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+
+        Assert.Same(row, provider.CurrentAnchor);
+
+        provider.UnregisterAnchorCandidate(row);
+        Assert.Null(provider.CurrentAnchor);
+        host.SetFollowingTail(true);
+        scrollViewer.Offset = new Vector(0, scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        Assert.Same(tail, provider.CurrentAnchor);
+
+        window.Content = null;
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        window.Content = scrollViewer;
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+
+        Assert.Same(tail, provider.CurrentAnchor);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task FailedOlderPageUsesRowAnchorsDuringMutationThenRestoresTailMode()
+    {
+        var row = new Border { Height = 600 };
+        var tail = new Border
+        {
+            Height = 1,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom,
+        };
+        var host = new TranscriptScrollAnchorHost { Children = { row, tail } };
+        var provider = (IScrollAnchorProvider)host;
+        host.SetTailAnchor(tail);
+        provider.RegisterAnchorCandidate(row);
+        var scrollViewer = new ScrollViewer { Content = host };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        scrollViewer.Offset = new Vector(0, scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        var usedTailDuringMutation = true;
+        using var coordinator = new TranscriptScrollCoordinator(
+            scrollViewer,
+            canLoadOlderRows: () => true,
+            loadOlderRowsAsync: (_, _) =>
+            {
+                usedTailDuringMutation = ReferenceEquals(provider.CurrentAnchor, tail);
+                return Task.FromResult(false);
+            },
+            canLoadNewerRows: () => false,
+            loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+            hasNewerRows: () => false,
+            anchorHost: host);
+
+        Assert.True(coordinator.QueueLoadOlderRows());
+        await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+
+        Assert.False(usedTailDuringMutation);
+        Assert.Same(tail, provider.CurrentAnchor);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task AnchorHost_TailCandidateKeepsCompletedLayoutsAtBottomDuringGrowth()
+    {
+        var content = new Border { Height = 600 };
+        var tail = new Border
+        {
+            Height = 1,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom,
+        };
+        var host = new TranscriptScrollAnchorHost { Children = { content, tail } };
+        host.SetTailAnchor(tail);
+        var scrollViewer = new ScrollViewer { Content = host };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        scrollViewer.Offset = new Vector(0, scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        Assert.Same(tail, scrollViewer.CurrentAnchor);
+        var initialTailTop = Assert.IsType<Point>(tail.TranslatePoint(default, scrollViewer)).Y;
+
+        content.Height = 900;
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+
+        var finalTailTop = Assert.IsType<Point>(tail.TranslatePoint(default, scrollViewer)).Y;
+        Assert.Equal(initialTailTop, finalTailTop, precision: 3);
+        Assert.InRange(
+            scrollViewer.Extent.Height - scrollViewer.Viewport.Height - scrollViewer.Offset.Y,
+            0,
+            1);
+        window.Close();
+    }
+
     [AvaloniaFact]
     public async Task Dispose_CancelsStartedPagingAndSuppressesPostLoadMutation()
     {
@@ -54,6 +240,34 @@ public sealed class TranscriptScrollCoordinatorTests
         Assert.True(cancellationObserved.Task.IsCompletedSuccessfully);
         Assert.False(loadCompleted);
         Assert.Equal(0, failureCount);
+    }
+
+    [AvaloniaFact]
+    public async Task Dispose_CancelsQueuedPagingBeforeDispatcherCallback()
+    {
+        var loadInvoked = false;
+        var coordinator = new TranscriptScrollCoordinator(
+            new ScrollViewer(),
+            canLoadOlderRows: () => true,
+            loadOlderRowsAsync: (_, _) =>
+            {
+                loadInvoked = true;
+                return Task.FromResult(false);
+            },
+            canLoadNewerRows: () => false,
+            loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+            hasNewerRows: () => false);
+
+        Assert.True(coordinator.QueueLoadOlderRows());
+        coordinator.Dispose();
+        await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.False(loadInvoked);
+        Assert.False(Assert.IsType<bool>(coordinator.GetType()
+            .GetField(
+                "_loadOlderPending",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(coordinator)));
     }
 
     [AvaloniaFact]
@@ -195,6 +409,77 @@ public sealed class TranscriptScrollCoordinatorTests
     }
 
     [AvaloniaFact]
+    public async Task PendingMarkdownKeepsAnchorUntilDeferredRenderCompletes()
+    {
+        var builder = new ObservableStringBuilder("Initial response.");
+        var presenter = new StreamingMarkdownPresenter { MarkdownBuilder = builder };
+        var renderedCount = 0;
+        presenter.Rendered += (_, _) => renderedCount++;
+        var row = new TranscriptRowPresenter
+        {
+            AnchorKey = "row",
+            Content = presenter,
+        };
+        var items = new StackPanel
+        {
+            Children =
+            {
+                new Border { Height = 600 },
+                row,
+                new Border { Height = 600 },
+            },
+        };
+        var scrollViewer = new ScrollViewer { Content = items };
+        var window = new Window { Width = 320, Height = 240, Content = scrollViewer };
+        window.Show();
+        for (var attempt = 0; attempt < 100 && renderedCount == 0; attempt++)
+        {
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            await Task.Delay(1);
+        }
+        Assert.True(renderedCount > 0);
+        var renderer = Assert.Single(presenter.Children.OfType<StableMarkdownRenderer>());
+        scrollViewer.Offset = new Vector(0, 500);
+        using var coordinator = new TranscriptScrollCoordinator(
+            scrollViewer,
+            items,
+            canLoadOlderRows: () => false,
+            loadOlderRowsAsync: (_, _) => Task.FromResult(false),
+            canLoadNewerRows: () => false,
+            loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+            hasNewerRows: () => false,
+            isFollowingLatest: () => false);
+        presenter.Rendered += (_, _) => coordinator.OnRenderedContentChanged();
+        renderer.SelectAll();
+
+        coordinator.BeginViewportMutation();
+        builder.Append("\n\n" + string.Join(
+            "\n\n",
+            Enumerable.Repeat("## Deferred heading\n\nDeferred body.", 40)));
+        coordinator.OnViewportContentChanged();
+        await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
+        var pendingAnchorField = coordinator.GetType().GetField(
+            "_pendingAnchor",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        Assert.NotNull(pendingAnchorField.GetValue(coordinator));
+
+        renderer.ClearSelection();
+        for (var attempt = 0;
+             attempt < 200 && pendingAnchorField.GetValue(coordinator) is not null;
+             attempt++)
+        {
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            await Task.Delay(1);
+        }
+        await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Null(pendingAnchorField.GetValue(coordinator));
+        Assert.False(presenter.IsRenderPending);
+        await presenter.PendingRenderOperations;
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public async Task QueuedBottomWrite_DoesNotOverrideLaterWheelInput()
     {
         var scrollViewer = new ScrollViewer
@@ -216,6 +501,226 @@ public sealed class TranscriptScrollCoordinatorTests
 
         Assert.Equal(userOffset, scrollViewer.Offset.Y);
         Assert.True(scrollViewer.Offset.Y < scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task ForcedBottomRequest_IsNotDowngradedByLaterPassiveRequest()
+    {
+        var scrollViewer = new ScrollViewer
+        {
+            Content = new Border { Height = 1400 },
+        };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        scrollViewer.Offset = new Vector(0, 400);
+        var isFollowingLatest = false;
+        using var coordinator = new TranscriptScrollCoordinator(
+            scrollViewer,
+            canLoadOlderRows: () => false,
+            loadOlderRowsAsync: (_, _) => Task.FromResult(false),
+            canLoadNewerRows: () => false,
+            loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+            hasNewerRows: () => false,
+            isFollowingLatest: () => isFollowingLatest,
+            onReachedLatest: () =>
+            {
+                isFollowingLatest = true;
+                return true;
+            });
+
+        coordinator.QueueScrollToBottom(force: true);
+        coordinator.QueueScrollToBottom();
+        await coordinator.PendingPagingOperations;
+
+        Assert.True(isFollowingLatest);
+        Assert.Equal(
+            scrollViewer.Extent.Height - scrollViewer.Viewport.Height,
+            scrollViewer.Offset.Y,
+            precision: 3);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task ExplicitBottomRequest_WinsOverLaterPersistedAnchorRestore()
+    {
+        var scrollViewer = new ScrollViewer
+        {
+            Content = new Border { Height = 1400 },
+        };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        scrollViewer.Offset = new Vector(0, 500);
+        using var coordinator = CreateCoordinator(scrollViewer);
+
+        coordinator.QueueScrollToBottom(force: true);
+        coordinator.RestoreViewportAnchor(new TranscriptViewportAnchorData(
+            AnchorKey: null,
+            OffsetY: 120,
+            DistanceFromBottom: 1040));
+        await coordinator.PendingPagingOperations;
+
+        Assert.Equal(
+            scrollViewer.Extent.Height - scrollViewer.Viewport.Height,
+            scrollViewer.Offset.Y,
+            precision: 3);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task ContinuousWheelBurst_IsNotReversedByRenderedContentChange()
+    {
+        var content = new Border { Height = 1800 };
+        var scrollViewer = new ScrollViewer { Content = content };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        scrollViewer.Offset = new Vector(
+            0,
+            scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        var isFollowingLatest = true;
+        using var coordinator = new TranscriptScrollCoordinator(
+            scrollViewer,
+            canLoadOlderRows: () => false,
+            loadOlderRowsAsync: (_, _) => Task.FromResult(false),
+            canLoadNewerRows: () => false,
+            loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+            hasNewerRows: () => false,
+            isFollowingLatest: () => isFollowingLatest,
+            onDetachedFromLatest: () =>
+            {
+                isFollowingLatest = false;
+                return true;
+            });
+
+        window.MouseMove(new Point(120, 120), RawInputModifiers.None);
+        for (var index = 0; index < 12; index++)
+        {
+            window.MouseWheel(
+                new Point(120, 120),
+                new Vector(0, 0.2),
+                RawInputModifiers.None);
+        }
+        var userOffset = scrollViewer.Offset.Y;
+
+        coordinator.OnRenderedContentChanged();
+        content.Height += 100;
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        await coordinator.PendingPagingOperations;
+
+        Assert.False(isFollowingLatest);
+        Assert.Equal(userOffset, scrollViewer.Offset.Y, precision: 3);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task DetachmentMutationDoesNotConsumeUpwardWheelInput()
+    {
+        var content = new Border { Height = 1800 };
+        var scrollViewer = new ScrollViewer { Content = content };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        scrollViewer.Offset = new Vector(
+            0,
+            scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        var initialOffset = scrollViewer.Offset.Y;
+        var isFollowingLatest = true;
+        TranscriptScrollCoordinator? coordinator = null;
+        coordinator = new TranscriptScrollCoordinator(
+            scrollViewer,
+            canLoadOlderRows: () => false,
+            loadOlderRowsAsync: (_, _) => Task.FromResult(false),
+            canLoadNewerRows: () => false,
+            loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+            hasNewerRows: () => false,
+            isFollowingLatest: () => isFollowingLatest,
+            onDetachedFromLatest: () =>
+            {
+                isFollowingLatest = false;
+                var activeCoordinator = coordinator!;
+                activeCoordinator.BeginTranscriptMutation();
+                content.Height -= 100;
+                activeCoordinator.OnTranscriptChanged();
+                return true;
+            });
+        using (coordinator)
+        {
+            window.MouseMove(new Point(120, 120), RawInputModifiers.None);
+            window.MouseWheel(new Point(120, 120), new Vector(0, 1), RawInputModifiers.None);
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            var userOffset = scrollViewer.Offset.Y;
+
+            await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.False(isFollowingLatest);
+            Assert.True(userOffset < initialOffset);
+            Assert.Equal(userOffset, scrollViewer.Offset.Y, precision: 3);
+        }
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task NestedAndHorizontalScrollGesturesDoNotInvalidateOuterIntent()
+    {
+        var nestedContent = new Border { Height = 900 };
+        var nestedViewer = new ScrollViewer
+        {
+            Height = 200,
+            Content = nestedContent,
+        };
+        var outerGestureTarget = new Border { Height = 400 };
+        var outerViewer = new ScrollViewer
+        {
+            Content = new StackPanel
+            {
+                Children =
+                {
+                    new Border { Height = 400 },
+                    nestedViewer,
+                    outerGestureTarget,
+                },
+            },
+        };
+        var window = new Window { Width = 320, Height = 300, Content = outerViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        nestedViewer.Offset = new Vector(0, 200);
+        using var coordinator = CreateCoordinator(outerViewer);
+        var interactionRevisionField = coordinator.GetType().GetField(
+            "_interactionRevision",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var gestureHandler = coordinator.GetType().GetMethod(
+            "OnUserScrollGesture",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var initialRevision = Assert.IsType<long>(interactionRevisionField.GetValue(coordinator));
+
+        gestureHandler.Invoke(coordinator, [outerViewer, new ScrollGestureEventArgs(1, new Vector(0, -10))
+        {
+            RoutedEvent = InputElement.ScrollGestureEvent,
+            Source = nestedContent,
+        }]);
+        gestureHandler.Invoke(coordinator, [outerViewer, new ScrollGestureEventArgs(2, new Vector(10, 0))
+        {
+            RoutedEvent = InputElement.ScrollGestureEvent,
+            Source = outerGestureTarget,
+        }]);
+
+        Assert.Equal(
+            initialRevision,
+            Assert.IsType<long>(interactionRevisionField.GetValue(coordinator)));
+
+        gestureHandler.Invoke(coordinator, [outerViewer, new ScrollGestureEventArgs(3, new Vector(0, -10))
+        {
+            RoutedEvent = InputElement.ScrollGestureEvent,
+            Source = outerGestureTarget,
+        }]);
+
+        Assert.Equal(
+            initialRevision + 1,
+            Assert.IsType<long>(interactionRevisionField.GetValue(coordinator)));
         window.Close();
     }
 
@@ -1041,6 +1546,45 @@ public sealed class TranscriptScrollCoordinatorTests
 
         Assert.False(isFollowingLatest);
         Assert.True(scrollViewer.Offset.Y < scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task ActiveSelectionOffsetChange_DetachesTailFollowingAndCapturesAnchor()
+    {
+        var text = new SelectableTextBlock
+        {
+            Text = string.Join('\n', Enumerable.Range(0, 200).Select(index => $"line {index}")),
+        };
+        var scrollViewer = new ScrollViewer { Content = text };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        scrollViewer.Offset = new Vector(0, scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        var isFollowingLatest = true;
+        TranscriptViewportAnchorData? savedAnchor = null;
+        using var coordinator = new TranscriptScrollCoordinator(
+            scrollViewer,
+            canLoadOlderRows: () => false,
+            loadOlderRowsAsync: (_, _) => Task.FromResult(false),
+            canLoadNewerRows: () => false,
+            loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+            hasNewerRows: () => false,
+            isFollowingLatest: () => isFollowingLatest,
+            onDetachedFromLatest: () =>
+            {
+                isFollowingLatest = false;
+                return true;
+            },
+            setViewportAnchor: anchor => savedAnchor = anchor);
+        text.SelectAll();
+        Assert.NotEmpty(text.SelectedText);
+
+        scrollViewer.Offset = new Vector(0, Math.Max(0, scrollViewer.Offset.Y - 100));
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+
+        Assert.False(isFollowingLatest);
+        Assert.NotNull(savedAnchor);
         window.Close();
     }
 

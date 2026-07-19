@@ -23,6 +23,8 @@ internal static class AgentRuntimeOperations
         new("agent.sessions.command.v1");
     public static readonly PackageRuntimeOperation<AgentRunCommand, AgentRunCommandResult> Runs =
         new("agent.runs.command.v1");
+    public static readonly PackageRuntimeOperation<AgentRunCommandStatusRequest, AgentRunCommandStatusResult> RunStatus =
+        new("agent.runs.status.v1");
     public static readonly PackageRuntimeOperation<AgentPermissionCommand, AgentPermissionProjection> Permissions =
         new("agent.permissions.command.v1");
     public static readonly PackageRuntimeOperation<AgentAttachmentReadRequest, AgentAttachmentReadResult> Attachments =
@@ -37,6 +39,7 @@ internal sealed record AgentChatSnapshotRequest(
     string? PreferredWorkspaceId = null,
     Guid? PreferredSessionId = null);
 internal sealed record AgentChatPermissionProjection(
+    long Revision,
     AgentSessionPermissionState? SessionState,
     IReadOnlyList<AgentPendingPermissionRequestRecord> PendingRequests);
 internal sealed record AgentChatSnapshotProjection(
@@ -49,7 +52,8 @@ internal sealed record AgentChatSnapshotProjection(
     AgentSessionSnapshot? SelectedSession,
     IReadOnlyList<AgentSessionSnapshot> WorkspaceSessions,
     AgentTranscriptPage InitialTranscript,
-    AgentChatPermissionProjection Permissions);
+    AgentChatPermissionProjection Permissions,
+    string? RuntimeInstanceId = null);
 
 internal interface IAgentChatSnapshotGateway
 {
@@ -105,6 +109,10 @@ internal interface IAgentChatSessionCommandGateway
 
 internal interface IAgentChatPermissionCommandGateway
 {
+    Task<AgentChatPermissionProjection> LoadSessionPermissionsAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken = default);
+
     Task<AgentChatPermissionProjection> SetSessionUnrestrictedModeAsync(
         Guid sessionId,
         bool isEnabled,
@@ -117,6 +125,36 @@ internal interface IAgentChatRunGateway
         Guid sessionId,
         string requestId,
         bool approveForSession,
+        CancellationToken cancellationToken = default);
+}
+
+internal interface IAgentCorrelatedRunGateway
+{
+    Task<AgentRunCheckpointRecord> QueueUserMessageAsync(
+        Guid sessionId,
+        string profileId,
+        string userMessage,
+        string workspaceId,
+        IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+        Guid userTurnId,
+        CancellationToken cancellationToken = default);
+
+    Task<AgentRunCheckpointRecord> RollbackAndQueueUserMessageAsync(
+        Guid sessionId,
+        Guid rollbackAnchorTurnId,
+        string profileId,
+        string userMessage,
+        string workspaceId,
+        IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+        Guid userTurnId,
+        CancellationToken cancellationToken = default);
+}
+
+internal interface IAgentRunCommandStatusGateway
+{
+    Task<AgentRunCommandStatus> GetRunCommandStatusAsync(
+        Guid sessionId,
+        Guid userTurnId,
         CancellationToken cancellationToken = default);
 }
 
@@ -190,8 +228,12 @@ internal sealed record AgentRunCommand(
     IReadOnlyList<AgentAttachmentUploadRequest>? Attachments = null,
     Guid? RollbackAnchorTurnId = null,
     string? PermissionRequestId = null,
-    bool ApproveForSession = false);
+    bool ApproveForSession = false,
+    Guid? UserTurnId = null);
 internal sealed record AgentRunCommandResult(long Revision, AgentRunCheckpointRecord? Checkpoint);
+internal sealed record AgentRunCommandStatusRequest(Guid SessionId, Guid UserTurnId);
+internal enum AgentRunCommandStatus { Pending, Committed, Absent }
+internal sealed record AgentRunCommandStatusResult(long Revision, AgentRunCommandStatus Status);
 
 internal enum AgentPermissionCommandKind { Read, SetUnrestricted, SaveOverride, DeleteOverride, SaveSessionApproval }
 internal sealed record AgentPermissionCommand(
@@ -239,4 +281,5 @@ internal sealed record AgentRuntimeChange(
     AgentSessionSnapshot? Session = null,
     AgentTurnRecord? Turn = null,
     AgentTurnMutation? TurnMutation = null,
-    AgentRunActivityUpdate? RunActivity = null);
+    AgentRunActivityUpdate? RunActivity = null,
+    string? RuntimeInstanceId = null);

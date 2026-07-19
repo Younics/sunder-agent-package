@@ -211,6 +211,21 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
         IReadOnlyList<AgentStoredAttachment> attachments,
         Guid? rollbackAnchorTurnId,
         string runningSummary)
+        => TryStartRun(
+            lease,
+            Guid.NewGuid(),
+            userMessage,
+            attachments,
+            rollbackAnchorTurnId,
+            runningSummary);
+
+    internal AgentRunStartPersistenceResult? TryStartRun(
+        AgentDurableRunLease lease,
+        Guid userTurnId,
+        string userMessage,
+        IReadOnlyList<AgentStoredAttachment> attachments,
+        Guid? rollbackAnchorTurnId,
+        string runningSummary)
     {
         AgentRunStartPersistenceResult? result;
         lock (lease.SyncRoot)
@@ -218,6 +233,7 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
             result = _store.TryStartRun(
                 lease.Key,
                 lease.Epoch,
+                userTurnId,
                 userMessage,
                 attachments,
                 rollbackAnchorTurnId,

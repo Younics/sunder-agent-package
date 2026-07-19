@@ -139,6 +139,7 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.Workspaces, services.GetRequiredService<AgentWorkspaceCommandHandler>());
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.SessionCommands, services.GetRequiredService<AgentSessionCommandHandler>());
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.Runs, services.GetRequiredService<AgentRunCommandHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.RunStatus, services.GetRequiredService<AgentRunCommandHandler>());
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.Permissions, services.GetRequiredService<AgentPermissionCommandHandler>());
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.Attachments, services.GetRequiredService<AgentAttachmentReadHandler>());
         registry.RegisterRuntimeStream(AgentRuntimeOperations.Changes, services.GetRequiredService<AgentRuntimeChangeHub>());

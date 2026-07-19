@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Sunder.Package.Agent.Contracts.Models;
@@ -19,6 +20,7 @@ internal sealed class AgentRuntimeChangeHub :
     private readonly object _gate = new();
     private readonly Dictionary<long, Subscriber> _subscribers = [];
     private readonly Queue<AgentRuntimeChange> _replay = new(ReplayCapacity);
+    private readonly string _instanceId = Guid.NewGuid().ToString("N");
     private long _revision;
     private long _subscriberId;
 
@@ -40,6 +42,8 @@ internal sealed class AgentRuntimeChangeHub :
     }
 
     public long Revision => Interlocked.Read(ref _revision);
+
+    public string InstanceId => _instanceId;
 
     public void NotifyPermissionChanged(Guid? sessionId)
         => Publish(new AgentRuntimeChange(
@@ -69,7 +73,10 @@ internal sealed class AgentRuntimeChangeHub :
             if (request.AfterRevision > revision || request.AfterRevision < oldestRevision - 1)
             {
                 replay = [];
-                reset = new AgentRuntimeChange(revision, AgentRuntimeChangeKind.ResnapshotRequired);
+                reset = new AgentRuntimeChange(
+                    revision,
+                    AgentRuntimeChangeKind.ResnapshotRequired,
+                    RuntimeInstanceId: _instanceId);
             }
             else
             {
@@ -89,7 +96,10 @@ internal sealed class AgentRuntimeChangeHub :
                 {
                     yield return ProjectForSubscriber(change, subscriber.SupportsTurnMutations);
                 }
-                yield return new AgentRuntimeChange(subscribedRevision, AgentRuntimeChangeKind.Connected);
+                yield return new AgentRuntimeChange(
+                    subscribedRevision,
+                    AgentRuntimeChangeKind.Connected,
+                    RuntimeInstanceId: _instanceId);
             }
             await foreach (var change in subscriber.Channel.Reader.ReadAllAsync(cancellationToken))
             {
@@ -97,7 +107,10 @@ internal sealed class AgentRuntimeChangeHub :
             }
             if (subscriber.Overflowed)
             {
-                yield return new AgentRuntimeChange(Revision, AgentRuntimeChangeKind.ResnapshotRequired);
+                yield return new AgentRuntimeChange(
+                    Revision,
+                    AgentRuntimeChangeKind.ResnapshotRequired,
+                    RuntimeInstanceId: _instanceId);
             }
         }
         finally
@@ -156,7 +169,11 @@ internal sealed class AgentRuntimeChangeHub :
     {
         lock (_gate)
         {
-            change = change with { Revision = Interlocked.Increment(ref _revision) };
+            change = change with
+            {
+                Revision = Interlocked.Increment(ref _revision),
+                RuntimeInstanceId = _instanceId,
+            };
             _replay.Enqueue(change);
             while (_replay.Count > ReplayCapacity)
             {
@@ -290,6 +307,7 @@ internal sealed class AgentChatSnapshotHandler(
                     ? storedSessionId
                     : null),
             cancellationToken).ConfigureAwait(false);
+        snapshot = snapshot with { RuntimeInstanceId = changes.InstanceId };
         if (changes.Revision == revision)
         {
             lock (_cacheGate)
@@ -498,45 +516,103 @@ internal sealed class AgentSessionCommandHandler(
 internal sealed class AgentRunCommandHandler(
     AgentRunCoordinator runs,
     AgentPermissionService permissions,
+    AgentSessionService sessions,
     AgentRuntimeChangeHub changes)
-    : IPackageRuntimeOperationHandler<AgentRunCommand, AgentRunCommandResult>
+    : IPackageRuntimeOperationHandler<AgentRunCommand, AgentRunCommandResult>,
+      IPackageRuntimeOperationHandler<AgentRunCommandStatusRequest, AgentRunCommandStatusResult>
 {
+    private readonly ConcurrentDictionary<Guid, Guid> _pendingUserTurns = new();
+
     public async ValueTask<AgentRunCommandResult> HandleAsync(
         AgentRunCommand request, CancellationToken cancellationToken = default)
     {
-        if (request.Kind == AgentRunCommandKind.ApprovePermission && request.ApproveForSession)
+        var tracksUserTurn = request.UserTurnId is not null
+                             && request.Kind is (AgentRunCommandKind.Start or AgentRunCommandKind.RollbackAndStart);
+        if (tracksUserTurn
+            && !_pendingUserTurns.TryAdd(request.UserTurnId!.Value, request.SessionId))
         {
-            var sessionId = request.SessionId;
-            var requestId = Require(request.PermissionRequestId, "Permission request id");
-            if (permissions.GetPendingRequest(sessionId, requestId) is { } pending)
+            throw new InvalidOperationException("The correlated run command is already pending.");
+        }
+        try
+        {
+            if (request.Kind == AgentRunCommandKind.ApprovePermission && request.ApproveForSession)
             {
-                permissions.SaveSessionApproval(
-                    sessionId,
-                    pending.ActionId,
-                    pending.BoundaryId);
+                var sessionId = request.SessionId;
+                var requestId = Require(request.PermissionRequestId, "Permission request id");
+                if (permissions.GetPendingRequest(sessionId, requestId) is { } pending)
+                {
+                    permissions.SaveSessionApproval(
+                        sessionId,
+                        pending.ActionId,
+                        pending.BoundaryId);
+                }
+            }
+            var checkpoint = request.Kind switch
+            {
+                AgentRunCommandKind.Start => request.UserTurnId is { } startUserTurnId
+                    ? await ((IAgentCorrelatedRunGateway)runs).QueueUserMessageAsync(request.SessionId,
+                        Require(request.ProfileId, "Profile id"), request.UserMessage ?? string.Empty,
+                        Require(request.WorkspaceId, "Workspace id"), request.Attachments ?? [], startUserTurnId,
+                        cancellationToken)
+                    : await runs.QueueUserMessageAsync(request.SessionId,
+                        Require(request.ProfileId, "Profile id"), request.UserMessage ?? string.Empty,
+                        Require(request.WorkspaceId, "Workspace id"), request.Attachments ?? [], cancellationToken),
+                AgentRunCommandKind.RollbackAndStart => request.UserTurnId is { } rollbackUserTurnId
+                    ? await ((IAgentCorrelatedRunGateway)runs).RollbackAndQueueUserMessageAsync(request.SessionId,
+                        request.RollbackAnchorTurnId ?? throw new InvalidOperationException("Rollback anchor is required."),
+                        Require(request.ProfileId, "Profile id"), request.UserMessage ?? string.Empty,
+                        Require(request.WorkspaceId, "Workspace id"), request.Attachments ?? [], rollbackUserTurnId,
+                        cancellationToken)
+                    : await runs.RollbackAndQueueUserMessageAsync(request.SessionId,
+                        request.RollbackAnchorTurnId ?? throw new InvalidOperationException("Rollback anchor is required."),
+                        Require(request.ProfileId, "Profile id"), request.UserMessage ?? string.Empty,
+                        Require(request.WorkspaceId, "Workspace id"), request.Attachments ?? [], cancellationToken),
+                AgentRunCommandKind.Stop => await ((IAgentRunGateway)runs).StopAsync(request.SessionId, cancellationToken),
+                AgentRunCommandKind.ApprovePermission => await ((IAgentRunGateway)runs).ApprovePendingPermissionAsync(
+                    request.SessionId, Require(request.PermissionRequestId, "Permission request id"), cancellationToken),
+                AgentRunCommandKind.DenyPermission => await ((IAgentRunGateway)runs).DenyPendingPermissionAsync(
+                    request.SessionId, Require(request.PermissionRequestId, "Permission request id"), cancellationToken),
+                _ => throw new InvalidOperationException("Unknown run command."),
+            };
+            if (request.Kind is AgentRunCommandKind.ApprovePermission or AgentRunCommandKind.DenyPermission)
+            {
+                changes.NotifyPermissionChanged(request.SessionId);
+            }
+            return new AgentRunCommandResult(changes.Revision, checkpoint);
+        }
+        finally
+        {
+            if (tracksUserTurn)
+            {
+                _pendingUserTurns.TryRemove(request.UserTurnId!.Value, out _);
             }
         }
-        var checkpoint = request.Kind switch
+    }
+
+    public ValueTask<AgentRunCommandStatusResult> HandleAsync(
+        AgentRunCommandStatusRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var turn = sessions.GetTurn(request.UserTurnId);
+        AgentRunCommandStatus status;
+        if (turn?.SessionId == request.SessionId && turn.Role == AgentMessageRole.User)
         {
-            AgentRunCommandKind.Start => await runs.QueueUserMessageAsync(request.SessionId,
-                Require(request.ProfileId, "Profile id"), request.UserMessage ?? string.Empty,
-                Require(request.WorkspaceId, "Workspace id"), request.Attachments ?? [], cancellationToken),
-            AgentRunCommandKind.RollbackAndStart => await runs.RollbackAndQueueUserMessageAsync(request.SessionId,
-                request.RollbackAnchorTurnId ?? throw new InvalidOperationException("Rollback anchor is required."),
-                Require(request.ProfileId, "Profile id"), request.UserMessage ?? string.Empty,
-                Require(request.WorkspaceId, "Workspace id"), request.Attachments ?? [], cancellationToken),
-            AgentRunCommandKind.Stop => await ((IAgentRunGateway)runs).StopAsync(request.SessionId, cancellationToken),
-            AgentRunCommandKind.ApprovePermission => await ((IAgentRunGateway)runs).ApprovePendingPermissionAsync(
-                request.SessionId, Require(request.PermissionRequestId, "Permission request id"), cancellationToken),
-            AgentRunCommandKind.DenyPermission => await ((IAgentRunGateway)runs).DenyPendingPermissionAsync(
-                request.SessionId, Require(request.PermissionRequestId, "Permission request id"), cancellationToken),
-            _ => throw new InvalidOperationException("Unknown run command."),
-        };
-        if (request.Kind is AgentRunCommandKind.ApprovePermission or AgentRunCommandKind.DenyPermission)
-        {
-            changes.NotifyPermissionChanged(request.SessionId);
+            status = AgentRunCommandStatus.Committed;
         }
-        return new AgentRunCommandResult(changes.Revision, checkpoint);
+        else if (_pendingUserTurns.TryGetValue(request.UserTurnId, out var pendingSessionId)
+                 && pendingSessionId == request.SessionId)
+        {
+            status = AgentRunCommandStatus.Pending;
+        }
+        else
+        {
+            turn = sessions.GetTurn(request.UserTurnId);
+            status = turn?.SessionId == request.SessionId && turn.Role == AgentMessageRole.User
+                ? AgentRunCommandStatus.Committed
+                : AgentRunCommandStatus.Absent;
+        }
+        return ValueTask.FromResult(new AgentRunCommandStatusResult(changes.Revision, status));
     }
 
     private static string Require(string? value, string name)

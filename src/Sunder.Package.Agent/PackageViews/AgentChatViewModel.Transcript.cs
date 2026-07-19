@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using Avalonia;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
@@ -14,6 +16,7 @@ public sealed partial class AgentChatViewModel
         var displayedSession = DisplayedSession;
         if (displayedSession is null)
         {
+            _runActivity.Reset();
             _timeline.ClearSession();
             StatusText = string.IsNullOrWhiteSpace(_globalStatusText)
                 ? GetSetupStatusText()
@@ -21,16 +24,27 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
+        if (_timeline.SessionId != displayedSession.SessionId)
+        {
+            _runActivity.Reset();
+        }
+        var previousRunActivityTurns = _timeline.SessionId == displayedSession.SessionId
+            ? SelectRunActivityTurns(_timeline.Projector.TurnWindow.OrderedTurns())
+            : null;
         var ticket = _timeline.BeginInitialLoad(
             displayedSession.SessionId,
             forceReplacement);
         StatusText = "Loading transcript...";
-        _backgroundTasks.Run(_ => RefreshTranscriptAsync(displayedSession, ticket));
+        _backgroundTasks.Run(_ => RefreshTranscriptAsync(
+            displayedSession,
+            ticket,
+            previousRunActivityTurns));
     }
 
     private async Task RefreshTranscriptAsync(
         AgentSessionListItemViewModel displayedSession,
-        TranscriptLoadTicket ticket)
+        TranscriptLoadTicket ticket,
+        IReadOnlyList<AgentTurnRecord>? previousRunActivityTurns)
     {
         try
         {
@@ -42,7 +56,11 @@ public sealed partial class AgentChatViewModel
                     InitialTranscriptTurnLimit),
                 ticket.Generation.CancellationToken).ConfigureAwait(false);
             await InvokeOnUiThreadAsync(
-                () => CompleteTranscriptRefresh(displayedSession, ticket, page));
+                () => CompleteTranscriptRefresh(
+                    displayedSession,
+                    ticket,
+                    page,
+                    previousRunActivityTurns));
         }
         catch (OperationCanceledException) when (ticket.Generation.CancellationToken.IsCancellationRequested)
         {
@@ -62,13 +80,18 @@ public sealed partial class AgentChatViewModel
     private void CompleteTranscriptRefresh(
         AgentSessionListItemViewModel displayedSession,
         TranscriptLoadTicket ticket,
-        AgentTranscriptPage page)
+        AgentTranscriptPage page,
+        IReadOnlyList<AgentTurnRecord>? previousRunActivityTurns)
     {
         if (!_timeline.TryCompleteInitialLoad(ticket, page.Turns, page.HasMore))
         {
             return;
         }
 
+        if (previousRunActivityTurns is not null)
+        {
+            ReconcileRunActivityAfterAuthoritativeReplacement(previousRunActivityTurns);
+        }
         TrackCheckpointActivity(_sessionService.GetLatestCheckpoint(displayedSession.SessionId));
         ApplyRunActivityState();
         UpdateSessionState(displayedSession.SessionId, markUnread: false);
@@ -138,7 +161,6 @@ public sealed partial class AgentChatViewModel
                 _timeline.ResumeFollowingLatestIfCaughtUp();
             }
             _runActivity.NotifyFollowStateChanged();
-            ApplyRunActivityState();
         }
 
         return loaded;
@@ -166,7 +188,6 @@ public sealed partial class AgentChatViewModel
         }
 
         _runActivity.NotifyFollowStateChanged();
-        ApplyRunActivityState();
         TranscriptTailFollowRequested?.Invoke(targetSessionId);
         if (_timeline.HasNewerRows)
         {
@@ -190,8 +211,6 @@ public sealed partial class AgentChatViewModel
         if (_timeline.ResumeFollowingLatestIfCaughtUp())
         {
             _runActivity.NotifyFollowStateChanged();
-            ApplyRunActivityState();
-            _timeline.NotifyRowsChanged();
             return true;
         }
 
@@ -215,6 +234,34 @@ public sealed partial class AgentChatViewModel
     internal void SetTranscriptRowExpanded(AgentTranscriptRowViewModel row, bool isExpanded)
         => _timeline.SetRowExpanded(row, isExpanded);
 
+    private void OnTimelineRowsChanging(bool isPageApplication)
+    {
+        if (!_isBatchingTranscriptNotifications)
+        {
+            TranscriptChanging?.Invoke(isPageApplication);
+            return;
+        }
+
+        if (_transcriptChangingRaisedInBatch)
+        {
+            return;
+        }
+
+        _transcriptChangingRaisedInBatch = true;
+        TranscriptChanging?.Invoke(isPageApplication);
+    }
+
+    private void OnTimelineRowsChanged()
+    {
+        if (_isBatchingTranscriptNotifications)
+        {
+            _transcriptChangedInBatch = true;
+            return;
+        }
+
+        TranscriptChanged?.Invoke();
+    }
+
     private void OnTurnChanged(Guid sessionId, AgentTurnRecord turn)
     {
         if (!_isInitialized)
@@ -222,12 +269,12 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        RunOnUiThread(() =>
+        EnqueueTranscriptBoundary(() =>
         {
             if (DisplayedSession?.SessionId == sessionId)
             {
+                PrepareForSubmittedUserTurn(turn);
                 _timeline.ApplyLiveTurn(turn);
-                ApplyRunActivityState();
             }
         });
     }
@@ -239,15 +286,233 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        RunOnUiThread(() =>
+        var scheduleDrain = false;
+        lock (_turnMutationQueueLock)
         {
-            var result = _timeline.ApplyLiveMutation(mutation);
-            if (result == TranscriptLiveTurnResult.ReloadRequired
-                && DisplayedTranscriptSessionId == mutation.SessionId)
+            if (_disposed)
             {
-                RefreshTranscript();
+                return;
+            }
+
+            if (_openTurnMutationBatch is null)
+            {
+                _openTurnMutationBatch = [];
+                var batch = _openTurnMutationBatch;
+                _transcriptWorkQueue.Enqueue(() => DrainTurnMutations(batch));
+            }
+            _openTurnMutationBatch.Add(mutation);
+            scheduleDrain = MarkTranscriptWorkDrainScheduled();
+        }
+
+        if (scheduleDrain)
+        {
+            ScheduleTranscriptWorkDrain();
+        }
+    }
+
+    private void EnqueueTranscriptBoundary(Action action)
+    {
+        var scheduleDrain = false;
+        lock (_turnMutationQueueLock)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _openTurnMutationBatch = null;
+            _transcriptWorkQueue.Enqueue(action);
+            scheduleDrain = MarkTranscriptWorkDrainScheduled();
+        }
+
+        if (scheduleDrain)
+        {
+            ScheduleTranscriptWorkDrain();
+        }
+    }
+
+    private Task<T> EnqueueTranscriptBoundaryAsync<T>(Func<T> action)
+    {
+        var completion = new TaskCompletionSource<T>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var scheduleDrain = false;
+        lock (_turnMutationQueueLock)
+        {
+            if (_disposed)
+            {
+                return Task.FromCanceled<T>(new CancellationToken(canceled: true));
+            }
+
+            _openTurnMutationBatch = null;
+            _transcriptWorkQueue.Enqueue(() =>
+            {
+                try
+                {
+                    completion.TrySetResult(action());
+                }
+                catch (Exception exception)
+                {
+                    completion.TrySetException(exception);
+                    throw;
+                }
+            });
+            scheduleDrain = MarkTranscriptWorkDrainScheduled();
+        }
+
+        if (scheduleDrain)
+        {
+            ScheduleTranscriptWorkDrain();
+        }
+
+        return completion.Task.WaitAsync(_lifetimeCancellation.Token);
+    }
+
+    private bool MarkTranscriptWorkDrainScheduled()
+    {
+        if (_transcriptWorkDrainScheduled)
+        {
+            return false;
+        }
+
+        _transcriptWorkDrainScheduled = true;
+        return true;
+    }
+
+    private void ScheduleTranscriptWorkDrain()
+    {
+        if (Application.Current is null)
+        {
+            DrainTranscriptWorkQueue();
+            return;
+        }
+
+        _backgroundTasks.Run(async _ =>
+            await Dispatcher.UIThread.InvokeAsync(
+                DrainTranscriptWorkQueue,
+                DispatcherPriority.Background));
+    }
+
+    private void DrainTranscriptWorkQueue()
+    {
+        while (true)
+        {
+            Action work;
+            lock (_turnMutationQueueLock)
+            {
+                if (_disposed)
+                {
+                    _openTurnMutationBatch = null;
+                    _transcriptWorkQueue.Clear();
+                    _transcriptWorkDrainScheduled = false;
+                    return;
+                }
+                if (!_transcriptWorkQueue.TryDequeue(out var queuedWork))
+                {
+                    _transcriptWorkDrainScheduled = false;
+                    return;
+                }
+                work = queuedWork;
+            }
+
+            try
+            {
+                work();
+            }
+            catch (Exception exception)
+            {
+                ReportPresentationFailure(exception);
+            }
+        }
+    }
+
+    private void DrainTurnMutations(List<AgentTurnMutation> batch)
+    {
+        AgentTurnMutation[] mutations;
+        lock (_turnMutationQueueLock)
+        {
+            if (ReferenceEquals(_openTurnMutationBatch, batch))
+            {
+                _openTurnMutationBatch = null;
+            }
+            if (_disposed)
+            {
+                batch.Clear();
+                return;
+            }
+
+            mutations = batch.ToArray();
+            batch.Clear();
+        }
+
+        RunTranscriptNotificationBatch(() =>
+        {
+            foreach (var mutation in mutations)
+            {
+                try
+                {
+                    if (mutation.Turn is { } submittedTurn)
+                    {
+                        PrepareForSubmittedUserTurn(submittedTurn);
+                    }
+                    var result = _timeline.ApplyLiveMutation(mutation);
+                    if (mutation.Turn is { } turn
+                        && DisplayedTranscriptSessionId != turn.SessionId)
+                    {
+                        CommitSubmittedUserTurn(turn);
+                    }
+                    if (result == TranscriptLiveTurnResult.ReloadRequired
+                        && DisplayedTranscriptSessionId == mutation.SessionId)
+                    {
+                        RefreshTranscript();
+                    }
+                }
+                catch (Exception exception)
+                {
+                    ReportPresentationFailure(exception);
+                }
             }
         });
+    }
+
+    private void RunTranscriptNotificationBatch(Action action)
+    {
+        BeginTranscriptNotificationBatch();
+        try
+        {
+            action();
+        }
+        finally
+        {
+            try
+            {
+                EndTranscriptNotificationBatch();
+            }
+            finally
+            {
+                _isBatchingTranscriptNotifications = false;
+                _transcriptChangingRaisedInBatch = false;
+                _transcriptChangedInBatch = false;
+            }
+        }
+    }
+
+    private void BeginTranscriptNotificationBatch()
+    {
+        _isBatchingTranscriptNotifications = true;
+        _transcriptChangingRaisedInBatch = false;
+        _transcriptChangedInBatch = false;
+    }
+
+    private void EndTranscriptNotificationBatch()
+    {
+        var raiseChanged = _transcriptChangedInBatch;
+        _isBatchingTranscriptNotifications = false;
+        _transcriptChangingRaisedInBatch = false;
+        _transcriptChangedInBatch = false;
+        if (raiseChanged)
+        {
+            TranscriptChanged?.Invoke();
+        }
     }
 
     private void OnTranscriptReset(Guid sessionId)
@@ -257,7 +522,7 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        RunOnUiThread(() =>
+        EnqueueTranscriptBoundary(() =>
         {
             if (DisplayedSession?.SessionId == sessionId)
             {
@@ -270,7 +535,7 @@ public sealed partial class AgentChatViewModel
     {
         if (_isInitialized)
         {
-            RunOnUiThread(() => ApplyRunActivityChanged(sessionId, activity));
+            EnqueueTranscriptBoundary(() => ApplyRunActivityChanged(sessionId, activity));
         }
     }
 
@@ -300,20 +565,18 @@ public sealed partial class AgentChatViewModel
         bool trackRunActivity,
         bool scheduleQuietTimer)
     {
-        if (trackRunActivity)
+        var committedSubmission = CommitSubmittedUserTurn(turn);
+        if (trackRunActivity && !committedSubmission)
         {
             _runActivity.TrackTurn(turn, scheduleQuietTimer);
         }
     }
 
     private void OnRunActivityStateChanged()
-    {
-        ApplyRunActivityState();
-        _timeline.NotifyRowsChanged();
-    }
+        => ApplyRunActivityState();
 
     private void ApplyRunActivityState()
-        => _timeline.ApplyActivity(
+        => RunActivityRow.SetPresentation(
             _runActivity.Text,
             _runActivity.IsReasoning,
             _runActivity.ShouldShow);

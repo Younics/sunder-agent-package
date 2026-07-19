@@ -17,18 +17,18 @@ internal sealed class StreamingMarkdownPresenter : Panel
 
     private ObservableStringBuilder? _markdownBuilder;
     private readonly List<Visual> _visibilitySources = [];
-    private MarkdownRenderer? _currentRenderer;
-    private MarkdownRenderer? _pendingRenderer;
+    private StableMarkdownRenderer? _currentRenderer;
+    private ObservableStringBuilder? _displayBuilder;
     private SelectableTextBlock? _fallback;
     private string _requestedSource = string.Empty;
-    private string _pendingSource = string.Empty;
-    private string _renderedSource = string.Empty;
+    private string _appliedSource = string.Empty;
+    private string _notifiedRenderedSource = string.Empty;
     private Task _refreshOperation = Task.CompletedTask;
-    private Task _promotionOperation = Task.CompletedTask;
     private bool _isAttached;
     private bool _isSubscribed;
     private bool _refreshQueued;
-    private bool _pendingReady;
+    private bool _hasRenderedContent;
+    private bool _initialLayoutNotificationPending;
     private bool _currentLayoutObserved;
     private Size _currentDesiredSize;
 
@@ -42,7 +42,27 @@ internal sealed class StreamingMarkdownPresenter : Panel
 
     public event EventHandler? Rendered;
 
-    internal Task PendingRenderOperations => Task.WhenAll(_refreshOperation, _promotionOperation);
+    internal Task PendingRenderOperations => Task.WhenAll(
+        _refreshOperation,
+        _currentRenderer?.PendingRenderOperations ?? Task.CompletedTask);
+
+    internal bool IsRenderPending
+        => _refreshQueued
+           || !_refreshOperation.IsCompleted
+           || _currentRenderer is null
+           || !_currentRenderer.PendingRenderOperations.IsCompleted
+           || !string.Equals(_requestedSource, _appliedSource, StringComparison.Ordinal)
+           || !HasCurrentTerminalRenderFailure
+           && (!string.Equals(_currentRenderer.RenderedSource, _appliedSource, StringComparison.Ordinal)
+               || !_hasRenderedContent
+               || _initialLayoutNotificationPending
+               || !_currentLayoutObserved);
+
+    internal int RendererCreationCount { get; private set; }
+
+    private bool HasCurrentTerminalRenderFailure
+        => _currentRenderer?.HasTerminalRenderFailure == true
+           && string.Equals(_requestedSource, _appliedSource, StringComparison.Ordinal);
 
     public ObservableStringBuilder? MarkdownBuilder
     {
@@ -58,6 +78,7 @@ internal sealed class StreamingMarkdownPresenter : Panel
             SetAndRaise(MarkdownBuilderProperty, ref _markdownBuilder, value);
             SubscribeToBuilder();
             ResetRenderedContent();
+            _requestedSource = value?.ToString() ?? string.Empty;
             RequestRefresh();
         }
     }
@@ -68,7 +89,7 @@ internal sealed class StreamingMarkdownPresenter : Panel
         foreach (var child in Children.ToArray())
         {
             child.Measure(availableSize);
-            if (ReferenceEquals(child, _pendingRenderer))
+            if (ReferenceEquals(child, _currentRenderer) && !_hasRenderedContent)
             {
                 continue;
             }
@@ -122,8 +143,10 @@ internal sealed class StreamingMarkdownPresenter : Panel
             SubscribeToBuilder();
             RequestRefresh();
         }
-        else
+        else if (!IsVisible)
         {
+            // A role branch that is itself hidden should not retain duplicate Markdown visuals.
+            // Ancestor visibility changes are temporary package-view suspension and retain state.
             ResetRenderedContent();
         }
     }
@@ -182,12 +205,14 @@ internal sealed class StreamingMarkdownPresenter : Panel
         }
 
         _requestedSource = _markdownBuilder?.ToString() ?? string.Empty;
+        EnsureFallback();
         if (_fallback is { } fallback
             && string.IsNullOrEmpty(fallback.SelectedText)
             && !fallback.IsKeyboardFocusWithin)
         {
             fallback.Text = _requestedSource;
         }
+
         if (_refreshQueued)
         {
             return;
@@ -195,70 +220,149 @@ internal sealed class StreamingMarkdownPresenter : Panel
 
         _refreshQueued = true;
         _refreshOperation = AwaitDispatcherOperationAsync(
-            Dispatcher.UIThread.InvokeAsync(StartRequestedRender, DispatcherPriority.Render));
+            Dispatcher.UIThread.InvokeAsync(ApplyRequestedSource, DispatcherPriority.Render));
     }
 
-    private void StartRequestedRender()
+    private void ApplyRequestedSource()
     {
         _refreshQueued = false;
-        if (!CanRender || _pendingRenderer is not null || _requestedSource == _renderedSource)
+        if (!CanRender)
         {
             return;
         }
 
-        _pendingSource = _requestedSource;
-        EnsureFallback();
-        var renderer = new MarkdownRenderer
+        _requestedSource = _markdownBuilder?.ToString() ?? string.Empty;
+        EnsureRenderer();
+        if (_currentRenderer is null || _displayBuilder is null)
         {
-            MarkdownBuilder = new ObservableStringBuilder(_pendingSource),
-            MinWidth = 0,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-            Opacity = 0,
-            IsHitTestVisible = false,
-            IsEnabled = false,
-            Focusable = false,
-        };
-        renderer.LayoutUpdated += OnPendingRendererLayoutUpdated;
-        _pendingRenderer = renderer;
-        _pendingReady = false;
+            return;
+        }
+        if (_currentRenderer.CanCopy
+            || _currentRenderer.IsKeyboardFocusWithin
+            || _fallback is { } selectedFallback
+            && (!string.IsNullOrEmpty(selectedFallback.SelectedText)
+                || selectedFallback.IsKeyboardFocusWithin))
+        {
+            return;
+        }
+        if (string.Equals(_requestedSource, _appliedSource, StringComparison.Ordinal))
+        {
+            TryPromoteInitialRenderer();
+            return;
+        }
+
+        if (_requestedSource.StartsWith(_appliedSource, StringComparison.Ordinal))
+        {
+            _displayBuilder.Append(_requestedSource[_appliedSource.Length..]);
+        }
+        else
+        {
+            _displayBuilder.Clear();
+            _displayBuilder.Append(_requestedSource);
+        }
+
+        _appliedSource = _requestedSource;
+        if (_fallback is { } fallback
+            && string.IsNullOrEmpty(fallback.SelectedText)
+            && !fallback.IsKeyboardFocusWithin)
+        {
+            fallback.Text = _appliedSource;
+        }
+        TryPromoteInitialRenderer();
+    }
+
+    private void EnsureRenderer()
+    {
+        if (_currentRenderer is not null)
+        {
+            return;
+        }
+
+        EnsureFallback();
+        _displayBuilder = new ObservableStringBuilder();
+        var renderer = StableMarkdownRenderer.Create();
+        renderer.SourceBuilder = _displayBuilder;
+        renderer.MinWidth = 0;
+        renderer.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch;
+        renderer.Opacity = 0;
+        renderer.IsHitTestVisible = false;
+        renderer.IsEnabled = false;
+        renderer.Focusable = false;
+        _currentRenderer = renderer;
+        RendererCreationCount++;
+        renderer.PropertyChanged += OnCurrentRendererPropertyChanged;
+        renderer.LayoutUpdated += OnCurrentRendererLayoutUpdated;
         Children.Add(renderer);
     }
 
-    private void OnPendingRendererLayoutUpdated(object? sender, EventArgs e)
+    private void OnCurrentRendererLayoutUpdated(object? sender, EventArgs e)
     {
-        if (sender is not MarkdownRenderer renderer
-            || !ReferenceEquals(renderer, _pendingRenderer)
-            || !HasRenderedPendingContent(renderer))
+        if (sender is not StableMarkdownRenderer renderer
+            || !ReferenceEquals(renderer, _currentRenderer))
         {
             return;
         }
 
-        renderer.LayoutUpdated -= OnPendingRendererLayoutUpdated;
-        _pendingReady = true;
-        _promotionOperation = AwaitDispatcherOperationAsync(
-            Dispatcher.UIThread.InvokeAsync(
-                () => PromotePendingRenderer(renderer),
-                DispatcherPriority.Background));
+        var desiredSize = renderer.DesiredSize;
+        if (!_hasRenderedContent)
+        {
+            TryPromoteInitialRenderer();
+            return;
+        }
+        if (_initialLayoutNotificationPending)
+        {
+            if (!_currentLayoutObserved)
+            {
+                _currentLayoutObserved = true;
+                _currentDesiredSize = desiredSize;
+                return;
+            }
+            if (Math.Abs(desiredSize.Height - _currentDesiredSize.Height) >= 0.5)
+            {
+                _currentDesiredSize = desiredSize;
+                return;
+            }
+
+            _initialLayoutNotificationPending = false;
+            _currentDesiredSize = desiredSize;
+            _notifiedRenderedSource = renderer.RenderedSource;
+            Rendered?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        if (!_currentLayoutObserved)
+        {
+            _currentLayoutObserved = true;
+            _currentDesiredSize = desiredSize;
+            return;
+        }
+        if (Math.Abs(desiredSize.Height - _currentDesiredSize.Height) < 0.5)
+        {
+            _currentDesiredSize = desiredSize;
+            if (!string.Equals(
+                    _notifiedRenderedSource,
+                    renderer.RenderedSource,
+                    StringComparison.Ordinal))
+            {
+                _notifiedRenderedSource = renderer.RenderedSource;
+                Rendered?.Invoke(this, EventArgs.Empty);
+            }
+            return;
+        }
+
+        _currentDesiredSize = desiredSize;
+        _notifiedRenderedSource = renderer.RenderedSource;
+        Rendered?.Invoke(this, EventArgs.Empty);
     }
 
-    private bool HasRenderedPendingContent(MarkdownRenderer renderer)
-        => string.IsNullOrWhiteSpace(_pendingSource)
-           || renderer.GetVisualDescendants().Skip(1).Any();
+    private bool HasRenderedCurrentContent(StableMarkdownRenderer renderer)
+        => string.Equals(renderer.RenderedSource, _appliedSource, StringComparison.Ordinal);
 
-    private void PromotePendingRenderer(MarkdownRenderer renderer)
+    private void TryPromoteInitialRenderer()
     {
-        if (!CanRender || !ReferenceEquals(renderer, _pendingRenderer))
-        {
-            return;
-        }
-        if (!string.Equals(_pendingSource, _requestedSource, StringComparison.Ordinal))
-        {
-            DiscardPendingRenderer(renderer);
-            RequestRefresh();
-            return;
-        }
-        if (_currentRenderer is { CanCopy: true }
-            || _currentRenderer?.IsKeyboardFocusWithin == true
+        if (_hasRenderedContent
+            || _currentRenderer is not { } renderer
+            || !HasRenderedCurrentContent(renderer)
             || _fallback is { } fallback
             && (!string.IsNullOrEmpty(fallback.SelectedText)
                 || fallback.IsKeyboardFocusWithin))
@@ -266,62 +370,20 @@ internal sealed class StreamingMarkdownPresenter : Panel
             return;
         }
 
-        if (_currentRenderer is not null)
-        {
-            _currentRenderer.PropertyChanged -= OnCurrentRendererPropertyChanged;
-            _currentRenderer.LayoutUpdated -= OnCurrentRendererLayoutUpdated;
-            _currentRenderer.MarkdownBuilder = null;
-            Children.Remove(_currentRenderer);
-        }
+        _hasRenderedContent = true;
         if (_fallback is not null)
         {
             _fallback.PropertyChanged -= OnFallbackPropertyChanged;
             Children.Remove(_fallback);
             _fallback = null;
         }
-
-        _pendingRenderer = null;
-        _pendingReady = false;
-        _currentRenderer = renderer;
-        renderer.PropertyChanged += OnCurrentRendererPropertyChanged;
-        renderer.LayoutUpdated += OnCurrentRendererLayoutUpdated;
-        _currentLayoutObserved = false;
-        _currentDesiredSize = renderer.DesiredSize;
-        _renderedSource = _pendingSource;
         renderer.Opacity = 1;
         renderer.IsHitTestVisible = true;
         renderer.IsEnabled = true;
         renderer.Focusable = true;
-        Rendered?.Invoke(this, EventArgs.Empty);
-        if (_requestedSource != _renderedSource)
-        {
-            RequestRefresh();
-        }
-    }
-
-    private void OnCurrentRendererLayoutUpdated(object? sender, EventArgs e)
-    {
-        if (sender is not MarkdownRenderer renderer
-            || !ReferenceEquals(renderer, _currentRenderer))
-        {
-            return;
-        }
-
-        var desiredSize = renderer.DesiredSize;
-        if (!_currentLayoutObserved)
-        {
-            _currentLayoutObserved = true;
-            _currentDesiredSize = desiredSize;
-            return;
-        }
-        if (Math.Abs(desiredSize.Width - _currentDesiredSize.Width) < 0.5
-            && Math.Abs(desiredSize.Height - _currentDesiredSize.Height) < 0.5)
-        {
-            return;
-        }
-
-        _currentDesiredSize = desiredSize;
-        Rendered?.Invoke(this, EventArgs.Empty);
+        _initialLayoutNotificationPending = true;
+        _currentLayoutObserved = false;
+        InvalidateMeasure();
     }
 
     private void EnsureFallback()
@@ -333,7 +395,7 @@ internal sealed class StreamingMarkdownPresenter : Panel
 
         _fallback = new SelectableTextBlock
         {
-            Text = _pendingSource,
+            Text = _requestedSource,
             TextWrapping = TextWrapping.Wrap,
         };
         _fallback.Classes.Add("markdown-fallback");
@@ -341,26 +403,18 @@ internal sealed class StreamingMarkdownPresenter : Panel
         Children.Add(_fallback);
     }
 
-    private void DiscardPendingRenderer(MarkdownRenderer renderer)
-    {
-        renderer.LayoutUpdated -= OnPendingRendererLayoutUpdated;
-        renderer.MarkdownBuilder = null;
-        Children.Remove(renderer);
-        _pendingRenderer = null;
-        _pendingReady = false;
-        _pendingSource = string.Empty;
-    }
-
     private void OnCurrentRendererPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
     {
-        if (sender is MarkdownRenderer renderer
+        if (sender is StableMarkdownRenderer renderer
             && ReferenceEquals(renderer, _currentRenderer)
-            && _pendingRenderer is { } pendingRenderer
-            && _pendingReady
             && !renderer.CanCopy
             && !renderer.IsKeyboardFocusWithin)
         {
-            PromotePendingRenderer(pendingRenderer);
+            renderer.ResumeDeferredRender();
+            if (!string.Equals(_requestedSource, _appliedSource, StringComparison.Ordinal))
+            {
+                RequestRefresh();
+            }
         }
     }
 
@@ -368,27 +422,27 @@ internal sealed class StreamingMarkdownPresenter : Panel
     {
         if (sender is SelectableTextBlock fallback
             && ReferenceEquals(fallback, _fallback)
-            && _pendingRenderer is { } pendingRenderer
-            && _pendingReady
             && string.IsNullOrEmpty(fallback.SelectedText)
             && !fallback.IsKeyboardFocusWithin)
         {
-            PromotePendingRenderer(pendingRenderer);
+            if (string.Equals(_requestedSource, _appliedSource, StringComparison.Ordinal))
+            {
+                TryPromoteInitialRenderer();
+            }
+            else
+            {
+                RequestRefresh();
+            }
         }
     }
 
     private void ResetRenderedContent()
     {
-        if (_pendingRenderer is not null)
-        {
-            _pendingRenderer.LayoutUpdated -= OnPendingRendererLayoutUpdated;
-            _pendingRenderer.MarkdownBuilder = null;
-        }
         if (_currentRenderer is not null)
         {
             _currentRenderer.PropertyChanged -= OnCurrentRendererPropertyChanged;
             _currentRenderer.LayoutUpdated -= OnCurrentRendererLayoutUpdated;
-            _currentRenderer.MarkdownBuilder = null;
+            _currentRenderer.SourceBuilder = null;
         }
         if (_fallback is not null)
         {
@@ -396,14 +450,15 @@ internal sealed class StreamingMarkdownPresenter : Panel
         }
 
         Children.Clear();
-        _pendingRenderer = null;
-        _pendingReady = false;
         _currentRenderer = null;
+        _displayBuilder = null;
+        _hasRenderedContent = false;
+        _initialLayoutNotificationPending = false;
         _currentLayoutObserved = false;
         _currentDesiredSize = default;
+        _notifiedRenderedSource = string.Empty;
         _fallback = null;
-        _pendingSource = string.Empty;
-        _renderedSource = string.Empty;
+        _appliedSource = string.Empty;
     }
 
     private static async Task AwaitDispatcherOperationAsync(DispatcherOperation operation)

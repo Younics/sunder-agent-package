@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Collections.Concurrent;
 using System.Reflection;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
@@ -72,6 +73,7 @@ public sealed class AgentRuntimeCorrectnessTests
             PreferredSessionId: Guid.NewGuid()));
 
         Assert.Equal(changes.Revision, snapshot.Revision);
+        Assert.Equal(changes.InstanceId, snapshot.RuntimeInstanceId);
         Assert.Equal(snapshot.Revision, snapshot.InitialTranscript.Revision);
         Assert.Equal(profile.ProfileId, snapshot.SelectedProfile?.ProfileId);
         Assert.Equal(workspace.WorkspaceId, snapshot.SelectedWorkspace?.WorkspaceId);
@@ -278,6 +280,91 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     [Fact]
+    public async Task ChatViewModel_RuntimeInstanceResetAcceptsLowerPermissionRevision()
+    {
+        var initial = CreateChatSnapshot(100);
+        var sessionId = initial.SelectedSession!.Session.SessionId;
+        initial = initial with
+        {
+            Permissions = initial.Permissions with
+            {
+                SessionState = new AgentSessionPermissionState(
+                    sessionId,
+                    true),
+            },
+        };
+        using var gateway = new AgentAppRuntimeGateway(new StaticChatSnapshotRuntimeClient(initial));
+        using var viewModel = new AgentChatViewModel(
+            gateway,
+            gateway,
+            gateway,
+            gateway,
+            gateway);
+        await viewModel.InitializeAsync();
+        Assert.True(viewModel.IsUnrestrictedModeEnabled);
+        var restarted = initial with
+        {
+            Revision = 1,
+            RuntimeInstanceId = "runtime-2",
+            InitialTranscript = initial.InitialTranscript with { Revision = 1 },
+            Permissions = new AgentChatPermissionProjection(
+                1,
+                new AgentSessionPermissionState(
+                    sessionId,
+                    false),
+                []),
+        };
+        var applySnapshot = typeof(AgentChatViewModel).GetMethod(
+            "ApplyChatSnapshot",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        applySnapshot.Invoke(viewModel, [restarted, true]);
+
+        Assert.False(viewModel.IsUnrestrictedModeEnabled);
+    }
+
+    [Fact]
+    public async Task AppRuntimeGateway_CorrelatedRunsCarryRequestedUserTurnIds()
+    {
+        var client = new CapturingRunRuntimeClient();
+        using var gateway = new AgentAppRuntimeGateway(client);
+        var correlatedGateway = (IAgentCorrelatedRunGateway)gateway;
+        var sessionId = Guid.NewGuid();
+        var startUserTurnId = Guid.NewGuid();
+        var rollbackUserTurnId = Guid.NewGuid();
+        var rollbackAnchorTurnId = Guid.NewGuid();
+
+        await correlatedGateway.QueueUserMessageAsync(
+            sessionId,
+            "profile",
+            "start",
+            "workspace",
+            [],
+            startUserTurnId);
+        await correlatedGateway.RollbackAndQueueUserMessageAsync(
+            sessionId,
+            rollbackAnchorTurnId,
+            "profile",
+            "rollback",
+            "workspace",
+            [],
+            rollbackUserTurnId);
+        var status = await gateway.GetRunCommandStatusAsync(sessionId, startUserTurnId);
+
+        var commands = client.Commands.ToArray();
+        Assert.Equal(2, commands.Length);
+        Assert.Equal(AgentRunCommandKind.Start, commands[0].Kind);
+        Assert.Equal(startUserTurnId, commands[0].UserTurnId);
+        Assert.Equal(AgentRunCommandKind.RollbackAndStart, commands[1].Kind);
+        Assert.Equal(rollbackAnchorTurnId, commands[1].RollbackAnchorTurnId);
+        Assert.Equal(rollbackUserTurnId, commands[1].UserTurnId);
+        Assert.Equal(AgentRunCommandStatus.Pending, status);
+        Assert.Equal(
+            new AgentRunCommandStatusRequest(sessionId, startUserTurnId),
+            client.LastStatusRequest);
+    }
+
+    [Fact]
     public async Task ChatViewModel_CanceledStaleSnapshotCannotOverwriteOrPersistNewerSelection()
     {
         using var scope = RegressionTestPackageScope.Create();
@@ -347,6 +434,86 @@ public sealed class AgentRuntimeCorrectnessTests
         await Task.Delay(50);
 
         Assert.Equal(snapshots.First.SelectedSession!.Session.SessionId, viewModel.SelectedSession?.SessionId);
+    }
+
+    [Fact]
+    public async Task ChatViewModel_StalePermissionReadCannotOverwriteNewerCommandResult()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var runtime = CreateSnapshotRuntime(scope.Context);
+        using var profiles = runtime.Profiles;
+        var profile = await profiles.CreateProfileAsync("Permission profile");
+        var workspace = runtime.Workspaces.CreateWorkspace("Permission workspace");
+        var session = runtime.Sessions.CreateSession(
+            "Permission session",
+            profileId: profile.ProfileId,
+            workspaceId: workspace.WorkspaceId);
+        var permissions = new RacingPermissionGateway(session.SessionId);
+        using var viewModel = new AgentChatViewModel(
+            profiles,
+            runtime.Workspaces,
+            runtime.Sessions,
+            permissions,
+            NoOpRunGateway.Instance);
+        await viewModel.InitializeAsync();
+
+        runtime.Sessions.UpdateSession(session with
+        {
+            Title = "Permission session updated",
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+        });
+        await permissions.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        viewModel.IsUnrestrictedModeEnabled = true;
+        await permissions.WriteCompleted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitUntilAsync(() => viewModel.IsUnrestrictedModeEnabled);
+
+        permissions.ReleaseRead();
+        await permissions.ReadCompleted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Task.Delay(25);
+
+        Assert.True(viewModel.IsUnrestrictedModeEnabled);
+    }
+
+    [Fact]
+    public async Task ChatViewModel_NewerPermissionReadCanFollowOlderCommandResult()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var runtime = CreateSnapshotRuntime(scope.Context);
+        using var profiles = runtime.Profiles;
+        var profile = await profiles.CreateProfileAsync("Permission profile");
+        var workspace = runtime.Workspaces.CreateWorkspace("Permission workspace");
+        var session = runtime.Sessions.CreateSession(
+            "Permission session",
+            profileId: profile.ProfileId,
+            workspaceId: workspace.WorkspaceId);
+        var permissions = new RacingPermissionGateway(
+            session.SessionId,
+            readRevision: 11,
+            writeRevision: 10,
+            readEnabled: false);
+        using var viewModel = new AgentChatViewModel(
+            profiles,
+            runtime.Workspaces,
+            runtime.Sessions,
+            permissions,
+            NoOpRunGateway.Instance);
+        await viewModel.InitializeAsync();
+
+        runtime.Sessions.UpdateSession(session with
+        {
+            Title = "Permission session updated",
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+        });
+        await permissions.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        viewModel.IsUnrestrictedModeEnabled = true;
+        await permissions.WriteCompleted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitUntilAsync(() => viewModel.IsUnrestrictedModeEnabled);
+
+        permissions.ReleaseRead();
+        await permissions.ReadCompleted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitUntilAsync(() => !viewModel.IsUnrestrictedModeEnabled);
     }
 
     [Fact]
@@ -670,6 +837,35 @@ public sealed class AgentRuntimeCorrectnessTests
         Assert.Equal(8, (int)AgentRuntimeChangeKind.RunActivity);
         Assert.Equal(9, (int)AgentRuntimeChangeKind.Permission);
         Assert.Equal(10, (int)AgentRuntimeChangeKind.TurnMutation);
+    }
+
+    [Fact]
+    public void Gateway_RuntimeInstanceChangeForcesResnapshotAcrossOverlappingRevisions()
+    {
+        using var gateway = new AgentAppRuntimeGateway(new ToggleRuntimeClient(isAvailable: true));
+        typeof(AgentAppRuntimeGateway)
+            .GetField("_runtimeInstanceId", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(gateway, "runtime-1");
+        typeof(AgentAppRuntimeGateway)
+            .GetField("_revision", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(gateway, 100L);
+        var apply = typeof(AgentAppRuntimeGateway).GetMethod(
+            "ApplyCurrentChange",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        var requiresSnapshot = Assert.IsType<bool>(apply.Invoke(
+            gateway,
+            [new AgentRuntimeChange(
+                100,
+                AgentRuntimeChangeKind.Connected,
+                RuntimeInstanceId: "runtime-2")]));
+
+        Assert.True(requiresSnapshot);
+        Assert.Equal(
+            "runtime-2",
+            typeof(AgentAppRuntimeGateway)
+                .GetField("_runtimeInstanceId", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(gateway));
     }
 
     [Fact]
@@ -1118,6 +1314,7 @@ public sealed class AgentRuntimeCorrectnessTests
             [sessionSnapshot],
             new AgentTranscriptPage(revision, [], false),
             new AgentChatPermissionProjection(
+                revision,
                 new AgentSessionPermissionState(session.SessionId, false),
                 []));
     }
@@ -1164,6 +1361,7 @@ public sealed class AgentRuntimeCorrectnessTests
             [firstSessionSnapshot],
             new AgentTranscriptPage(41, [], false),
             new AgentChatPermissionProjection(
+                41,
                 new AgentSessionPermissionState(firstSession.SessionId, false),
                 []));
         var second = new AgentChatSnapshotProjection(
@@ -1177,6 +1375,7 @@ public sealed class AgentRuntimeCorrectnessTests
             [secondSessionSnapshot],
             new AgentTranscriptPage(42, [], false),
             new AgentChatPermissionProjection(
+                42,
                 new AgentSessionPermissionState(secondSession.SessionId, false),
                 []));
         return (first, second);
@@ -1220,6 +1419,7 @@ public sealed class AgentRuntimeCorrectnessTests
                 workspaceSessions,
                 new AgentTranscriptPage(revision, [], false),
                 new AgentChatPermissionProjection(
+                    revision,
                     new AgentSessionPermissionState(selected.Session.SessionId, false),
                     []));
         return (Create(51, firstSessionSnapshot), Create(52, secondSessionSnapshot));
@@ -1396,6 +1596,133 @@ public sealed class AgentRuntimeCorrectnessTests
         AgentProfileService Profiles,
         AgentRuntimeChangeHub Changes);
 
+    private sealed class RacingPermissionGateway(
+        Guid sessionId,
+        long readRevision = 1,
+        long writeRevision = 2,
+        bool readEnabled = false)
+        : IAgentPermissionGateway,
+          IAgentChatPermissionCommandGateway
+    {
+        private readonly TaskCompletionSource _releaseRead = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReadStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReadCompleted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource WriteCompleted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public AgentSessionPermissionState GetSessionState(Guid requestedSessionId)
+            => new(requestedSessionId, false);
+
+        public void SetSessionUnrestrictedMode(Guid requestedSessionId, bool isEnabled) { }
+
+        public IReadOnlyList<AgentPermissionActionDescriptor> ListActions() => [];
+
+        public IReadOnlyList<AgentPermissionOverride> ListOverrides() => [];
+
+        public void SaveOverride(
+            string actionId,
+            string boundaryId,
+            AgentPermissionDecision decision)
+        { }
+
+        public void DeleteOverride(string actionId, string boundaryId) { }
+
+        public IReadOnlyList<AgentPendingPermissionRequestRecord> ListPendingRequestsForSessionTree(
+            Guid requestedSessionId) => [];
+
+        public void SaveSessionApproval(
+            Guid requestedSessionId,
+            string actionId,
+            string boundaryId)
+        { }
+
+        public async Task<AgentChatPermissionProjection> LoadSessionPermissionsAsync(
+            Guid requestedSessionId,
+            CancellationToken cancellationToken = default)
+        {
+            Assert.Equal(sessionId, requestedSessionId);
+            ReadStarted.TrySetResult();
+            await _releaseRead.Task.WaitAsync(cancellationToken);
+            ReadCompleted.TrySetResult();
+            return new AgentChatPermissionProjection(
+                readRevision,
+                new AgentSessionPermissionState(sessionId, readEnabled),
+                []);
+        }
+
+        public Task<AgentChatPermissionProjection> SetSessionUnrestrictedModeAsync(
+            Guid requestedSessionId,
+            bool isEnabled,
+            CancellationToken cancellationToken = default)
+        {
+            Assert.Equal(sessionId, requestedSessionId);
+            Assert.True(isEnabled);
+            WriteCompleted.TrySetResult();
+            return Task.FromResult(new AgentChatPermissionProjection(
+                writeRevision,
+                new AgentSessionPermissionState(sessionId, true),
+                []));
+        }
+
+        public void ReleaseRead() => _releaseRead.TrySetResult();
+    }
+
+    private sealed class NoOpRunGateway : IAgentRunGateway
+    {
+        public static NoOpRunGateway Instance { get; } = new();
+
+        public Task<AgentRunCheckpointRecord> QueueUserMessageAsync(
+            Guid sessionId,
+            string profileId,
+            string userMessage,
+            string workspaceId,
+            IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(CreateCheckpoint(sessionId));
+
+        public Task<AgentRunCheckpointRecord> RollbackAndQueueUserMessageAsync(
+            Guid sessionId,
+            Guid rollbackAnchorTurnId,
+            string profileId,
+            string userMessage,
+            string workspaceId,
+            IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(CreateCheckpoint(sessionId));
+
+        public Task<AgentRunCheckpointRecord?> StopAsync(
+            Guid sessionId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<AgentRunCheckpointRecord?>(null);
+
+        public Task<AgentRunCheckpointRecord?> ApprovePendingPermissionAsync(
+            Guid sessionId,
+            string requestId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<AgentRunCheckpointRecord?>(null);
+
+        public Task<AgentRunCheckpointRecord?> DenyPendingPermissionAsync(
+            Guid sessionId,
+            string requestId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<AgentRunCheckpointRecord?>(null);
+
+        private static AgentRunCheckpointRecord CreateCheckpoint(Guid sessionId)
+            => new(
+                Guid.NewGuid(),
+                sessionId,
+                1,
+                AgentRunStatus.Running,
+                "Running",
+                DateTimeOffset.UtcNow);
+    }
+
     private sealed class ChangeHubRuntime : IDisposable
     {
         private readonly RegressionTestPackageScope _scope;
@@ -1502,6 +1829,58 @@ public sealed class AgentRuntimeCorrectnessTests
             }
             yield return (TEvent)(object)new AgentRuntimeChange(0, AgentRuntimeChangeKind.Connected);
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
+    private sealed class CapturingRunRuntimeClient : IPackageRuntimeClient
+    {
+        public bool IsAvailable => true;
+
+        public ConcurrentQueue<AgentRunCommand> Commands { get; } = new();
+
+        public AgentRunCommandStatusRequest? LastStatusRequest { get; private set; }
+
+        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            PackageRuntimeOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (ReferenceEquals(operation, AgentRuntimeOperations.RunStatus))
+            {
+                LastStatusRequest = (AgentRunCommandStatusRequest)(object)request;
+                return ValueTask.FromResult((TResponse)(object)new AgentRunCommandStatusResult(
+                    1,
+                    AgentRunCommandStatus.Pending));
+            }
+            if (!ReferenceEquals(operation, AgentRuntimeOperations.Runs))
+            {
+                throw new NotSupportedException(operation.OperationId);
+            }
+
+            var command = (AgentRunCommand)(object)request;
+            Commands.Enqueue(command);
+            var checkpoint = new AgentRunCheckpointRecord(
+                Guid.NewGuid(),
+                command.SessionId,
+                1,
+                AgentRunStatus.Running,
+                "Running.",
+                DateTimeOffset.UtcNow);
+            return ValueTask.FromResult((TResponse)(object)new AgentRunCommandResult(1, checkpoint));
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            PackageRuntimeStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
         }
     }
 

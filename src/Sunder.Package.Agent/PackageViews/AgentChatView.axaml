@@ -6,7 +6,6 @@
              xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
              xmlns:agentModels="using:Sunder.Package.Agent.Models"
              xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
-              xmlns:md="clr-namespace:LiveMarkdown.Avalonia;assembly=LiveMarkdown.Avalonia"
               x:Class="Sunder.Package.Agent.PackageViews.AgentChatView"
               x:DataType="vm:AgentChatViewModel"
               mc:Ignorable="d">
@@ -198,9 +197,10 @@
                     MinWidth="0"
                     HorizontalAlignment="Stretch"
                     IsVisible="{Binding ShowMarkdownDetails}">
-              <md:MarkdownRenderer MarkdownBuilder="{Binding DetailMarkdownBuilder}"
-                                   MinWidth="0"
-                                   HorizontalAlignment="Stretch" />
+              <shared:StreamingMarkdownPresenter MarkdownBuilder="{Binding DetailMarkdownBuilder}"
+                                                 MinWidth="0"
+                                                 HorizontalAlignment="Stretch"
+                                                 Rendered="TranscriptMarkdown_OnRendered" />
             </Border>
 
             <Border Grid.Row="4"
@@ -1331,21 +1331,36 @@
                            IsVisible="{Binding !ShowSetupInstructions}">
               <Border x:Name="TranscriptScrollContent"
                       Classes="transcript-content">
-                <ItemsRepeater x:Name="TranscriptItemsControl"
-                               Classes="transcript-items"
-                               ItemsSource="{Binding Messages}">
-                  <ItemsRepeater.Layout>
-                    <StackLayout />
-                  </ItemsRepeater.Layout>
-                  <ItemsRepeater.ItemTemplate>
-                    <DataTemplate x:DataType="vm:AgentTranscriptRowViewModel">
-                      <shared:TranscriptRowPresenter Classes="transcript-row-anchor"
-                                                     AnchorKey="{Binding AnchorKey}"
-                                                     IsRepeaterHosted="True"
-                                                     Content="{Binding}" />
-                    </DataTemplate>
-                  </ItemsRepeater.ItemTemplate>
-                </ItemsRepeater>
+                <shared:TranscriptScrollAnchorHost x:Name="TranscriptAnchorHost"
+                                                   RowDefinitions="Auto,Auto,Auto">
+                  <ItemsRepeater x:Name="TranscriptItemsControl"
+                                 Grid.Row="0"
+                                 Classes="transcript-items"
+                                 ItemsSource="{Binding Messages}">
+                    <ItemsRepeater.Layout>
+                      <StackLayout />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                      <DataTemplate x:DataType="vm:AgentTranscriptRowViewModel">
+                        <shared:TranscriptRowPresenter Classes="transcript-row-anchor"
+                                                       AnchorKey="{Binding AnchorKey}"
+                                                       IsRepeaterHosted="True"
+                                                       Content="{Binding}" />
+                      </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                  </ItemsRepeater>
+                  <shared:TranscriptRowPresenter Grid.Row="1"
+                                                 Classes="transcript-row-anchor"
+                                                 AnchorKey="{Binding RunActivityRow.AnchorKey}"
+                                                 IsRepeaterHosted="True"
+                                                 IsVisible="{Binding RunActivityRow.IsVisible}"
+                                                 Content="{Binding RunActivityRow}" />
+                  <Border x:Name="TranscriptTailAnchor"
+                          Grid.Row="2"
+                          Height="1"
+                          VerticalAlignment="Bottom"
+                          IsHitTestVisible="False" />
+                </shared:TranscriptScrollAnchorHost>
               </Border>
             </ScrollViewer>
 

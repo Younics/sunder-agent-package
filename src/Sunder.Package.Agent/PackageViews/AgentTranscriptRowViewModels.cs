@@ -175,6 +175,7 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
     private string _activityTextBase;
     private bool _isReasoningActivity;
     private bool _animateActivityText = true;
+    private bool _isTickerSubscribed;
     private int _tick = 3;
 
     public AgentActivityTranscriptRowViewModel(
@@ -194,13 +195,39 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
         _activityTextBase = string.IsNullOrWhiteSpace(activityTextBase) ? "Processing" : activityTextBase.Trim();
         _isReasoningActivity = isReasoningActivity;
         ApplyActivityTextBase(_activityTextBase, isReasoningActivity);
-        _ticker.Tick += OnTick;
     }
 
     public string RoleGlyph => "A";
 
     [ObservableProperty]
     private string _thinkingText = "Thinking...";
+
+    [ObservableProperty]
+    private bool _isVisible;
+
+    partial void OnIsVisibleChanged(bool value)
+    {
+        if (value == _isTickerSubscribed)
+        {
+            return;
+        }
+
+        if (value)
+        {
+            _ticker.Tick += OnTick;
+        }
+        else
+        {
+            _ticker.Tick -= OnTick;
+        }
+        _isTickerSubscribed = value;
+    }
+
+    public void SetPresentation(string activityTextBase, bool isReasoningActivity, bool isVisible)
+    {
+        SetActivityTextBase(activityTextBase, isReasoningActivity);
+        IsVisible = isVisible;
+    }
 
     public void SetActivityTextBase(string activityTextBase, bool isReasoningActivity = false)
     {
@@ -326,6 +353,10 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
 
     public void Dispose()
     {
-        _ticker.Tick -= OnTick;
+        if (_isTickerSubscribed)
+        {
+            _ticker.Tick -= OnTick;
+            _isTickerSubscribed = false;
+        }
     }
 }

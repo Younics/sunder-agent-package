@@ -8,7 +8,8 @@ public sealed class AgentRunCoordinator(
     AgentUserMessageRunCoordinator userMessageRunCoordinator,
     AgentRunStopCoordinator stopCoordinator,
     AgentChildRunSessionService childRunSessionService,
-    AgentPermissionResumeCoordinator permissionResumeCoordinator) : IAgentChildRunExecutor, IAgentRunGateway
+    AgentPermissionResumeCoordinator permissionResumeCoordinator)
+    : IAgentChildRunExecutor, IAgentRunGateway, IAgentCorrelatedRunGateway
 {
     private readonly AgentUserMessageRunCoordinator _userMessageRunCoordinator = userMessageRunCoordinator;
     private readonly AgentRunStopCoordinator _stopCoordinator = stopCoordinator;
@@ -70,6 +71,24 @@ public sealed class AgentRunCoordinator(
             attachments,
             cancellationToken);
 
+    Task<AgentRunCheckpointRecord> IAgentCorrelatedRunGateway.QueueUserMessageAsync(
+        Guid sessionId,
+        string profileId,
+        string userMessage,
+        string workspaceId,
+        IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+        Guid userTurnId,
+        CancellationToken cancellationToken)
+        => _userMessageRunCoordinator.QueueAsync(
+            sessionId,
+            profileId,
+            userMessage,
+            workspaceId,
+            attachments,
+            rollbackAnchorTurnId: null,
+            userTurnId,
+            cancellationToken);
+
     public async Task<AgentRunCheckpointRecord> RollbackAndQueueUserMessageAsync(
         Guid sessionId,
         Guid rollbackAnchorTurnId,
@@ -99,6 +118,29 @@ public sealed class AgentRunCoordinator(
             workspaceId,
             attachments,
             rollbackAnchorTurnId,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    async Task<AgentRunCheckpointRecord> IAgentCorrelatedRunGateway.RollbackAndQueueUserMessageAsync(
+        Guid sessionId,
+        Guid rollbackAnchorTurnId,
+        string profileId,
+        string userMessage,
+        string workspaceId,
+        IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+        Guid userTurnId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await StopAsync(sessionId).ConfigureAwait(false);
+        return await _userMessageRunCoordinator.QueueAsync(
+            sessionId,
+            profileId,
+            userMessage,
+            workspaceId,
+            attachments,
+            rollbackAnchorTurnId,
+            userTurnId,
             cancellationToken).ConfigureAwait(false);
     }
 

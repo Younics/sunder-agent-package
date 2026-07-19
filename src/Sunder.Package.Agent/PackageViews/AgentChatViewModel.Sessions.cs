@@ -221,12 +221,42 @@ public sealed partial class AgentChatViewModel
 
     private void ReloadPendingPermissionRequests()
     {
-        if (_chatSnapshotGateway is not null)
+        var sessionId = SelectedSession?.SessionId;
+        if (_chatPermissionCommandGateway is not null && sessionId is { } selectedSessionId)
         {
-            ScheduleChatSnapshotRequest(
-                SelectedProfile?.ProfileId,
-                SelectedWorkspace?.WorkspaceId,
-                SelectedSession?.SessionId);
+            var generation = Interlocked.Increment(ref _permissionRequestGeneration);
+            _backgroundTasks.Run(async cancellationToken =>
+            {
+                var projection = await _chatPermissionCommandGateway
+                    .LoadSessionPermissionsAsync(selectedSessionId, cancellationToken)
+                    .ConfigureAwait(false);
+                await InvokeOnUiThreadAsync(() =>
+                {
+                    if (_disposed
+                        || generation != Volatile.Read(ref _permissionRequestGeneration)
+                        || SelectedSession?.SessionId != selectedSessionId
+                        || projection.Revision < _appliedPermissionRevision)
+                    {
+                        return;
+                    }
+
+                    _appliedPermissionRevision = projection.Revision;
+                    _permissionPanel.ApplySnapshot(
+                        selectedSessionId,
+                        projection.SessionState,
+                        projection.PendingRequests);
+                    NotifyPermissionPanelChanged();
+                }).ConfigureAwait(false);
+            });
+            return;
+        }
+
+        if (sessionId is null)
+        {
+            Interlocked.Increment(ref _permissionRequestGeneration);
+            _appliedPermissionRevision = 0;
+            _permissionPanel.ApplySnapshot(null, null, []);
+            NotifyPermissionPanelChanged();
             return;
         }
 
@@ -409,7 +439,7 @@ public sealed partial class AgentChatViewModel
     {
         if (_isInitialized)
         {
-            RunOnUiThread(() => ApplySessionChanged(sessionId));
+            EnqueueTranscriptBoundary(() => ApplySessionChanged(sessionId));
         }
     }
 
@@ -594,10 +624,7 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        ReloadPendingPermissionRequests();
         UpdateSessionState(sessionId, markUnread: false);
-        UpdateActivityRowForCurrentState();
-        TranscriptChanged?.Invoke();
     }
 
     private void OnSelectedSessionPropertyChanged(object? sender, PropertyChangedEventArgs e)

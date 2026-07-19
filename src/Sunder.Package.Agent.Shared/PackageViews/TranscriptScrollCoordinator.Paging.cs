@@ -62,10 +62,15 @@ internal sealed partial class TranscriptScrollCoordinator
             _restoreAnchorPending = false;
             if (!_disposed && _presentationActive && _pendingAnchor is not null)
             {
-                QueueRestoreScrollAnchor();
+                if (_renderedContentChangedDuringAnchorRestore)
+                {
+                    _renderedContentChangedDuringAnchorRestore = false;
+                    QueueRestoreScrollAnchor();
+                }
             }
             else
             {
+                _renderedContentChangedDuringAnchorRestore = false;
                 ReevaluatePagingEdges();
             }
         }
@@ -87,7 +92,8 @@ internal sealed partial class TranscriptScrollCoordinator
                 return;
             }
             _pendingAnchor = null;
-            var protectedAnchorKey = CaptureCurrentScrollAnchorKey();
+            var protectedAnchorKey = anchor.Items.FirstOrDefault()?.Item
+                                     ?? CaptureCurrentScrollAnchorKey();
             loaded = await _loadOlderRowsAsync(protectedAnchorKey, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (loaded
@@ -157,6 +163,7 @@ internal sealed partial class TranscriptScrollCoordinator
                 }
                 _activePageInteractionRevision = -1;
                 _loadOlderPending = false;
+                _anchorHost?.SetFollowingTail(IsFollowingTail);
             }
         }
     }

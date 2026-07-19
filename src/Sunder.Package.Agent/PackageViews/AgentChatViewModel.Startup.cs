@@ -219,6 +219,7 @@ public sealed partial class AgentChatViewModel
             sessionSnapshots,
             new AgentTranscriptPage(0, turns, hasMoreTurns),
             new AgentChatPermissionProjection(
+                0,
                 selectedSession is null
                     ? null
                     : _permissionService.GetSessionState(selectedSession.Session.SessionId),
@@ -307,10 +308,26 @@ public sealed partial class AgentChatViewModel
                 _composer.Text = string.Empty;
             }
 
-            _permissionPanel.ApplySnapshot(
-                SelectedSession?.SessionId,
-                snapshot.Permissions.SessionState,
-                snapshot.Permissions.PendingRequests);
+            var runtimeInstanceChanged = !string.Equals(
+                snapshot.RuntimeInstanceId,
+                _appliedRuntimeInstanceId,
+                StringComparison.Ordinal);
+            if (runtimeInstanceChanged)
+            {
+                _appliedRuntimeInstanceId = snapshot.RuntimeInstanceId;
+                _appliedPermissionRevision = 0;
+                Interlocked.Increment(ref _permissionRequestGeneration);
+            }
+            if (runtimeInstanceChanged
+                || isSessionReplacement
+                || snapshot.Permissions.Revision >= _appliedPermissionRevision)
+            {
+                _appliedPermissionRevision = snapshot.Permissions.Revision;
+                _permissionPanel.ApplySnapshot(
+                    SelectedSession?.SessionId,
+                    snapshot.Permissions.SessionState,
+                    snapshot.Permissions.PendingRequests);
+            }
             ApplySnapshotTranscript(snapshot, forceTranscriptReplacement || !wasInitialized);
         }
         finally
@@ -320,6 +337,7 @@ public sealed partial class AgentChatViewModel
         }
 
         _isInitialized = true;
+        ScheduleCompletedSubmissionReconciliation();
         OnPropertyChanged(nameof(DraftMessage));
         NotifyProfileStateChanged();
         NotifyWorkspaceStateChanged();
@@ -364,16 +382,28 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        var replacedTranscript = forceReplacement || _timeline.SessionId != DisplayedSession.SessionId;
+        var isSessionReplacement = _timeline.SessionId != DisplayedSession.SessionId;
+        var replacedTranscript = forceReplacement || isSessionReplacement;
         if (replacedTranscript)
         {
+            var previousRunActivityTurns = isSessionReplacement
+                ? null
+                : SelectRunActivityTurns(_timeline.Projector.TurnWindow.OrderedTurns());
+            if (isSessionReplacement)
+            {
+                _runActivity.Reset();
+            }
             var ticket = _timeline.BeginInitialLoad(
                 DisplayedSession.SessionId,
                 forceReplacement);
-            _timeline.TryCompleteInitialLoad(
+            var applied = _timeline.TryCompleteInitialLoad(
                 ticket,
                 snapshot.InitialTranscript.Turns,
                 snapshot.InitialTranscript.HasMore);
+            if (applied && previousRunActivityTurns is not null)
+            {
+                ReconcileRunActivityAfterAuthoritativeReplacement(previousRunActivityTurns);
+            }
         }
         else
         {
@@ -397,6 +427,44 @@ public sealed partial class AgentChatViewModel
         }
         StatusText = DisplayedSession.StatusText;
     }
+
+    private void ReconcileRunActivityAfterAuthoritativeReplacement(
+        IReadOnlyList<AgentTurnRecord> previousTurns)
+    {
+        var currentTurns = SelectRunActivityTurns(_timeline.Projector.TurnWindow.OrderedTurns());
+        if (HaveSameRunActivityTurns(previousTurns, currentTurns))
+        {
+            return;
+        }
+
+        _runActivity.Reset();
+        foreach (var turn in currentTurns)
+        {
+            _runActivity.TrackTurn(turn, scheduleQuietTimer: true);
+        }
+    }
+
+    private static AgentTurnRecord[] SelectRunActivityTurns(IEnumerable<AgentTurnRecord> turns)
+    {
+        var orderedTurns = turns
+            .OrderBy(turn => turn.CreatedAtUtc)
+            .ThenBy(turn => turn.TurnId)
+            .ToArray();
+        var latestUserIndex = Array.FindLastIndex(
+            orderedTurns,
+            turn => turn.Role == AgentMessageRole.User);
+        return latestUserIndex < 0 ? orderedTurns : orderedTurns[latestUserIndex..];
+    }
+
+    private static bool HaveSameRunActivityTurns(
+        IReadOnlyList<AgentTurnRecord> first,
+        IReadOnlyList<AgentTurnRecord> second)
+        => first.Count == second.Count
+           && first.Zip(second).All(pair =>
+               pair.First.TurnId == pair.Second.TurnId
+               && pair.First.Role == pair.Second.Role
+               && pair.First.Kind == pair.Second.Kind
+               && pair.First.Items.SequenceEqual(pair.Second.Items));
 
     private void ReconcileProfiles(IReadOnlyList<AgentProfileRecord> profiles)
     {
@@ -449,15 +517,12 @@ public sealed partial class AgentChatViewModel
         }
 
         var operation = BeginChatSnapshotRequest();
-        _backgroundTasks.Run(async _ =>
+        EnqueueTranscriptBoundary(() =>
         {
-            await InvokeOnUiThreadAsync(() =>
+            if (IsCurrentChatSnapshotRequest(operation.Generation))
             {
-                if (IsCurrentChatSnapshotRequest(operation.Generation))
-                {
-                    ApplyChatSnapshot(snapshot, forceTranscriptReplacement: true);
-                }
-            }).ConfigureAwait(false);
+                ApplyChatSnapshot(snapshot, forceTranscriptReplacement: true);
+            }
         });
     }
 

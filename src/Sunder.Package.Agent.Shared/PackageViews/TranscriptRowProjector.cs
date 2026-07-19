@@ -82,6 +82,7 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
     private readonly AgentTranscriptTurnWindow _turnWindow;
     private readonly int _turnCapacity;
     private TRow? _activityRow;
+    private TranscriptActivityProjection? _activityProjection;
 
     public TranscriptRowProjector(
         ObservableCollection<TRow> rows,
@@ -110,7 +111,8 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
         AgentTurnRecord turn,
         TranscriptInsertMode insertMode,
         int prependIndex = 0,
-        bool replaceOnEqualTimestamp = true)
+        bool replaceOnEqualTimestamp = true,
+        bool notifyExistingMessageChange = true)
     {
         var insertedRows = 0;
         var previousTurn = _turnWindow.OrderedTurns()
@@ -177,7 +179,10 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
                 var projection = DescribeMessage(turn);
                 if (_messageRowsByTurnId.TryGetValue(turn.TurnId, out var existingMessageRow))
                 {
-                    RowsChanging?.Invoke();
+                    if (notifyExistingMessageChange)
+                    {
+                        RowsChanging?.Invoke();
+                    }
                     _factory.UpdateMessage(existingMessageRow, turn, projection);
                     break;
                 }
@@ -286,22 +291,32 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
         {
             RowsChanging?.Invoke();
             _activityRow = _factory.CreateActivity(projection);
+            _activityProjection = projection;
             _rows.Add(_activityRow);
             RowCreated?.Invoke(_activityRow);
             return true;
         }
 
-        RowsChanging?.Invoke();
-        _factory.UpdateActivity(_activityRow, projection);
         var index = _rows.IndexOf(_activityRow);
-        if (index >= 0 && index != _rows.Count - 1)
+        var projectionChanged = _activityProjection != projection;
+        var positionChanged = index < 0 || index != _rows.Count - 1;
+        if (!projectionChanged && !positionChanged)
         {
-            RowsChanging?.Invoke();
+            return false;
+        }
+
+        RowsChanging?.Invoke();
+        if (projectionChanged)
+        {
+            _factory.UpdateActivity(_activityRow, projection);
+            _activityProjection = projection;
+        }
+        if (index >= 0 && positionChanged)
+        {
             _rows.Move(index, _rows.Count - 1);
         }
         else if (index < 0)
         {
-            RowsChanging?.Invoke();
             _rows.Add(_activityRow);
         }
 
@@ -323,6 +338,7 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
 
         _factory.DisposeRow(_activityRow);
         _activityRow = null;
+        _activityProjection = null;
         return true;
     }
 
@@ -399,6 +415,7 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
         }
 
         _activityRow = null;
+        _activityProjection = null;
         _messageRowsByTurnId.Clear();
         _toolRowsByKey.Clear();
         _turnWindow.Reset();

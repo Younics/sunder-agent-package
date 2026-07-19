@@ -13,6 +13,23 @@ public sealed partial class AgentLocalStore
         IReadOnlyList<AgentStoredAttachment> attachments,
         Guid? rollbackAnchorTurnId,
         string runningSummary)
+        => TryStartRun(
+            runKey,
+            expectedEpoch,
+            Guid.NewGuid(),
+            userMessage,
+            attachments,
+            rollbackAnchorTurnId,
+            runningSummary);
+
+    internal AgentRunStartPersistenceResult? TryStartRun(
+        AgentDurableRunKey runKey,
+        long expectedEpoch,
+        Guid userTurnId,
+        string userMessage,
+        IReadOnlyList<AgentStoredAttachment> attachments,
+        Guid? rollbackAnchorTurnId,
+        string runningSummary)
     {
         BeforeFencedTranscriptTransaction?.Invoke(AgentTranscriptMutationKind.UserRunStart);
 
@@ -38,7 +55,7 @@ public sealed partial class AgentLocalStore
         var now = DateTimeOffset.UtcNow;
         var userTurn = attachments.Count == 0
             ? CreateTextTurn(
-                Guid.NewGuid(),
+                userTurnId,
                 runKey.SessionId,
                 AgentMessageRole.User,
                 AgentTurnKind.Message,
@@ -46,7 +63,7 @@ public sealed partial class AgentLocalStore
                 now,
                 now)
             : CreateMessageTurn(
-                Guid.NewGuid(),
+                userTurnId,
                 runKey.SessionId,
                 AgentMessageRole.User,
                 userMessage,

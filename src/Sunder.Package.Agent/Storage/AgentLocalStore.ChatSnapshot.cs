@@ -92,8 +92,9 @@ public sealed partial class AgentLocalStore
         }
 
         var permissions = selectedSession is null
-            ? new AgentChatPermissionProjection(null, [])
+            ? new AgentChatPermissionProjection(revision, null, [])
             : new AgentChatPermissionProjection(
+                revision,
                 ReadChatSessionPermissionState(
                     connection,
                     transaction,

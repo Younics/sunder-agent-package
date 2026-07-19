@@ -16,6 +16,7 @@ internal sealed class AgentRunActivityState : IDisposable
     private bool _hasVisibleRunActivity;
     private bool _showAfterQuiet;
     private bool _disposed;
+    private ActivityPresentation _publishedPresentation;
 
     public AgentRunActivityState(
         Func<bool> isRunActive,
@@ -25,6 +26,7 @@ internal sealed class AgentRunActivityState : IDisposable
         _isRunActive = isRunActive;
         _isFollowingLatest = isFollowingLatest;
         _quietDelay = quietDelay ?? DefaultQuietDelay;
+        _publishedPresentation = CurrentPresentation;
     }
 
     public event Action? Changed;
@@ -45,7 +47,7 @@ internal sealed class AgentRunActivityState : IDisposable
         IsReasoning = false;
         _hasVisibleRunActivity = false;
         _showAfterQuiet = false;
-        Changed?.Invoke();
+        PublishIfChanged();
     }
 
     public void TrackTurn(AgentTurnRecord turn, bool scheduleQuietTimer)
@@ -69,7 +71,7 @@ internal sealed class AgentRunActivityState : IDisposable
             RestartQuietTimer();
         }
 
-        Changed?.Invoke();
+        PublishIfChanged();
     }
 
     public void TrackCheckpoint(AgentRunCheckpointRecord? checkpoint)
@@ -78,18 +80,19 @@ internal sealed class AgentRunActivityState : IDisposable
         {
             _quietTimer.Cancel();
             _showAfterQuiet = false;
-            Changed?.Invoke();
+            PublishIfChanged();
             return;
         }
 
         SetText(ResolveActivityText(checkpoint), isReasoning: false);
+        PublishIfChanged();
     }
 
     public void TrackUpdate(string? text, bool isReasoning)
     {
         SetText(string.IsNullOrWhiteSpace(text) ? "Thinking" : text, isReasoning, notify: false);
         _showAfterQuiet = true;
-        Changed?.Invoke();
+        PublishIfChanged();
     }
 
     public void NotifyRunStateChanged()
@@ -100,10 +103,10 @@ internal sealed class AgentRunActivityState : IDisposable
             _showAfterQuiet = false;
         }
 
-        Changed?.Invoke();
+        PublishIfChanged();
     }
 
-    public void NotifyFollowStateChanged() => Changed?.Invoke();
+    public void NotifyFollowStateChanged() => PublishIfChanged();
 
     public void Dispose()
     {
@@ -136,13 +139,13 @@ internal sealed class AgentRunActivityState : IDisposable
 
     private void ShowAfterQuietPeriod()
     {
-        if (!_isRunActive() || !_isFollowingLatest())
+        if (!_isRunActive())
         {
             return;
         }
 
         _showAfterQuiet = true;
-        Changed?.Invoke();
+        PublishIfChanged();
     }
 
     private void SetText(string text, bool isReasoning, bool notify = true)
@@ -158,8 +161,23 @@ internal sealed class AgentRunActivityState : IDisposable
         IsReasoning = isReasoning;
         if (notify)
         {
-            Changed?.Invoke();
+            PublishIfChanged();
         }
+    }
+
+    private ActivityPresentation CurrentPresentation
+        => new(Text, IsReasoning, ShouldShow);
+
+    private void PublishIfChanged()
+    {
+        var current = CurrentPresentation;
+        if (current == _publishedPresentation)
+        {
+            return;
+        }
+
+        _publishedPresentation = current;
+        Changed?.Invoke();
     }
 
     private static bool HasVisibleRunActivity(AgentTurnRecord turn)
@@ -240,4 +258,9 @@ internal sealed class AgentRunActivityState : IDisposable
             : string.Join(' ', parts.Select(part =>
                 CultureInfo.InvariantCulture.TextInfo.ToTitleCase(part.ToLowerInvariant())));
     }
+
+    private readonly record struct ActivityPresentation(
+        string Text,
+        bool IsReasoning,
+        bool ShouldShow);
 }

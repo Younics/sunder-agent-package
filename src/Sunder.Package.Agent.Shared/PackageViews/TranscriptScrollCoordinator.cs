@@ -35,8 +35,10 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
     private readonly Action<Exception>? _pagingFailed;
     private readonly Func<IEnumerable<(object Item, Control Visual)>>? _enumerateRealizedAnchors;
     private readonly Func<object, Control?>? _realizeAnchorVisual;
+    private readonly TranscriptScrollAnchorHost? _anchorHost;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly SemaphoreSlim _anchorRestorationGate = new(1, 1);
+    private readonly HashSet<Control> _suspendedNativeAnchorCandidates = [];
     private CancellationTokenSource _presentationPagingCancellation;
     private readonly double _autoScrollThreshold;
     private readonly double _loadOlderThreshold;
@@ -50,6 +52,8 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
     private bool _presentationActive = true;
     private bool _bottomPlacementLockActive;
     private bool _restoreAnchorPending;
+    private bool _renderedContentChangedDuringAnchorRestore;
+    private bool _nativeAnchoringSuspended;
     private bool _loadOlderPending;
     private bool _loadNewerPending;
     private bool _suppressEdgeLoadsUntilNextScroll;
@@ -90,7 +94,8 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         Func<object, Control?>? realizeAnchorVisual = null,
         double autoScrollThreshold = DefaultAutoScrollThreshold,
         double loadOlderThreshold = DefaultLoadOlderThreshold,
-        double loadNewerThreshold = DefaultLoadNewerThreshold)
+        double loadNewerThreshold = DefaultLoadNewerThreshold,
+        TranscriptScrollAnchorHost? anchorHost = null)
     {
         _scrollViewer = scrollViewer;
         _itemsControl = itemsControl;
@@ -107,6 +112,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         _pagingFailed = pagingFailed;
         _enumerateRealizedAnchors = enumerateRealizedAnchors;
         _realizeAnchorVisual = realizeAnchorVisual;
+        _anchorHost = anchorHost;
         _autoScrollThreshold = autoScrollThreshold;
         _loadOlderThreshold = loadOlderThreshold;
         _loadNewerThreshold = loadNewerThreshold;
@@ -114,6 +120,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
             _lifetimeCancellation.Token);
         _lastObservedOffsetY = scrollViewer.Offset.Y;
         _scrollViewer.PropertyChanged += OnScrollViewerPropertyChanged;
+        _scrollViewer.ScrollChanged += OnScrollViewerScrollChanged;
         _scrollViewer.AddHandler(
             InputElement.PointerWheelChangedEvent,
             OnUserPointerWheelChanged,
@@ -144,6 +151,17 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
             OnDescendantGotFocus,
             RoutingStrategies.Bubble,
             handledEventsToo: true);
+        _scrollViewer.AddHandler(
+            InputElement.ScrollGestureEvent,
+            OnUserScrollGesture,
+            RoutingStrategies.Tunnel,
+            handledEventsToo: true);
+        _scrollViewer.AddHandler(
+            InputElement.ScrollGestureEndedEvent,
+            OnUserScrollGestureEnded,
+            RoutingStrategies.Tunnel,
+            handledEventsToo: true);
+        _anchorHost?.SetFollowingTail(IsFollowingTail);
         UpdateJumpToLatestVisibility();
     }
 
@@ -164,7 +182,8 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         Func<object, Control?>? realizeAnchorVisual = null,
         double autoScrollThreshold = DefaultAutoScrollThreshold,
         double loadOlderThreshold = DefaultLoadOlderThreshold,
-        double loadNewerThreshold = DefaultLoadNewerThreshold)
+        double loadNewerThreshold = DefaultLoadNewerThreshold,
+        TranscriptScrollAnchorHost? anchorHost = null)
         : this(
             scrollViewer,
             null,
@@ -183,56 +202,9 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
             realizeAnchorVisual,
             autoScrollThreshold,
             loadOlderThreshold,
-            loadNewerThreshold)
+            loadNewerThreshold,
+            anchorHost)
     {
-    }
-
-    public void BeginTranscriptMutation()
-    {
-        if (_disposed || _isRestoringAnchor)
-        {
-            return;
-        }
-
-        _pendingAnchor ??= CaptureScrollAnchor(ScrollAnchorMode.LiveTranscriptMutation);
-    }
-
-    public void BeginTranscriptReplacementMutation()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        InvalidatePendingScrollOperations();
-        _pendingAnchor = CaptureScrollAnchor(ScrollAnchorMode.LiveTranscriptMutation);
-    }
-
-    public void BeginViewportMutation()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _pendingAnchor ??= CaptureScrollAnchor(ScrollAnchorMode.ViewportMutation);
-    }
-
-    public void OnViewportContentChanged()
-    {
-        UpdateJumpToLatestVisibility();
-        if (_pendingAnchor is not null)
-        {
-            QueueRestoreScrollAnchor();
-        }
-    }
-
-    public void DiscardPendingTranscriptMutation()
-    {
-        if (_pendingAnchor?.Mode == ScrollAnchorMode.LiveTranscriptMutation)
-        {
-            _pendingAnchor = null;
-        }
     }
 
     public void SetPresentationActive(bool isActive)
@@ -266,6 +238,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         _lastObservedOffsetY = _scrollViewer.Offset.Y;
         _pendingAnchor = null;
         _pendingScrollToBottomRequest = null;
+        _captureViewportAnchorOnScrollChanged = false;
         _forceScrollToBottomOnNextTranscriptChanged = false;
         _userScrollPending = false;
         _pendingUserScrollCanResumeFollowing = false;
@@ -275,6 +248,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         _touchScrollStart = null;
         _touchNestedScrollViewer = null;
         _touchScrollRecognized = false;
+        _scrollGestureActive = false;
         _loadNewerResumeInteractionRevision = -1;
         if (isActive)
         {
@@ -311,7 +285,17 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         {
             return;
         }
+        if (_pendingScrollToBottomRequest is
+            {
+                Force: true,
+                InteractionRevision: var requestRevision,
+            }
+            && requestRevision == _interactionRevision)
+        {
+            return;
+        }
 
+        _anchorHost?.SetFollowingTail(false);
         var items = anchor.AnchorKey is not null && anchor.AnchorViewportTop is { } anchorTop
             ? new[] { new ItemAnchor(anchor.AnchorKey, anchorTop, anchorTop) }
             : [];
@@ -326,60 +310,23 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         QueueRestoreScrollAnchor();
     }
 
-    public void OnTranscriptChanged()
-    {
-        if (_disposed || !_presentationActive)
-        {
-            return;
-        }
-
-        UpdateJumpToLatestVisibility();
-        if (_forceScrollToBottomOnNextTranscriptChanged)
-        {
-            _forceScrollToBottomOnNextTranscriptChanged = false;
-            if (_forceScrollToBottomInteractionRevision == _interactionRevision)
-            {
-                _pendingAnchor = null;
-                QueueScrollToBottom(force: true);
-                return;
-            }
-        }
-
-        if (_pendingAnchor is not null)
-        {
-            QueueRestoreScrollAnchor();
-            return;
-        }
-
-        if (_loadOlderPending || _loadNewerPending)
-        {
-            return;
-        }
-
-        if (IsFollowingTail && QueueLoadNewerRowsIfAtBottom(requireActualBottom: true))
-        {
-            return;
-        }
-
-        if (IsFollowingTail && !_hasNewerRows())
-        {
-            QueueScrollToBottom();
-        }
-    }
-
-    public void ForceScrollToBottomOnNextTranscriptChanged()
-    {
-        InvalidatePendingScrollOperations();
-        _forceScrollToBottomOnNextTranscriptChanged = true;
-        _forceScrollToBottomInteractionRevision = _interactionRevision;
-        PrepareToFollowTail();
-        _pendingAnchor = null;
-    }
-
     public void QueueScrollToBottom(bool force = false)
     {
         if (_disposed)
         {
+            return;
+        }
+
+        if (force
+            && _pendingAnchor is
+            {
+                Mode: ScrollAnchorMode.LiveTranscriptMutation,
+                WasFollowingTail: true,
+                InteractionRevision: var anchorRevision,
+            }
+            && anchorRevision == _interactionRevision)
+        {
+            PrepareToFollowTail();
             return;
         }
 
@@ -389,7 +336,16 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
             PrepareToFollowTail();
         }
 
-        _pendingScrollToBottomRequest = new ScrollToBottomRequest(_interactionRevision, force);
+        var requestIsForced = force
+                              || _pendingScrollToBottomRequest is
+                              {
+                                  Force: true,
+                                  InteractionRevision: var pendingRevision,
+                              }
+                              && pendingRevision == _interactionRevision;
+        _pendingScrollToBottomRequest = new ScrollToBottomRequest(
+            _interactionRevision,
+            requestIsForced);
         if (_scrollToBottomPending)
         {
             return;
@@ -437,67 +393,6 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         _settledScrollOperation = ObservePagingOperationAsync(operation);
     }
 
-    private void OnScrollViewerPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs change)
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        if (change.Property == ScrollViewer.OffsetProperty)
-        {
-            OnScrollOffsetChanged();
-            return;
-        }
-
-        if (change.Property == ScrollViewer.ExtentProperty || change.Property == ScrollViewer.ViewportProperty)
-        {
-            if (_bottomPlacementLockActive)
-            {
-                if (_bottomPlacementInteractionRevision == _interactionRevision)
-                {
-                    PinToBottom();
-                }
-                else
-                {
-                    CancelBottomPlacementLockForUserInteraction();
-                }
-                UpdateJumpToLatestVisibility();
-                return;
-            }
-
-            if (ShouldPinToBottomForLayoutGrowth())
-            {
-                QueueScrollToBottom();
-                UpdateJumpToLatestVisibility();
-                return;
-            }
-
-            UpdateJumpToLatestVisibility();
-            if (_suppressEdgeLoadsUntilNextScroll
-                || _isRestoringAnchor
-                || _pendingAnchor is not null
-                || _loadOlderPending
-                || _loadNewerPending)
-            {
-                return;
-            }
-
-            QueueLoadOlderRowsIfNearTop();
-            QueueLoadNewerRowsIfAtBottom(requireActualBottom: false);
-        }
-    }
-
-    private bool ShouldPinToBottomForLayoutGrowth()
-        => _presentationActive
-           && IsFollowingTail
-           && _tailFollowInteractionRevision == _interactionRevision
-           && !_hasNewerRows()
-           && !_isRestoringAnchor
-           && _pendingAnchor is null
-           && !_loadOlderPending
-           && !_loadNewerPending;
-
     private void OnScrollOffsetChanged()
     {
         var offsetY = _scrollViewer.Offset.Y;
@@ -522,12 +417,26 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
 
         var userScroll = ResolveUserScrollDirection(offsetDelta);
         var userDirection = userScroll.Direction;
+        if (userDirection != UserScrollDirection.None)
+        {
+            _pendingAnchor = null;
+        }
         if (userDirection == UserScrollDirection.None)
         {
+            if (HasActiveTextSelection())
+            {
+                DetachFromLatestForUser();
+                RequestViewportAnchorCapture();
+            }
+            else if (_scrollViewer.IsKeyboardFocusWithin)
+            {
+                RequestViewportAnchorCapture();
+            }
             UpdateJumpToLatestVisibility();
             return;
         }
 
+        RequestViewportAnchorCapture();
         _suppressEdgeLoadsUntilNextScroll = false;
         _lastUserScrollDirection = userDirection;
         if (userDirection == UserScrollDirection.TowardHistory)
@@ -604,18 +513,20 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         }
 
         _isOlderEdgeArmed = false;
+        _anchorHost?.SetFollowingTail(false);
         var anchor = CaptureScrollAnchor(ScrollAnchorMode.OlderRowsMutation);
         var interactionRevision = anchor.InteractionRevision;
         var pagingContextRevision = _pagingContextRevision;
         _activePageInteractionRevision = interactionRevision;
         _loadOlderPending = true;
+        var cancellationToken = _presentationPagingCancellation.Token;
 
         var operation = Dispatcher.UIThread.InvokeAsync(
             () => LoadOlderRowsAsync(
                 anchor,
                 interactionRevision,
                 pagingContextRevision,
-                _presentationPagingCancellation.Token),
+                cancellationToken),
             DispatcherPriority.Background);
         _loadOlderOperation = ObservePagingOperationAsync(operation);
 
@@ -658,13 +569,14 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
             ? interactionRevision
             : -1;
         _loadNewerPending = true;
+        var cancellationToken = _presentationPagingCancellation.Token;
         var operation = Dispatcher.UIThread.InvokeAsync(
             () => LoadNewerRowsAsync(
                 anchor,
                 wasFollowingTail,
                 interactionRevision,
                 pagingContextRevision,
-                _presentationPagingCancellation.Token),
+                cancellationToken),
             DispatcherPriority.Background);
         _loadNewerOperation = ObservePagingOperationAsync(operation);
 
@@ -735,8 +647,17 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
 
     private void UpdateJumpToLatestVisibility()
     {
-        var isVisible = !_bottomPlacementLockActive
-                        && (_hasNewerRows() || !IsFollowingTail || !IsNearBottom());
+        var tailPlacementPending = IsFollowingTail
+                                   && (_pendingAnchor?.WasFollowingTail == true
+                                       || _restoreAnchorPending
+                                       || _isRestoringAnchor
+                                       || _scrollToBottomPending
+                                       || _pendingScrollToBottomRequest is not null);
+        var isVisible = _anchorHost is not null && IsFollowingTail
+            ? !_bottomPlacementLockActive && _hasNewerRows()
+            : !_bottomPlacementLockActive
+              && !tailPlacementPending
+              && (_hasNewerRows() || !IsFollowingTail || !IsNearBottom());
         if (_isJumpToLatestVisible == isVisible)
         {
             return;
@@ -772,25 +693,5 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
 
     private double ResolveLoadThreshold(double configuredThreshold)
         => Math.Max(configuredThreshold, _scrollViewer.Viewport.Height * ViewportLoadThresholdRatio);
-
-    private sealed record ScrollAnchor(
-        ScrollAnchorMode Mode,
-        bool WasFollowingTail,
-        double DistanceFromBottom,
-        double OffsetY,
-        double ExtentHeight,
-        long InteractionRevision,
-        IReadOnlyList<ItemAnchor> Items);
-
-    private sealed record ScrollToBottomRequest(long InteractionRevision, bool Force);
-
-    private sealed record ItemAnchor(object Item, double Top, double Bottom);
-
-    private enum ScrollAnchorMode
-    {
-        LiveTranscriptMutation,
-        ViewportMutation,
-        OlderRowsMutation,
-    }
 
 }

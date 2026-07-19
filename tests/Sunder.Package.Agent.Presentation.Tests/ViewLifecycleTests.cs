@@ -4,6 +4,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Layout;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using LiveMarkdown.Avalonia;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sunder.Package.Agent.Contracts;
@@ -726,9 +727,12 @@ public sealed class ViewLifecycleTests
         using var scope = RegressionTestPackageScope.Create();
         var services = CreateAgentServices(scope);
         using var profileService = services.ProfileService;
-        await profileService.CreateProfileAsync("Warm profile");
+        var profile = await profileService.CreateProfileAsync("Warm profile");
         var workspace = services.WorkspaceService.CreateWorkspace("Warm workspace");
-        var session = services.SessionService.CreateSession("Warm session", workspaceId: workspace.WorkspaceId);
+        var session = services.SessionService.CreateSession(
+            "Warm session",
+            profileId: profile.ProfileId,
+            workspaceId: workspace.WorkspaceId);
         services.SessionService.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, "Warm response.");
         var sessionGateway = new CountingSessionGateway(services.SessionService);
         using var view = new AgentChatView(
@@ -743,7 +747,8 @@ public sealed class ViewLifecycleTests
             null!,
             new AgentAttachmentService(scope.Context),
             NullPackageNotificationService.Instance);
-        var window = new Window { Width = 900, Height = 700, Content = view };
+        var host = new Border { Child = view };
+        var window = new Window { Width = 900, Height = 700, Content = host };
         window.Show();
         var context = new PackageViewNavigationContext(
             "sunder.package.agent.chat",
@@ -751,19 +756,33 @@ public sealed class ViewLifecycleTests
         await Task.Run(async () => await view.OnNavigatedToAsync(context));
         var transcript = GetTranscriptScrollViewer(view);
         var settledOperation = GetSettledScrollOperation(view);
+        var transcriptBehavior = GetTranscriptBehavior(view);
         var opacityChanges = 0;
+        var offsetChanges = 0;
         transcript.PropertyChanged += (_, change) =>
         {
             if (change.Property.Name == "Opacity")
             {
                 opacityChanges++;
             }
+            if (change.Property == ScrollViewer.OffsetProperty)
+            {
+                offsetChanges++;
+            }
         };
+
+        host.IsVisible = false;
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        Assert.False(GetPrivateBoolean(transcriptBehavior, "_changedBeforeScrollReady"));
+        host.IsVisible = true;
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
 
         await Task.Run(async () => await view.OnNavigatedToAsync(context));
 
         Assert.Equal(1, sessionGateway.RecentTranscriptReadCount);
         Assert.Equal(0, opacityChanges);
+        Assert.Equal(0, offsetChanges);
+        Assert.False(GetPrivateBoolean(transcriptBehavior, "_changedBeforeScrollReady"));
         Assert.Same(settledOperation, GetSettledScrollOperation(view));
         Assert.Equal(1d, transcript.Opacity);
         window.Close();
@@ -845,6 +864,319 @@ public sealed class ViewLifecycleTests
         await Task.Run(async () => await view.OnNavigatedToAsync(context));
         Assert.Equal(1d, transcript.Opacity);
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task AgentChatViewModel_QueuedAuthoritativeAddProjectsBeforeComposerClearsWithoutReplacement()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var services = CreateAgentServices(scope);
+        using var profileService = services.ProfileService;
+        await profileService.CreateProfileAsync("Send profile");
+        var workspace = services.WorkspaceService.CreateWorkspace("Send workspace");
+        var session = services.SessionService.CreateSession(
+            "Send session",
+            workspaceId: workspace.WorkspaceId);
+        var sessionGateway = new CountingSessionGateway(services.SessionService);
+        using var viewModel = new AgentChatViewModel(
+            profileService,
+            services.WorkspaceService,
+            sessionGateway,
+            NoOpPermissionGateway.Instance,
+            NoOpRunGateway.Instance);
+        await viewModel.InitializeAsync();
+        viewModel.SelectedSession = viewModel.Sessions.Single(item => item.SessionId == session.SessionId);
+        const string message = "queued authoritative message";
+        viewModel.DraftMessage = message;
+        var composer = typeof(AgentChatViewModel)
+            .GetField(
+                "_composer",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(viewModel)!;
+        var beginSubmission = composer.GetType()
+            .GetMethods(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)
+            .Single(method => method.Name == "TryBeginSubmission"
+                              && method.GetParameters().Length == 2);
+        var submission = beginSubmission.Invoke(
+            composer,
+            [session.SessionId, new HashSet<Guid>()]);
+        Assert.NotNull(submission);
+        var recentReadsBeforeCompletion = sessionGateway.RecentTranscriptReadCount;
+        var turn = services.SessionService.AppendTextTurn(
+            session.SessionId,
+            AgentMessageRole.User,
+            message);
+        submission.GetType()
+            .GetField(
+                "<UserTurnId>k__BackingField",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(submission, turn.TurnId);
+        var rowWasPresentWhenComposerCleared = false;
+        viewModel.PropertyChanged += (_, eventArgs) =>
+        {
+            if (eventArgs.PropertyName == nameof(AgentChatViewModel.DraftMessage)
+                && string.IsNullOrEmpty(viewModel.DraftMessage))
+            {
+                rowWasPresentWhenComposerCleared = viewModel.Messages.Any(row => row.RowId == turn.TurnId);
+            }
+        };
+        var completeSubmission = typeof(AgentChatViewModel).GetMethod(
+            "CompleteOrRestoreComposerSubmissionAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+
+        var completed = await Assert.IsAssignableFrom<Task<bool>>(completeSubmission.Invoke(
+            viewModel,
+            [viewModel.SelectedSession!, submission, true]));
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+
+        Assert.True(completed);
+        Assert.True(rowWasPresentWhenComposerCleared);
+        Assert.Empty(viewModel.DraftMessage);
+        Assert.Single(viewModel.Messages, row => row.RowId == turn.TurnId);
+        Assert.Equal(recentReadsBeforeCompletion, sessionGateway.RecentTranscriptReadCount);
+        Assert.False(viewModel.IsTranscriptLoading);
+    }
+
+    [AvaloniaFact]
+    public async Task AgentChatView_AssistantArrivalReplacesActivityWithoutExposingOlderPosition()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var services = CreateAgentServices(scope);
+        using var profileService = services.ProfileService;
+        await profileService.CreateProfileAsync("Live row profile");
+        var workspace = services.WorkspaceService.CreateWorkspace("Live row workspace");
+        var session = services.SessionService.CreateSession(
+            "Live row session",
+            workspaceId: workspace.WorkspaceId);
+        for (var index = 0; index < 8; index++)
+        {
+            services.SessionService.AppendTextTurn(
+                session.SessionId,
+                AgentMessageRole.Assistant,
+                $"Existing response {index}: {new string('x', 100)}");
+        }
+        var runRevision = services.SessionService.GetNextRunRevision(session.SessionId);
+        services.SessionService.SaveCheckpoint(
+            session.SessionId,
+            runRevision,
+            AgentRunStatus.Running,
+            "Thinking.");
+
+        using var view = CreateAgentChatView(scope, services, profileService);
+        var window = new Window { Width = 800, Height = 360, Content = view };
+        window.Show();
+        try
+        {
+            await view.OnNavigatedToAsync(new PackageViewNavigationContext(
+                    "sunder.package.agent.chat",
+                    new Dictionary<string, string?>()))
+                .AsTask()
+                .WaitAsync(TimeSpan.FromSeconds(3));
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
+            var transcript = GetTranscriptScrollViewer(view);
+            var repeater = Assert.IsType<ItemsRepeater>(view.FindControl<ItemsRepeater>("TranscriptItemsControl"));
+            var tailAnchor = Assert.IsType<Border>(view.FindControl<Border>("TranscriptTailAnchor"));
+            var jumpButton = Assert.IsType<Button>(view.FindControl<Button>("JumpToLatestTranscriptButton"));
+            var completedLayoutDistances = new List<double>();
+            var opacityWasHidden = false;
+            var jumpBecameVisible = false;
+            var collectionRemovals = 0;
+            var observeLayouts = false;
+            transcript.PropertyChanged += (_, change) =>
+            {
+                if (change.Property == Visual.OpacityProperty && transcript.Opacity == 0)
+                {
+                    opacityWasHidden = true;
+                }
+            };
+            transcript.LayoutUpdated += (_, _) =>
+            {
+                if (observeLayouts && transcript.Viewport.Height > 0)
+                {
+                    completedLayoutDistances.Add(Math.Max(
+                        0,
+                        transcript.Extent.Height - transcript.Viewport.Height - transcript.Offset.Y));
+                }
+            };
+            viewModel.Messages.CollectionChanged += (_, eventArgs) =>
+            {
+                if (eventArgs.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Remove)
+                {
+                    collectionRemovals++;
+                }
+            };
+            jumpButton.PropertyChanged += (_, change) =>
+            {
+                if (change.Property == Visual.IsVisibleProperty && jumpButton.IsVisible)
+                {
+                    jumpBecameVisible = true;
+                }
+            };
+            const string markdown = "## New assistant response";
+            Assert.True(viewModel.RunActivityRow.IsVisible);
+            Assert.Same(tailAnchor, transcript.CurrentAnchor);
+
+            observeLayouts = true;
+            services.SessionService.AppendTextTurn(
+                session.SessionId,
+                AgentMessageRole.Assistant,
+                markdown);
+            await WaitUntilAsync(() => viewModel.Messages
+                .OfType<AgentTextTranscriptRowViewModel>()
+                .Any(row => row.Content == markdown));
+            await GetPendingCoordinatorOperations(view).WaitAsync(TimeSpan.FromSeconds(3));
+            await WaitUntilAsync(() => repeater.TryGetElement(viewModel.Messages.Count - 1) is Control row
+                                       && row.GetVisualDescendants()
+                                           .OfType<MarkdownRenderer>()
+                                           .Any(renderer => renderer.Opacity == 1));
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Background);
+            observeLayouts = false;
+
+            Assert.False(opacityWasHidden);
+            Assert.False(jumpBecameVisible);
+            Assert.False(viewModel.RunActivityRow.IsVisible);
+            Assert.Equal(0, collectionRemovals);
+            Assert.NotEmpty(completedLayoutDistances);
+            Assert.All(
+                completedLayoutDistances,
+                distance => Assert.InRange(distance, 0, 1));
+            Assert.Equal(
+                transcript.Extent.Height - transcript.Viewport.Height,
+                transcript.Offset.Y,
+                precision: 3);
+            Assert.Same(tailAnchor, transcript.CurrentAnchor);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task AgentChatView_ToolCallAndResultRemainPinnedWithoutCollectionRemoval()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var services = CreateAgentServices(scope);
+        using var profileService = services.ProfileService;
+        await profileService.CreateProfileAsync("Tool tail profile");
+        var workspace = services.WorkspaceService.CreateWorkspace("Tool tail workspace");
+        var session = services.SessionService.CreateSession(
+            "Tool tail session",
+            workspaceId: workspace.WorkspaceId);
+        for (var index = 0; index < 8; index++)
+        {
+            services.SessionService.AppendTextTurn(
+                session.SessionId,
+                AgentMessageRole.Assistant,
+                $"Existing response {index}: {new string('x', 100)}");
+        }
+        var runRevision = services.SessionService.GetNextRunRevision(session.SessionId);
+        services.SessionService.SaveCheckpoint(
+            session.SessionId,
+            runRevision,
+            AgentRunStatus.Running,
+            "Thinking.");
+
+        using var view = CreateAgentChatView(scope, services, profileService);
+        var window = new Window { Width = 800, Height = 360, Content = view };
+        window.Show();
+        try
+        {
+            await view.OnNavigatedToAsync(new PackageViewNavigationContext(
+                    "sunder.package.agent.chat",
+                    new Dictionary<string, string?>()))
+                .AsTask()
+                .WaitAsync(TimeSpan.FromSeconds(3));
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
+            var transcript = GetTranscriptScrollViewer(view);
+            var tailAnchor = Assert.IsType<Border>(view.FindControl<Border>("TranscriptTailAnchor"));
+            var completedLayoutDistances = new List<double>();
+            var collectionRemovals = 0;
+            var observeLayouts = false;
+            transcript.LayoutUpdated += (_, _) =>
+            {
+                if (observeLayouts && transcript.Viewport.Height > 0)
+                {
+                    completedLayoutDistances.Add(Math.Max(
+                        0,
+                        transcript.Extent.Height - transcript.Viewport.Height - transcript.Offset.Y));
+                }
+            };
+            viewModel.Messages.CollectionChanged += (_, eventArgs) =>
+            {
+                if (eventArgs.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Remove)
+                {
+                    collectionRemovals++;
+                }
+            };
+            Assert.True(viewModel.RunActivityRow.IsVisible);
+            Assert.Same(tailAnchor, transcript.CurrentAnchor);
+
+            observeLayouts = true;
+            services.SessionService.AppendToolCallTurn(
+                session.SessionId,
+                AgentMessageRole.Assistant,
+                "tail-call",
+                "test_tool",
+                "{}");
+            await WaitUntilAsync(() => viewModel.Messages.OfType<AgentToolInvocationRowViewModel>().Any());
+            await GetPendingCoordinatorOperations(view).WaitAsync(TimeSpan.FromSeconds(3));
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Background);
+            observeLayouts = false;
+
+            Assert.False(viewModel.RunActivityRow.IsVisible);
+            Assert.Equal(0, collectionRemovals);
+            Assert.NotEmpty(completedLayoutDistances);
+            Assert.All(completedLayoutDistances, distance => Assert.InRange(distance, 0, 1));
+            Assert.Same(tailAnchor, transcript.CurrentAnchor);
+
+            services.SessionService.ReportRunActivity(
+                session.SessionId,
+                runRevision,
+                AgentRunActivityKind.Tool,
+                "Running test tool");
+            await WaitUntilAsync(() => viewModel.RunActivityRow.IsVisible);
+            completedLayoutDistances.Clear();
+            observeLayouts = true;
+            services.SessionService.AppendToolResultTurn(
+                session.SessionId,
+                "tail-call",
+                "test_tool",
+                "{}",
+                "## Tool failed\nDetailed failure output.",
+                "Failed.",
+                null,
+                null,
+                false,
+                true,
+                "test_failure",
+                "test");
+            await WaitUntilAsync(() => viewModel.Messages
+                .OfType<AgentToolInvocationRowViewModel>()
+                .Any(row => row.IsFailed && row.IsExpanded));
+            await GetPendingCoordinatorOperations(view).WaitAsync(TimeSpan.FromSeconds(3));
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Background);
+            observeLayouts = false;
+
+            Assert.False(viewModel.RunActivityRow.IsVisible);
+            Assert.Equal(0, collectionRemovals);
+            Assert.NotEmpty(completedLayoutDistances);
+            Assert.All(completedLayoutDistances, distance => Assert.InRange(distance, 0, 1));
+            Assert.Equal(
+                transcript.Extent.Height - transcript.Viewport.Height,
+                transcript.Offset.Y,
+                precision: 3);
+            Assert.Same(tailAnchor, transcript.CurrentAnchor);
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 
     [AvaloniaFact]
@@ -1500,15 +1832,28 @@ public sealed class ViewLifecycleTests
             .GetValue(coordinator));
     }
 
+    private static Task GetPendingCoordinatorOperations(AgentChatView view)
+    {
+        var coordinator = GetTranscriptScrollCoordinator(view);
+        return Assert.IsAssignableFrom<Task>(coordinator.GetType()
+            .GetProperty(
+                "PendingPagingOperations",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(coordinator));
+    }
+
     private static object GetTranscriptScrollCoordinator(AgentChatView view)
     {
-        var behavior = typeof(AgentChatView)
-            .GetField("_transcriptBehavior", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .GetValue(view)!;
+        var behavior = GetTranscriptBehavior(view);
         return behavior.GetType()
             .GetField("_scrollCoordinator", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .GetValue(behavior)!;
     }
+
+    private static object GetTranscriptBehavior(AgentChatView view)
+        => typeof(AgentChatView)
+            .GetField("_transcriptBehavior", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(view)!;
 
     private static bool GetPrivateBoolean(object instance, string fieldName)
         => Assert.IsType<bool>(instance.GetType()

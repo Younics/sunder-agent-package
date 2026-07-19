@@ -61,6 +61,7 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
     {
         _tasks = new PresentationTaskScope();
         InitializeComponent();
+        TranscriptAnchorHost.SetTailAnchor(TranscriptTailAnchor);
         ConfigureComposerDropTarget(ExpandedComposerDropTarget);
         ConfigureComposerDropTarget(ExpandedComposerTextBox);
         ConfigureComposerDropTarget(CollapsedComposerDropTarget);
@@ -94,7 +95,8 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
             exception => ViewModel?.ReportTranscriptPagingFailure(exception),
             enumerateRealizedAnchors: EnumerateRealizedTranscriptAnchors,
             realizeAnchorVisual: RealizeTranscriptAnchor,
-            presentationStateChanged: isActive => ViewModel?.SetTranscriptPresentationActive(isActive));
+            presentationStateChanged: isActive => ViewModel?.SetTranscriptPresentationActive(isActive),
+            anchorHost: TranscriptAnchorHost);
         _renameFocus = new InlineRenameFocusCoordinator<AgentSessionListItemViewModel>(
             this,
             session => session.SessionId,

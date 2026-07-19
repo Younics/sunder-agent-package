@@ -30,6 +30,12 @@ internal sealed class AgentRunStartService(
     internal async Task<AgentRunStartResult> StartAsync(
         AgentRunPlan plan,
         CancellationToken cancellationToken)
+        => await StartAsync(plan, Guid.NewGuid(), cancellationToken).ConfigureAwait(false);
+
+    internal async Task<AgentRunStartResult> StartAsync(
+        AgentRunPlan plan,
+        Guid userTurnId,
+        CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested)
         {
@@ -62,6 +68,7 @@ internal sealed class AgentRunStartService(
                     start = IsCurrent(plan)
                         ? _sessionService.TryStartRun(
                             plan.RunHandle.DurableLease!,
+                            userTurnId,
                             plan.UserMessage,
                             plan.Attachments,
                             plan.RollbackAnchorTurnId,

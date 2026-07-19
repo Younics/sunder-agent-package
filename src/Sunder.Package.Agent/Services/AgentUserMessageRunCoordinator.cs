@@ -139,8 +139,31 @@ public sealed class AgentUserMessageRunCoordinator
         IReadOnlyList<AgentAttachmentUploadRequest> attachments,
         Guid? rollbackAnchorTurnId,
         CancellationToken cancellationToken)
+        => await QueueAsync(
+            sessionId,
+            profileId,
+            userMessage,
+            workspaceId,
+            attachments,
+            rollbackAnchorTurnId,
+            userTurnId: null,
+            cancellationToken).ConfigureAwait(false);
+
+    internal async Task<AgentRunCheckpointRecord> QueueAsync(
+        Guid sessionId,
+        string profileId,
+        string userMessage,
+        string workspaceId,
+        IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+        Guid? rollbackAnchorTurnId,
+        Guid? userTurnId,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (userTurnId == Guid.Empty)
+        {
+            throw new ArgumentException("User turn id cannot be empty.", nameof(userTurnId));
+        }
         var session = _sessionService.GetSession(sessionId)
             ?? throw new InvalidOperationException($"Session '{sessionId}' was not found.");
         AgentDurableRunRecord reservedRun;
@@ -203,7 +226,10 @@ public sealed class AgentUserMessageRunCoordinator
 
             var preparedPlan = ((AgentRunPrepared)preparation).Plan;
             var start = await _startService
-                .StartAsync(preparedPlan, runHandle.CancellationTokenSource.Token)
+                .StartAsync(
+                    preparedPlan,
+                    userTurnId ?? Guid.NewGuid(),
+                    runHandle.CancellationTokenSource.Token)
                 .ConfigureAwait(false);
             return start switch
             {

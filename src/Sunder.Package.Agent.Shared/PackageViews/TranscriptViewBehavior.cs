@@ -19,6 +19,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
     private readonly TranscriptScrollCoordinator _scrollCoordinator;
     private readonly List<Visual> _visibilitySources = [];
     private bool _changedBeforeScrollReady;
+    private bool _restoreAnchorOnActivation;
     private bool _initialPlacementPending = true;
     private bool _initialPlacementQueued;
     private int _initialPlacementVersion;
@@ -52,7 +53,8 @@ internal sealed class TranscriptViewBehavior : IDisposable
         Action<Exception>? pagingFailed = null,
         Func<IEnumerable<(object Item, Control Visual)>>? enumerateRealizedAnchors = null,
         Func<object, Control?>? realizeAnchorVisual = null,
-        Action<bool>? presentationStateChanged = null)
+        Action<bool>? presentationStateChanged = null,
+        TranscriptScrollAnchorHost? anchorHost = null)
     {
         _owner = owner;
         _scrollViewer = scrollViewer;
@@ -84,7 +86,8 @@ internal sealed class TranscriptViewBehavior : IDisposable
             viewportAnchorChanged,
             pagingFailed,
             enumerateRealizedAnchors,
-            realizeAnchorVisual);
+            realizeAnchorVisual,
+            anchorHost: anchorHost);
         _owner.Loaded += OnLoaded;
         _owner.AttachedToVisualTree += OnPresentationStateChanged;
         _owner.DetachedFromVisualTree += OnPresentationStateChanged;
@@ -216,8 +219,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
     {
         if (!_disposed && _loaded && _presentationActive && !_initialPlacementPending)
         {
-            _scrollCoordinator.BeginTranscriptMutation();
-            _scrollCoordinator.OnTranscriptChanged();
+            _scrollCoordinator.OnRenderedContentChanged();
         }
     }
 
@@ -304,6 +306,10 @@ internal sealed class TranscriptViewBehavior : IDisposable
         _loaded = isOwnerActive;
         if (presentationChanged)
         {
+            if (!isPresentationActive && !_isFollowingLatest())
+            {
+                _restoreAnchorOnActivation = true;
+            }
             _presentationActive = isPresentationActive;
             _scrollCoordinator.SetPresentationActive(isPresentationActive);
             if (!isPresentationActive && _initialPlacementPending)
@@ -312,7 +318,9 @@ internal sealed class TranscriptViewBehavior : IDisposable
                 _changedBeforeScrollReady = true;
             }
             _presentationStateChanged?.Invoke(isPresentationActive);
-            if (isPresentationActive && !_isFollowingLatest())
+            if (isPresentationActive
+                && (_changedBeforeScrollReady || _restoreAnchorOnActivation)
+                && !_isFollowingLatest())
             {
                 var viewportAnchor = _getViewportAnchor?.Invoke();
                 _scrollCoordinator.RestoreViewportAnchor(viewportAnchor);
@@ -321,15 +329,15 @@ internal sealed class TranscriptViewBehavior : IDisposable
                     _scrollCoordinator.ReevaluatePagingEdges();
                 }
             }
+            if (isPresentationActive)
+            {
+                _restoreAnchorOnActivation = false;
+            }
         }
 
         if (isOwnerActive)
         {
             HandleTranscriptReady();
-        }
-        else
-        {
-            _changedBeforeScrollReady = true;
         }
     }
 

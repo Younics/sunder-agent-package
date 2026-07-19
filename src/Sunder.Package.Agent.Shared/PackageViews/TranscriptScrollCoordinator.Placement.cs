@@ -1,4 +1,5 @@
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
@@ -63,6 +64,7 @@ internal sealed partial class TranscriptScrollCoordinator
             var extentHeight = _scrollViewer.Extent.Height;
             var viewportHeight = _scrollViewer.Viewport.Height;
             if (viewportHeight > 0
+                && !HasPendingRenderedContent()
                 && Math.Abs(extentHeight - previousExtentHeight) < 0.5
                 && Math.Abs(viewportHeight - previousViewportHeight) < 0.5
                 && IsNearBottom())
@@ -174,10 +176,15 @@ internal sealed partial class TranscriptScrollCoordinator
         }
     }
 
-    private static DispatcherPriorityAwaitable YieldForRenderedContent(
+    private static async Task YieldForRenderedContent(
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Dispatcher.Yield(DispatcherPriority.Background);
+        await Dispatcher.Yield(DispatcherPriority.Background);
     }
+
+    private bool HasPendingRenderedContent()
+        => _scrollViewer.GetVisualDescendants()
+            .OfType<StreamingMarkdownPresenter>()
+            .Any(presenter => presenter.IsEffectivelyVisible && presenter.IsRenderPending);
 }

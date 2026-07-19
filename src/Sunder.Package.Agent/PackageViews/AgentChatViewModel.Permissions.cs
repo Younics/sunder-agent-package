@@ -31,6 +31,7 @@ public sealed partial class AgentChatViewModel
             }
 
             var sessionId = selectedSession.SessionId;
+            var runtimeInstanceId = _appliedRuntimeInstanceId;
             _backgroundTasks.Run(async cancellationToken =>
             {
                 var permissions = await _chatPermissionCommandGateway.SetSessionUnrestrictedModeAsync(
@@ -39,10 +40,16 @@ public sealed partial class AgentChatViewModel
                     cancellationToken).ConfigureAwait(false);
                 await InvokeOnUiThreadAsync(() =>
                 {
-                    if (SelectedSession?.SessionId != sessionId)
+                    if (SelectedSession?.SessionId != sessionId
+                        || !string.Equals(
+                            runtimeInstanceId,
+                            _appliedRuntimeInstanceId,
+                            StringComparison.Ordinal)
+                        || permissions.Revision < _appliedPermissionRevision)
                     {
                         return;
                     }
+                    _appliedPermissionRevision = permissions.Revision;
                     _permissionPanel.ApplySnapshot(
                         sessionId,
                         permissions.SessionState,

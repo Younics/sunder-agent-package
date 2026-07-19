@@ -20,6 +20,7 @@ using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Provider.Anthropic;
 using Sunder.Package.Agent.Provider.Gemini;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Package.Agent.Skills.PackageViews;
@@ -74,6 +75,115 @@ public sealed class AgentRunCoordinatorTests
         Assert.Equal(3, storedTurn.ContentRevision);
         Assert.False(storedTurn.IsStreaming);
         Assert.Equal("## Heading\n\n- item", Assert.Single(storedTurn.Items).TextContent);
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_PersistsRequestedUserTurnId()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")));
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        var userTurnId = Guid.NewGuid();
+
+        await ((IAgentCorrelatedRunGateway)runtime.RunCoordinator).QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "correlated message",
+            runtime.CurrentWorkspaceId,
+            [],
+            userTurnId);
+
+        var userTurn = Assert.Single(
+            runtime.SessionService.ListTurns(sessionId),
+            turn => turn.Role == AgentMessageRole.User);
+        Assert.Equal(userTurnId, userTurn.TurnId);
+    }
+
+    [Fact]
+    public async Task RollbackAndQueueUserMessageAsync_PersistsRequestedUserTurnId()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")));
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        var anchor = runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.User,
+            "original message");
+        runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.Assistant,
+            "original response");
+        var userTurnId = Guid.NewGuid();
+
+        await ((IAgentCorrelatedRunGateway)runtime.RunCoordinator).RollbackAndQueueUserMessageAsync(
+            sessionId,
+            anchor.TurnId,
+            runtime.CurrentProfileId,
+            "replacement message",
+            runtime.CurrentWorkspaceId,
+            [],
+            userTurnId);
+
+        var userTurn = Assert.Single(
+            runtime.SessionService.ListTurns(sessionId),
+            turn => turn.Role == AgentMessageRole.User
+                    && turn.TurnId != anchor.TurnId);
+        Assert.Equal(userTurnId, userTurn.TurnId);
+    }
+
+    [Fact]
+    public async Task RunCommandStatus_TracksPendingCommittedAndAbsentCorrelations()
+    {
+        var readinessStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReadiness = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        async ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken)
+        {
+            readinessStarted.TrySetResult();
+            await releaseReadiness.Task.WaitAsync(cancellationToken);
+            return new AgentProviderReadiness(
+                "test-provider",
+                AgentProviderReadinessStatus.Ready,
+                "Ready.");
+        }
+
+        using var runtime = AgentTestRuntime.Create(new ScriptedProvider(
+            (_, _) => Complete("done"),
+            readinessHandler: GetReadinessAsync));
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        using var changes = new AgentRuntimeChangeHub(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService);
+        var handler = new AgentRunCommandHandler(
+            runtime.RunCoordinator,
+            runtime.PermissionService,
+            runtime.SessionService,
+            changes);
+        var userTurnId = Guid.NewGuid();
+        var run = handler.HandleAsync(
+            new AgentRunCommand(
+                AgentRunCommandKind.Start,
+                sessionId,
+                runtime.CurrentProfileId,
+                "tracked message",
+                runtime.CurrentWorkspaceId,
+                UserTurnId: userTurnId)).AsTask();
+        await readinessStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var pending = await handler.HandleAsync(
+            new AgentRunCommandStatusRequest(sessionId, userTurnId));
+        var absent = await handler.HandleAsync(
+            new AgentRunCommandStatusRequest(sessionId, Guid.NewGuid()));
+        releaseReadiness.TrySetResult();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+        var committed = await handler.HandleAsync(
+            new AgentRunCommandStatusRequest(sessionId, userTurnId));
+
+        Assert.Equal(AgentRunCommandStatus.Pending, pending.Status);
+        Assert.Equal(AgentRunCommandStatus.Absent, absent.Status);
+        Assert.Equal(AgentRunCommandStatus.Committed, committed.Status);
     }
 
     [Fact]
@@ -8508,7 +8618,7 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task AgentChatViewModel_TrimsLiveTranscriptWindowWithoutResettingRetainedRows()
+    public async Task AgentChatViewModel_BuffersLiveOverflowWithoutResettingRetainedRows()
     {
         const string toolId = "fetch_page";
 
@@ -8535,22 +8645,28 @@ public sealed class AgentRunCoordinatorTests
             .OfType<AgentTextTranscriptRowViewModel>()
             .Single(row => row.Content == "message-200");
         var resetCount = 0;
+        var removeCount = 0;
         viewModel.Messages.CollectionChanged += (_, args) =>
         {
             if (args.Action == NotifyCollectionChangedAction.Reset)
             {
                 resetCount++;
             }
+            else if (args.Action == NotifyCollectionChangedAction.Remove)
+            {
+                removeCount++;
+            }
         };
 
         runtime.SessionService.AppendTextTurn(sessionId, AgentMessageRole.User, "message-240");
 
         Assert.Equal(0, resetCount);
-        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.Equal(0, removeCount);
+        Assert.InRange(viewModel.Messages.Count, 61, 90);
         Assert.True(viewModel.HasOlderTranscriptRows);
         Assert.DoesNotContain(
             viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>(),
-            row => row.Content == "message-180"
+            row => row.Content == "message-150"
         );
         Assert.Same(
             retainedRow,
@@ -8559,7 +8675,7 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task AgentChatViewModel_KeepsToolHeavyLiveTranscriptAtVisibleRowLimit()
+    public async Task AgentChatViewModel_KeepsToolHeavyLiveTranscriptWithinOverflowLimit()
     {
         const string toolId = "fetch_page";
 
@@ -8596,7 +8712,7 @@ public sealed class AgentRunCoordinatorTests
                 backendId: null);
         }
 
-        Assert.Equal(60, viewModel.Messages.Count);
+        Assert.InRange(viewModel.Messages.Count, 60, 90);
         Assert.True(viewModel.HasOlderTranscriptRows);
         Assert.All(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>(), row => Assert.NotNull(row.ResultTurnId));
     }
@@ -8731,6 +8847,144 @@ public sealed class AgentRunCoordinatorTests
         Assert.Contains(
             viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>(),
             row => row.Content == "followed response");
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_RejectedSendKeepsDetachedTranscriptState()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("unused")));
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        runtime.SessionService.AppendTextTurn(sessionId, AgentMessageRole.User, "initial message");
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            ThrowingRunGateway.Instance);
+        await viewModel.InitializeAsync();
+        Assert.True(viewModel.DetachTranscriptFromLatest());
+        viewModel.DraftMessage = "rejected message";
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => viewModel.SendMessageCommand.ExecuteAsync(null));
+        await WaitUntilAsync(() => viewModel.SendMessageCommand.CanExecute(null));
+
+        Assert.False(viewModel.IsTranscriptFollowingLatest);
+        Assert.Equal("rejected message", viewModel.DraftMessage);
+        Assert.True(viewModel.SendMessageCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_UncertainSendRetriesReconciliationWithoutBlockingSession()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("unused")));
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            ThrowingRunGateway.Instance);
+        await viewModel.InitializeAsync();
+        var transcriptGateway = new FailOnceTranscriptPageGateway(runtime.SessionService);
+        typeof(AgentChatViewModel)
+            .GetField("_transcriptPageGateway", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(viewModel, transcriptGateway);
+        viewModel.DraftMessage = "uncertain message";
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => viewModel.SendMessageCommand.ExecuteAsync(null));
+        await WaitUntilAsync(() => viewModel.SendMessageCommand.CanExecute(null));
+
+        Assert.True(transcriptGateway.InvocationCount >= 3);
+        Assert.Equal("uncertain message", viewModel.DraftMessage);
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_SendClearsComposerAfterAuthoritativeUserRowIsProjected()
+    {
+        const string toolId = "fetch_page";
+        const string message = "atomic composer transition";
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            new TestTool(toolId));
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator);
+        await viewModel.InitializeAsync();
+        viewModel.SelectedSession = viewModel.Sessions.Single(session => session.SessionId == sessionId);
+        viewModel.DraftMessage = message;
+        var userRowWasPresentWhenComposerCleared = false;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(AgentChatViewModel.DraftMessage)
+                && string.IsNullOrEmpty(viewModel.DraftMessage))
+            {
+                userRowWasPresentWhenComposerCleared = viewModel.Messages
+                    .OfType<AgentTextTranscriptRowViewModel>()
+                    .Any(row => row.IsUser && row.Content == message);
+            }
+        };
+
+        await viewModel.SendMessageCommand.ExecuteAsync(null);
+
+        Assert.True(userRowWasPresentWhenComposerCleared);
+        Assert.Empty(viewModel.DraftMessage);
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_ExactFallbackDoesNotAppendOffWindowTurnAtTail()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")));
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        var oldTurn = runtime.SessionService.AppendTextTurn(
+            sessionId,
+            AgentMessageRole.User,
+            "old correlated request");
+        for (var index = 0; index < 80; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                AgentMessageRole.Assistant,
+                $"newer response {index:00}");
+        }
+
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator);
+        await viewModel.InitializeAsync();
+        Assert.DoesNotContain(viewModel.Messages, row => row.RowId == oldTurn.TurnId);
+        var composer = Assert.IsType<AgentComposerState>(
+            typeof(AgentChatViewModel)
+                .GetField("_composer", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(viewModel));
+        var submission = Assert.IsType<AgentComposerSubmission>(
+            composer.TryBeginSubmission(sessionId));
+        typeof(AgentComposerSubmission)
+            .GetField("<UserTurnId>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(submission, oldTurn.TurnId);
+        var completeSubmission = typeof(AgentChatViewModel).GetMethod(
+            "CompleteOrRestoreComposerSubmissionAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        await Assert.IsAssignableFrom<Task<bool>>(completeSubmission.Invoke(
+            viewModel,
+            [viewModel.SelectedSession!, submission, true]));
+
+        Assert.True(submission.IsCommitted);
+        Assert.DoesNotContain(viewModel.Messages, row => row.RowId == oldTurn.TurnId);
+        await WaitUntilAsync(() => viewModel.StatusText != "Loading transcript...");
+        Assert.DoesNotContain(viewModel.Messages, row => row.RowId == oldTurn.TurnId);
     }
 
     [Fact]
@@ -9109,10 +9363,7 @@ public sealed class AgentRunCoordinatorTests
         Assert.Same(toolRow, preservedToolRow);
         Assert.True(preservedToolRow.IsExpanded);
         Assert.True(preservedToolRow.ShowDetails);
-        Assert.DoesNotContain(
-            viewModel.Messages,
-            row => row is AgentActivityTranscriptRowViewModel
-        );
+        Assert.False(viewModel.RunActivityRow.IsVisible);
     }
 
     [Fact]
@@ -9141,7 +9392,9 @@ public sealed class AgentRunCoordinatorTests
             "Thinking."
         );
 
-        var activityRow = Assert.IsType<AgentActivityTranscriptRowViewModel>(Assert.Single(viewModel.Messages));
+        var activityRow = viewModel.RunActivityRow;
+        Assert.True(activityRow.IsVisible);
+        Assert.Empty(viewModel.Messages);
         Assert.StartsWith("Thinking", activityRow.ThinkingText, StringComparison.Ordinal);
 
         runtime.SessionService.SaveCheckpoint(
@@ -9151,6 +9404,56 @@ public sealed class AgentRunCoordinatorTests
             "Done."
         );
 
+        Assert.Empty(viewModel.Messages);
+        Assert.False(activityRow.IsVisible);
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_SessionReplacementRebuildsRunActivityState()
+    {
+        using var runtime = AgentTestRuntime.Create(new ScriptedProvider((_, _) => Complete("done")));
+        var firstSessionId = await runtime.CreateSessionAsync("noop");
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator);
+        await viewModel.InitializeAsync();
+        var firstRunRevision = runtime.SessionService.GetNextRunRevision(firstSessionId);
+        runtime.SessionService.SaveCheckpoint(
+            firstSessionId,
+            firstRunRevision,
+            AgentRunStatus.Running,
+            "Thinking.");
+        runtime.SessionService.AppendTextTurn(
+            firstSessionId,
+            AgentMessageRole.Assistant,
+            "partial response");
+        Assert.False(viewModel.RunActivityRow.IsVisible);
+
+        typeof(AgentChatViewModel)
+            .GetMethod(
+                "RefreshTranscript",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(viewModel, [true]);
+        await WaitUntilAsync(() => !viewModel.IsTranscriptLoading);
+        Assert.False(viewModel.RunActivityRow.IsVisible);
+
+        var secondSession = runtime.SessionService.CreateSession(
+            "Second session",
+            workspaceId: runtime.CurrentWorkspaceId);
+        runtime.SessionService.SaveCheckpoint(
+            secondSession.SessionId,
+            runtime.SessionService.GetNextRunRevision(secondSession.SessionId),
+            AgentRunStatus.Running,
+            "Thinking.");
+        viewModel.SelectedSession = viewModel.Sessions.Single(
+            session => session.SessionId == secondSession.SessionId);
+
+        await WaitUntilAsync(() =>
+            viewModel.DisplayedSession?.SessionId == secondSession.SessionId
+            && viewModel.RunActivityRow.IsVisible);
         Assert.Empty(viewModel.Messages);
     }
 
@@ -9187,12 +9490,14 @@ public sealed class AgentRunCoordinatorTests
             "Checking the latest transcript before choosing a tool."
         );
 
-        var activityRow = Assert.IsType<AgentActivityTranscriptRowViewModel>(Assert.Single(viewModel.Messages));
+        var activityRow = viewModel.RunActivityRow;
+        Assert.True(activityRow.IsVisible);
+        Assert.Empty(viewModel.Messages);
         Assert.Equal("Checking the latest transcript before choosing a tool. ...", activityRow.ThinkingText);
     }
 
     [Fact]
-    public async Task AgentChatViewModel_RemovesActivityRowWhenAssistantTextStarts()
+    public async Task AgentChatViewModel_HidesActivityRowWhenAssistantTextStarts()
     {
         const string toolId = "fetch_page";
 
@@ -9217,7 +9522,9 @@ public sealed class AgentRunCoordinatorTests
             "Thinking."
         );
 
-        Assert.IsType<AgentActivityTranscriptRowViewModel>(Assert.Single(viewModel.Messages));
+        var activityRow = viewModel.RunActivityRow;
+        Assert.True(activityRow.IsVisible);
+        Assert.Empty(viewModel.Messages);
 
         runtime.SessionService.AppendTextTurn(
             sessionId,
@@ -9229,10 +9536,11 @@ public sealed class AgentRunCoordinatorTests
             Assert.Single(viewModel.Messages)
         );
         Assert.Equal("partial response", textRow.Content);
+        Assert.False(activityRow.IsVisible);
     }
 
     [Fact]
-    public async Task AgentChatViewModel_RemovesActivityRowWhenToolActivityStarts()
+    public async Task AgentChatViewModel_HidesActivityRowWhenToolActivityStarts()
     {
         const string toolId = "fetch_page";
 
@@ -9257,7 +9565,9 @@ public sealed class AgentRunCoordinatorTests
             "Thinking."
         );
 
-        Assert.IsType<AgentActivityTranscriptRowViewModel>(Assert.Single(viewModel.Messages));
+        var activityRow = viewModel.RunActivityRow;
+        Assert.True(activityRow.IsVisible);
+        Assert.Empty(viewModel.Messages);
 
         runtime.SessionService.AppendToolCallTurn(
             sessionId,
@@ -9268,6 +9578,7 @@ public sealed class AgentRunCoordinatorTests
         );
 
         Assert.IsType<AgentToolInvocationRowViewModel>(Assert.Single(viewModel.Messages));
+        Assert.False(activityRow.IsVisible);
     }
 
     [Fact]
@@ -9297,7 +9608,9 @@ public sealed class AgentRunCoordinatorTests
         );
         await viewModel.InitializeAsync();
 
-        Assert.IsType<AgentActivityTranscriptRowViewModel>(Assert.Single(viewModel.Messages));
+        var activityRow = viewModel.RunActivityRow;
+        Assert.True(activityRow.IsVisible);
+        Assert.Empty(viewModel.Messages);
 
         runtime.SessionService.SaveCheckpoint(
             sessionId,
@@ -9313,10 +9626,8 @@ public sealed class AgentRunCoordinatorTests
             "{\"url\":\"https://example.com\"}"
         );
 
-        Assert.IsType<AgentToolInvocationRowViewModel>(viewModel.Messages[0]);
-        var activityRow = Assert.IsType<AgentActivityTranscriptRowViewModel>(
-            viewModel.Messages[^1]
-        );
+        Assert.IsType<AgentToolInvocationRowViewModel>(Assert.Single(viewModel.Messages));
+        Assert.True(activityRow.IsVisible);
         Assert.StartsWith("Running Fetch Page", activityRow.ThinkingText, StringComparison.Ordinal);
     }
 
@@ -9405,7 +9716,7 @@ public sealed class AgentRunCoordinatorTests
             "{\"url\":\"https://example.com\"}"
         );
 
-        Assert.Contains(viewModel.Messages, row => row is AgentActivityTranscriptRowViewModel);
+        Assert.True(viewModel.RunActivityRow.IsVisible);
 
         runtime.SessionService.SaveCheckpoint(
             sessionId,
@@ -9414,10 +9725,7 @@ public sealed class AgentRunCoordinatorTests
             "Done."
         );
 
-        Assert.DoesNotContain(
-            viewModel.Messages,
-            row => row is AgentActivityTranscriptRowViewModel
-        );
+        Assert.False(viewModel.RunActivityRow.IsVisible);
         Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
     }
 
@@ -9459,10 +9767,7 @@ public sealed class AgentRunCoordinatorTests
             "Done."
         );
 
-        Assert.DoesNotContain(
-            viewModel.Messages,
-            row => row is AgentActivityTranscriptRowViewModel
-        );
+        Assert.False(viewModel.RunActivityRow.IsVisible);
 
         runtime.SessionService.AppendTextTurn(sessionId, AgentMessageRole.User, "next request");
         runtime.SessionService.SaveCheckpoint(
@@ -9472,7 +9777,82 @@ public sealed class AgentRunCoordinatorTests
             "Thinking again."
         );
 
-        Assert.IsType<AgentActivityTranscriptRowViewModel>(viewModel.Messages[^1]);
+        Assert.True(viewModel.RunActivityRow.IsVisible);
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_BackgroundSubmissionDoesNotResetDisplayedRunActivity()
+    {
+        var blockNextReadiness = 0;
+        var readinessStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReadiness = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async ValueTask<AgentProviderReadiness> GetReadinessAsync(
+            CancellationToken cancellationToken)
+        {
+            if (Interlocked.Exchange(ref blockNextReadiness, 0) != 0)
+            {
+                readinessStarted.TrySetResult();
+                await releaseReadiness.Task.WaitAsync(cancellationToken);
+            }
+
+            return new AgentProviderReadiness(
+                "test-provider",
+                AgentProviderReadinessStatus.Ready,
+                "Ready.");
+        }
+
+        using var runtime = AgentTestRuntime.Create(new ScriptedProvider(
+            (_, _) => Complete("done"),
+            readinessHandler: GetReadinessAsync));
+        var displayedSessionId = await runtime.CreateSessionAsync("noop");
+        var backgroundSessionId = runtime.SessionService.CreateSession(
+            "Background session",
+            workspaceId: runtime.CurrentWorkspaceId).SessionId;
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator,
+            activityQuietDelay: TimeSpan.FromHours(1));
+        await viewModel.InitializeAsync();
+        viewModel.SelectedSession = viewModel.Sessions.Single(
+            session => session.SessionId == backgroundSessionId);
+        viewModel.DraftMessage = "background request";
+
+        Volatile.Write(ref blockNextReadiness, 1);
+        var sendTask = viewModel.SendMessageCommand.ExecuteAsync(null);
+        await readinessStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        viewModel.SelectedSession = viewModel.Sessions.Single(
+            session => session.SessionId == displayedSessionId);
+        var displayedRunRevision = runtime.SessionService.GetNextRunRevision(displayedSessionId);
+        runtime.SessionService.SaveCheckpoint(
+            displayedSessionId,
+            displayedRunRevision,
+            AgentRunStatus.Running,
+            "Thinking.");
+        runtime.SessionService.AppendTextTurn(
+            displayedSessionId,
+            AgentMessageRole.Assistant,
+            "visible response");
+        Assert.False(viewModel.RunActivityRow.IsVisible);
+
+        releaseReadiness.TrySetResult();
+        await sendTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(displayedSessionId, viewModel.DisplayedTranscriptSessionId);
+        Assert.Empty(viewModel.Sessions.Single(
+            session => session.SessionId == backgroundSessionId).DraftMessage);
+        var draftCache = Assert.IsType<Dictionary<Guid, string>>(
+            typeof(AgentChatViewModel)
+                .GetField("_sessionDrafts", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .GetValue(viewModel));
+        Assert.DoesNotContain(backgroundSessionId, draftCache.Keys);
+        Assert.False(viewModel.RunActivityRow.IsVisible);
     }
 
     [Fact]
@@ -11583,6 +11963,129 @@ public sealed class AgentRunCoordinatorTests
             AgentRunStatus.Stopped,
             runtime.SessionService.GetLatestCheckpoint(sessionId)?.Status
         );
+    }
+
+    private sealed class ThrowingRunGateway :
+        IAgentRunGateway,
+        IAgentCorrelatedRunGateway,
+        IAgentRunCommandStatusGateway
+    {
+        public static ThrowingRunGateway Instance { get; } = new();
+
+        public Task<AgentRunCheckpointRecord> QueueUserMessageAsync(
+            Guid sessionId,
+            string profileId,
+            string userMessage,
+            string workspaceId,
+            IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+            CancellationToken cancellationToken = default)
+            => Task.FromException<AgentRunCheckpointRecord>(
+                new InvalidOperationException("Injected run rejection."));
+
+        public Task<AgentRunCheckpointRecord> RollbackAndQueueUserMessageAsync(
+            Guid sessionId,
+            Guid rollbackAnchorTurnId,
+            string profileId,
+            string userMessage,
+            string workspaceId,
+            IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+            CancellationToken cancellationToken = default)
+            => QueueUserMessageAsync(
+                sessionId,
+                profileId,
+                userMessage,
+                workspaceId,
+                attachments,
+                cancellationToken);
+
+        public Task<AgentRunCheckpointRecord?> StopAsync(
+            Guid sessionId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<AgentRunCheckpointRecord?>(null);
+
+        public Task<AgentRunCheckpointRecord?> ApprovePendingPermissionAsync(
+            Guid sessionId,
+            string requestId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<AgentRunCheckpointRecord?>(null);
+
+        public Task<AgentRunCheckpointRecord?> DenyPendingPermissionAsync(
+            Guid sessionId,
+            string requestId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<AgentRunCheckpointRecord?>(null);
+
+        Task<AgentRunCheckpointRecord> IAgentCorrelatedRunGateway.QueueUserMessageAsync(
+            Guid sessionId,
+            string profileId,
+            string userMessage,
+            string workspaceId,
+            IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+            Guid userTurnId,
+            CancellationToken cancellationToken)
+            => QueueUserMessageAsync(
+                sessionId,
+                profileId,
+                userMessage,
+                workspaceId,
+                attachments,
+                cancellationToken);
+
+        Task<AgentRunCheckpointRecord> IAgentCorrelatedRunGateway.RollbackAndQueueUserMessageAsync(
+            Guid sessionId,
+            Guid rollbackAnchorTurnId,
+            string profileId,
+            string userMessage,
+            string workspaceId,
+            IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+            Guid userTurnId,
+            CancellationToken cancellationToken)
+            => RollbackAndQueueUserMessageAsync(
+                sessionId,
+                rollbackAnchorTurnId,
+                profileId,
+                userMessage,
+                workspaceId,
+                attachments,
+                cancellationToken);
+
+        public Task<AgentRunCommandStatus> GetRunCommandStatusAsync(
+            Guid sessionId,
+            Guid userTurnId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(AgentRunCommandStatus.Absent);
+    }
+
+    private sealed class FailOnceTranscriptPageGateway(AgentSessionService sessions)
+        : IAgentTranscriptPageGateway
+    {
+        private int _invocationCount;
+        private int _failNextTurnLookup = 1;
+
+        public int InvocationCount => Volatile.Read(ref _invocationCount);
+
+        public Task<AgentTranscriptPage> LoadTranscriptPageAsync(
+            AgentTranscriptPageRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref _invocationCount);
+            if (request.Direction == AgentTranscriptPageDirection.Turn
+                && Interlocked.Exchange(ref _failNextTurnLookup, 0) != 0)
+            {
+                throw new InvalidOperationException("Injected reconciliation failure.");
+            }
+
+            IReadOnlyList<AgentTurnRecord> turns = request.Direction switch
+            {
+                AgentTranscriptPageDirection.Turn when request.AnchorTurnId is { } turnId
+                    => sessions.GetTurn(turnId) is { } turn ? [turn] : [],
+                AgentTranscriptPageDirection.Recent
+                    => sessions.ListRecentTurns(request.SessionId, request.Limit),
+                _ => [],
+            };
+            return Task.FromResult(new AgentTranscriptPage(0, turns, false));
+        }
     }
 
     private sealed class AgentTestRuntime : IDisposable

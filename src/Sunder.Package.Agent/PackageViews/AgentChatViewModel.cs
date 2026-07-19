@@ -27,6 +27,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private readonly IAgentPermissionGateway _permissionService;
     private readonly IAgentAttachmentGateway? _attachmentService;
     private readonly IAgentRunGateway _runCoordinator;
+    private readonly IAgentCorrelatedRunGateway? _correlatedRunCoordinator;
+    private readonly IAgentRunCommandStatusGateway? _runCommandStatusGateway;
     private readonly IAgentExecutionGateway? _warmupService;
     private readonly AgentChatSelectionStateService? _selectionState;
     private readonly AgentToolPresentationService _toolPresentationService;
@@ -45,8 +47,13 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private readonly AsyncOnce _initialization = new();
     private readonly PresentationTaskScope _backgroundTasks = new();
     private readonly SemaphoreSlim _selectionPersistenceGate = new(1, 1);
+    private readonly SemaphoreSlim _composerReconciliationGate = new(1, 1);
     private readonly Dictionary<Guid, AgentSessionSnapshot> _snapshotSessions = [];
     private readonly Dictionary<Guid, string> _sessionDrafts = [];
+    private readonly object _turnMutationQueueLock = new();
+    private readonly Queue<Action> _transcriptWorkQueue = new();
+    private List<AgentTurnMutation>? _openTurnMutationBatch;
+    private bool _transcriptWorkDrainScheduled;
     private AgentSessionListItemViewModel? _observedSelectedSession;
     private readonly object _chatSnapshotRequestLock = new();
     private CancellationTokenSource? _chatSnapshotRequestCancellation;
@@ -55,7 +62,13 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private bool _isRestoringReconciledSessionSelection;
     private bool _suppressWorkspaceSelection;
     private int _chatSnapshotRequestGeneration;
+    private int _permissionRequestGeneration;
+    private long _appliedPermissionRevision;
+    private string? _appliedRuntimeInstanceId;
     private bool _isApplyingChatSnapshot;
+    private bool _isBatchingTranscriptNotifications;
+    private bool _transcriptChangingRaisedInBatch;
+    private bool _transcriptChangedInBatch;
     private bool _isInitialized;
     private bool _hasStartupError;
     private bool _disposed;
@@ -82,6 +95,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _permissionService = permissionService;
         _attachmentService = attachmentService;
         _runCoordinator = runCoordinator;
+        _correlatedRunCoordinator = runCoordinator as IAgentCorrelatedRunGateway;
+        _runCommandStatusGateway = runCoordinator as IAgentRunCommandStatusGateway;
         _warmupService = warmupService;
         _selectionState = selectionState;
         _toolPresentationService = toolPresentationService ?? new AgentToolPresentationService();
@@ -114,12 +129,13 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             InitialTranscriptTurnLimit,
             OlderTranscriptTurnPageSize,
             TranscriptVisibleRowLimit);
+        RunActivityRow = new AgentActivityTranscriptRowViewModel(_activityTicker);
         _runActivity = new AgentRunActivityState(
             () => IsDisplayedSessionRunActive,
             () => _timeline.IsFollowingLatest,
             activityQuietDelay);
-        _timeline.RowsChanging += isPageApplication => TranscriptChanging?.Invoke(isPageApplication);
-        _timeline.RowsChanged += () => TranscriptChanged?.Invoke();
+        _timeline.RowsChanging += OnTimelineRowsChanging;
+        _timeline.RowsChanged += OnTimelineRowsChanged;
         _timeline.PropertyChanged += OnTimelinePropertyChanged;
         _timeline.TurnProjected += OnTimelineTurnProjected;
         _runActivity.Changed += OnRunActivityStateChanged;
@@ -150,6 +166,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     public ObservableCollection<AgentWorkspacePathChipViewModel> NarrowWorkspacePathChips { get; } = [];
 
     public ObservableCollection<AgentTranscriptRowViewModel> Messages { get; } = [];
+
+    public AgentActivityTranscriptRowViewModel RunActivityRow { get; }
 
     public IReadOnlyList<string> WorkspacePathChipLabels => _workspacePathChipLabels;
 
@@ -386,9 +404,11 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         var workspaceId = workspace.WorkspaceId;
         var draftSnapshot = DraftMessage;
         var message = draftSnapshot;
-        var attachments = PendingAttachments
+        var pendingAttachments = PendingAttachments.ToArray();
+        var attachments = pendingAttachments
             .Select(attachment => attachment.UploadRequest)
             .ToArray();
+        var rollbackTurnId = _composer.RollbackTurnId;
         if (string.IsNullOrWhiteSpace(message) && attachments.Length == 0)
         {
             return;
@@ -426,7 +446,11 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             _lifetimeCancellation.Token);
         var submission = _composer.TryBeginSubmission(
             sessionId,
-            existingTranscript.Turns.Select(turn => turn.TurnId).ToHashSet());
+            draftSnapshot,
+            pendingAttachments,
+            rollbackTurnId,
+            existingTranscript.Turns.Select(turn => turn.TurnId).ToHashSet(),
+            useUserTurnCorrelation: _correlatedRunCoordinator is not null);
         if (submission is null)
         {
             ApplySessionStatus(
@@ -437,6 +461,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         }
 
         NotifySendPendingStateChanged(sessionId);
+        var shouldEndSubmission = true;
 
         try
         {
@@ -459,38 +484,68 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                 return;
             }
 
-            RequestTranscriptTailFollow(sessionId);
-            ClearSubmittedComposerState(selectedSession, submission);
-
+            shouldEndSubmission = false;
             if (submission.RollbackTurnId is { } anchorTurnId)
             {
-                await _runCoordinator.RollbackAndQueueUserMessageAsync(
-                    sessionId,
-                    anchorTurnId,
-                    profileId,
-                    message,
-                    workspaceId,
-                    attachments,
-                    _lifetimeCancellation.Token
-                );
+                if (_correlatedRunCoordinator is not null)
+                {
+                    await _correlatedRunCoordinator.RollbackAndQueueUserMessageAsync(
+                        sessionId,
+                        anchorTurnId,
+                        profileId,
+                        message,
+                        workspaceId,
+                        attachments,
+                        submission.UserTurnId,
+                        _lifetimeCancellation.Token
+                    );
+                }
+                else
+                {
+                    await _runCoordinator.RollbackAndQueueUserMessageAsync(
+                        sessionId,
+                        anchorTurnId,
+                        profileId,
+                        message,
+                        workspaceId,
+                        attachments,
+                        _lifetimeCancellation.Token
+                    );
+                }
             }
             else
             {
-                await _runCoordinator.QueueUserMessageAsync(
-                    sessionId,
-                    profileId,
-                    message,
-                    workspaceId,
-                    attachments,
-                    _lifetimeCancellation.Token
-                );
+                if (_correlatedRunCoordinator is not null)
+                {
+                    await _correlatedRunCoordinator.QueueUserMessageAsync(
+                        sessionId,
+                        profileId,
+                        message,
+                        workspaceId,
+                        attachments,
+                        submission.UserTurnId,
+                        _lifetimeCancellation.Token
+                    );
+                }
+                else
+                {
+                    await _runCoordinator.QueueUserMessageAsync(
+                        sessionId,
+                        profileId,
+                        message,
+                        workspaceId,
+                        attachments,
+                        _lifetimeCancellation.Token
+                    );
+                }
             }
 
-            await CompleteOrRestoreComposerSubmissionAsync(selectedSession, submission);
+            shouldEndSubmission = await CompleteOrRestoreComposerSubmissionAsync(
+                selectedSession,
+                submission);
 
             if (SelectedSession?.SessionId == sessionId)
             {
-                ReloadPendingPermissionRequests();
                 SyncSelectedSessionState(sessionId);
             }
             else
@@ -500,12 +555,23 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         }
         catch
         {
-            await CompleteOrRestoreComposerSubmissionAsync(selectedSession, submission);
+            shouldEndSubmission = await CompleteOrRestoreComposerSubmissionAsync(
+                selectedSession,
+                submission,
+                restoreWhenMissing: _runCommandStatusGateway is null);
             throw;
         }
         finally
         {
-            EndPendingSend(submission);
+            var isSubmissionComplete = submission.CompleteCommand();
+            if (shouldEndSubmission || isSubmissionComplete)
+            {
+                EndPendingSend(submission);
+            }
+            else
+            {
+                ScheduleCompletedSubmissionReconciliation();
+            }
         }
     }
 
@@ -514,100 +580,6 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         && !IsSelectedSessionSendPending()
         && (IsSelectedSessionRunInactive || IsRollbackPending)
         && (!string.IsNullOrWhiteSpace(DraftMessage) || PendingAttachments.Count > 0);
-
-    private void ClearSubmittedComposerState(
-        AgentSessionListItemViewModel submittedSession,
-        AgentComposerSubmission submission
-    )
-    {
-        if (string.Equals(submittedSession.DraftMessage, submission.Text, StringComparison.Ordinal))
-        {
-            submittedSession.DraftMessage = string.Empty;
-        }
-
-        if (SelectedSession?.SessionId != submission.SessionId)
-        {
-            return;
-        }
-
-        _composer.ClearSubmitted(submission);
-        NotifyComposerStateChanged();
-    }
-
-    private void RestoreUncommittedComposerState(
-        AgentSessionListItemViewModel submittedSession,
-        AgentComposerSubmission submission)
-    {
-        if (submission.IsCommitted)
-        {
-            return;
-        }
-
-        if (!string.IsNullOrEmpty(submission.Text)
-            && string.IsNullOrEmpty(submittedSession.DraftMessage))
-        {
-            submittedSession.DraftMessage = submission.Text;
-        }
-
-        if (_composer.RestoreUncommitted(submission, SelectedSession?.SessionId))
-        {
-            NotifyComposerStateChanged();
-        }
-    }
-
-    private async Task CompleteOrRestoreComposerSubmissionAsync(
-        AgentSessionListItemViewModel submittedSession,
-        AgentComposerSubmission submission)
-    {
-        var transcript = await LoadTranscriptPageAsync(
-            new AgentTranscriptPageRequest(
-                submission.SessionId,
-                AgentTranscriptPageDirection.Recent,
-                500),
-            _lifetimeCancellation.Token);
-        var wasCommitted = transcript.Turns
-            .Any(turn => turn.Role == AgentMessageRole.User
-                         && !submission.ExistingTurnIds.Contains(turn.TurnId));
-        if (wasCommitted)
-        {
-            submission.Commit();
-            return;
-        }
-
-        RestoreUncommittedComposerState(submittedSession, submission);
-    }
-
-    private bool IsSelectedSessionSendPending() =>
-        SelectedSession is not null && IsSendPending(SelectedSession.SessionId);
-
-    private bool IsSendPending(Guid sessionId)
-        => _composer.IsSendPending(sessionId);
-
-    private void EndPendingSend(AgentComposerSubmission submission)
-    {
-        if (_composer.EndSubmission(submission))
-        {
-            NotifySendPendingStateChanged(submission.SessionId);
-        }
-    }
-
-    private void NotifySendPendingStateChanged(Guid sessionId)
-    {
-        if (SelectedSession?.SessionId == sessionId)
-        {
-            NotifySelectedSessionRunStateChanged();
-        }
-    }
-
-    private void NotifyComposerStateChanged()
-    {
-        OnPropertyChanged(nameof(DraftMessage));
-        OnPropertyChanged(nameof(PendingRollbackTurnId));
-        OnPendingRollbackTurnIdChanged(PendingRollbackTurnId);
-        OnDraftMessageChanged(DraftMessage);
-        OnPropertyChanged(nameof(HasPendingAttachments));
-        OnPropertyChanged(nameof(PendingAttachmentSummaryText));
-    }
 
     [RelayCommand]
     private async Task StopRunAsync()
@@ -646,6 +618,12 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
         _disposed = true;
         _lifetimeCancellation.Cancel();
+        lock (_turnMutationQueueLock)
+        {
+            _openTurnMutationBatch = null;
+            _transcriptWorkQueue.Clear();
+            _transcriptWorkDrainScheduled = false;
+        }
         lock (_chatSnapshotRequestLock)
         {
             _chatSnapshotRequestCancellation?.Cancel();
@@ -683,6 +661,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _workspaceWarmupCts?.Dispose();
         _runActivity.Changed -= OnRunActivityStateChanged;
         _runActivity.Dispose();
+        RunActivityRow.Dispose();
         _timeline.PropertyChanged -= OnTimelinePropertyChanged;
         _timeline.TurnProjected -= OnTimelineTurnProjected;
         _timeline.Dispose();

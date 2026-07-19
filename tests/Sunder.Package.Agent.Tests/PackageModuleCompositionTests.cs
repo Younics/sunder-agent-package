@@ -34,6 +34,7 @@ public sealed class PackageModuleCompositionTests
                 RuntimeOperation("agent.workspaces.command.v1", "Sunder.Package.Agent.Runtime.AgentWorkspaceCommandHandler"),
                 RuntimeOperation("agent.sessions.command.v1", "Sunder.Package.Agent.Runtime.AgentSessionCommandHandler"),
                 RuntimeOperation("agent.runs.command.v1", "Sunder.Package.Agent.Runtime.AgentRunCommandHandler"),
+                RuntimeOperation("agent.runs.status.v1", "Sunder.Package.Agent.Runtime.AgentRunCommandHandler"),
                 RuntimeOperation("agent.permissions.command.v1", "Sunder.Package.Agent.Runtime.AgentPermissionCommandHandler"),
                 RuntimeOperation("agent.attachments.read.v1", "Sunder.Package.Agent.Runtime.AgentAttachmentReadHandler"),
                 RuntimeStream("agent.changes.v1", "Sunder.Package.Agent.Runtime.AgentRuntimeChangeHub"),

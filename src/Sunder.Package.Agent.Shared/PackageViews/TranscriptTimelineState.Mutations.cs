@@ -32,12 +32,15 @@ internal sealed partial class TranscriptTimelineState<TRow>
             return TranscriptLiveTurnResult.ReloadRequired;
         }
 
-        return ApplyLiveTurn(updatedTurn);
+        return ApplyLiveTurn(
+            updatedTurn,
+            notifyVisualChange: mutation.Kind is not AgentTurnMutationKind.Append
+                and not AgentTurnMutationKind.Complete);
     }
 
     public void ApplyActivity(string text, bool isReasoning, bool isVisible)
     {
-        if (!IsFollowingLatest && !IsReplacingRows)
+        if (isVisible && !IsFollowingLatest && !IsReplacingRows)
         {
             return;
         }
