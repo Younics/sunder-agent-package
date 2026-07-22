@@ -29,10 +29,6 @@ public sealed partial class AgentWorkspacesViewModel
                         opened ? AgentWorkspaceStatusKind.Success : AgentWorkspaceStatusKind.Warning,
                         autoClear: opened);
                     break;
-                case AgentEditorActionKind.RefreshEditor:
-                    await RefreshEditorSectionsAsync();
-                    SetStatus("Workspace editor refreshed.", AgentWorkspaceStatusKind.Success, autoClear: true);
-                    break;
                 case AgentEditorActionKind.RefreshField:
                     await RefreshEditorFieldAsync(action.Field);
                     SetStatus("Workspace editor field refreshed.", AgentWorkspaceStatusKind.Success, autoClear: true);

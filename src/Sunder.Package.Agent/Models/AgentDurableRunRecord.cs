@@ -17,7 +17,24 @@ internal sealed record AgentDurableRunRecord(
     DateTimeOffset UpdatedAtUtc,
     DateTimeOffset? FinishedAtUtc,
     AgentRunSuspension? Suspension = null,
-    string? ContinuationToken = null);
+    string? ContinuationToken = null,
+    long ProviderCycleCount = 0,
+    long ToolCallCount = 0,
+    long SubmittedContextTokenCount = 0)
+{
+    public AgentRunBudgetState BudgetState
+        => new(ProviderCycleCount, ToolCallCount, SubmittedContextTokenCount);
+}
+
+internal readonly record struct AgentRunBudgetState(
+    long ProviderCycles,
+    long ToolCalls,
+    long SubmittedContextTokens);
+
+internal readonly record struct AgentRunBudgetCharge(
+    long ProviderCycles = 0,
+    long ToolCalls = 0,
+    long SubmittedContextTokens = 0);
 
 internal sealed class AgentDurableRunLease(AgentDurableRunRecord run)
 {

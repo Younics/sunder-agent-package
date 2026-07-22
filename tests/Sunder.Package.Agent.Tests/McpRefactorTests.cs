@@ -136,6 +136,126 @@ public sealed class McpRefactorTests
     }
 
     [Fact]
+    public async Task ConnectionPool_EvictsLeastRecentlyUsedIdleSessionConnectionAtCapacity()
+    {
+        var factory = new FakeConnectionFactory();
+        await using var manager = new McpClientConnectionManager(
+            NullLoggerFactory.Instance,
+            factory,
+            maxSessionScopedConnections: 2);
+        var server = CreateServer("one", "one");
+        var firstScope = McpConnectionScope.For(Guid.NewGuid(), "workspace");
+        var secondScope = McpConnectionScope.For(Guid.NewGuid(), "workspace");
+
+        await AcquireAndReleaseAsync(manager, server, firstScope);
+        await Task.Delay(10);
+        await AcquireAndReleaseAsync(manager, server, secondScope);
+        await Task.Delay(10);
+        await AcquireAndReleaseAsync(manager, server, firstScope);
+        await Task.Delay(10);
+        await AcquireAndReleaseAsync(
+            manager,
+            server,
+            McpConnectionScope.For(Guid.NewGuid(), "workspace"));
+
+        Assert.Equal(3, factory.ConnectCount);
+        Assert.Equal(2, manager.CachedConnectionCount);
+        Assert.Equal(0, factory.Connections[0].DisposeCount);
+        Assert.Equal(1, factory.Connections[1].DisposeCount);
+        Assert.Equal(0, factory.Connections[2].DisposeCount);
+    }
+
+    [Fact]
+    public async Task ConnectionPool_RejectsNewSessionConnectionWhenEveryEntryIsLeased()
+    {
+        var factory = new FakeConnectionFactory();
+        await using var manager = new McpClientConnectionManager(
+            NullLoggerFactory.Instance,
+            factory,
+            maxSessionScopedConnections: 1);
+        var server = CreateServer("one", "one");
+        await using var lease = await manager.AcquireClientLeaseAsync(
+            server,
+            Empty,
+            Empty,
+            null,
+            McpConnectionScope.For(Guid.NewGuid(), "workspace"));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            manager.AcquireClientLeaseAsync(
+                server,
+                Empty,
+                Empty,
+                null,
+                McpConnectionScope.For(Guid.NewGuid(), "workspace")));
+
+        Assert.Contains("every connection is in use", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, factory.ConnectCount);
+        Assert.Equal(1, manager.CachedConnectionCount);
+    }
+
+    [Fact]
+    public async Task SessionConnectionCleaner_DrainsOnlyConnectionsForDeletedSession()
+    {
+        var factory = new FakeConnectionFactory();
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var server = CreateServer("one", "one");
+        var deletedSessionId = Guid.NewGuid();
+        var retainedSessionId = Guid.NewGuid();
+        await using var deletedSessionLease = await manager.AcquireClientLeaseAsync(
+            server,
+            Empty,
+            Empty,
+            null,
+            McpConnectionScope.For(deletedSessionId, "workspace"));
+        Assert.NotNull(deletedSessionLease);
+        await AcquireAndReleaseAsync(
+            manager,
+            server,
+            McpConnectionScope.For(retainedSessionId, "workspace"));
+        var cleaner = new McpSessionConnectionCleaner(manager);
+
+        var cleanup = Task.Run(() => cleaner.DeleteSessionData(deletedSessionId));
+        await WaitUntilAsync(() => manager.CachedConnectionCount == 1);
+
+        Assert.False(cleanup.IsCompleted);
+        Assert.Equal(0, factory.Connections[0].DisposeCount);
+        Assert.Equal(0, factory.Connections[1].DisposeCount);
+
+        await deletedSessionLease.DisposeAsync();
+        await cleanup.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(1, factory.Connections[0].DisposeCount);
+        Assert.Equal(0, factory.Connections[1].DisposeCount);
+        Assert.Equal(1, manager.CachedConnectionCount);
+        Assert.Equal(McpConnectionStatusKind.Connected, manager.GetStatus(server).Kind);
+    }
+
+    [Fact]
+    public async Task SessionConnectionCleaner_DisposesLateConnectionAndRejectsRecreation()
+    {
+        var factory = new LateConnectionFactory();
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var server = CreateServer("one", "one");
+        var sessionId = Guid.NewGuid();
+        var scope = McpConnectionScope.For(sessionId, "workspace");
+        var discovery = manager.GetToolsAsync(server, Empty, Empty, null, scope);
+        await factory.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var cleanup = manager.DisconnectSessionAsync(sessionId);
+        await factory.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        factory.ReleaseConnection.TrySetResult();
+
+        await cleanup.WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => discovery);
+        Assert.Equal(1, factory.Connection.DisposeCount);
+        Assert.Equal(0, manager.CachedConnectionCount);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            manager.GetToolsAsync(server, Empty, Empty, null, scope));
+        Assert.Equal(1, factory.ConnectCount);
+    }
+
+    [Fact]
     public async Task ConnectionPool_DisconnectRetiresConnectionUntilInvocationLeaseDrains()
     {
         var factory = new FakeConnectionFactory();
@@ -527,6 +647,31 @@ public sealed class McpRefactorTests
             DisposeCount++;
             _completion.TrySetResult();
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class LateConnectionFactory : IMcpClientConnectionFactory
+    {
+        public int ConnectCount { get; private set; }
+        public FakeConnection Connection { get; } = new();
+        public TaskCompletionSource ConnectStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource CancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseConnection { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<IMcpClientConnection> ConnectAsync(
+            ConfiguredMcpServerRecord server,
+            IReadOnlyDictionary<string, string> headers,
+            IReadOnlyDictionary<string, string> environmentVariables,
+            int? discoveryTimeoutMilliseconds,
+            Action<string> standardError,
+            CancellationToken cancellationToken)
+        {
+            ConnectCount++;
+            using var registration = cancellationToken.Register(
+                () => CancellationObserved.TrySetResult());
+            ConnectStarted.TrySetResult();
+            await ReleaseConnection.Task;
+            return Connection;
         }
     }
 

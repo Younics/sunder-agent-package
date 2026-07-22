@@ -35,7 +35,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
             feature
         );
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, feature);
-        registry.RegisterExtension(PackageExtensionPoints.SystemPromptContributors, feature);
+        registry.RegisterExtension(PackageExtensionPoints.PromptContextContributors, feature);
         registry.RegisterExtension(
             PackageExtensionPoints.BehaviorLoops,
             services.GetRequiredService<OrchestratedAgentBehaviorLoop>()

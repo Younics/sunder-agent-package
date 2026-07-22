@@ -1,3 +1,5 @@
+using Sunder.Package.Agent.Contracts.Models;
+
 namespace Sunder.Package.Agent.Memory.Semantic;
 
 public sealed record StoredMemoryRecord(
@@ -15,7 +17,8 @@ public sealed record StoredMemoryRecord(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc,
     DateTimeOffset? LastAccessedAtUtc,
-    int AccessCount);
+    int AccessCount,
+    AgentMemoryProvenance Provenance = AgentMemoryProvenance.Unknown);
 
 public sealed record MemoryCorrectionResult(
     StoredMemoryRecord CorrectedMemory,
@@ -31,7 +34,8 @@ public sealed record MemoryUpsertRequest(
     Guid? SourceTurnId,
     bool IsPinned,
     float Importance,
-    float Confidence);
+    float Confidence,
+    AgentMemoryProvenance Provenance = AgentMemoryProvenance.Unknown);
 
 public sealed record StoredMemoryEvidenceRecord(
     Guid EvidenceId,

@@ -104,9 +104,6 @@ override Sunder.Package.Agent.Contracts.Models.AgentExecutionPathMapping.ToStrin
 override Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor.GetHashCode() -> int
 override Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor.ToString() -> string!
-override Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.Equals(object? obj) -> bool
-override Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.GetHashCode() -> int
-override Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.ToString() -> string!
 override Sunder.Package.Agent.Contracts.Models.AgentExecutionScopeDescriptor.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Contracts.Models.AgentExecutionScopeDescriptor.GetHashCode() -> int
 override Sunder.Package.Agent.Contracts.Models.AgentExecutionScopeDescriptor.ToString() -> string!
@@ -140,9 +137,6 @@ override Sunder.Package.Agent.Contracts.Models.AgentFileWriteRequest.ToString() 
 override Sunder.Package.Agent.Contracts.Models.AgentLifecycleEvent.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Contracts.Models.AgentLifecycleEvent.GetHashCode() -> int
 override Sunder.Package.Agent.Contracts.Models.AgentLifecycleEvent.ToString() -> string!
-override Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.Equals(object? obj) -> bool
-override Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.GetHashCode() -> int
-override Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.ToString() -> string!
 override Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor.GetHashCode() -> int
 override Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor.ToString() -> string!
@@ -188,18 +182,12 @@ override Sunder.Package.Agent.Contracts.Models.AgentPermissionOverride.ToString(
 override Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest.GetHashCode() -> int
 override Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest.ToString() -> string!
-override Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.Equals(object? obj) -> bool
-override Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.GetHashCode() -> int
-override Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.ToString() -> string!
 override Sunder.Package.Agent.Contracts.Models.AgentProcessCommandRequest.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Contracts.Models.AgentProcessCommandRequest.GetHashCode() -> int
 override Sunder.Package.Agent.Contracts.Models.AgentProcessCommandRequest.ToString() -> string!
 override Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor.GetHashCode() -> int
 override Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor.ToString() -> string!
-override Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext.Equals(object? obj) -> bool
-override Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext.GetHashCode() -> int
-override Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext.ToString() -> string!
 override Sunder.Package.Agent.Contracts.Models.AgentProfileModelBindingRecord.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Contracts.Models.AgentProfileModelBindingRecord.GetHashCode() -> int
 override Sunder.Package.Agent.Contracts.Models.AgentProfileModelBindingRecord.ToString() -> string!
@@ -311,9 +299,6 @@ override Sunder.Package.Agent.Contracts.Models.AgentToolSourceContext.ToString()
 override Sunder.Package.Agent.Contracts.Models.AgentToolSourceItem.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Contracts.Models.AgentToolSourceItem.GetHashCode() -> int
 override Sunder.Package.Agent.Contracts.Models.AgentToolSourceItem.ToString() -> string!
-override Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.Equals(object? obj) -> bool
-override Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.GetHashCode() -> int
-override Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.ToString() -> string!
 override Sunder.Package.Agent.Contracts.Models.AgentTranscriptRollbackResult.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Contracts.Models.AgentTranscriptRollbackResult.GetHashCode() -> int
 override Sunder.Package.Agent.Contracts.Models.AgentTranscriptRollbackResult.ToString() -> string!
@@ -327,15 +312,6 @@ override Sunder.Package.Agent.Contracts.Models.AgentTurnRecord.ToString() -> str
 override Sunder.Package.Agent.Contracts.Models.AgentWorkingSummaryRecord.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Contracts.Models.AgentWorkingSummaryRecord.GetHashCode() -> int
 override Sunder.Package.Agent.Contracts.Models.AgentWorkingSummaryRecord.ToString() -> string!
-override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext.Equals(object? obj) -> bool
-override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext.GetHashCode() -> int
-override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext.ToString() -> string!
-override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.Equals(object? obj) -> bool
-override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.GetHashCode() -> int
-override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.ToString() -> string!
-override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.Equals(object? obj) -> bool
-override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.GetHashCode() -> int
-override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.ToString() -> string!
 override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord.GetHashCode() -> int
 override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord.ToString() -> string!
@@ -360,17 +336,14 @@ override Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathRecord.ToString
 override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord.GetHashCode() -> int
 override Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord.ToString() -> string!
-static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.AttachmentContentStores -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentAttachmentContentStore!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.BehaviorLoops -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoop!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.ChatProviders -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentChatProvider!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.ChildRunExecutors -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentChildRunExecutor!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.EmbeddingProviders -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentEmbeddingProvider!>!
-static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.ExecutionResourceProviders -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionResourceProvider!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.ExecutionTargets -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionTarget!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.LifecycleObservers -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentLifecycleObserver!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.PermissionSurfaces -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentPermissionSurface!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.ProfileCapabilityConsumers -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentProfileCapabilityConsumer!>!
-static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.ProfileEditorContributors -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentProfileEditorContributor!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.ProfileSelectableCapabilityProviders -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentProfileSelectableCapabilityProvider!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.PromptContextContributors -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentPromptContextContributor!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.RuntimeCatalogs -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentRuntimeCatalog!>!
@@ -378,7 +351,6 @@ static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.SessionDat
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.SystemPromptContributors -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentSystemPromptContributor!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.Tools -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentTool!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.ToolSources -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentToolSource!>!
-static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.WorkspaceBindingContributors -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspaceBindingContributor!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.WorkspaceEditorContributors -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspaceEditorContributor!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.WorkspaceExecutionResolvers -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspaceExecutionResolver!>!
 static readonly Sunder.Package.Agent.Contracts.PackageExtensionPoints.WorkspacePathMigrationContributors -> Sunder.Sdk.Abstractions.PackageExtensionPoint<Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspacePathMigrationContributor!>!
@@ -442,8 +414,6 @@ static Sunder.Package.Agent.Contracts.Models.AgentExecutionPathMapping.operator 
 static Sunder.Package.Agent.Contracts.Models.AgentExecutionPathMapping.operator ==(Sunder.Package.Agent.Contracts.Models.AgentExecutionPathMapping? left, Sunder.Package.Agent.Contracts.Models.AgentExecutionPathMapping? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor.operator !=(Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor? left, Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor.operator ==(Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor? left, Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.operator !=(Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest? left, Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.operator ==(Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest? left, Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentExecutionScopeDescriptor.operator !=(Sunder.Package.Agent.Contracts.Models.AgentExecutionScopeDescriptor? left, Sunder.Package.Agent.Contracts.Models.AgentExecutionScopeDescriptor? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentExecutionScopeDescriptor.operator ==(Sunder.Package.Agent.Contracts.Models.AgentExecutionScopeDescriptor? left, Sunder.Package.Agent.Contracts.Models.AgentExecutionScopeDescriptor? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentExecutionShellDescriptor.operator !=(Sunder.Package.Agent.Contracts.Models.AgentExecutionShellDescriptor? left, Sunder.Package.Agent.Contracts.Models.AgentExecutionShellDescriptor? right) -> bool
@@ -466,8 +436,6 @@ static Sunder.Package.Agent.Contracts.Models.AgentFileWriteRequest.operator !=(S
 static Sunder.Package.Agent.Contracts.Models.AgentFileWriteRequest.operator ==(Sunder.Package.Agent.Contracts.Models.AgentFileWriteRequest? left, Sunder.Package.Agent.Contracts.Models.AgentFileWriteRequest? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentLifecycleEvent.operator !=(Sunder.Package.Agent.Contracts.Models.AgentLifecycleEvent? left, Sunder.Package.Agent.Contracts.Models.AgentLifecycleEvent? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentLifecycleEvent.operator ==(Sunder.Package.Agent.Contracts.Models.AgentLifecycleEvent? left, Sunder.Package.Agent.Contracts.Models.AgentLifecycleEvent? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.operator !=(Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult? left, Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.operator ==(Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult? left, Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor.operator !=(Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor? left, Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor.operator ==(Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor? left, Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentMemoryMatchReason.operator !=(Sunder.Package.Agent.Contracts.Models.AgentMemoryMatchReason? left, Sunder.Package.Agent.Contracts.Models.AgentMemoryMatchReason? right) -> bool
@@ -500,14 +468,10 @@ static Sunder.Package.Agent.Contracts.Models.AgentPermissionOverride.operator !=
 static Sunder.Package.Agent.Contracts.Models.AgentPermissionOverride.operator ==(Sunder.Package.Agent.Contracts.Models.AgentPermissionOverride? left, Sunder.Package.Agent.Contracts.Models.AgentPermissionOverride? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest.operator !=(Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest? left, Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest.operator ==(Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest? left, Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.operator !=(Sunder.Package.Agent.Contracts.Models.AgentPermissionRule? left, Sunder.Package.Agent.Contracts.Models.AgentPermissionRule? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.operator ==(Sunder.Package.Agent.Contracts.Models.AgentPermissionRule? left, Sunder.Package.Agent.Contracts.Models.AgentPermissionRule? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentProcessCommandRequest.operator !=(Sunder.Package.Agent.Contracts.Models.AgentProcessCommandRequest? left, Sunder.Package.Agent.Contracts.Models.AgentProcessCommandRequest? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentProcessCommandRequest.operator ==(Sunder.Package.Agent.Contracts.Models.AgentProcessCommandRequest? left, Sunder.Package.Agent.Contracts.Models.AgentProcessCommandRequest? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor.operator !=(Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor? left, Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor.operator ==(Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor? left, Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext.operator !=(Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext? left, Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext.operator ==(Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext? left, Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentProfileModelBindingRecord.operator !=(Sunder.Package.Agent.Contracts.Models.AgentProfileModelBindingRecord? left, Sunder.Package.Agent.Contracts.Models.AgentProfileModelBindingRecord? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentProfileModelBindingRecord.operator ==(Sunder.Package.Agent.Contracts.Models.AgentProfileModelBindingRecord? left, Sunder.Package.Agent.Contracts.Models.AgentProfileModelBindingRecord? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentProfileRecord.operator !=(Sunder.Package.Agent.Contracts.Models.AgentProfileRecord? left, Sunder.Package.Agent.Contracts.Models.AgentProfileRecord? right) -> bool
@@ -585,8 +549,6 @@ static Sunder.Package.Agent.Contracts.Models.AgentToolSourceContext.operator !=(
 static Sunder.Package.Agent.Contracts.Models.AgentToolSourceContext.operator ==(Sunder.Package.Agent.Contracts.Models.AgentToolSourceContext? left, Sunder.Package.Agent.Contracts.Models.AgentToolSourceContext? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentToolSourceItem.operator !=(Sunder.Package.Agent.Contracts.Models.AgentToolSourceItem? left, Sunder.Package.Agent.Contracts.Models.AgentToolSourceItem? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentToolSourceItem.operator ==(Sunder.Package.Agent.Contracts.Models.AgentToolSourceItem? left, Sunder.Package.Agent.Contracts.Models.AgentToolSourceItem? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.operator !=(Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord? left, Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.operator ==(Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord? left, Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentTranscriptRollbackResult.operator !=(Sunder.Package.Agent.Contracts.Models.AgentTranscriptRollbackResult? left, Sunder.Package.Agent.Contracts.Models.AgentTranscriptRollbackResult? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentTranscriptRollbackResult.operator ==(Sunder.Package.Agent.Contracts.Models.AgentTranscriptRollbackResult? left, Sunder.Package.Agent.Contracts.Models.AgentTranscriptRollbackResult? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentTranscriptWindowTrimResult.operator !=(Sunder.Package.Agent.Contracts.Models.AgentTranscriptWindowTrimResult left, Sunder.Package.Agent.Contracts.Models.AgentTranscriptWindowTrimResult right) -> bool
@@ -597,12 +559,6 @@ static Sunder.Package.Agent.Contracts.Models.AgentTurnRecord.operator !=(Sunder.
 static Sunder.Package.Agent.Contracts.Models.AgentTurnRecord.operator ==(Sunder.Package.Agent.Contracts.Models.AgentTurnRecord? left, Sunder.Package.Agent.Contracts.Models.AgentTurnRecord? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentWorkingSummaryRecord.operator !=(Sunder.Package.Agent.Contracts.Models.AgentWorkingSummaryRecord? left, Sunder.Package.Agent.Contracts.Models.AgentWorkingSummaryRecord? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentWorkingSummaryRecord.operator ==(Sunder.Package.Agent.Contracts.Models.AgentWorkingSummaryRecord? left, Sunder.Package.Agent.Contracts.Models.AgentWorkingSummaryRecord? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext.operator !=(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext? left, Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext.operator ==(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext? left, Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.operator !=(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor? left, Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.operator ==(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor? left, Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.operator !=(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness? left, Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness? right) -> bool
-static Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.operator ==(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness? left, Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord.operator !=(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord? left, Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord.operator ==(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord? left, Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord? right) -> bool
 static Sunder.Package.Agent.Contracts.Models.AgentWorkspaceDocumentRecord.operator !=(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceDocumentRecord? left, Sunder.Package.Agent.Contracts.Models.AgentWorkspaceDocumentRecord? right) -> bool
@@ -664,8 +620,6 @@ Sunder.Package.Agent.Contracts.AgentTurnContextRecord.UserMessage.get -> string!
 Sunder.Package.Agent.Contracts.AgentTurnContextRecord.UserMessage.init -> void
 Sunder.Package.Agent.Contracts.AgentTurnContextRecord.WorkingSummary.get -> string?
 Sunder.Package.Agent.Contracts.AgentTurnContextRecord.WorkingSummary.init -> void
-Sunder.Package.Agent.Contracts.Contracts.IAgentAttachmentContentStore
-Sunder.Package.Agent.Contracts.Contracts.IAgentAttachmentContentStore.ReadAttachmentBytesAsync(Sunder.Package.Agent.Contracts.Models.AgentAttachmentMetadata! metadata, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<byte[]!>!
 Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoop
 Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoop.Descriptor.get -> Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopDescriptor!
 Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoop.RunAsync(Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopContext! context, Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoopRuntime! runtime, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopResult!>
@@ -700,10 +654,6 @@ Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionPathEnvironment.AddPathE
 Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionPathEnvironment.ListPathEntriesAsync(Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<string!>!>
 Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionPathMapper
 Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionPathMapper.MapToHostPathAsync(Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext! context, string! executionPath, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Contracts.Models.AgentExecutionPathMapping!>
-Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionResourceProvider
-Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionResourceProvider.DisplayName.get -> string!
-Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionResourceProvider.ListResourcesAsync(Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor!>!>
-Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionResourceProvider.ProviderId.get -> string!
 Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionResourceResolver
 Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionResourceResolver.ResolveResourcesAsync(Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext! context, System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor!>! resources, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentResolvedExecutionResource!>!>
 Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionScopeProvider
@@ -719,7 +669,7 @@ Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionTarget.ResolveFileResour
 Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionTarget.WriteFileAsync(Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext! context, Sunder.Package.Agent.Contracts.Models.AgentFileWriteRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Contracts.Models.AgentFileMutationResult!>
 Sunder.Package.Agent.Contracts.Contracts.IAgentLifecycleObserver
 Sunder.Package.Agent.Contracts.Contracts.IAgentLifecycleObserver.DisplayName.get -> string!
-Sunder.Package.Agent.Contracts.Contracts.IAgentLifecycleObserver.HandleLifecycleEventAsync(Sunder.Package.Agent.Contracts.Models.AgentLifecycleEvent! lifecycleEvent, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult?>
+Sunder.Package.Agent.Contracts.Contracts.IAgentLifecycleObserver.HandleLifecycleEventAsync(Sunder.Package.Agent.Contracts.Models.AgentLifecycleEvent! lifecycleEvent, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 Sunder.Package.Agent.Contracts.Contracts.IAgentLifecycleObserver.ObserverId.get -> string!
 Sunder.Package.Agent.Contracts.Contracts.IAgentNativeToolSource
 Sunder.Package.Agent.Contracts.Contracts.IAgentNativeToolSource.ListRuntimeToolsAsync(Sunder.Package.Agent.Contracts.Models.AgentToolSourceContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentRuntimeTool!>!>
@@ -737,11 +687,6 @@ Sunder.Package.Agent.Contracts.Contracts.IAgentProfileCapabilityConsumer
 Sunder.Package.Agent.Contracts.Contracts.IAgentProfileCapabilityConsumer.ConsumerId.get -> string!
 Sunder.Package.Agent.Contracts.Contracts.IAgentProfileCapabilityConsumer.DisplayName.get -> string!
 Sunder.Package.Agent.Contracts.Contracts.IAgentProfileCapabilityConsumer.ListConsumedCapabilities() -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor!>!
-Sunder.Package.Agent.Contracts.Contracts.IAgentProfileEditorContributor
-Sunder.Package.Agent.Contracts.Contracts.IAgentProfileEditorContributor.CanEdit(Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext! context) -> bool
-Sunder.Package.Agent.Contracts.Contracts.IAgentProfileEditorContributor.ContributorId.get -> string!
-Sunder.Package.Agent.Contracts.Contracts.IAgentProfileEditorContributor.GetSectionsAsync(Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentEditorSection!>!>
-Sunder.Package.Agent.Contracts.Contracts.IAgentProfileEditorContributor.SaveSectionAsync(Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext! context, Sunder.Package.Agent.Contracts.Models.AgentEditorSaveRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Contracts.Models.AgentEditorSaveResult!>
 Sunder.Package.Agent.Contracts.Contracts.IAgentProfileSelectableCapabilityChangeNotifier
 Sunder.Package.Agent.Contracts.Contracts.IAgentProfileSelectableCapabilityChangeNotifier.SelectableCapabilitiesChanged -> System.Action?
 Sunder.Package.Agent.Contracts.Contracts.IAgentProfileSelectableCapabilityProvider
@@ -795,9 +740,6 @@ Sunder.Package.Agent.Contracts.Contracts.IAgentToolSource.SourceId.get -> string
 Sunder.Package.Agent.Contracts.Contracts.IAgentToolSource.SourceKind.get -> string!
 Sunder.Package.Agent.Contracts.Contracts.IAgentUtilityModelProvider
 Sunder.Package.Agent.Contracts.Contracts.IAgentUtilityModelProvider.ResolveUtilityModelIdAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
-Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspaceBindingContributor
-Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspaceBindingContributor.Descriptor.get -> Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor!
-Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspaceBindingContributor.GetReadinessAsync(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness!>
 Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspaceEditorContributor
 Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspaceEditorContributor.CanEdit(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceEditorContext! context) -> bool
 Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspaceEditorContributor.ContributorId.get -> string!
@@ -890,8 +832,6 @@ Sunder.Package.Agent.Contracts.Models.AgentAuthMode.ApiKey = 0 -> Sunder.Package
 Sunder.Package.Agent.Contracts.Models.AgentAuthMode.CodexConnected = 1 -> Sunder.Package.Agent.Contracts.Models.AgentAuthMode
 Sunder.Package.Agent.Contracts.Models.AgentBehaviorInstructionContext
 Sunder.Package.Agent.Contracts.Models.AgentBehaviorInstructionContext.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentBehaviorInstructionContext!
-Sunder.Package.Agent.Contracts.Models.AgentBehaviorInstructionContext.AgentBehaviorInstructionContext(string? SystemInstructions, bool HasSupplementaryContext) -> void
-Sunder.Package.Agent.Contracts.Models.AgentBehaviorInstructionContext.Deconstruct(out string? SystemInstructions, out bool HasSupplementaryContext) -> void
 Sunder.Package.Agent.Contracts.Models.AgentBehaviorInstructionContext.Equals(Sunder.Package.Agent.Contracts.Models.AgentBehaviorInstructionContext? other) -> bool
 Sunder.Package.Agent.Contracts.Models.AgentBehaviorInstructionContext.HasSupplementaryContext.get -> bool
 Sunder.Package.Agent.Contracts.Models.AgentBehaviorInstructionContext.HasSupplementaryContext.init -> void
@@ -1051,7 +991,6 @@ Sunder.Package.Agent.Contracts.Models.AgentEditorAction.Parameters.get -> System
 Sunder.Package.Agent.Contracts.Models.AgentEditorAction.Parameters.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentEditorActionKind
 Sunder.Package.Agent.Contracts.Models.AgentEditorActionKind.OpenPackageSettings = 0 -> Sunder.Package.Agent.Contracts.Models.AgentEditorActionKind
-Sunder.Package.Agent.Contracts.Models.AgentEditorActionKind.RefreshEditor = 1 -> Sunder.Package.Agent.Contracts.Models.AgentEditorActionKind
 Sunder.Package.Agent.Contracts.Models.AgentEditorActionKind.RefreshField = 2 -> Sunder.Package.Agent.Contracts.Models.AgentEditorActionKind
 Sunder.Package.Agent.Contracts.Models.AgentEditorField
 Sunder.Package.Agent.Contracts.Models.AgentEditorField.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentEditorField!
@@ -1238,19 +1177,6 @@ Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor.ResourceK
 Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor.ResourceKind.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor.SourceId.get -> string!
 Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceDescriptor.SourceId.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest
-Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest!
-Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.AgentExecutionResourceRequest(System.Guid? SessionId, Sunder.Package.Agent.Contracts.Models.AgentProfileRecord? Profile, Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord? Workspace, Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord? ExecutionBinding) -> void
-Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.Deconstruct(out System.Guid? SessionId, out Sunder.Package.Agent.Contracts.Models.AgentProfileRecord? Profile, out Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord? Workspace, out Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord? ExecutionBinding) -> void
-Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.Equals(Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest? other) -> bool
-Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.ExecutionBinding.get -> Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord?
-Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.ExecutionBinding.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.Profile.get -> Sunder.Package.Agent.Contracts.Models.AgentProfileRecord?
-Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.Profile.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.SessionId.get -> System.Guid?
-Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.SessionId.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.Workspace.get -> Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord?
-Sunder.Package.Agent.Contracts.Models.AgentExecutionResourceRequest.Workspace.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentExecutionScopeDescriptor
 Sunder.Package.Agent.Contracts.Models.AgentExecutionScopeDescriptor.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentExecutionScopeDescriptor!
 Sunder.Package.Agent.Contracts.Models.AgentExecutionScopeDescriptor.AgentExecutionScopeDescriptor(string! DisplayName, System.Collections.Generic.IReadOnlyList<string!>! WorkspacePaths, string? DefaultWorkingDirectory = null, string? PathStyleDescription = null) -> void
@@ -1296,8 +1222,8 @@ Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext.Workspace.get 
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext.Workspace.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor!
-Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.AgentExecutionTargetDescriptor(string! TargetKind, string! TargetId, string! DisplayName, string? Description, bool SupportsShell, bool SupportsFiles, bool SupportsSearch) -> void
-Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.Deconstruct(out string! TargetKind, out string! TargetId, out string! DisplayName, out string? Description, out bool SupportsShell, out bool SupportsFiles, out bool SupportsSearch) -> void
+Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.AgentExecutionTargetDescriptor(string! TargetKind, string! TargetId, string! DisplayName, string? Description, bool SupportsShell, bool SupportsFiles) -> void
+Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.Deconstruct(out string! TargetKind, out string! TargetId, out string! DisplayName, out string? Description, out bool SupportsShell, out bool SupportsFiles) -> void
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.Description.get -> string?
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.Description.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.DisplayName.get -> string!
@@ -1305,8 +1231,6 @@ Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.DisplayName
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.Equals(Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor? other) -> bool
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.SupportsFiles.get -> bool
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.SupportsFiles.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.SupportsSearch.get -> bool
-Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.SupportsSearch.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.SupportsShell.get -> bool
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.SupportsShell.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor.TargetId.get -> string!
@@ -1327,7 +1251,6 @@ Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadiness.TargetId.ini
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadiness.TargetKind.get -> string!
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadiness.TargetKind.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadinessStatus
-Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadinessStatus.Degraded = 2 -> Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadinessStatus
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadinessStatus.Failed = 3 -> Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadinessStatus
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadinessStatus.NeedsConfiguration = 1 -> Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadinessStatus
 Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadinessStatus.Ready = 0 -> Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadinessStatus
@@ -1416,13 +1339,6 @@ Sunder.Package.Agent.Contracts.Models.AgentLifecycleEventKind.RunInterrupted = 3
 Sunder.Package.Agent.Contracts.Models.AgentLifecycleEventKind.RunStopped = 4 -> Sunder.Package.Agent.Contracts.Models.AgentLifecycleEventKind
 Sunder.Package.Agent.Contracts.Models.AgentLifecycleEventKind.ToolResultRecorded = 2 -> Sunder.Package.Agent.Contracts.Models.AgentLifecycleEventKind
 Sunder.Package.Agent.Contracts.Models.AgentLifecycleEventKind.UserTurnAdded = 0 -> Sunder.Package.Agent.Contracts.Models.AgentLifecycleEventKind
-Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult
-Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult!
-Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.AgentLifecycleObserverResult(string? WorkingSummary = null) -> void
-Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.Deconstruct(out string? WorkingSummary) -> void
-Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.Equals(Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult? other) -> bool
-Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.WorkingSummary.get -> string?
-Sunder.Package.Agent.Contracts.Models.AgentLifecycleObserverResult.WorkingSummary.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor
 Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor!
 Sunder.Package.Agent.Contracts.Models.AgentMcpServerDescriptor.AgentMcpServerDescriptor(string! ServerId, string! DisplayName, string? Description = null, string? StatusText = null) -> void
@@ -1447,12 +1363,10 @@ Sunder.Package.Agent.Contracts.Models.AgentMemoryMatchReason.Kind.get -> string!
 Sunder.Package.Agent.Contracts.Models.AgentMemoryMatchReason.Kind.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry
 Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry!
-Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry.AgentMemoryRecallEntry(string! MemoryId, string! Category, string! Content, string? EvidenceText, float Score, bool IsPinned, Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState TrustState = Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState.Active, System.Guid? SourceTurnId = null, System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentMemoryMatchReason!>? MatchReasons = null) -> void
 Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry.Category.get -> string!
 Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry.Category.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry.Content.get -> string!
 Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry.Content.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry.Deconstruct(out string! MemoryId, out string! Category, out string! Content, out string? EvidenceText, out float Score, out bool IsPinned, out Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState TrustState, out System.Guid? SourceTurnId, out System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentMemoryMatchReason!>? MatchReasons) -> void
 Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry.Equals(Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry? other) -> bool
 Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry.EvidenceText.get -> string?
 Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry.EvidenceText.init -> void
@@ -1521,10 +1435,7 @@ Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallResult.Entries.get -> Sys
 Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallResult.Entries.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallResult.Equals(Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallResult? other) -> bool
 Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState
-Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState.Active = 0 -> Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState
 Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState.Contested = 3 -> Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState
-Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState.Forgotten = 1 -> Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState
-Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState.Superseded = 2 -> Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState
 Sunder.Package.Agent.Contracts.Models.AgentMessageRole
 Sunder.Package.Agent.Contracts.Models.AgentMessageRole.Assistant = 2 -> Sunder.Package.Agent.Contracts.Models.AgentMessageRole
 Sunder.Package.Agent.Contracts.Models.AgentMessageRole.System = 0 -> Sunder.Package.Agent.Contracts.Models.AgentMessageRole
@@ -1636,11 +1547,7 @@ Sunder.Package.Agent.Contracts.Models.AgentPermissionEvaluation.Reason.get -> st
 Sunder.Package.Agent.Contracts.Models.AgentPermissionEvaluation.Reason.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind
 Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind.ActionId = 0 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind
-Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind.CommandPattern = 2 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind
-Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind.PathPattern = 3 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind
-Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind.Target = 4 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind
 Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind.ToolId = 1 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind
-Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind.UrlPattern = 5 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind
 Sunder.Package.Agent.Contracts.Models.AgentPermissionOverride
 Sunder.Package.Agent.Contracts.Models.AgentPermissionOverride.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentPermissionOverride!
 Sunder.Package.Agent.Contracts.Models.AgentPermissionOverride.ActionId.get -> string!
@@ -1681,23 +1588,6 @@ Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest.ToolId.get -> strin
 Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest.ToolId.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest.WorkspaceId.get -> string?
 Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest.WorkspaceId.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentPermissionRule!
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.ActionId.get -> string!
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.ActionId.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.AgentPermissionRule(string! RuleId, string! ActionId, Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind MatcherKind, string! Pattern, Sunder.Package.Agent.Contracts.Models.AgentPermissionDecision Decision, int SortOrder) -> void
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.Decision.get -> Sunder.Package.Agent.Contracts.Models.AgentPermissionDecision
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.Decision.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.Deconstruct(out string! RuleId, out string! ActionId, out Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind MatcherKind, out string! Pattern, out Sunder.Package.Agent.Contracts.Models.AgentPermissionDecision Decision, out int SortOrder) -> void
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.Equals(Sunder.Package.Agent.Contracts.Models.AgentPermissionRule? other) -> bool
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.MatcherKind.get -> Sunder.Package.Agent.Contracts.Models.AgentPermissionMatcherKind
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.MatcherKind.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.Pattern.get -> string!
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.Pattern.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.RuleId.get -> string!
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.RuleId.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.SortOrder.get -> int
-Sunder.Package.Agent.Contracts.Models.AgentPermissionRule.SortOrder.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentProcessCommandRequest
 Sunder.Package.Agent.Contracts.Models.AgentProcessCommandRequest.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentProcessCommandRequest!
 Sunder.Package.Agent.Contracts.Models.AgentProcessCommandRequest.AgentProcessCommandRequest(string! FileName, System.Collections.Generic.IReadOnlyList<string!>! Arguments, string? WorkingDirectory = null, int? TimeoutSeconds = null) -> void
@@ -1722,13 +1612,6 @@ Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor.D
 Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor.DisplayName.get -> string!
 Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor.DisplayName.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor.Equals(Sunder.Package.Agent.Contracts.Models.AgentProfileCapabilityConsumerDescriptor? other) -> bool
-Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext
-Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext!
-Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext.AgentProfileEditorContext(Sunder.Package.Agent.Contracts.Models.AgentProfileRecord! Profile) -> void
-Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext.Deconstruct(out Sunder.Package.Agent.Contracts.Models.AgentProfileRecord! Profile) -> void
-Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext.Equals(Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext? other) -> bool
-Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext.Profile.get -> Sunder.Package.Agent.Contracts.Models.AgentProfileRecord!
-Sunder.Package.Agent.Contracts.Models.AgentProfileEditorContext.Profile.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentProfileModelBindingRecord
 Sunder.Package.Agent.Contracts.Models.AgentProfileModelBindingRecord.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentProfileModelBindingRecord!
 Sunder.Package.Agent.Contracts.Models.AgentProfileModelBindingRecord.AgentProfileModelBindingRecord(string! ProfileId, string! CapabilityKind, string? ProviderId, string? ModelId, string? SettingsJson, System.DateTimeOffset UpdatedAtUtc) -> void
@@ -1833,10 +1716,8 @@ Sunder.Package.Agent.Contracts.Models.AgentProfileSelectableCapabilityRequest.Pr
 Sunder.Package.Agent.Contracts.Models.AgentProfileSelectableCapabilityRequest.Profile.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock!
-Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock.AgentPromptContextBlock(string! Title, string! Content, int Priority = 0, string? SourceId = null) -> void
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock.Content.get -> string!
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock.Content.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock.Deconstruct(out string! Title, out string! Content, out int Priority, out string? SourceId) -> void
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock.Equals(Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock? other) -> bool
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock.Priority.get -> int
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock.Priority.init -> void
@@ -1872,10 +1753,16 @@ Sunder.Package.Agent.Contracts.Models.AgentPromptContextPlan.ShouldContribute.ge
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest!
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.AgentPromptContextRequest(Sunder.Package.Agent.Contracts.AgentSessionContextRecord! Session, Sunder.Package.Agent.Contracts.AgentRunContextRecord! Run, Sunder.Package.Agent.Contracts.AgentTurnContextRecord! Turn, System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentTurnRecord!>! Turns, System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentTurnRecord!>! RecentLiveBufferTurns, Sunder.Package.Agent.Contracts.Models.AgentPromptContextPlan! ContextPlan) -> void
+Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.AvailableTools.get -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentToolDescriptor!>!
+Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.AvailableTools.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.ContextPlan.get -> Sunder.Package.Agent.Contracts.Models.AgentPromptContextPlan!
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.ContextPlan.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.Deconstruct(out Sunder.Package.Agent.Contracts.AgentSessionContextRecord! Session, out Sunder.Package.Agent.Contracts.AgentRunContextRecord! Run, out Sunder.Package.Agent.Contracts.AgentTurnContextRecord! Turn, out System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentTurnRecord!>! Turns, out System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentTurnRecord!>! RecentLiveBufferTurns, out Sunder.Package.Agent.Contracts.Models.AgentPromptContextPlan! ContextPlan) -> void
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.Equals(Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest? other) -> bool
+Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.ExecutionBinding.get -> Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord?
+Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.ExecutionBinding.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.Profile.get -> Sunder.Package.Agent.Contracts.Models.AgentProfileRecord?
+Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.Profile.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.RecentLiveBufferTurns.get -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentTurnRecord!>!
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.RecentLiveBufferTurns.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.Run.get -> Sunder.Package.Agent.Contracts.AgentRunContextRecord!
@@ -1886,6 +1773,8 @@ Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.Turn.get -> Sund
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.Turn.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.Turns.get -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentTurnRecord!>!
 Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.Turns.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.Workspace.get -> Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord?
+Sunder.Package.Agent.Contracts.Models.AgentPromptContextRequest.Workspace.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentProviderDescriptor
 Sunder.Package.Agent.Contracts.Models.AgentProviderDescriptor.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentProviderDescriptor!
 Sunder.Package.Agent.Contracts.Models.AgentProviderDescriptor.AgentProviderDescriptor(string! ProviderId, string! DisplayName, System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentAuthMode>! SupportedAuthModes, bool SupportsStreaming, bool SupportsInterruptibleRuns) -> void
@@ -2103,7 +1992,6 @@ Sunder.Package.Agent.Contracts.Models.AgentSessionRecord.WorkspaceId.get -> stri
 Sunder.Package.Agent.Contracts.Models.AgentSessionRecord.WorkspaceId.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentSessionState
 Sunder.Package.Agent.Contracts.Models.AgentSessionState.Active = 0 -> Sunder.Package.Agent.Contracts.Models.AgentSessionState
-Sunder.Package.Agent.Contracts.Models.AgentSessionState.Archived = 4 -> Sunder.Package.Agent.Contracts.Models.AgentSessionState
 Sunder.Package.Agent.Contracts.Models.AgentSessionState.Completed = 3 -> Sunder.Package.Agent.Contracts.Models.AgentSessionState
 Sunder.Package.Agent.Contracts.Models.AgentSessionState.Failed = 5 -> Sunder.Package.Agent.Contracts.Models.AgentSessionState
 Sunder.Package.Agent.Contracts.Models.AgentSessionState.Interrupted = 1 -> Sunder.Package.Agent.Contracts.Models.AgentSessionState
@@ -2360,9 +2248,7 @@ Sunder.Package.Agent.Contracts.Models.AgentToolReadiness.ToolId.get -> string!
 Sunder.Package.Agent.Contracts.Models.AgentToolReadiness.ToolId.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentToolReadinessStatus
 Sunder.Package.Agent.Contracts.Models.AgentToolReadinessStatus.Failed = 3 -> Sunder.Package.Agent.Contracts.Models.AgentToolReadinessStatus
-Sunder.Package.Agent.Contracts.Models.AgentToolReadinessStatus.NeedsConfiguration = 1 -> Sunder.Package.Agent.Contracts.Models.AgentToolReadinessStatus
 Sunder.Package.Agent.Contracts.Models.AgentToolReadinessStatus.Ready = 0 -> Sunder.Package.Agent.Contracts.Models.AgentToolReadinessStatus
-Sunder.Package.Agent.Contracts.Models.AgentToolReadinessStatus.Unavailable = 2 -> Sunder.Package.Agent.Contracts.Models.AgentToolReadinessStatus
 Sunder.Package.Agent.Contracts.Models.AgentToolRequest
 Sunder.Package.Agent.Contracts.Models.AgentToolRequest.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentToolRequest!
 Sunder.Package.Agent.Contracts.Models.AgentToolRequest.AgentToolRequest(string! ToolId, string! ArgumentsJson) -> void
@@ -2425,21 +2311,6 @@ Sunder.Package.Agent.Contracts.Models.AgentToolSourceItem.Title.get -> string!
 Sunder.Package.Agent.Contracts.Models.AgentToolSourceItem.Title.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentToolSourceItem.Url.get -> string!
 Sunder.Package.Agent.Contracts.Models.AgentToolSourceItem.Url.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord!
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.AgentTranscriptMessageRecord(System.Guid MessageId, System.Guid SessionId, Sunder.Package.Agent.Contracts.Models.AgentMessageRole Role, string! Content, System.DateTimeOffset CreatedAtUtc) -> void
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.Content.get -> string!
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.Content.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.CreatedAtUtc.get -> System.DateTimeOffset
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.CreatedAtUtc.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.Deconstruct(out System.Guid MessageId, out System.Guid SessionId, out Sunder.Package.Agent.Contracts.Models.AgentMessageRole Role, out string! Content, out System.DateTimeOffset CreatedAtUtc) -> void
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.Equals(Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord? other) -> bool
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.MessageId.get -> System.Guid
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.MessageId.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.Role.get -> Sunder.Package.Agent.Contracts.Models.AgentMessageRole
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.Role.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.SessionId.get -> System.Guid
-Sunder.Package.Agent.Contracts.Models.AgentTranscriptMessageRecord.SessionId.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentTranscriptRollbackResult
 Sunder.Package.Agent.Contracts.Models.AgentTranscriptRollbackResult.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentTranscriptRollbackResult!
 Sunder.Package.Agent.Contracts.Models.AgentTranscriptRollbackResult.AgentTranscriptRollbackResult(System.Guid SessionId, System.Guid AnchorTurnId, System.Collections.Generic.IReadOnlyList<System.Guid>! DeletedTurnIds, System.Collections.Generic.IReadOnlyList<System.Guid>! DeletedSessionIds) -> void
@@ -2555,41 +2426,6 @@ Sunder.Package.Agent.Contracts.Models.AgentWorkingSummaryRecord.SummaryText.get 
 Sunder.Package.Agent.Contracts.Models.AgentWorkingSummaryRecord.SummaryText.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentWorkingSummaryRecord.UpdatedAtUtc.get -> System.DateTimeOffset
 Sunder.Package.Agent.Contracts.Models.AgentWorkingSummaryRecord.UpdatedAtUtc.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext!
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext.AgentWorkspaceBindingContext(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord! Workspace, Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord! Binding) -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext.Binding.get -> Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord!
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext.Binding.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext.Deconstruct(out Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord! Workspace, out Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord! Binding) -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext.Equals(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext? other) -> bool
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext.Workspace.get -> Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord!
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingContext.Workspace.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor!
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.AgentWorkspaceBindingDescriptor(string! ExtensionPointId, string! ContributionId, string! Role, string! DisplayName, string? Description) -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.ContributionId.get -> string!
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.ContributionId.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.Deconstruct(out string! ExtensionPointId, out string! ContributionId, out string! Role, out string! DisplayName, out string? Description) -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.Description.get -> string?
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.Description.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.DisplayName.get -> string!
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.DisplayName.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.Equals(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor? other) -> bool
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.ExtensionPointId.get -> string!
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.ExtensionPointId.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.Role.get -> string!
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingDescriptor.Role.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness!
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.AgentWorkspaceBindingReadiness(string! BindingId, Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadinessStatus Status, string! Message) -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.BindingId.get -> string!
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.BindingId.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.Deconstruct(out string! BindingId, out Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadinessStatus Status, out string! Message) -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.Equals(Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness? other) -> bool
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.Message.get -> string!
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.Message.init -> void
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.Status.get -> Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetReadinessStatus
-Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingReadiness.Status.init -> void
 Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord
 Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord!
 Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord.AgentWorkspaceBindingRecord(string! BindingId, string! WorkspaceId, string! ExtensionPointId, string! ContributionId, string! Role, bool IsEnabled, int SortOrder, System.DateTimeOffset CreatedAtUtc, System.DateTimeOffset UpdatedAtUtc) -> void
@@ -2771,3 +2607,74 @@ Sunder.Package.Agent.Contracts.Services.AgentProfileSelectableCapabilityChangeOb
 Sunder.Package.Agent.Contracts.Services.AgentProfileSelectableCapabilityChangeObserver.RefreshProviderSubscriptions() -> void
 ~override Sunder.Package.Agent.Contracts.Models.AgentTranscriptWindowTrimResult.Equals(object obj) -> bool
 ~override Sunder.Package.Agent.Contracts.Models.AgentTranscriptWindowTrimResult.ToString() -> string
+override Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Equals(object? obj) -> bool
+override Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.GetHashCode() -> int
+override Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.ToString() -> string!
+Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoopRuntime.CompleteAssistantTurn(Sunder.Package.Agent.Contracts.Models.AgentTurnRecord! assistantTurn) -> Sunder.Package.Agent.Contracts.Models.AgentTurnRecord!
+Sunder.Package.Agent.Contracts.Models.AgentBehaviorInstructionContext.AgentBehaviorInstructionContext(string? SystemInstructions, bool HasSupplementaryContext, System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock!>? SupplementaryContextBlocks = null) -> void
+Sunder.Package.Agent.Contracts.Models.AgentBehaviorInstructionContext.Deconstruct(out string? SystemInstructions, out bool HasSupplementaryContext, out System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock!>? SupplementaryContextBlocks) -> void
+Sunder.Package.Agent.Contracts.Models.AgentBehaviorInstructionContext.SupplementaryContextBlocks.get -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock!>?
+Sunder.Package.Agent.Contracts.Models.AgentBehaviorInstructionContext.SupplementaryContextBlocks.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentContextProvenance
+Sunder.Package.Agent.Contracts.Models.AgentContextProvenance.Assistant = 3 -> Sunder.Package.Agent.Contracts.Models.AgentContextProvenance
+Sunder.Package.Agent.Contracts.Models.AgentContextProvenance.DurableMemory = 6 -> Sunder.Package.Agent.Contracts.Models.AgentContextProvenance
+Sunder.Package.Agent.Contracts.Models.AgentContextProvenance.Extension = 5 -> Sunder.Package.Agent.Contracts.Models.AgentContextProvenance
+Sunder.Package.Agent.Contracts.Models.AgentContextProvenance.Tool = 4 -> Sunder.Package.Agent.Contracts.Models.AgentContextProvenance
+Sunder.Package.Agent.Contracts.Models.AgentContextProvenance.TranscriptSummary = 2 -> Sunder.Package.Agent.Contracts.Models.AgentContextProvenance
+Sunder.Package.Agent.Contracts.Models.AgentContextProvenance.Unknown = 0 -> Sunder.Package.Agent.Contracts.Models.AgentContextProvenance
+Sunder.Package.Agent.Contracts.Models.AgentContextProvenance.User = 1 -> Sunder.Package.Agent.Contracts.Models.AgentContextProvenance
+Sunder.Package.Agent.Contracts.Models.AgentContextTrust
+Sunder.Package.Agent.Contracts.Models.AgentContextTrust.Untrusted = 0 -> Sunder.Package.Agent.Contracts.Models.AgentContextTrust
+Sunder.Package.Agent.Contracts.Models.AgentContextTrust.UserProvided = 1 -> Sunder.Package.Agent.Contracts.Models.AgentContextTrust
+Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance
+Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance.Assistant = 2 -> Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance
+Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance.Tool = 3 -> Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance
+Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance.Unknown = 0 -> Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance
+Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance.User = 1 -> Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance
+Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry.AgentMemoryRecallEntry(string! MemoryId, string! Category, string! Content, string? EvidenceText, float Score, bool IsPinned, Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState TrustState = Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState.Untrusted, System.Guid? SourceTurnId = null, System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentMemoryMatchReason!>? MatchReasons = null, Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance Provenance = Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance.Unknown) -> void
+Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry.Deconstruct(out string! MemoryId, out string! Category, out string! Content, out string? EvidenceText, out float Score, out bool IsPinned, out Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState TrustState, out System.Guid? SourceTurnId, out System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentMemoryMatchReason!>? MatchReasons, out Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance Provenance) -> void
+Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry.Provenance.get -> Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance
+Sunder.Package.Agent.Contracts.Models.AgentMemoryRecallEntry.Provenance.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState.Untrusted = 0 -> Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState
+Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState.UserConfirmedInstruction = 2 -> Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState
+Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState.UserProvided = 1 -> Sunder.Package.Agent.Contracts.Models.AgentMemoryTrustState
+Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock.AgentPromptContextBlock(string! Title, string! Content, int Priority = 0, string? SourceId = null, Sunder.Package.Agent.Contracts.Models.AgentContextProvenance Provenance = Sunder.Package.Agent.Contracts.Models.AgentContextProvenance.Extension, Sunder.Package.Agent.Contracts.Models.AgentContextTrust Trust = Sunder.Package.Agent.Contracts.Models.AgentContextTrust.Untrusted) -> void
+Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock.Deconstruct(out string! Title, out string! Content, out int Priority, out string? SourceId, out Sunder.Package.Agent.Contracts.Models.AgentContextProvenance Provenance, out Sunder.Package.Agent.Contracts.Models.AgentContextTrust Trust) -> void
+Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock.Provenance.get -> Sunder.Package.Agent.Contracts.Models.AgentContextProvenance
+Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock.Provenance.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock.Trust.get -> Sunder.Package.Agent.Contracts.Models.AgentContextTrust
+Sunder.Package.Agent.Contracts.Models.AgentPromptContextBlock.Trust.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.<Clone>$() -> Sunder.Package.Agent.Contracts.Models.AgentTurnMutation!
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.AgentTurnMutation(System.Guid SessionId, System.Guid TurnId, long ContentRevision, Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind Kind, int BaseContentLength, string? Text, System.DateTimeOffset UpdatedAtUtc, Sunder.Package.Agent.Contracts.Models.AgentTurnRecord? Turn = null, long RuntimeRevision = 0) -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.BaseContentLength.get -> int
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.BaseContentLength.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.ContentRevision.get -> long
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.ContentRevision.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Deconstruct(out System.Guid SessionId, out System.Guid TurnId, out long ContentRevision, out Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind Kind, out int BaseContentLength, out string? Text, out System.DateTimeOffset UpdatedAtUtc, out Sunder.Package.Agent.Contracts.Models.AgentTurnRecord? Turn, out long RuntimeRevision) -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Equals(Sunder.Package.Agent.Contracts.Models.AgentTurnMutation? other) -> bool
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Kind.get -> Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Kind.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.RuntimeRevision.get -> long
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.RuntimeRevision.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.SessionId.get -> System.Guid
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.SessionId.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Text.get -> string?
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Text.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Turn.get -> Sunder.Package.Agent.Contracts.Models.AgentTurnRecord?
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.Turn.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.TurnId.get -> System.Guid
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.TurnId.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.UpdatedAtUtc.get -> System.DateTimeOffset
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.UpdatedAtUtc.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind.Add = 0 -> Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind.Append = 1 -> Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind.Complete = 3 -> Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind
+Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind.Replace = 2 -> Sunder.Package.Agent.Contracts.Models.AgentTurnMutationKind
+Sunder.Package.Agent.Contracts.Models.AgentTurnRecord.ContentRevision.get -> long
+Sunder.Package.Agent.Contracts.Models.AgentTurnRecord.ContentRevision.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentTurnRecord.IsStreaming.get -> bool
+Sunder.Package.Agent.Contracts.Models.AgentTurnRecord.IsStreaming.init -> void
+static Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.operator !=(Sunder.Package.Agent.Contracts.Models.AgentTurnMutation? left, Sunder.Package.Agent.Contracts.Models.AgentTurnMutation? right) -> bool
+static Sunder.Package.Agent.Contracts.Models.AgentTurnMutation.operator ==(Sunder.Package.Agent.Contracts.Models.AgentTurnMutation? left, Sunder.Package.Agent.Contracts.Models.AgentTurnMutation? right) -> bool

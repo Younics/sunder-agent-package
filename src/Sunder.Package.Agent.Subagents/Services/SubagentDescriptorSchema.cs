@@ -71,7 +71,7 @@ internal sealed class SubagentDescriptorSchema(
                 SourceKind: "subagent",
                 SourceId: SubagentConstants.PackageId,
                 SourceDisplayName: SourceDisplayName,
-                RuntimeInstructions: BuildRuntimeInstructions(enabledSubagents),
+                RuntimeInstructions: BuildRuntimeInstructions(),
                 ActivationRequirement: new AgentToolActivationRequirement(AgentProfileSelectableCapabilityKinds.Subagent, SubagentConstants.PackageId),
                 Priority: AgentToolPriority.High),
         };
@@ -96,7 +96,7 @@ internal sealed class SubagentDescriptorSchema(
                 SourceKind: "subagent",
                 SourceId: SubagentConstants.PackageId,
                 SourceDisplayName: SourceDisplayName,
-                RuntimeInstructions: BuildRuntimeInstructions(enabledSubagents),
+                RuntimeInstructions: BuildRuntimeInstructions(),
                 ActivationRequirement: new AgentToolActivationRequirement(AgentProfileSelectableCapabilityKinds.Subagent, SubagentConstants.PackageId),
                 Priority: AgentToolPriority.High));
         }
@@ -124,27 +124,31 @@ internal sealed class SubagentDescriptorSchema(
                 : null);
     }
 
-    public ValueTask<IReadOnlyList<AgentSystemPromptBlock>> ContributeAsync(
-        AgentSystemPromptRequest request,
+    public ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
+        AgentPromptContextRequest request,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var enabledSubagents = ListEnabledSubagents(request.Profile, requireUsable: true);
-        if (!SupportsSubagentFeature(request.Profile) || enabledSubagents.Count == 0)
+        var profile = request.Profile
+                      ?? _extensionCatalog.GetExtensions(PackageExtensionPoints.RuntimeCatalogs)
+                          .FirstOrDefault()
+                          ?.GetProfile(request.Session.ProfileId);
+        var enabledSubagents = ListEnabledSubagents(profile, requireUsable: true);
+        if (!SupportsSubagentFeature(profile) || enabledSubagents.Count == 0)
         {
-            return ValueTask.FromResult<IReadOnlyList<AgentSystemPromptBlock>>([]);
+            return ValueTask.FromResult<AgentPromptContextContribution?>(null);
         }
 
-        return ValueTask.FromResult<IReadOnlyList<AgentSystemPromptBlock>>(
+        return ValueTask.FromResult<AgentPromptContextContribution?>(new AgentPromptContextContribution(
         [
-            new AgentSystemPromptBlock(
-                "subagent-task-guidance",
+            new AgentPromptContextBlock(
                 "Subagent Delegation",
-                BuildRuntimeInstructions(enabledSubagents),
+                "Enabled subagents:\n" + FormatSubagentList(enabledSubagents),
                 Priority: 120,
-                Required: true,
-                SourceId: SubagentConstants.PackageId),
-        ]);
+                SourceId: SubagentConstants.PackageId,
+                Provenance: AgentContextProvenance.User,
+                Trust: AgentContextTrust.UserProvided),
+        ]));
     }
 
     public IReadOnlyList<SubagentRecord> ListEnabledSubagents(AgentProfileRecord? profile, bool requireUsable)
@@ -217,7 +221,7 @@ internal sealed class SubagentDescriptorSchema(
             FormatSubagentList(agents),
         ]);
 
-    private static string BuildRuntimeInstructions(IReadOnlyList<SubagentRecord> agents)
+    private static string BuildRuntimeInstructions()
     {
         var builder = new StringBuilder();
         builder.AppendLine("You are using a profile with delegated subagents.");
@@ -226,9 +230,6 @@ internal sealed class SubagentDescriptorSchema(
         builder.AppendLine("Use the parent agent for coordination, synthesis, final user communication, and direct work that does not match any subagent.");
         builder.AppendLine("Do not invent subagent purposes. Only delegate based on the descriptions listed here.");
         builder.AppendLine("When multiple independent matching read-only subagent tasks are needed and the delegate_tasks tool is available, delegate them together. Otherwise delegate the highest-value matching task first.");
-        builder.AppendLine();
-        builder.AppendLine("Enabled subagents:");
-        builder.AppendLine(FormatSubagentList(agents));
         return builder.ToString().Trim();
     }
 

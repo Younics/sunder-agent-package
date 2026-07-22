@@ -52,7 +52,7 @@ public sealed class DockerExecutionWorkspaceEditorContributor(
             new AgentEditorSection(
                 SectionId,
                 "Docker Execution Settings",
-                "Docker creates or reuses a workspace container from a configured image. Workspace paths are mounted automatically from the main Workspace section.",
+                "Docker creates a resource-bounded container with no network, no added Linux capabilities, and writable workspace bind mounts. It reduces exposure but is not a complete security sandbox. Workspace paths are mounted automatically from the main Workspace section.",
                 [
                     new AgentEditorField(
                         ImageFieldId,
@@ -60,7 +60,7 @@ public sealed class DockerExecutionWorkspaceEditorContributor(
                         AgentEditorFieldKind.Select,
                         imageOptions.Length == 0
                             ? "Pull at least one configured image in Docker Execution settings."
-                            : "Choose a ready Docker image configured in Docker Execution settings.",
+                            : "Choose a ready image pinned by explicit version tag or sha256 digest.",
                         Value: config.ImageReference,
                         Options: imageOptions)
                     {

@@ -5,83 +5,159 @@ on:
   push:
     branches: [main]
 
-permissions:
-  contents: read
+permissions: {}
 
 env:
   DOTNET_VERSION: "10.0.100"
+  MSBUILDDISABLENODEREUSE: "1"
 
 jobs:
-  release-smoke:
+  core-dependency:
+    name: Resolve Core main commit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.core.outputs.commit }}
+    steps:
+      - name: Resolve Core main commit
+        id: core
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r commit ref < <(git ls-remote --exit-code https://github.com/Younics/sunder-core.git refs/heads/main)
+          if [[ ! "$commit" =~ ^[0-9a-f]{40}$ || "$ref" != "refs/heads/main" ]]; then
+            echo "Could not resolve exactly one full commit SHA for Younics/sunder-core main." >&2
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+  release-smoke:
+    name: Build and smoke complete family
+    needs: core-dependency
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout Agent repository
         uses: actions/checkout@v4
         with:
           path: sunder-agent-package
 
-      - name: Checkout coordinated Core repository
+      - name: Checkout resolved Core commit
         uses: actions/checkout@v4
         with:
           repository: Younics/sunder-core
+          ref: ${{ needs.core-dependency.outputs.commit }}
           path: sunder-core
+
+      - name: Verify exact Core checkout
+        working-directory: sunder-core
+        shell: bash
+        env:
+          EXPECTED_CORE_COMMIT: ${{ needs.core-dependency.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_CORE_COMMIT"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore and build coordinated sources
-        working-directory: sunder-agent-package
-        run: |
-          dotnet restore Sunder.AgentPackage.slnx --force-evaluate -p:SunderUseSourceSdk=true
-          dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 -p:SunderUseSourceSdk=true
-
-      - name: Build Core archive validator
-        working-directory: sunder-core
-        run: |
-          dotnet restore src/Host/Sunder.Cli/Sunder.Cli.csproj --locked-mode
-          dotnet build src/Host/Sunder.Cli/Sunder.Cli.csproj -c Release --no-restore
-
-      - name: Verify exact generated capability manifests
-        working-directory: sunder-agent-package
-        run: dotnet test tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj -c Release --no-build --no-restore --filter FullyQualifiedName~GeneratedPackageManifestTests
-
-      - name: Build and validate every inventory archive
+      - name: Restore, build, and test coordinated Agent sources
         working-directory: sunder-agent-package
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p artifacts/smoke
           version="$(jq -er '.releaseVersion' packages.json)"
-          expected_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
-          while IFS=$'\t' read -r package_id project_path; do
-            output="$PWD/artifacts/smoke/$package_id.$version.sunderpkg"
-            dotnet msbuild "$project_path" -t:PackSunderPackage -m:1 -p:Configuration=Release -p:SunderUseSourceSdk=true -p:SunderPackageOutputPath="$output"
-            dotnet ../sunder-core/src/Host/Sunder.Cli/bin/Release/net10.0/sunder.dll package validate "$output"
-          done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, .projectPath] | @tsv' packages.json)
-          test "$(find artifacts/smoke -name '*.sunderpkg' -type f | wc -l)" -eq "$expected_count"
+          dotnet restore Sunder.AgentPackage.slnx --force-evaluate -p:SunderUseSourceSdk=true
+          dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 -p:SunderUseSourceSdk=true -p:Version="$version" -p:PackageVersion="$version" -p:InformationalVersion="$version" -p:ContinuousIntegrationBuild=true
+          dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore -m:1 -p:SunderUseSourceSdk=true
 
-      - name: Runtime clean lifecycle smoke for complete package family
+      - name: Pack Contracts and every runtime archive once
+        working-directory: sunder-agent-package
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$PWD/artifacts/family"
+          mkdir -p "$output"
+          version="$(jq -er '.releaseVersion' packages.json)"
+
+          dotnet pack src/Sunder.Package.Agent.Contracts/Sunder.Package.Agent.Contracts.csproj \
+            -c Release --no-build --no-restore -o "$output" \
+            -p:SunderUseSourceSdk=true -p:Version="$version" -p:PackageVersion="$version" \
+            -p:InformationalVersion="$version" -p:ContinuousIntegrationBuild=true
+
+          while IFS=$'\t' read -r package_id project_path; do
+            output_path="$output/$package_id.$version.sunderpkg"
+            dotnet msbuild "$project_path" -t:PackSunderPackage -m:1 \
+              -p:Configuration=Release -p:SunderUseSourceSdk=true \
+              -p:Version="$version" -p:PackageVersion="$version" \
+              -p:InformationalVersion="$version" -p:ContinuousIntegrationBuild=true \
+              -p:SunderPackageOutputPath="$output_path"
+          done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, .projectPath] | @tsv' packages.json)
+
+          runtime_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
+          test "$(find "$output" -maxdepth 1 -name '*.sunderpkg' -type f | wc -l)" -eq "$runtime_count"
+          test -f "$output/Sunder.Package.Agent.Contracts.$version.nupkg"
+          test "$(find "$output" -maxdepth 1 -type f | wc -l)" -eq "$((runtime_count + 1))"
+
+          contracts_nuspec="$(unzip -p "$output/Sunder.Package.Agent.Contracts.$version.nupkg" '*.nuspec')"
+          if ! grep -Eq 'id="Sunder\.Sdk" version="\[1\.1\.0, ?1\.2\.0\)"' <<< "$contracts_nuspec"; then
+            echo "Agent Contracts does not bound its Sunder.Sdk dependency to the 1.1 minor line." >&2
+            exit 1
+          fi
+
+      - name: Build Core validation and smoke paths
+        working-directory: sunder-core
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore src/Host/Sunder.Cli/Sunder.Cli.csproj --locked-mode
+          dotnet restore tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj --locked-mode
+          dotnet restore tests/Sunder.App.Tests/Sunder.App.Tests.csproj --locked-mode
+          dotnet build src/Host/Sunder.Cli/Sunder.Cli.csproj -c Release --no-restore
+          dotnet build tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-restore
+          dotnet build tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-restore
+
+      - name: Validate exact family archives through Package Format
+        working-directory: sunder-agent-package
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r archive; do
+            dotnet ../sunder-core/src/Host/Sunder.Cli/bin/Release/net10.0/sunder.dll package validate "$archive"
+          done < <(find artifacts/family -maxdepth 1 -name '*.sunderpkg' -type f | sort)
+
+      - name: Runtime clean lifecycle smoke for exact family bytes
         working-directory: sunder-core
         shell: bash
         env:
-          SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/smoke
+          SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/family
+          SUNDER_AGENT_UI_SNAPSHOT_DIR: ${{ github.workspace }}/agent-ui-snapshot
         run: |
           set -euo pipefail
+          mkdir -p "$SUNDER_AGENT_UI_SNAPSHOT_DIR"
           test_fqn="Sunder.Runtime.Host.Tests.AgentPackageReleaseSmokeTests.ReleaseArchives_InstallActivateUnloadReloadAndReinstallAsOneFamily"
-          discovered="$(dotnet test tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --list-tests --filter "FullyQualifiedName=$test_fqn")"
-          printf '%s\n' "$discovered"
+          discovered="$(dotnet test tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-build --no-restore --list-tests --filter "FullyQualifiedName=$test_fqn")"
           grep -Fqx "    $test_fqn" <<< "$discovered"
           dotnet test tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
 
-      - name: App UI snapshot activation gate
+      - name: App activation smoke for Runtime-produced snapshot
         working-directory: sunder-core
         shell: bash
+        env:
+          SUNDER_AGENT_UI_SNAPSHOT_DIR: ${{ github.workspace }}/agent-ui-snapshot
         run: |
           set -euo pipefail
-          test_fqn="Sunder.App.Tests.PackageViewHostServiceTests.ApplyPackageGenerationAsync_CommitsReplacementBeforeRetiringDetachedGeneration"
-          discovered="$(dotnet test tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --list-tests --filter "FullyQualifiedName=$test_fqn")"
-          printf '%s\n' "$discovered"
+          test_fqn="Sunder.App.Tests.AgentPackageReleaseSmokeTests.RuntimeProducedAgentSnapshot_MaterializesAndActivatesInApp"
+          discovered="$(dotnet test tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --list-tests --filter "FullyQualifiedName=$test_fqn")"
           grep -Fqx "    $test_fqn" <<< "$discovered"
           dotnet test tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
+
+      - name: Upload verified family artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sunder-agent-family-smoke
+          path: sunder-agent-package/artifacts/family/*
+          if-no-files-found: error
+          retention-days: 7

@@ -160,7 +160,8 @@ public sealed class FilesToolSourceRefactorTests
         {
             ["first.txt"] = "old first",
             ["second.txt"] = "old second",
-        }) { CancelMutationCall = 2 };
+        })
+        { CancelMutationCall = 2 };
         var (source, _, context) = CreateSource(target);
         var patch = PatchArguments("""
             *** Begin Patch
@@ -264,6 +265,28 @@ public sealed class FilesToolSourceRefactorTests
         using var payload = JsonDocument.Parse(result.StructuredPayloadJson!);
         Assert.Equal(1000, payload.RootElement.GetArrayLength());
         Assert.DoesNotContain("file-1001.txt", result.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Grep_WhenRipgrepIsMissing_UsesFallbackThatDoesNotFollowDirectorySymlinks()
+    {
+        var target = new MissingRipgrepExecutionTarget();
+        var (source, _, context) = CreateSource(target);
+
+        var result = await source.ExecuteAsync(
+            context,
+            new AgentToolRequest("grep", "{\"pattern\":\"needle\",\"path\":\"workspace\"}"));
+
+        Assert.False(result.IsError, result.Content);
+        Assert.Collection(
+            target.Commands,
+            command => Assert.Equal("rg", command.FileName),
+            command =>
+            {
+                Assert.Equal("grep", command.FileName);
+                Assert.Contains("-rIn", command.Arguments);
+                Assert.DoesNotContain("-RIn", command.Arguments);
+            });
     }
 
     [Fact]
@@ -379,8 +402,7 @@ public sealed class FilesToolSourceRefactorTests
             "Memory",
             null,
             SupportsShell: true,
-            SupportsFiles: true,
-            SupportsSearch: true);
+            SupportsFiles: true);
 
         public Dictionary<string, string> Files { get; }
 
@@ -423,7 +445,7 @@ public sealed class FilesToolSourceRefactorTests
                 ShellTimedOut,
                 WasTruncated: ResultsTruncated));
 
-        public ValueTask<AgentShellCommandResult> ExecuteProcessAsync(AgentExecutionTargetContext context, AgentProcessCommandRequest request, CancellationToken cancellationToken = default)
+        public virtual ValueTask<AgentShellCommandResult> ExecuteProcessAsync(AgentExecutionTargetContext context, AgentProcessCommandRequest request, CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new AgentShellCommandResult(0, ProcessOutput));
 
         public virtual ValueTask<AgentFileReadResult> ReadFileAsync(AgentExecutionTargetContext context, AgentFileReadRequest request, CancellationToken cancellationToken = default)
@@ -545,5 +567,21 @@ public sealed class FilesToolSourceRefactorTests
                 request.Path,
                 AgentFileReadErrorCodes.FileNotFound,
                 $"File not found: {request.Path}"));
+    }
+
+    private sealed class MissingRipgrepExecutionTarget : MemoryExecutionTarget
+    {
+        public List<AgentProcessCommandRequest> Commands { get; } = [];
+
+        public override ValueTask<AgentShellCommandResult> ExecuteProcessAsync(
+            AgentExecutionTargetContext context,
+            AgentProcessCommandRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Commands.Add(request);
+            return ValueTask.FromResult(request.FileName == "rg"
+                ? new AgentShellCommandResult(127, "rg: command not found")
+                : new AgentShellCommandResult(1, string.Empty));
+        }
     }
 }

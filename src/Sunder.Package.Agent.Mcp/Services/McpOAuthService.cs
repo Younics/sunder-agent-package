@@ -34,6 +34,7 @@ public sealed class McpOAuthService : IAsyncDisposable
             throw new InvalidOperationException("Interactive MCP OAuth must be started by the registered host callback handler.");
         }
         if (!server.OAuthEnabled || string.IsNullOrWhiteSpace(server.EndpointUrl)) return null;
+        McpTransportSecurity.ValidateRemoteEndpoint(server);
         var registration = await ReadClientRegistrationAsync(server.ServerId, cancellationToken);
         var redirectUri = TryReadRedirectUri(registration) ?? NonInteractiveRedirectUri;
         return await CreateClientOptionsCoreAsync(
@@ -52,6 +53,7 @@ public sealed class McpOAuthService : IAsyncDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!server.OAuthEnabled) throw new InvalidOperationException($"MCP server '{server.DisplayName}' is not configured for OAuth.");
         if (string.IsNullOrWhiteSpace(server.EndpointUrl)) throw new InvalidOperationException($"MCP server '{server.DisplayName}' is missing an endpoint URL.");
+        McpTransportSecurity.ValidateRemoteEndpoint(server);
 
         McpOAuthFlow flow;
         lock (_syncRoot)

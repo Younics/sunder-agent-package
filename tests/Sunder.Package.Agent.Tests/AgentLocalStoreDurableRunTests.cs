@@ -38,6 +38,8 @@ public sealed class AgentLocalStoreDurableRunTests
                 (7L, "permission-execution-snapshot"),
                 (8L, "turn-content-revisions"),
                 (9L, "turn-run-ownership"),
+                (10L, "remove-dormant-continuity-and-permission-schema"),
+                (11L, "durable-run-budgets"),
             ],
             migrations.Select(static migration => (migration.Version, migration.Name)));
         Assert.All(migrations, migration => Assert.Matches("^[0-9a-f]{64}$", migration.Checksum));
@@ -106,6 +108,50 @@ public sealed class AgentLocalStoreDurableRunTests
         Assert.Equal(completedCheckpoint.CreatedAtUtc, completedRun.UpdatedAtUtc);
         Assert.Equal(completedCheckpoint.CreatedAtUtc, completedRun.FinishedAtUtc);
         Assert.Equal(AgentSessionState.Completed, store.GetSession(session.SessionId)?.State);
+    }
+
+    [Fact]
+    public void RunBudget_PersistsAcrossSuspensionRestartAndContinuation()
+    {
+        using var scope = DurableRunTestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var session = CreateSession(store);
+        var run = store.ReserveRun(session.SessionId, "profile.test", "continue with one budget");
+        var running = Assert.IsType<AgentRunTransitionResult>(store.TryTransitionRun(
+            run.Key,
+            run.Epoch,
+            AgentRunStatus.Running,
+            "Running."));
+
+        var firstCharge = Assert.IsType<AgentRunBudgetState>(store.ChargeRunBudget(
+            run.Key,
+            running.Run.Epoch,
+            new AgentRunBudgetCharge(ProviderCycles: 2, ToolCalls: 3, SubmittedContextTokens: 400)));
+        Assert.Equal(new AgentRunBudgetState(2, 3, 400), firstCharge);
+        var suspended = Assert.IsType<AgentRunSuspensionResult>(store.SuspendRun(
+            run.Key,
+            running.Run.Epoch,
+            new AgentPermissionRunSuspension("request-1", "call-1", Guid.NewGuid()),
+            "Waiting for permission."));
+
+        var restarted = new AgentLocalStore(scope.Context);
+        var waiting = Assert.IsType<AgentDurableRunRecord>(restarted.GetRun(run.Key.RunId));
+        Assert.Equal(firstCharge, waiting.BudgetState);
+        Assert.NotNull(restarted.ConsumeRunContinuation(
+            run.Key,
+            waiting.Epoch,
+            suspended.ContinuationToken,
+            AgentRunSuspensionKind.Permission,
+            "Permission approved."));
+        var resumed = Assert.IsType<AgentDurableRunRecord>(restarted.GetRun(run.Key.RunId));
+
+        var cumulative = Assert.IsType<AgentRunBudgetState>(restarted.ChargeRunBudget(
+            run.Key,
+            resumed.Epoch,
+            new AgentRunBudgetCharge(ProviderCycles: 1, ToolCalls: 2, SubmittedContextTokens: 50)));
+
+        Assert.Equal(new AgentRunBudgetState(3, 5, 450), cumulative);
+        Assert.Equal(cumulative, restarted.GetRun(run.Key.RunId)?.BudgetState);
     }
 
     [Fact]
@@ -190,6 +236,40 @@ public sealed class AgentLocalStoreDurableRunTests
             AgentRunStatus.Running,
             "Legacy projection must not reopen either."));
         Assert.Equal(AgentDurableRunStatus.Completed, store.GetRun(run.Key.RunId)?.Status);
+    }
+
+    [Fact]
+    public void LateTerminalCheckpointForOlderRun_DoesNotSupersedeNewerRevision()
+    {
+        using var scope = DurableRunTestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var session = CreateSession(store);
+        var first = store.ReserveRun(session.SessionId, "profile.test", "first");
+        var firstRunning = Assert.IsType<AgentRunTransitionResult>(store.TryTransitionRun(
+            first.Key,
+            first.Epoch,
+            AgentRunStatus.Running,
+            "First running."));
+        var newer = store.ReserveRun(session.SessionId, "profile.test", "newer");
+        Assert.NotNull(store.TryTransitionRun(
+            newer.Key,
+            newer.Epoch,
+            AgentRunStatus.Running,
+            "Newer running."));
+        var sessionAfterNewerRun = Assert.IsType<AgentSessionRecord>(store.GetSession(session.SessionId));
+
+        Assert.NotNull(store.TryTransitionRun(
+            first.Key,
+            firstRunning.Run.Epoch,
+            AgentRunStatus.Interrupted,
+            "First unwound late."));
+
+        var latest = Assert.IsType<AgentRunCheckpointRecord>(store.GetLatestCheckpoint(session.SessionId));
+        var sessionAfterLateCheckpoint = Assert.IsType<AgentSessionRecord>(store.GetSession(session.SessionId));
+        Assert.Equal(newer.Key.RunRevision, latest.RunRevision);
+        Assert.Equal(AgentRunStatus.Running, latest.Status);
+        Assert.Equal(sessionAfterNewerRun.State, sessionAfterLateCheckpoint.State);
+        Assert.Equal(sessionAfterNewerRun.UpdatedAtUtc, sessionAfterLateCheckpoint.UpdatedAtUtc);
     }
 
     [Theory]

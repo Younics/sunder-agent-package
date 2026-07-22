@@ -36,7 +36,6 @@ public sealed class AgentWorkspaceStackContributor(
                 "agent-workspace",
                 Description: null,
                 DefaultSelected: true,
-                Sensitivities: BuildSensitivities(workspace),
                 Details: BuildExportDetails(workspace, workspaceService.ListBindings(workspace.WorkspaceId))))
             .ToArray();
         return ValueTask.FromResult<IReadOnlyList<StackExportItemDescriptor>>(workspaces);
@@ -46,7 +45,9 @@ public sealed class AgentWorkspaceStackContributor(
         StackExportRequest request,
         CancellationToken cancellationToken = default)
     {
-        var selectedIds = request.ItemIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectedIds = request.ItemSelections
+            .Select(selection => selection.ItemId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var fragments = new List<StackFragmentExport>();
         var payloads = new List<AgentWorkspaceStackPayload>();
         var warnings = new List<string>();
@@ -183,7 +184,10 @@ public sealed class AgentWorkspaceStackContributor(
     }
 
     private StackPackageRequirement CreatePackageRequirement()
-        => new(PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.0.0");
+        => AgentStackPackageRequirements.Create(
+            PackageId,
+            PackageId,
+            packageContext.Version.ToString());
 
     private IReadOnlyList<StackPackageRequirement> BuildPackageRequirements(IReadOnlyList<AgentWorkspaceStackPayload> payloads)
     {
@@ -210,7 +214,10 @@ public sealed class AgentWorkspaceStackContributor(
             .ThenBy(packageId => packageId, StringComparer.OrdinalIgnoreCase)
             .Select(packageId => string.Equals(packageId, PackageId, StringComparison.OrdinalIgnoreCase)
                 ? CreatePackageRequirement()
-                : new StackPackageRequirement(packageId))
+                : AgentStackPackageRequirements.Create(
+                    packageId,
+                    PackageId,
+                    packageContext.Version.ToString()))
             .ToArray();
     }
 
@@ -220,22 +227,6 @@ public sealed class AgentWorkspaceStackContributor(
         {
             packageIds.Add(packageId.Trim());
         }
-    }
-
-    private static IReadOnlyList<StackValueSensitivity> BuildSensitivities(AgentWorkspaceRecord workspace)
-    {
-        var sensitivities = new List<StackValueSensitivity>();
-        if (!string.IsNullOrWhiteSpace(workspace.Description))
-        {
-            sensitivities.Add(StackValueSensitivity.Public);
-        }
-
-        if (workspace.Paths.Count > 0 || workspace.Documents.Count > 0)
-        {
-            sensitivities.Add(StackValueSensitivity.Public);
-        }
-
-        return sensitivities.Count == 0 ? [StackValueSensitivity.Public] : sensitivities.Distinct().ToArray();
     }
 
     private static IReadOnlyList<StackExportItemDetail> BuildExportDetails(
@@ -526,4 +517,29 @@ public sealed class AgentWorkspaceStackContributor(
     }
 
     private sealed record WorkspaceBindingStackEntry(string ContributionId);
+}
+
+internal static class AgentStackPackageRequirements
+{
+    private const string CoordinatedFamilyPrefix = "sunder.package.agent";
+
+    public static StackPackageRequirement Create(
+        string packageId,
+        string owningPackageId,
+        string owningPackageVersion)
+        => new(
+            packageId,
+            CreatedWithVersion: string.Equals(
+                packageId,
+                owningPackageId,
+                StringComparison.OrdinalIgnoreCase)
+                ? owningPackageVersion
+                : null,
+            MinimumVersion: IsCoordinatedFamilyPackage(packageId) ? "1.1.0" : null);
+
+    private static bool IsCoordinatedFamilyPackage(string packageId)
+        => string.Equals(packageId, CoordinatedFamilyPrefix, StringComparison.OrdinalIgnoreCase)
+           || packageId.StartsWith(
+               CoordinatedFamilyPrefix + ".",
+               StringComparison.OrdinalIgnoreCase);
 }

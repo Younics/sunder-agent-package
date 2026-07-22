@@ -147,6 +147,48 @@ public sealed partial class AgentLocalStore
                 ON AgentTurns (SessionId, RunId, RunRevision)
                 WHERE IsStreaming = 1;
             """),
+        // Keep the provisional v10 checksum stable for local databases while fresh 1.1 baselines omit both tables.
+        new(
+            10,
+            "remove-dormant-continuity-and-permission-schema",
+            """
+            INSERT INTO AgentSessionContextCheckpoints (
+                ContextCheckpointId,
+                SessionId,
+                FirstOmittedTurnId,
+                LastOmittedTurnId,
+                OmittedTurnCount,
+                SummaryText,
+                DetailsJson,
+                CreatedAtUtc)
+            SELECT
+                lower(hex(randomblob(16))),
+                summary.SessionId,
+                NULL,
+                NULL,
+                0,
+                summary.SummaryText,
+                '{"source":"legacy-working-summary"}',
+                summary.UpdatedAtUtc
+            FROM AgentWorkingSummaries AS summary
+            WHERE trim(summary.SummaryText) <> ''
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM AgentSessionContextCheckpoints AS checkpoint
+                  WHERE checkpoint.SessionId = summary.SessionId);
+
+            DROP TABLE AgentWorkingSummaries;
+            DROP TABLE AgentPermissionRules;
+            """,
+            RemoveDormantContinuityAndPermissionSchema),
+        SqlMigration(
+            11,
+            "durable-run-budgets",
+            """
+            ALTER TABLE AgentRuns ADD COLUMN ProviderCycleCount INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE AgentRuns ADD COLUMN ToolCallCount INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE AgentRuns ADD COLUMN SubmittedContextTokenCount INTEGER NOT NULL DEFAULT 0;
+            """),
     ];
 
     private void ApplySchemaMigrations()
@@ -154,6 +196,54 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         ApplySchemaMigrations(connection, SchemaMigrations[^1].Version);
+    }
+
+    private static void RemoveDormantContinuityAndPermissionSchema(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        if (TableExists(connection, transaction, "AgentWorkingSummaries"))
+        {
+            using var workingSummaryCommand = connection.CreateCommand();
+            workingSummaryCommand.Transaction = transaction;
+            workingSummaryCommand.CommandText = """
+                INSERT INTO AgentSessionContextCheckpoints (
+                    ContextCheckpointId,
+                    SessionId,
+                    FirstOmittedTurnId,
+                    LastOmittedTurnId,
+                    OmittedTurnCount,
+                    SummaryText,
+                    DetailsJson,
+                    CreatedAtUtc)
+                SELECT
+                    lower(hex(randomblob(16))),
+                    summary.SessionId,
+                    NULL,
+                    NULL,
+                    0,
+                    summary.SummaryText,
+                    '{"source":"legacy-working-summary"}',
+                    summary.UpdatedAtUtc
+                FROM AgentWorkingSummaries AS summary
+                WHERE trim(summary.SummaryText) <> ''
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM AgentSessionContextCheckpoints AS checkpoint
+                      WHERE checkpoint.SessionId = summary.SessionId);
+
+                DROP TABLE AgentWorkingSummaries;
+                """;
+            workingSummaryCommand.ExecuteNonQuery();
+        }
+
+        if (TableExists(connection, transaction, "AgentPermissionRules"))
+        {
+            using var permissionRuleCommand = connection.CreateCommand();
+            permissionRuleCommand.Transaction = transaction;
+            permissionRuleCommand.CommandText = "DROP TABLE AgentPermissionRules;";
+            permissionRuleCommand.ExecuteNonQuery();
+        }
     }
 
     internal static void ApplySchemaMigrations(SqliteConnection connection, int targetVersion)

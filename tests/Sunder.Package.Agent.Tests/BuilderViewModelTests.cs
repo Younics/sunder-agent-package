@@ -13,18 +13,6 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class BuilderViewModelTests
 {
     [Fact]
-    public async Task DevelopmentActions_WhenCapabilityIsUnavailable_AreDisabledWithReason()
-    {
-        var viewModel = CreateViewModel();
-        viewModel.SelectedProject = CreateProject("unavailable", "Unavailable");
-
-        Assert.False(viewModel.CanUseDevelopmentSessions);
-        Assert.Contains("Load and Live reload are disabled", viewModel.DevelopmentSessionUnavailableReason, StringComparison.Ordinal);
-
-        await viewModel.DisposeAsync();
-    }
-
-    [Fact]
     public async Task InitializeAsync_ConcurrentCallsShareOneLoad()
     {
         var store = new BlockingBuilderProjectStore();
@@ -154,7 +142,7 @@ public sealed class BuilderViewModelTests
         Assert.Equal(BackgroundProcessIndicator.Main, request.Indicator);
         Assert.True(request.CanCancel);
         Assert.Equal("Setup check queued.", viewModel.StatusText);
-        Assert.True(viewModel.CanUseSelectedProjectRuntimeActions);
+        Assert.True(viewModel.CanRunSelectedProjectOperations);
     }
 
     [Fact]
@@ -210,7 +198,7 @@ public sealed class BuilderViewModelTests
     }
 
     [Fact]
-    public async Task SelectedWorkspacePath_ResolvesProjectFolderAndRelativeDevOutput()
+    public async Task SelectedWorkspacePath_ResolvesProjectFolder()
     {
         var root = Path.Combine(Path.GetTempPath(), "sunder-builder-tests", Guid.NewGuid().ToString("N"));
         var firstRoot = Path.Combine(root, "first");
@@ -223,7 +211,7 @@ public sealed class BuilderViewModelTests
             new AgentWorkspacePathRecord("second", "workspace.local", secondRoot, IsDefault: false, SortOrder: 1, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         );
         var resolver = new TestWorkspaceExecutionResolver(workspace);
-        var executionService = new BuilderWorkspaceExecutionService(new TestExtensionCatalog(resolver));
+        var executionService = new BuilderWorkspaceExecutionService(resolver);
         var viewModel = CreateViewModel(resolver: resolver);
         viewModel.Workspaces.Add(workspace);
         var project = CreateProject("one", "USB Lootbox");
@@ -239,11 +227,8 @@ public sealed class BuilderViewModelTests
             var hostMapping = await execution.MapToHostPathAsync(executionProjectFolder);
             var expectedProjectFolder = Path.Combine(secondRoot, "USBLootbox");
             project.ProjectFolder = expectedProjectFolder;
-            project.DevPackageRelativePath = "/bin/Release/net10.0/sunder-dev";
 
             Assert.Equal(expectedProjectFolder, hostMapping.HostPath);
-            Assert.Equal("/bin/Release/net10.0/sunder-dev", project.DevPackageRelativePath);
-            Assert.Equal(Path.Combine(expectedProjectFolder, "bin", "Release", "net10.0", "sunder-dev"), project.DevPackageFolder);
         }
         finally
         {
@@ -262,7 +247,9 @@ public sealed class BuilderViewModelTests
         var packageContext = new TestPackageContext();
         store ??= new BuilderProjectStore(packageContext);
         var pathService = new BuilderPathService();
-        var executionService = new BuilderWorkspaceExecutionService(new TestExtensionCatalog(resolver));
+        var executionService = resolver is null
+            ? new BuilderWorkspaceExecutionService()
+            : new BuilderWorkspaceExecutionService(resolver);
         var backgroundProcesses = queue ?? new TestBackgroundProcessQueue();
         return new BuilderViewModel(
             new BuilderProjectApplicationService(
@@ -308,13 +295,10 @@ public sealed class BuilderViewModelTests
             "workspace.local",
             $"/tmp/{id}",
             $"/tmp/{id}",
-            $"/tmp/{id}/bin/Debug/net10.0/sunder-dev",
-            true,
             now,
             now)
         {
             WorkspacePathId = DefaultPathId("workspace.local"),
-            DevPackageRelativePath = "/bin/Debug/net10.0/sunder-dev",
         });
     }
 
@@ -380,8 +364,7 @@ public sealed class BuilderViewModelTests
             "Local",
             null,
             SupportsShell: true,
-            SupportsFiles: true,
-            SupportsSearch: false
+            SupportsFiles: true
         );
 
         public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(AgentExecutionTargetContext context, CancellationToken cancellationToken = default)

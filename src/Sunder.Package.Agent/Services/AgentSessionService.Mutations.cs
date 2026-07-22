@@ -5,13 +5,6 @@ namespace Sunder.Package.Agent.Services;
 
 public sealed partial class AgentSessionService
 {
-    public AgentTranscriptMessageRecord AppendMessage(Guid sessionId, AgentMessageRole role, string content)
-    {
-        var message = _store.AppendMessage(sessionId, role, content);
-        NotifySessionChanged(sessionId);
-        return message;
-    }
-
     public AgentTurnRecord AppendTextTurn(Guid sessionId, AgentMessageRole role, string content)
     {
         var turn = _store.AppendTextTurn(sessionId, role, content);
@@ -54,13 +47,6 @@ public sealed partial class AgentSessionService
         var turn = _store.AppendUserTurn(sessionId, role, content, attachments);
         NotifyTurnAndSessionChanged(sessionId, turn);
         return turn;
-    }
-
-    public AgentTranscriptMessageRecord UpdateMessageContent(Guid messageId, string content)
-    {
-        var message = _store.UpdateMessageContent(messageId, content);
-        NotifySessionChanged(message.SessionId);
-        return message;
     }
 
     public AgentTranscriptRollbackResult RollbackTranscript(Guid sessionId, Guid anchorTurnId)

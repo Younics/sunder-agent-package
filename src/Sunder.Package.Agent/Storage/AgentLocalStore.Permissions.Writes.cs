@@ -73,7 +73,11 @@ public sealed partial class AgentLocalStore
               AND Status = 'WaitingForApproval'
               AND FinishedAtUtc IS NULL
               AND SuspensionKind = 'Permission'
-              AND ContinuationToken = $continuationToken;
+              AND ContinuationToken = $continuationToken
+              AND NOT EXISTS (
+                  SELECT 1 FROM AgentRuns newer
+                  WHERE newer.SessionId = $sessionId
+                    AND newer.RunRevision > $runRevision);
             """;
         command.Parameters.AddWithValue("$status", runStatus.ToString());
         command.Parameters.AddWithValue("$updatedAtUtc", now.ToString("O"));

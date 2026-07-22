@@ -29,7 +29,8 @@ public sealed class AgentBehaviorLoopHostFactory(
         long runRevision,
         DateTimeOffset runStartedAtUtc,
         string userMessage,
-        Guid userTurnId)
+        Guid userTurnId,
+        AgentWorkspaceBindingRecord? executionBinding = null)
     {
         var runLease = _activeRunRegistry
                            .GetCurrent(session.SessionId, runId, runRevision)?.DurableLease
@@ -50,6 +51,7 @@ public sealed class AgentBehaviorLoopHostFactory(
             runStartedAtUtc,
             userMessage,
             userTurnId,
+            executionBinding,
             runLease,
             _defaultBehaviorLoop,
             () => _activeRunRegistry.IsCurrent(session.SessionId, runId, runRevision));

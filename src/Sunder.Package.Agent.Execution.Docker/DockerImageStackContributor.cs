@@ -42,7 +42,6 @@ internal sealed class DockerImageStackContributor(
                 "docker-image",
                 "Configure Docker image references when this Stack is used. Images are not pulled during import.",
                 DefaultSelected: false,
-                Sensitivities: [StackValueSensitivity.Public],
                 Details: details)];
     }
 
@@ -50,7 +49,7 @@ internal sealed class DockerImageStackContributor(
         StackExportRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (!request.ItemIds.Contains(ItemId, StringComparer.OrdinalIgnoreCase))
+        if (!request.IsItemSelected(ItemId))
         {
             return new StackExportContribution([], [], []);
         }
@@ -164,7 +163,7 @@ internal sealed class DockerImageStackContributor(
     }
 
     private StackPackageRequirement CreatePackageRequirement()
-        => new(packageContext.PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.0.0");
+        => new(packageContext.PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.1.0");
 
     private static string BuildActionId(string fragmentId, string imageReference)
         => "docker-image:" + fragmentId + ":" + imageReference;

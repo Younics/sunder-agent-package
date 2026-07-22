@@ -173,6 +173,7 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
                 HeaderNames = NormalizeSecretNames(write.Server.HeaderNames, "header"),
                 EnvironmentVariableNames = NormalizeSecretNames(write.Server.EnvironmentVariableNames, "environment variable"),
             };
+            McpTransportSecurity.ValidateRemoteEndpoint(persisted, write.Headers);
             stagedWrites.Add(new StagedCatalogWrite(write, existing, persisted));
         }
 

@@ -6,6 +6,8 @@ public sealed class MemorySemanticSettingsService(IPackageContext packageContext
 {
     private const int DefaultEmbeddingBatchSize = 16;
     private const int DefaultMaxCanonicalTextChars = 1200;
+    private const int MaxEmbeddingBatchSize = 128;
+    private const int MaxCanonicalTextChars = 8_000;
 
     private readonly IPackageContext _packageContext = packageContext;
     internal int CachedMaxCanonicalTextChars { get; private set; } = DefaultMaxCanonicalTextChars;
@@ -14,13 +16,19 @@ public sealed class MemorySemanticSettingsService(IPackageContext packageContext
         => !bool.TryParse(await _packageContext.Settings.GetValueAsync("semantic.enabled", cancellationToken), out var enabled) || enabled;
 
     public async Task<int> GetEmbeddingBatchSizeAsync(CancellationToken cancellationToken = default)
-        => ParsePositiveInt(await _packageContext.Settings.GetValueAsync("semantic.batchSize", cancellationToken), DefaultEmbeddingBatchSize);
+        => ParseBoundedInt(
+            await _packageContext.Settings.GetValueAsync("semantic.batchSize", cancellationToken),
+            DefaultEmbeddingBatchSize,
+            minimum: 1,
+            maximum: MaxEmbeddingBatchSize);
 
     public async Task<int> GetMaxCanonicalTextCharsAsync(CancellationToken cancellationToken = default)
     {
-        CachedMaxCanonicalTextChars = ParsePositiveInt(
+        CachedMaxCanonicalTextChars = ParseBoundedInt(
             await _packageContext.Settings.GetValueAsync("semantic.maxCanonicalTextChars", cancellationToken),
-            DefaultMaxCanonicalTextChars);
+            DefaultMaxCanonicalTextChars,
+            minimum: 128,
+            maximum: MaxCanonicalTextChars);
         return CachedMaxCanonicalTextChars;
     }
 
@@ -29,8 +37,10 @@ public sealed class MemorySemanticSettingsService(IPackageContext packageContext
             ? SemanticReindexMode.Never
             : SemanticReindexMode.Lazy;
 
-    private static int ParsePositiveInt(string? value, int fallback)
-        => int.TryParse(value, out var parsed) && parsed > 0 ? parsed : fallback;
+    private static int ParseBoundedInt(string? value, int fallback, int minimum, int maximum)
+        => int.TryParse(value, out var parsed)
+            ? Math.Clamp(parsed, minimum, maximum)
+            : fallback;
 }
 
 public enum SemanticReindexMode

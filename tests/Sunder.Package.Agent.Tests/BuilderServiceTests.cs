@@ -1,8 +1,10 @@
+using System.Text.Json;
 using Sunder.Package.Agent.Builder;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Runtime;
 using Xunit;
 using Xunit.Sdk;
 
@@ -88,39 +90,6 @@ public sealed class BuilderServiceTests
     }
 
     [Fact]
-    public async Task ViewModel_DisposalFlushesPendingRuntimeAutosave()
-    {
-        var root = CreateProjectFolder();
-        try
-        {
-            var target = new TestExecutionTarget();
-            var workspace = CreateWorkspace(root);
-            var store = new RecordingProjectStore();
-            var pathService = new BuilderPathService();
-            var persistence = new BuilderProjectPersistence(store, TimeSpan.FromMinutes(1));
-            var viewModel = new BuilderViewModel(
-                CreateApplicationService(workspace, target, store, pathService),
-                new BuilderOperationQueue(new CapturingBackgroundProcessQueue()),
-                persistence,
-                pathService,
-                new RecordingUiDispatcher());
-            var project = new BuilderProjectViewModel(CreateInitializedRecord(root));
-            viewModel.Workspaces.Add(workspace);
-            viewModel.Projects.Add(project);
-            viewModel.ActivateProject(project);
-
-            project.Watch = false;
-            await viewModel.DisposeAsync();
-
-            Assert.False(Assert.Single(store.Saves[^1]).Watch);
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Fact]
     public async Task ViewModel_DisposalAfterFailedLoad_DoesNotFlushEmptyProjects()
     {
         var root = CreateProjectFolder();
@@ -179,21 +148,6 @@ public sealed class BuilderServiceTests
     }
 
     [Fact]
-    public void PathService_CalculatesNormalizedDevOutputAndRejectsTraversal()
-    {
-        var service = new BuilderPathService();
-        var root = Path.Combine(Path.GetTempPath(), "sunder-builder-paths", Guid.NewGuid().ToString("N"));
-
-        var relative = service.NormalizeDevPackageRelativePath("bin\\Release/net10.0/sunder-dev");
-        var output = service.ResolveDevPackageFolder(root, relative);
-
-        Assert.Equal("/bin/Release/net10.0/sunder-dev", relative);
-        Assert.Equal(Path.Combine(root, "bin", "Release", "net10.0", "sunder-dev"), output);
-        Assert.Equal(relative, service.TryResolveRelativeDevPackagePath(root, output));
-        Assert.Throws<InvalidOperationException>(() => service.NormalizeDevPackageRelativePath("../outside"));
-    }
-
-    [Fact]
     public void PathService_ResolveContainedHostPath_RejectsDirectorySymlinkEscape()
     {
         var root = Path.Combine(Path.GetTempPath(), "sunder-builder-containment", Guid.NewGuid().ToString("N"));
@@ -245,6 +199,101 @@ public sealed class BuilderServiceTests
         finally
         {
             Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RuntimeBridge_RoutesWorkspaceResolutionAndProcessExecution()
+    {
+        var workspace = CreateWorkspace(Path.GetTempPath());
+        var target = new TestExecutionTarget(output: "Runtime output");
+        var runtime = new LoopbackBuilderRuntimeClient(CreateBuilderRuntimeHandler(workspace, target));
+        var service = new BuilderWorkspaceExecutionService(runtime);
+
+        Assert.Equal(
+            workspace.WorkspaceId,
+            Assert.Single(await service.ListWorkspacesAsync()).WorkspaceId);
+        var execution = await service.ResolveAsync(workspace.WorkspaceId);
+        var result = await execution.RunProcessAsync("dotnet", ["build"]);
+
+        Assert.Equal("Runtime output", result.CombinedOutput);
+        Assert.Equal("build", target.LastProjectOperation);
+        Assert.Equal(
+            [
+                "ListWorkspaces",
+                "ResolveWorkspace",
+                "ExecuteProcess",
+            ],
+            runtime.RequestKinds);
+    }
+
+    [Fact]
+    public async Task RuntimeBridge_TruncatesProcessOutputBeforeTransport()
+    {
+        var workspace = CreateWorkspace(Path.GetTempPath());
+        var target = new TestExecutionTarget(output: new string('x', (512 * 1024) + 1));
+        var runtime = new LoopbackBuilderRuntimeClient(CreateBuilderRuntimeHandler(workspace, target));
+        var execution = await new BuilderWorkspaceExecutionService(runtime).ResolveAsync(workspace.WorkspaceId);
+
+        var result = await execution.RunShellAsync("dotnet build");
+
+        Assert.Equal(512 * 1024, result.CombinedOutput.Length);
+        Assert.True(result.WasTruncated);
+    }
+
+    [Fact]
+    public async Task RuntimeBridge_FitsWorkspaceListBelowResponseTransportLimit()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var longPath = "/" + new string('x', 2047);
+        var workspaces = Enumerable.Range(0, 100)
+            .Select(index => new AgentWorkspaceRecord(
+                $"workspace-{index}",
+                $"Workspace {index}",
+                null,
+                now,
+                now,
+                Enumerable.Range(0, 64)
+                    .Select(pathIndex => new AgentWorkspacePathRecord(
+                        $"path-{index}-{pathIndex}",
+                        $"workspace-{index}",
+                        longPath,
+                        pathIndex == 0,
+                        pathIndex,
+                        now,
+                        now))
+                    .ToArray()))
+            .ToArray();
+        var runtime = new LoopbackBuilderRuntimeClient(CreateBuilderRuntimeHandler(
+            new ListOnlyWorkspaceExecutionResolver(workspaces)));
+
+        var projected = await new BuilderWorkspaceExecutionService(runtime).ListWorkspacesAsync();
+
+        Assert.NotEmpty(projected);
+        Assert.True(projected.Count < workspaces.Length);
+        Assert.True(runtime.MaximumResponseBytes < (4 * 1024 * 1024) - (64 * 1024));
+    }
+
+    [Fact]
+    public async Task WorkspaceList_RunsSynchronousResolverOffCallingThreadAndSupportsCallerCancellation()
+    {
+        var resolver = new BlockingWorkspaceExecutionResolver();
+        var service = new BuilderWorkspaceExecutionService(resolver);
+        var callingThreadId = Environment.CurrentManagedThreadId;
+        using var cancellation = new CancellationTokenSource();
+
+        var listing = service.ListWorkspacesAsync(cancellation.Token);
+        await resolver.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.NotEqual(callingThreadId, resolver.InvocationThreadId);
+        await cancellation.CancelAsync();
+
+        try
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => listing);
+        }
+        finally
+        {
+            resolver.Release.TrySetResult();
         }
     }
 
@@ -380,7 +429,7 @@ public sealed class BuilderServiceTests
         pathService ??= new BuilderPathService();
         return new BuilderProjectApplicationService(
             new BuilderSetupService(),
-            new BuilderWorkspaceExecutionService(new TestExtensionCatalog(new TestWorkspaceExecutionResolver(workspace, target))),
+            new BuilderWorkspaceExecutionService(new TestWorkspaceExecutionResolver(workspace, target)),
             store,
             pathService);
     }
@@ -400,7 +449,7 @@ public sealed class BuilderServiceTests
     private static BuilderProjectRecord CreateRecord(string id)
     {
         var now = DateTimeOffset.UtcNow;
-        return new BuilderProjectRecord(id, id, $"local.{id}", "workspace.local", string.Empty, string.Empty, string.Empty, true, now, now);
+        return new BuilderProjectRecord(id, id, $"local.{id}", "workspace.local", string.Empty, string.Empty, now, now);
     }
 
     private static BuilderProjectRecord CreateInitializedRecord(string root)
@@ -413,13 +462,10 @@ public sealed class BuilderServiceTests
             "workspace.local",
             root,
             root,
-            Path.Combine(root, "bin", "Debug", "net10.0", "sunder-dev"),
-            true,
             now,
             now)
         {
             WorkspacePathId = "workspace.path",
-            DevPackageRelativePath = BuilderPathService.DefaultDevPackageRelativePath,
         };
     }
 
@@ -441,6 +487,21 @@ public sealed class BuilderServiceTests
             now,
             now,
             [new AgentWorkspacePathRecord("workspace.path", "workspace.local", root, true, 0, now, now)]);
+    }
+
+    private static object CreateBuilderRuntimeHandler(
+        AgentWorkspaceRecord workspace,
+        TestExecutionTarget target)
+        => CreateBuilderRuntimeHandler(new TestWorkspaceExecutionResolver(workspace, target));
+
+    private static object CreateBuilderRuntimeHandler(IAgentWorkspaceExecutionResolver resolver)
+    {
+        var handlerType = typeof(BuilderWorkspaceExecutionService).Assembly.GetType(
+            "Sunder.Package.Agent.Builder.BuilderRuntimeHandler",
+            throwOnError: true)!;
+        return Activator.CreateInstance(
+            handlerType,
+            new TestExtensionCatalog(resolver))!;
     }
 
     private static BackgroundProcessContext CreateContext(CancellationToken cancellationToken = default)
@@ -681,7 +742,40 @@ public sealed class BuilderServiceTests
         }
     }
 
-    private sealed class TestExecutionTarget(bool blockProjectOperations = false) : IAgentProcessExecutionTarget
+    private sealed class ListOnlyWorkspaceExecutionResolver(
+        IReadOnlyList<AgentWorkspaceRecord> workspaces) : IAgentWorkspaceExecutionResolver
+    {
+        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => workspaces;
+
+        public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
+            string workspaceId,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<AgentWorkspaceExecutionResolution>(new NotSupportedException());
+    }
+
+    private sealed class BlockingWorkspaceExecutionResolver : IAgentWorkspaceExecutionResolver
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int InvocationThreadId { get; private set; }
+
+        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces()
+        {
+            InvocationThreadId = Environment.CurrentManagedThreadId;
+            Started.TrySetResult();
+            Release.Task.GetAwaiter().GetResult();
+            return [];
+        }
+
+        public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
+            string workspaceId,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<AgentWorkspaceExecutionResolution>(new NotSupportedException());
+    }
+
+    private sealed class TestExecutionTarget(
+        bool blockProjectOperations = false,
+        string output = "") : IAgentProcessExecutionTarget
     {
         public AgentExecutionTargetDescriptor Descriptor { get; } = new(
             "local",
@@ -689,8 +783,7 @@ public sealed class BuilderServiceTests
             "Local",
             null,
             SupportsShell: true,
-            SupportsFiles: true,
-            SupportsSearch: false);
+            SupportsFiles: true);
 
         public TaskCompletionSource ProjectOperationStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -716,7 +809,7 @@ public sealed class BuilderServiceTests
             AgentExecutionTargetContext context,
             AgentShellCommandRequest request,
             CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentShellCommandResult(0, string.Empty));
+            => ValueTask.FromResult(new AgentShellCommandResult(0, output));
 
         public async ValueTask<AgentShellCommandResult> ExecuteProcessAsync(
             AgentExecutionTargetContext context,
@@ -730,7 +823,7 @@ public sealed class BuilderServiceTests
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             }
 
-            return new AgentShellCommandResult(0, string.Empty);
+            return new AgentShellCommandResult(0, output);
         }
 
         public ValueTask<AgentFileReadResult> ReadFileAsync(
@@ -750,5 +843,44 @@ public sealed class BuilderServiceTests
             AgentFileDeleteRequest request,
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new AgentFileMutationResult(request.Path, "Deleted"));
+    }
+
+    private sealed class LoopbackBuilderRuntimeClient(object handler)
+        : IPackageRuntimeClient
+    {
+        public bool IsAvailable => true;
+
+        public List<string> RequestKinds { get; } = [];
+
+        public int MaximumResponseBytes { get; private set; }
+
+        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            PackageRuntimeOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            Assert.Equal("agent.builder.execute.v1", operation.OperationId);
+            RequestKinds.Add(request.GetType().GetProperty("Kind")!.GetValue(request)!.ToString()!);
+            var invocation = handler.GetType().GetMethod("HandleAsync")!.Invoke(
+                handler,
+                [request, cancellationToken])!;
+            var task = (Task)invocation.GetType().GetMethod("AsTask")!.Invoke(invocation, null)!;
+            await task;
+            var response = (TResponse)task.GetType().GetProperty("Result")!.GetValue(task)!;
+            MaximumResponseBytes = Math.Max(
+                MaximumResponseBytes,
+                JsonSerializer.SerializeToUtf8Bytes(response, response.GetType()).Length);
+            return response;
+        }
+
+        public IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            PackageRuntimeStream<TRequest, TEvent> stream,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+            => throw new NotSupportedException();
     }
 }

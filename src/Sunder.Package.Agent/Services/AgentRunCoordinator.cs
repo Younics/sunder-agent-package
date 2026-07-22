@@ -156,11 +156,24 @@ public sealed class AgentRunCoordinator(
     public Task<AgentRunCheckpointRecord?> ApprovePendingPermissionAsync(Guid sessionId, string requestId)
         => _permissionResumeCoordinator.ApproveAsync(sessionId, requestId);
 
+    internal Task<AgentRunCheckpointRecord?> ApprovePendingPermissionAsync(
+        Guid sessionId,
+        string requestId,
+        bool approveForSession,
+        CancellationToken cancellationToken)
+        => _permissionResumeCoordinator.ApproveAsync(
+            sessionId,
+            requestId,
+            approveForSession,
+            cancellationToken);
+
     Task<AgentRunCheckpointRecord?> IAgentRunGateway.ApprovePendingPermissionAsync(
         Guid sessionId, string requestId, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        return ApprovePendingPermissionAsync(sessionId, requestId);
+        return _permissionResumeCoordinator.ApproveAsync(
+            sessionId,
+            requestId,
+            cancellationToken: cancellationToken);
     }
 
     public Task<AgentRunCheckpointRecord?> DenyPendingPermissionAsync(Guid sessionId, string requestId)
@@ -169,7 +182,9 @@ public sealed class AgentRunCoordinator(
     Task<AgentRunCheckpointRecord?> IAgentRunGateway.DenyPendingPermissionAsync(
         Guid sessionId, string requestId, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        return DenyPendingPermissionAsync(sessionId, requestId);
+        return _permissionResumeCoordinator.DenyAsync(
+            sessionId,
+            requestId,
+            cancellationToken);
     }
 }

@@ -155,6 +155,36 @@ public sealed class AgentRunSuspensionStoreTests
             Assert.Single(store.ListDispatchableParentContinuationWork()).Status);
     }
 
+    [Fact]
+    public void ParentContinuationRejectedQueue_RemainsDurablyDispatchable()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var (store, run, userTurnId) = CreateRunningRun(scope, "retry after queue rejection");
+        var childSessionId = Guid.NewGuid();
+        var suspended = SuspendChildJoin(store, run, userTurnId, childSessionId);
+        var ready = store.CompleteChildJoinTask(
+            run.Key,
+            suspended.ContinuationToken,
+            CompletedChild(childSessionId, AgentRunStatus.Completed));
+        var waitingRun = Assert.IsType<AgentDurableRunRecord>(store.GetRun(run.Key.RunId));
+        var dispatch = Assert.IsType<AgentParentContinuationDispatchResult>(
+            store.TryClaimParentContinuationWork(
+                ready.Work!.WorkId,
+                run.Key,
+                waitingRun.Epoch,
+                suspended.ContinuationToken));
+
+        Assert.True(store.RecordParentContinuationRetryPending(
+            dispatch.Work.WorkId,
+            "Background queue rejected dispatch."));
+
+        var restarted = new AgentLocalStore(scope.Context);
+        var pending = Assert.Single(restarted.ListDispatchableParentContinuationWork());
+        Assert.Equal(AgentParentContinuationWorkStatus.Dispatching, pending.Status);
+        Assert.Null(pending.ExecutionStartedAtUtc);
+        Assert.Equal("Background queue rejected dispatch.", pending.LastError);
+    }
+
     private static (AgentLocalStore Store, AgentDurableRunRecord Run, Guid UserTurnId) CreateRunningRun(
         RegressionTestPackageScope scope,
         string userMessage)

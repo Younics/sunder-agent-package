@@ -27,8 +27,8 @@ internal static class AgentRuntimeOperations
         new("agent.runs.status.v1");
     public static readonly PackageRuntimeOperation<AgentPermissionCommand, AgentPermissionProjection> Permissions =
         new("agent.permissions.command.v1");
-    public static readonly PackageRuntimeOperation<AgentAttachmentReadRequest, AgentAttachmentReadResult> Attachments =
-        new("agent.attachments.read.v1");
+    public static readonly PackageRuntimeOperation<AgentAttachmentTransferRequest, AgentAttachmentTransferResult> AttachmentTransfers =
+        new("agent.attachments.transfer.v1");
     public static readonly PackageRuntimeStream<AgentChangeSubscription, AgentRuntimeChange> Changes =
         new("agent.changes.v1");
 }
@@ -225,7 +225,7 @@ internal sealed record AgentRunCommand(
     string? ProfileId = null,
     string? UserMessage = null,
     string? WorkspaceId = null,
-    IReadOnlyList<AgentAttachmentUploadRequest>? Attachments = null,
+    IReadOnlyList<AgentAttachmentUploadHandle>? AttachmentHandles = null,
     Guid? RollbackAnchorTurnId = null,
     string? PermissionRequestId = null,
     bool ApproveForSession = false,
@@ -250,8 +250,34 @@ internal sealed record AgentPermissionProjection(
     IReadOnlyList<AgentPermissionOverride> Overrides,
     IReadOnlyList<AgentPendingPermissionRequestRecord> PendingRequests);
 
-internal sealed record AgentAttachmentReadRequest(AgentAttachmentMetadata Metadata);
-internal sealed record AgentAttachmentReadResult(byte[] Content);
+internal enum AgentAttachmentTransferKind
+{
+    BeginUpload,
+    WriteUploadChunk,
+    CompleteUpload,
+    AbortUpload,
+    ReadDownloadChunk,
+}
+
+internal sealed record AgentAttachmentUploadDescriptor(
+    string FileName,
+    string? MediaType,
+    int SizeBytes,
+    string Sha256);
+internal sealed record AgentAttachmentUploadHandle(string TransferId);
+internal sealed record AgentAttachmentTransferRequest(
+    AgentAttachmentTransferKind Kind,
+    string? TransferId = null,
+    AgentAttachmentUploadDescriptor? Upload = null,
+    int Offset = 0,
+    byte[]? Content = null,
+    AgentAttachmentMetadata? Metadata = null);
+internal sealed record AgentAttachmentTransferResult(
+    string? TransferId = null,
+    int NextOffset = 0,
+    int TotalBytes = 0,
+    byte[]? Content = null,
+    bool IsComplete = false);
 
 internal sealed record AgentChangeSubscription(
     long AfterRevision = 0,

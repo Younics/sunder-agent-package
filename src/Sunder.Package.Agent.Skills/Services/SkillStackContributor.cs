@@ -32,7 +32,6 @@ internal sealed class SkillStackContributor(
                 "agent-skill",
                 skill.Description,
                 DefaultSelected: true,
-                Sensitivities: [StackValueSensitivity.Public],
                 Details:
                 [
                     new StackExportItemDetail(
@@ -49,7 +48,9 @@ internal sealed class SkillStackContributor(
         StackExportRequest request,
         CancellationToken cancellationToken = default)
     {
-        var selectedIds = request.ItemIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectedIds = request.ItemSelections
+            .Select(selection => selection.ItemId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var fragments = new List<StackFragmentExport>();
         var warnings = new List<string>();
         foreach (var skill in store.ListSkills().Where(skill => selectedIds.Contains(skill.SkillId)))
@@ -166,7 +167,7 @@ internal sealed class SkillStackContributor(
     }
 
     private StackPackageRequirement CreatePackageRequirement()
-        => new(SkillConstants.PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.0.0");
+        => new(SkillConstants.PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.1.0");
 
     private static bool IsGitHubSkill(InstalledSkillRecord skill)
         => string.Equals(skill.SourceKind, "github", StringComparison.OrdinalIgnoreCase)

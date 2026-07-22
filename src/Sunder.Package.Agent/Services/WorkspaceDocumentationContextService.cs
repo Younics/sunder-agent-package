@@ -4,7 +4,7 @@ using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class WorkspaceDocumentationContextService : IAgentSystemPromptContributor
+public sealed class WorkspaceDocumentationContextService : IAgentPromptContextContributor
 {
     private const int MaxDocumentChars = 12000;
     private const int MaxPromptChars = 60000;
@@ -15,20 +15,20 @@ public sealed class WorkspaceDocumentationContextService : IAgentSystemPromptCon
 
     public string DisplayName => "Workspace Documentation";
 
-    public async ValueTask<IReadOnlyList<AgentSystemPromptBlock>> ContributeAsync(
-        AgentSystemPromptRequest request,
+    public async ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
+        AgentPromptContextRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (request.Workspace is null)
         {
-            return [];
+            return null;
         }
 
         var documents = ListWorkspaceDocuments(request.Workspace).ToArray();
         if (documents.Length == 0)
         {
-            return [];
+            return null;
         }
 
         var content = new StringBuilder();
@@ -58,20 +58,19 @@ public sealed class WorkspaceDocumentationContextService : IAgentSystemPromptCon
 
         if (appendedDocuments == 0)
         {
-            return [];
+            return null;
         }
 
-        return
+        return new AgentPromptContextContribution(
         [
-            new AgentSystemPromptBlock(
-                "workspace-documentation",
+            new AgentPromptContextBlock(
                 "Workspace Documentation",
                 content.ToString().Trim(),
                 Priority: 85,
-                Required: true,
-                MaxChars: MaxPromptChars,
-                SourceId: "sunder.package.agent")
-        ];
+                SourceId: "sunder.package.agent",
+                Provenance: AgentContextProvenance.Tool,
+                Trust: AgentContextTrust.Untrusted)
+        ]);
     }
 
     private static IEnumerable<WorkspaceDocumentationItem> ListWorkspaceDocuments(AgentWorkspaceRecord workspace)

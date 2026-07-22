@@ -80,7 +80,8 @@ public sealed partial class AgentLocalStore
         command.CommandText = """
             SELECT RunId, SessionId, RunRevision, Epoch, Status, ProfileId, UserMessage,
                    StartedAtUtc, UpdatedAtUtc, FinishedAtUtc, SuspensionKind,
-                   ContinuationToken, SuspensionDataJson
+                   ContinuationToken, SuspensionDataJson, ProviderCycleCount,
+                   ToolCallCount, SubmittedContextTokenCount
             FROM AgentRuns
             WHERE RunId = $runId;
             """;
@@ -98,7 +99,8 @@ public sealed partial class AgentLocalStore
         command.CommandText = """
             SELECT RunId, SessionId, RunRevision, Epoch, Status, ProfileId, UserMessage,
                    StartedAtUtc, UpdatedAtUtc, FinishedAtUtc, SuspensionKind,
-                   ContinuationToken, SuspensionDataJson
+                   ContinuationToken, SuspensionDataJson, ProviderCycleCount,
+                   ToolCallCount, SubmittedContextTokenCount
             FROM AgentRuns
             WHERE SessionId = $sessionId
             ORDER BY RunRevision DESC
@@ -107,6 +109,60 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
         using var reader = command.ExecuteReader();
         return reader.Read() ? ReadRun(reader) : null;
+    }
+
+    internal AgentRunBudgetState? ChargeRunBudget(
+        AgentDurableRunKey key,
+        long expectedEpoch,
+        AgentRunBudgetCharge charge)
+    {
+        if (charge.ProviderCycles < 0
+            || charge.ToolCalls < 0
+            || charge.SubmittedContextTokens < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(charge));
+        }
+
+        using var connection = CreateConnection();
+        connection.Open();
+        using var transaction = connection.BeginTransaction(deferred: false);
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE AgentRuns
+            SET ProviderCycleCount = ProviderCycleCount + $providerCycles,
+                ToolCallCount = ToolCallCount + $toolCalls,
+                SubmittedContextTokenCount = SubmittedContextTokenCount + $submittedContextTokens,
+                UpdatedAtUtc = $updatedAtUtc
+            WHERE RunId = $runId
+              AND SessionId = $sessionId
+              AND RunRevision = $runRevision
+              AND Epoch = $expectedEpoch
+              AND Status = 'Running'
+              AND FinishedAtUtc IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM AgentRuns newer
+                  WHERE newer.SessionId = $sessionId
+                    AND newer.RunRevision > $runRevision);
+            """;
+        command.Parameters.AddWithValue("$providerCycles", charge.ProviderCycles);
+        command.Parameters.AddWithValue("$toolCalls", charge.ToolCalls);
+        command.Parameters.AddWithValue("$submittedContextTokens", charge.SubmittedContextTokens);
+        command.Parameters.AddWithValue("$updatedAtUtc", DateTimeOffset.UtcNow.ToString("O"));
+        command.Parameters.AddWithValue("$runId", key.RunId.ToString());
+        command.Parameters.AddWithValue("$sessionId", key.SessionId.ToString());
+        command.Parameters.AddWithValue("$runRevision", key.RunRevision);
+        command.Parameters.AddWithValue("$expectedEpoch", expectedEpoch);
+        if (command.ExecuteNonQuery() != 1)
+        {
+            transaction.Rollback();
+            return null;
+        }
+
+        var run = GetRun(connection, transaction, key.RunId)
+            ?? throw new InvalidOperationException("The charged durable run could not be reloaded.");
+        transaction.Commit();
+        return run.BudgetState;
     }
 
     private void RecoverUnownedActiveRuns()
@@ -637,7 +693,8 @@ public sealed partial class AgentLocalStore
         command.CommandText = """
             SELECT RunId, SessionId, RunRevision, Epoch, Status, ProfileId, UserMessage,
                    StartedAtUtc, UpdatedAtUtc, FinishedAtUtc, SuspensionKind,
-                   ContinuationToken, SuspensionDataJson
+                   ContinuationToken, SuspensionDataJson, ProviderCycleCount,
+                   ToolCallCount, SubmittedContextTokenCount
             FROM AgentRuns
             WHERE RunId = $runId;
             """;
@@ -702,6 +759,9 @@ public sealed partial class AgentLocalStore
             DateTimeOffset.Parse(reader.GetString(8)),
             reader.IsDBNull(9) ? null : DateTimeOffset.Parse(reader.GetString(9)),
             suspension,
-            reader.IsDBNull(11) ? null : reader.GetString(11));
+            reader.IsDBNull(11) ? null : reader.GetString(11),
+            reader.GetInt64(13),
+            reader.GetInt64(14),
+            reader.GetInt64(15));
     }
 }

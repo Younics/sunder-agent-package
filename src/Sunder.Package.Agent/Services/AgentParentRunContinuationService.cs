@@ -14,7 +14,9 @@ public sealed class AgentParentRunContinuationService(
     AgentBehaviorLoopHostFactory behaviorLoopHostFactory,
     AgentBehaviorLoopResolver behaviorLoopResolver,
     AgentChildRunSessionService childRunSessionService,
-    AgentSessionTransitionGate? transitionGate = null)
+    AgentSessionTransitionGate? transitionGate = null,
+    AgentSessionDeletionFence? deletionFence = null,
+    AgentBackgroundWorkService? backgroundWork = null)
 {
     private readonly AgentSessionService _sessionService = sessionService;
     private readonly AgentProfileService _profileService = profileService;
@@ -26,6 +28,9 @@ public sealed class AgentParentRunContinuationService(
     private readonly AgentChildRunSessionService _childRunSessionService = childRunSessionService;
     private readonly AgentSessionTransitionGate _transitionGate =
         transitionGate ?? AgentSessionTransitionGate.Shared;
+    private readonly AgentSessionDeletionFence _deletionFence =
+        deletionFence ?? AgentSessionDeletionFence.Shared;
+    private readonly AgentBackgroundWorkService? _backgroundWork = backgroundWork;
     private int _recoveryStarted;
 
     public async Task<AgentRunCheckpointRecord?> TryResumeAfterChildCompletionAsync(
@@ -127,17 +132,21 @@ public sealed class AgentParentRunContinuationService(
             return;
         }
 
-        _ = Task.Run(async () =>
+        var queued = _backgroundWork?.TryQueue(async cancellationToken =>
         {
             try
             {
-                await ProcessPendingWorkAsync(CancellationToken.None).ConfigureAwait(false);
+                await ProcessPendingWorkAsync(cancellationToken).ConfigureAwait(false);
             }
             catch
             {
                 // Work remains durable and will be retried by the next explicit drain or package start.
             }
-        });
+        }) == true;
+        if (!queued)
+        {
+            Interlocked.Exchange(ref _recoveryStarted, 0);
+        }
     }
 
     internal async Task ProcessPendingWorkAsync(CancellationToken cancellationToken)
@@ -248,6 +257,14 @@ public sealed class AgentParentRunContinuationService(
         };
         using (await _transitionGate.EnterAsync(key.SessionId).ConfigureAwait(false))
         {
+            if (_deletionFence.IsFenced(parentSession))
+            {
+                runHandle.CancellationTokenSource.Dispose();
+                return InterruptStaleDispatch(
+                    dispatch.Work.WorkId,
+                    lease,
+                    "Parent continuation was canceled because its session is being deleted.");
+            }
             var activation = _activeRunRegistry.Activate(key.SessionId, runHandle);
             if (!activation.IsAccepted)
             {
@@ -255,7 +272,7 @@ public sealed class AgentParentRunContinuationService(
                 if (activation.CurrentRun.RunId == key.RunId
                     && activation.CurrentRun.RunRevision == key.RunRevision)
                 {
-                    ScheduleRetryAfterActiveUnwind(key);
+                    ScheduleRetryAfterActiveUnwind(key, dispatch.Work.WorkId);
                 }
                 else
                 {
@@ -310,7 +327,8 @@ public sealed class AgentParentRunContinuationService(
                 key.RunRevision,
                 dispatch.Run.StartedAtUtc,
                 dispatch.Run.UserMessage,
-                parentUserTurn.TurnId);
+                parentUserTurn.TurnId,
+                ResolveExecutionBinding(workspace));
             var loopResult = await _behaviorLoopResolver.Resolve(parentProfile).RunAsync(
                 new AgentBehaviorLoopContext(
                     parentSession,
@@ -386,7 +404,7 @@ public sealed class AgentParentRunContinuationService(
         }
         finally
         {
-            _activeRunRegistry.CleanupCurrent(key.SessionId, key.RunId, key.RunRevision);
+            _activeRunRegistry.Complete(key.SessionId, key.RunId, key.RunRevision);
             runHandle.CancellationTokenSource.Dispose();
         }
     }
@@ -423,21 +441,21 @@ public sealed class AgentParentRunContinuationService(
         return checkpoint;
     }
 
-    private void ScheduleRetryAfterActiveUnwind(AgentDurableRunKey key)
+    private void ScheduleRetryAfterActiveUnwind(AgentDurableRunKey key, string workId)
     {
-        _ = Task.Run(async () =>
+        var queued = _backgroundWork?.TryQueue(async cancellationToken =>
         {
             try
             {
                 for (var attempt = 0; attempt < 100; attempt++)
                 {
-                    await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
+                    await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken).ConfigureAwait(false);
                     if (!_activeRunRegistry.IsCurrent(
                             key.SessionId,
                             key.RunId,
                             key.RunRevision))
                     {
-                        await ProcessPendingWorkAsync(CancellationToken.None).ConfigureAwait(false);
+                        await ProcessPendingWorkAsync(cancellationToken).ConfigureAwait(false);
                         return;
                     }
                 }
@@ -446,7 +464,13 @@ public sealed class AgentParentRunContinuationService(
             {
                 // Durable work remains dispatchable for startup recovery.
             }
-        });
+        }) == true;
+        if (!queued)
+        {
+            _sessionService.RecordParentContinuationRetryPending(
+                workId,
+                "Parent continuation retry remains durable because the background queue rejected dispatch.");
+        }
     }
 
     private AgentChildJoinTaskResult BuildChildTaskResult(

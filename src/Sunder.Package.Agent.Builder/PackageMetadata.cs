@@ -3,7 +3,7 @@ using Sunder.Sdk.Packaging;
 [assembly: SunderPackage(
     Id = "sunder.package.agent.builder",
     Name = "Sunder Agent Builder",
-    Summary = "Adds Sunder package development session controls to Sunder Agent.",
+    Summary = "Creates, builds, and publishes Sunder package projects from Agent workspaces.",
     Icon = "assets/icon.png"
 )]
 

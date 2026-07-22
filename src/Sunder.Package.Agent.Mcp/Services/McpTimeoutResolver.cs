@@ -2,18 +2,37 @@ namespace Sunder.Package.Agent.Mcp.Services;
 
 internal static class McpTimeoutResolver
 {
+    internal const int DefaultDiscoveryTimeoutMilliseconds = 15_000;
+    internal const int DefaultToolTimeoutMilliseconds = 120_000;
+    internal const int MaximumDiscoveryTimeoutMilliseconds = 120_000;
+    internal const int MaximumToolTimeoutMilliseconds = 1_800_000;
+
     public static int? ResolveDiscoveryTimeoutMilliseconds(ConfiguredMcpServerRecord server)
-        => ResolveOptionalTimeoutMilliseconds(server.DiscoveryTimeoutMilliseconds ?? server.TimeoutMilliseconds);
+        => ResolveTimeoutMilliseconds(
+            server.DiscoveryTimeoutMilliseconds ?? server.TimeoutMilliseconds,
+            DefaultDiscoveryTimeoutMilliseconds,
+            MaximumDiscoveryTimeoutMilliseconds);
 
     public static int? ResolveToolTimeoutMilliseconds(ConfiguredMcpServerRecord server)
-        => ResolveOptionalTimeoutMilliseconds(server.ToolTimeoutMilliseconds ?? server.TimeoutMilliseconds);
+        => ResolveTimeoutMilliseconds(
+            server.ToolTimeoutMilliseconds ?? server.TimeoutMilliseconds,
+            DefaultToolTimeoutMilliseconds,
+            MaximumToolTimeoutMilliseconds);
 
     public static int? ResolveEffectiveTimeoutMilliseconds(int? serverTimeoutMilliseconds)
-        => ResolveOptionalTimeoutMilliseconds(serverTimeoutMilliseconds);
+        => ResolveTimeoutMilliseconds(
+            serverTimeoutMilliseconds,
+            DefaultDiscoveryTimeoutMilliseconds,
+            MaximumDiscoveryTimeoutMilliseconds);
 
     public static int? ResolveBackgroundRefreshTimeoutMilliseconds(int? discoveryTimeoutMilliseconds)
-        => ResolveOptionalTimeoutMilliseconds(discoveryTimeoutMilliseconds);
+        => ResolveTimeoutMilliseconds(
+            discoveryTimeoutMilliseconds,
+            DefaultDiscoveryTimeoutMilliseconds,
+            MaximumDiscoveryTimeoutMilliseconds);
 
-    private static int? ResolveOptionalTimeoutMilliseconds(int? timeoutMilliseconds)
-        => timeoutMilliseconds is > 0 ? timeoutMilliseconds.Value : null;
+    private static int ResolveTimeoutMilliseconds(int? timeoutMilliseconds, int fallback, int maximum)
+        => timeoutMilliseconds is > 0
+            ? Math.Min(timeoutMilliseconds.Value, maximum)
+            : fallback;
 }

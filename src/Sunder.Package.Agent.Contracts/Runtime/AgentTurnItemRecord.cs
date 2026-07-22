@@ -1,5 +1,29 @@
 namespace Sunder.Package.Agent.Contracts.Models;
 
+/// <summary>
+/// Captures one persisted, ordered content item within a transcript turn.
+/// </summary>
+/// <remarks>
+/// Field applicability depends on <paramref name="Kind"/>. JSON payloads are opaque to this record and must be
+/// validated by their producing/consuming extension. Error and backend fields describe provenance and execution
+/// outcome; neither makes the associated content trusted.
+/// </remarks>
+/// <param name="ItemId">The stable identifier of this persisted item.</param>
+/// <param name="TurnId">The identifier of the owning turn.</param>
+/// <param name="SequenceNumber">The item's ascending ordinal within the turn.</param>
+/// <param name="Kind">The semantic shape that determines which optional fields apply.</param>
+/// <param name="TextContent">Message text, attachment text projection, or tool-result text, when applicable.</param>
+/// <param name="CallId">The provider-issued correlation identifier shared by a tool call and its result, when applicable.</param>
+/// <param name="ToolId">The opaque tool identifier associated with a call or result.</param>
+/// <param name="ArgumentsJson">The tool-call arguments as JSON, or <see langword="null"/> for non-call items.</param>
+/// <param name="ResultSummary">An optional bounded human-readable summary of a tool result.</param>
+/// <param name="StructuredPayloadJson">Optional tool-defined machine-readable result JSON.</param>
+/// <param name="SourcesJson">Optional producer-defined JSON containing citations or source metadata.</param>
+/// <param name="WasTruncated">Whether any content was shortened or omitted while persisting or projecting this item.</param>
+/// <param name="IsError">Whether the item represents a failed tool operation rather than a successful result.</param>
+/// <param name="ErrorCode">An optional stable, producer-defined code for programmatic error handling.</param>
+/// <param name="BackendId">An optional identifier for the backend that produced the result, useful for diagnostics and provenance.</param>
+/// <param name="PresentationPayloadJson">Optional UI-specific JSON that supplements, but does not replace, the provider-facing result fields.</param>
 public sealed record AgentTurnItemRecord(
     Guid ItemId,
     Guid TurnId,

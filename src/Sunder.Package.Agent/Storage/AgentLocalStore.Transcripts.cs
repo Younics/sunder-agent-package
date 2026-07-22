@@ -1,5 +1,4 @@
 using Microsoft.Data.Sqlite;
-using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 
@@ -8,11 +7,6 @@ namespace Sunder.Package.Agent.Storage;
 public sealed partial class AgentLocalStore
 {
     internal Action<AgentTranscriptMutationKind>? BeforeFencedTranscriptTransaction { get; set; }
-
-    public AgentTranscriptMessageRecord AppendMessage(Guid sessionId, AgentMessageRole role, string content)
-    {
-        return ProjectTurnToTranscriptMessage(AppendTextTurn(sessionId, role, content));
-    }
 
     public AgentTurnRecord AppendTextTurn(Guid sessionId, AgentMessageRole role, string content)
     {
@@ -474,12 +468,6 @@ public sealed partial class AgentLocalStore
 
     private static void DeleteSessionContinuityState(SqliteConnection connection, SqliteTransaction transaction, Guid sessionId)
     {
-        using var deleteWorkingSummaries = connection.CreateCommand();
-        deleteWorkingSummaries.Transaction = transaction;
-        deleteWorkingSummaries.CommandText = "DELETE FROM AgentWorkingSummaries WHERE SessionId = $sessionId;";
-        deleteWorkingSummaries.Parameters.AddWithValue("$sessionId", sessionId.ToString());
-        deleteWorkingSummaries.ExecuteNonQuery();
-
         using var deleteContextCheckpoints = connection.CreateCommand();
         deleteContextCheckpoints.Transaction = transaction;
         deleteContextCheckpoints.CommandText = "DELETE FROM AgentSessionContextCheckpoints WHERE SessionId = $sessionId;";
@@ -532,94 +520,6 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
         command.Parameters.AddWithValue("$anchorCreatedAtUtc", anchorTurn.CreatedAtUtc.ToString("O"));
         command.Parameters.AddWithValue("$anchorTurnId", anchorTurn.TurnId.ToString());
-    }
-
-    private static AgentTranscriptMessageRecord ProjectTurnToTranscriptMessage(AgentTurnRecord turn)
-        => new(
-            turn.TurnId,
-            turn.SessionId,
-            turn.Role,
-            RenderTurnContent(turn),
-            turn.CreatedAtUtc);
-
-    private static string RenderTurnContent(AgentTurnRecord turn)
-    {
-        var parts = new List<string>();
-        foreach (var item in turn.Items.OrderBy(item => item.SequenceNumber))
-        {
-            switch (item.Kind)
-            {
-                case AgentTurnItemKind.Text when !string.IsNullOrWhiteSpace(item.TextContent):
-                    parts.Add(item.TextContent.Trim());
-                    break;
-
-                case AgentTurnItemKind.ToolCall:
-                    parts.Add(RenderToolCallItem(item));
-                    break;
-
-                case AgentTurnItemKind.ToolResult:
-                    parts.Add(RenderToolResultItem(item));
-                    break;
-
-                case AgentTurnItemKind.Attachment:
-                    parts.Add(RenderAttachmentItem(item));
-                    break;
-            }
-        }
-
-        return string.Join("\n\n", parts.Where(part => !string.IsNullOrWhiteSpace(part)));
-    }
-
-    private static string RenderToolCallItem(AgentTurnItemRecord item)
-    {
-        var toolId = string.IsNullOrWhiteSpace(item.ToolId) ? "unknown_tool" : item.ToolId;
-        if (string.IsNullOrWhiteSpace(item.ArgumentsJson))
-        {
-            return $"Tool call: {toolId}";
-        }
-
-        return $"Tool call: {toolId}\n```json\n{item.ArgumentsJson}\n```";
-    }
-
-    private static string RenderToolResultItem(AgentTurnItemRecord item)
-    {
-        if (!string.IsNullOrWhiteSpace(item.TextContent))
-        {
-            return item.TextContent.Trim();
-        }
-
-        return string.IsNullOrWhiteSpace(item.ResultSummary)
-            ? "Tool result."
-            : item.ResultSummary;
-    }
-
-    private static string RenderAttachmentItem(AgentTurnItemRecord item)
-    {
-        var metadata = TryReadAttachmentMetadata(item);
-        if (metadata is null)
-        {
-            return "Attachment.";
-        }
-
-        var text = $"Attachment: {metadata.FileName} ({metadata.MediaType}, {metadata.SizeBytes} bytes)";
-        return metadata.WasTruncated ? text + "\nText content was truncated." : text;
-    }
-
-    private static AgentAttachmentMetadata? TryReadAttachmentMetadata(AgentTurnItemRecord item)
-    {
-        if (string.IsNullOrWhiteSpace(item.StructuredPayloadJson))
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<AgentAttachmentMetadata>(item.StructuredPayloadJson);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
     }
 
     private static void InsertTurn(

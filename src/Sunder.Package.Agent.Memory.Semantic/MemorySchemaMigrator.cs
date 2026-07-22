@@ -5,7 +5,7 @@ namespace Sunder.Package.Agent.Memory.Semantic;
 
 internal sealed class MemorySchemaMigrator(string databasePath)
 {
-    internal const int CurrentVersion = 4;
+    internal const int CurrentVersion = 5;
 
     private static readonly ReferenceCountedKeyedLock<string> MigrationLocks = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _databasePath = databasePath;
@@ -24,6 +24,7 @@ internal sealed class MemorySchemaMigrator(string databasePath)
             ApplyMigration(connection, appliedVersions, 2, "Add memory supersession lineage", AddSupersessionColumn);
             ApplyMigration(connection, appliedVersions, 3, "Create and populate full-text search", CreateSearchSchema);
             ApplyMigration(connection, appliedVersions, 4, "Add staged embedding generations", AddEmbeddingGenerations);
+            ApplyMigration(connection, appliedVersions, 5, "Add memory provenance", AddMemoryProvenance);
 
             if (!HasTable(connection, "SessionMemorySearch"))
             {
@@ -139,7 +140,8 @@ internal sealed class MemorySchemaMigrator(string databasePath)
                 CreatedAtUtc TEXT NOT NULL,
                 UpdatedAtUtc TEXT NOT NULL,
                 LastAccessedAtUtc TEXT NULL,
-                AccessCount INTEGER NOT NULL DEFAULT 0
+                AccessCount INTEGER NOT NULL DEFAULT 0,
+                Provenance TEXT NOT NULL DEFAULT 'Unknown'
             );
             CREATE TABLE IF NOT EXISTS SessionMemoryEvidence (
                 EvidenceId TEXT PRIMARY KEY,
@@ -233,6 +235,14 @@ internal sealed class MemorySchemaMigrator(string databasePath)
             CREATE INDEX IF NOT EXISTS IX_SessionMemoryEmbeddingGenerations_SessionProviderModel
                 ON SessionMemoryEmbeddingGenerations (SessionId, ProviderId, ModelId, State);
             """);
+    }
+
+    private static void AddMemoryProvenance(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        if (!HasColumn(connection, transaction, "SessionMemories", "Provenance"))
+        {
+            Execute(connection, transaction, "ALTER TABLE SessionMemories ADD COLUMN Provenance TEXT NOT NULL DEFAULT 'Unknown';");
+        }
     }
 
     private static void CreateGenerationEmbeddingTable(SqliteConnection connection, SqliteTransaction transaction)

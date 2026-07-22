@@ -10,7 +10,6 @@ namespace Sunder.Package.Agent.Execution.Docker;
 public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packageContext, DockerImageCatalogService? imageCatalogService = null)
     : IAgentWorkspacePathMigrationContributor
 {
-    internal const string DefaultImageReference = "agent0ai/agent-zero:latest";
     internal const string DefaultContainerRoot = "/workspace";
     internal const string DefaultShellPath = "/bin/sh";
 
@@ -176,7 +175,7 @@ public sealed class DockerExecutionWorkspaceConfigService(IPackageContext packag
     private DockerExecutionWorkspaceConfig Normalize(
         string bindingId,
         DockerExecutionWorkspaceConfig config,
-        string? defaultImageReference = DefaultImageReference)
+        string? defaultImageReference = null)
     {
         var shellPath = string.IsNullOrWhiteSpace(config.ShellPath)
             ? DefaultShellPath

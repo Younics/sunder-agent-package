@@ -31,8 +31,8 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         ));
         services.AddSingleton<AgentWorkspaceStackContributor>();
         services.AddSingleton<AgentAttachmentService>();
+        services.AddSingleton<AgentAttachmentTransferService>();
         services.AddSingleton<AgentRunAttachmentStore>();
-        services.AddSingletonAlias<IAgentAttachmentContentStore, AgentAttachmentService>();
         services.AddSingleton<AgentRuntimeCatalog>();
         services.AddSingleton<AgentChatSelectionStateService>();
         services.AddSingleton<InstalledPackageToolSource>();
@@ -47,7 +47,7 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<AgentStreamingTurnWriter>();
         services.AddSingleton<AgentPromptPreparationPipeline>(provider => new AgentPromptPreparationPipeline(
             provider.GetRequiredService<AgentSystemPromptComposer>(),
-            provider.GetService<IAgentAttachmentContentStore>(),
+            provider.GetRequiredService<AgentAttachmentService>(),
             provider.GetRequiredService<AgentSessionContextProjectionService>()
         ));
         services.AddSingleton<AgentProviderCycleRunner>();
@@ -62,6 +62,9 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<AgentBehaviorLoopHostFactory>();
         services.AddSingleton<AgentActiveRunRegistry>();
         services.AddSingleton<AgentSessionTransitionGate>();
+        services.AddSingleton<AgentSessionDeletionFence>();
+        services.AddSingleton<AgentSessionDeletionService>();
+        services.AddSingleton<AgentBackgroundWorkService>();
         services.AddSingleton<AgentRunEventLogger>();
         services.AddSingleton<AgentRunProviderResolver>();
         services.AddSingleton<AgentSessionTitleService>();
@@ -78,7 +81,8 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
             provider.GetRequiredService<AgentRunStartService>(),
             provider.GetRequiredService<AgentRunExecutionService>(),
             provider.GetRequiredService<AgentActiveRunRegistry>(),
-            provider.GetRequiredService<AgentSessionTransitionGate>()
+            provider.GetRequiredService<AgentSessionTransitionGate>(),
+            provider.GetRequiredService<AgentSessionDeletionFence>()
         ));
         services.AddSingleton<AgentRunCoordinator>();
         services.AddSingletonAlias<IAgentChildRunExecutor, AgentRunCoordinator>();
@@ -92,7 +96,7 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<AgentSessionCommandHandler>();
         services.AddSingleton<AgentRunCommandHandler>();
         services.AddSingleton<AgentPermissionCommandHandler>();
-        services.AddSingleton<AgentAttachmentReadHandler>();
+        services.AddSingleton<AgentAttachmentTransferHandler>();
     }
 
     public void RegisterRuntimeContributions(
@@ -101,6 +105,7 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
     )
     {
         services.GetRequiredService<AgentParentRunContinuationService>().StartRecovery();
+        registry.RegisterBackgroundService<AgentBackgroundWorkService>();
         registry.RegisterExtension(
             PackageExtensionPoints.RuntimeCatalogs,
             services.GetRequiredService<AgentRuntimeCatalog>()
@@ -114,10 +119,6 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
             services.GetRequiredService<AgentRunCoordinator>()
         );
         registry.RegisterExtension(
-            PackageExtensionPoints.AttachmentContentStores,
-            services.GetRequiredService<AgentAttachmentService>()
-        );
-        registry.RegisterExtension(
             PackageExtensionPoints.SessionDataCleaners,
             services.GetRequiredService<AgentAttachmentService>()
         );
@@ -126,7 +127,7 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
             services.GetRequiredService<DefaultAgentBehaviorLoop>()
         );
         registry.RegisterExtension(
-            PackageExtensionPoints.SystemPromptContributors,
+            PackageExtensionPoints.PromptContextContributors,
             services.GetRequiredService<WorkspaceDocumentationContextService>()
         );
         RegisterStackContributor(registry, services.GetRequiredService<AgentProfileStackContributor>());
@@ -141,7 +142,7 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.Runs, services.GetRequiredService<AgentRunCommandHandler>());
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.RunStatus, services.GetRequiredService<AgentRunCommandHandler>());
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.Permissions, services.GetRequiredService<AgentPermissionCommandHandler>());
-        registry.RegisterRuntimeOperation(AgentRuntimeOperations.Attachments, services.GetRequiredService<AgentAttachmentReadHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.AttachmentTransfers, services.GetRequiredService<AgentAttachmentTransferHandler>());
         registry.RegisterRuntimeStream(AgentRuntimeOperations.Changes, services.GetRequiredService<AgentRuntimeChangeHub>());
     }
 

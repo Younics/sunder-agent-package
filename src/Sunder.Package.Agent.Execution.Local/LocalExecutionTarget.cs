@@ -5,7 +5,7 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.Execution.Local;
 
 public sealed class LocalExecutionTarget
-    : IAgentProcessExecutionTarget, IAgentRangedFileExecutionTarget, IAgentWorkspaceBindingContributor, IAgentExecutionScopeProvider, IAgentExecutionResourceResolver, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment
+    : IAgentProcessExecutionTarget, IAgentRangedFileExecutionTarget, IAgentExecutionScopeProvider, IAgentExecutionResourceResolver, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment
 {
     private readonly LocalExecutionWorkspaceConfigService _configService;
     private readonly LocalShellExecutor _shellExecutor;
@@ -24,25 +24,7 @@ public sealed class LocalExecutionTarget
         "Local Machine",
         "Executes commands and file operations on this machine within configured workspace paths.",
         SupportsShell: true,
-        SupportsFiles: true,
-        SupportsSearch: true);
-
-    AgentWorkspaceBindingDescriptor IAgentWorkspaceBindingContributor.Descriptor { get; } = new(
-        "sunder.package.agent:execution-targets",
-        "local",
-        "primary-execution-target",
-        "Local Machine",
-        "Run shell and file tools on this machine using configured workspace paths.");
-
-    public async ValueTask<AgentWorkspaceBindingReadiness> GetReadinessAsync(
-        AgentWorkspaceBindingContext context,
-        CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        var readiness = await GetReadinessCoreAsync(
-            new AgentExecutionTargetContext(null, null, context.Workspace, context.Binding), cancellationToken);
-        return new AgentWorkspaceBindingReadiness(context.Binding.BindingId, readiness.Status, readiness.Message);
-    }
+        SupportsFiles: true);
 
     public async ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
         AgentExecutionTargetContext context,

@@ -420,29 +420,47 @@ internal sealed partial class AgentAppRuntimeGateway :
     public async Task<AgentRunCheckpointRecord> QueueUserMessageAsync(Guid sessionId, string profileId,
         string userMessage, string workspaceId, IReadOnlyList<AgentAttachmentUploadRequest> attachments,
         CancellationToken cancellationToken = default)
-        => (await InvokeAsync(AgentRuntimeOperations.Runs, new AgentRunCommand(AgentRunCommandKind.Start,
-            sessionId, profileId, userMessage, workspaceId, attachments), cancellationToken).ConfigureAwait(false))
+        => (await InvokeRunWithAttachmentsAsync(new AgentRunCommand(
+            AgentRunCommandKind.Start,
+            sessionId,
+            profileId,
+            userMessage,
+            workspaceId), attachments, cancellationToken).ConfigureAwait(false))
             .Checkpoint ?? throw new InvalidOperationException("Runtime did not start the run.");
     async Task<AgentRunCheckpointRecord> IAgentCorrelatedRunGateway.QueueUserMessageAsync(Guid sessionId, string profileId,
         string userMessage, string workspaceId, IReadOnlyList<AgentAttachmentUploadRequest> attachments,
         Guid userTurnId, CancellationToken cancellationToken)
-        => (await InvokeAsync(AgentRuntimeOperations.Runs, new AgentRunCommand(AgentRunCommandKind.Start,
-            sessionId, profileId, userMessage, workspaceId, attachments, UserTurnId: userTurnId),
-            cancellationToken).ConfigureAwait(false)).Checkpoint
+        => (await InvokeRunWithAttachmentsAsync(new AgentRunCommand(
+            AgentRunCommandKind.Start,
+            sessionId,
+            profileId,
+            userMessage,
+            workspaceId,
+            UserTurnId: userTurnId), attachments, cancellationToken).ConfigureAwait(false)).Checkpoint
            ?? throw new InvalidOperationException("Runtime did not start the run.");
     public async Task<AgentRunCheckpointRecord> RollbackAndQueueUserMessageAsync(Guid sessionId,
         Guid rollbackAnchorTurnId, string profileId, string userMessage, string workspaceId,
         IReadOnlyList<AgentAttachmentUploadRequest> attachments, CancellationToken cancellationToken = default)
-        => (await InvokeAsync(AgentRuntimeOperations.Runs, new AgentRunCommand(AgentRunCommandKind.RollbackAndStart,
-            sessionId, profileId, userMessage, workspaceId, attachments, rollbackAnchorTurnId), cancellationToken)
+        => (await InvokeRunWithAttachmentsAsync(new AgentRunCommand(
+            AgentRunCommandKind.RollbackAndStart,
+            sessionId,
+            profileId,
+            userMessage,
+            workspaceId,
+            RollbackAnchorTurnId: rollbackAnchorTurnId), attachments, cancellationToken)
             .ConfigureAwait(false)).Checkpoint ?? throw new InvalidOperationException("Runtime did not start the run.");
     async Task<AgentRunCheckpointRecord> IAgentCorrelatedRunGateway.RollbackAndQueueUserMessageAsync(Guid sessionId,
         Guid rollbackAnchorTurnId, string profileId, string userMessage, string workspaceId,
         IReadOnlyList<AgentAttachmentUploadRequest> attachments, Guid userTurnId,
         CancellationToken cancellationToken)
-        => (await InvokeAsync(AgentRuntimeOperations.Runs, new AgentRunCommand(AgentRunCommandKind.RollbackAndStart,
-            sessionId, profileId, userMessage, workspaceId, attachments, rollbackAnchorTurnId,
-            UserTurnId: userTurnId), cancellationToken).ConfigureAwait(false)).Checkpoint
+        => (await InvokeRunWithAttachmentsAsync(new AgentRunCommand(
+            AgentRunCommandKind.RollbackAndStart,
+            sessionId,
+            profileId,
+            userMessage,
+            workspaceId,
+            RollbackAnchorTurnId: rollbackAnchorTurnId,
+            UserTurnId: userTurnId), attachments, cancellationToken).ConfigureAwait(false)).Checkpoint
            ?? throw new InvalidOperationException("Runtime did not start the run.");
     public async Task<AgentRunCommandStatus> GetRunCommandStatusAsync(
         Guid sessionId,
@@ -475,16 +493,6 @@ internal sealed partial class AgentAppRuntimeGateway :
         => (await InvokeAsync(AgentRuntimeOperations.Runs, new AgentRunCommand(
             AgentRunCommandKind.DenyPermission, sessionId, PermissionRequestId: requestId), cancellationToken)
             .ConfigureAwait(false)).Checkpoint;
-
-    public Task<AgentAttachmentUploadRequest> LoadUploadRequestFromFileAsync(
-        string path, CancellationToken cancellationToken = default)
-        => AgentAttachmentService.LoadLocalUploadRequestFromFileAsync(path, cancellationToken);
-    public AgentAttachmentInfo InspectUpload(AgentAttachmentUploadRequest upload)
-        => AgentAttachmentService.InspectUploadContent(upload);
-    public async Task<byte[]> ReadAttachmentBytesAsync(
-        AgentAttachmentMetadata metadata, CancellationToken cancellationToken = default)
-        => (await InvokeAsync(AgentRuntimeOperations.Attachments,
-            new AgentAttachmentReadRequest(metadata), cancellationToken).ConfigureAwait(false)).Content;
 
     public async Task<AgentTranscriptPage> LoadTranscriptPageAsync(
         AgentTranscriptPageRequest request,
@@ -768,7 +776,6 @@ internal sealed partial class AgentAppRuntimeGateway :
         SetConnectionState(AgentRuntimeConnectionState.Disposed);
     }
 }
-
 internal sealed class AgentRuntimeTransport(IPackageRuntimeClient client)
 {
     private readonly IPackageRuntimeClient _client = client;

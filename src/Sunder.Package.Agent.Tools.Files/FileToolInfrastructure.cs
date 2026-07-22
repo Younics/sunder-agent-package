@@ -30,9 +30,9 @@ internal static class FileToolResult
 
 internal static class FileSystemPromptBuilder
 {
-    public static async ValueTask<IReadOnlyList<AgentSystemPromptBlock>> BuildAsync(
+    public static async ValueTask<AgentPromptContextContribution?> BuildAsync(
         IAgentExecutionTarget? target,
-        AgentSystemPromptRequest request,
+        AgentPromptContextRequest request,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -41,15 +41,15 @@ internal static class FileSystemPromptBuilder
             || request.ExecutionBinding is null
             || target is not IAgentExecutionScopeProvider scopeProvider)
         {
-            return [];
+            return null;
         }
 
         var scope = await scopeProvider.GetExecutionScopeAsync(
-            new AgentExecutionTargetContext(request.Session.SessionId, request.Profile.ProfileId, request.Workspace, request.ExecutionBinding),
+            new AgentExecutionTargetContext(request.Session.SessionId, request.Profile?.ProfileId, request.Workspace, request.ExecutionBinding),
             cancellationToken);
         if (scope.WorkspacePaths.Count == 0)
         {
-            return [];
+            return null;
         }
 
         var content = new StringBuilder();
@@ -76,15 +76,15 @@ internal static class FileSystemPromptBuilder
         content.AppendLine()
             .AppendLine("Use these exact workspace paths when an absolute path is needed. Prefer relative paths from the default working directory when possible. Do not invent paths from other user profiles or machines. Paths outside the configured workspace paths require permission.");
 
-        return
+        return new AgentPromptContextContribution(
         [
-            new AgentSystemPromptBlock(
-                "workspace-file-scope",
+            new AgentPromptContextBlock(
                 "Workspace File Scope",
                 content.ToString().Trim(),
                 Priority: 90,
-                Required: true,
-                SourceId: FileToolDescriptorRegistry.SourceId)
-        ];
+                SourceId: FileToolDescriptorRegistry.SourceId,
+                Provenance: AgentContextProvenance.Extension,
+                Trust: AgentContextTrust.Untrusted)
+        ]);
     }
 }

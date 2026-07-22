@@ -15,27 +15,15 @@ public sealed record BuilderInitializationResult(
 
 public sealed record BuilderProjectOperationResult(BuilderProjectRecord Project, string RuntimeLog);
 
-public sealed record BuilderProjectLoadResult(
-    BuilderProjectRecord Project,
-    PackageDevelopmentSessionStatus? Status,
-    string? Message);
-
 public sealed class BuilderProjectApplicationService(
     BuilderSetupService setupService,
     BuilderWorkspaceExecutionService executionService,
     IBuilderProjectStore projectStore,
-    BuilderPathService pathService,
-    IPackageDevelopmentSessionControl? developmentSessions = null)
+    BuilderPathService pathService)
 {
-    private static readonly PackageDevelopmentSessionAvailability MissingDevelopmentSessions = new(
-        false,
-        "This host does not provide development package session control. Build and publish remain available, but Load and Live reload are disabled.");
-
-    public PackageDevelopmentSessionAvailability DevelopmentSessionAvailability
-        => developmentSessions?.Availability ?? MissingDevelopmentSessions;
-
-    public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces()
-        => executionService.ListWorkspaces();
+    public Task<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+        CancellationToken cancellationToken = default)
+        => executionService.ListWorkspacesAsync(cancellationToken);
 
     public Task<IReadOnlyList<BuilderProjectRecord>> LoadProjectsAsync(CancellationToken cancellationToken = default)
         => projectStore.LoadAsync(cancellationToken);
@@ -108,15 +96,6 @@ public sealed class BuilderProjectApplicationService(
             return Invalid("Selected workspace path was not found.");
         }
 
-        try
-        {
-            project = pathService.NormalizeProject(project);
-        }
-        catch (Exception ex)
-        {
-            return Invalid(ex.Message);
-        }
-
         if (!requireInitializedPaths)
         {
             return new BuilderProjectValidationResult(project, null);
@@ -134,10 +113,10 @@ public sealed class BuilderProjectApplicationService(
 
         try
         {
-            project = pathService.NormalizeProject(project with
+            project = project with
             {
                 ProjectFolder = pathService.ResolveContainedHostPath(project.ProjectFolder, workspacePath.HostPath),
-            });
+            };
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
         {
@@ -195,12 +174,12 @@ public sealed class BuilderProjectApplicationService(
                 : result.CombinedOutput);
         }
 
-        var initialized = pathService.NormalizeProject(project with
+        var initialized = project with
         {
             ExecutionProjectFolder = executionProjectFolder,
             ProjectFolder = hostProjectFolder,
             UpdatedAtUtc = DateTimeOffset.UtcNow,
-        });
+        };
         return new BuilderInitializationResult(initialized, prerequisites);
     }
 
@@ -223,7 +202,7 @@ public sealed class BuilderProjectApplicationService(
                 string.IsNullOrWhiteSpace(result.CombinedOutput) ? "dotnet build failed." : result.CombinedOutput);
         }
 
-        var updated = pathService.NormalizeProject(project with { UpdatedAtUtc = DateTimeOffset.UtcNow });
+        var updated = project with { UpdatedAtUtc = DateTimeOffset.UtcNow };
         return new BuilderProjectOperationResult(updated, string.Empty);
     }
 
@@ -251,51 +230,6 @@ public sealed class BuilderProjectApplicationService(
             project with { UpdatedAtUtc = DateTimeOffset.UtcNow },
             string.IsNullOrWhiteSpace(result.CombinedOutput) ? "Publish completed." : result.CombinedOutput);
     }
-
-    public async Task<BuilderProjectLoadResult> LoadProjectAsync(
-        BuilderProjectRecord project,
-        CancellationToken cancellationToken = default)
-    {
-        project = pathService.NormalizeProject(project);
-        if (string.IsNullOrWhiteSpace(project.DevPackageFolder) || !Directory.Exists(project.DevPackageFolder))
-        {
-            return new BuilderProjectLoadResult(
-                project,
-                null,
-                "Build the project before loading; the sunder-dev folder does not exist.");
-        }
-
-        if (developmentSessions is null || !developmentSessions.Availability.IsAvailable)
-        {
-            return new BuilderProjectLoadResult(project, null, DevelopmentSessionAvailability.UnavailableReason);
-        }
-
-        var operation = await developmentSessions.LoadDevelopmentPackageAsync(
-            new PackageDevelopmentSessionLoadRequest(project.DevPackageFolder, project.Watch),
-            cancellationToken);
-        if (!operation.IsSuccess || operation.Status is null)
-        {
-            return new BuilderProjectLoadResult(project, operation.Status, operation.Message);
-        }
-
-        var status = operation.Status;
-        return new BuilderProjectLoadResult(
-            project with { PackageId = status.PackageId, UpdatedAtUtc = DateTimeOffset.UtcNow },
-            status,
-            null);
-    }
-
-    public Task<PackageDevelopmentSessionOperationResult> UnloadProjectAsync(string packageId, CancellationToken cancellationToken = default)
-        => developmentSessions is null
-            ? Task.FromResult(new PackageDevelopmentSessionOperationResult(
-                PackageDevelopmentSessionOperationOutcome.Unsupported,
-                MissingDevelopmentSessions.UnavailableReason!))
-            : developmentSessions.UnloadDevelopmentPackageAsync(packageId, cancellationToken);
-
-    public Task<PackageDevelopmentSessionStatus?> GetProjectStatusAsync(string packageId, CancellationToken cancellationToken = default)
-        => developmentSessions is null || !developmentSessions.Availability.IsAvailable
-            ? Task.FromResult<PackageDevelopmentSessionStatus?>(null)
-            : developmentSessions.GetDevelopmentPackageStatusAsync(packageId, cancellationToken);
 
     public async Task<IReadOnlyList<BuilderPrerequisiteStatus>> EnsurePrerequisitesInstalledAsync(
         string workspaceId,

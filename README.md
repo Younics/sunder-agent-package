@@ -5,6 +5,7 @@
   <p>Agents, providers, tools, execution targets, memory, MCP, skills, and subagents for the Sunder desktop platform.</p>
   <p>
     <a href="https://github.com/Younics/sunder-core"><strong>Sunder Core</strong></a> &middot;
+    <a href="docs/README.md"><strong>Documentation</strong></a> &middot;
     <a href="#package-family"><strong>Package Family</strong></a> &middot;
     <a href="#recommended-starting-sets"><strong>Starting Sets</strong></a> &middot;
     <a href="#build-from-source"><strong>Build</strong></a>
@@ -46,6 +47,10 @@ sunder install sunder.package.agent.tools.files
 
 For local development, build package archives from source or load generated `sunder-dev` folders into Sunder App.
 
+## Documentation
+
+Extension authors should start with the **[Agent Extension Author Guide](docs/README.md)**. It includes the [quickstart](docs/extension-quickstart.md), the complete [extension-point catalog](docs/extension-points.md), capability-specific guides, testing guidance, and compatibility/troubleshooting policy. A compiled minimal extension is available under [`samples/Sunder.Agent.Extension.Minimal`](samples/Sunder.Agent.Extension.Minimal/README.md).
+
 ## Package Family
 
 | Package | Identifier | Role |
@@ -65,7 +70,7 @@ For local development, build package archives from source or load generated `sun
 | Semantic Memory | `sunder.package.agent.memory.semantic` | Semantic memory indexing, recall, and prompt context |
 | Skills | `sunder.package.agent.skills` | Reusable skill support for profiles and runs |
 | Subagents | `sunder.package.agent.subagents` | Child agent sessions, subagent profiles, and run coordination |
-| Builder | `sunder.package.agent.builder` | Package creation/build/publish plus optional host-provided development session controls |
+| Builder | `sunder.package.agent.builder` | Package project creation, prerequisite setup, build, and publish |
 
 ## Recommended Starting Sets
 
@@ -77,7 +82,7 @@ For local development, build package archives from source or load generated `sun
 | Local model setup | Agent, LM Studio provider, local execution |
 | Extensible agent workspace | Agent, MCP, skills, subagents, provider of choice |
 
-Local execution runs commands and file operations with the current host user's privileges. It is a trusted host-user execution target, not an operating-system sandbox. Workspace bindings, canonical path checks, and tool permission contracts constrain requested paths, but they do not isolate a malicious process from the host; use the Docker execution target when isolation is required.
+Local execution runs commands and file operations with the current host user's privileges. It is a trusted host-user execution target, not an operating-system sandbox. Workspace bindings, canonical path checks, and tool permission contracts constrain requested paths, but they do not isolate a malicious process from the host. Docker execution adds a container boundary, drops Linux capabilities, enables no-new-privileges, bounds CPU/memory/PIDs, and disables networking by default. It is still not a complete security sandbox: configured workspace paths are writable bind mounts, container images are trusted code, and access to the Docker daemon remains security-sensitive.
 
 ## How It Fits Together
 
@@ -97,7 +102,7 @@ Extension packages use `Sunder.Package.Agent.Contracts` to register capabilities
 
 Extension ownership is mandatory. Stack exporters use owned catalog contributions to include provider, execution-target, behavior-loop, skill, and subagent package dependencies; an ownerless catalog result is rejected by the SDK.
 
-Builder always supports project creation, build, and publish. Load, auto-load, and Live reload require an available `IPackageDevelopmentSessionControl`; when the App/Runtime topology cannot share a development output path, those controls remain disabled and Builder displays the host-provided reason.
+Builder supports project creation, prerequisite setup, build, and publish. Runtime package activation and reload remain host-owned operations outside Builder.
 
 Core session continuity is owned by `sunder.package.agent`: the default behavior loop projects long transcripts into the provider prompt, stores session context checkpoints for omitted turns, and preserves active tool call/result pairs. Semantic memory remains durable, recallable knowledge and should not own active working summaries.
 
@@ -117,7 +122,7 @@ Browser callbacks are host-owned; packages never bind callback ports. OpenAI Cod
 
 ## 1.x Compatibility Policy
 
-Version `1.1.0` is an intentional clean break from the unused public `1.0.0` line. Every Agent package and `Sunder.Package.Agent.Contracts` ships at `1.1.0`; extension package dependencies require `>=1.1.0 <1.2.0`. Rebuild the complete family together. There are no 1.0 compatibility shims, and the Runtime rejects mixed SDK/package baselines before assembly load. The new immutable contract ledger is `src/Sunder.Package.Agent.Contracts/PublicAPI.Shipped.txt`.
+Version `1.1.0` is an intentional clean break from the unused public `1.0.0` line. Every Agent package and `Sunder.Package.Agent.Contracts` ships at one family version; Sunder NuGet references use `[1.1.0,1.2.0)` and extension runtime dependencies use `>=1.1.0 <1.2.0`. Rebuild and release the complete family together. There are no 1.0 compatibility shims, and the Runtime rejects mixed SDK/package baselines before assembly load. The immutable contract ledger is `src/Sunder.Package.Agent.Contracts/PublicAPI.Shipped.txt`.
 
 Agent data upgrades are forward-only through one ordered SQLite migration ledger. Each applied migration records its number, immutable name, and SHA-256 checksum in the same transaction as its schema change. Startup refuses unknown, newer, renamed, or checksum-mismatched entries. If validation fails, back up `agent/agent.db` and use an Agent build that recognizes the ledger; do not edit or delete ledger rows.
 
@@ -137,6 +142,8 @@ Package projects support two development modes:
 | Inside the private `sunder` workspace | Local source references to `repos/sunder-core` |
 | Standalone public clone | NuGet references to `Sunder.Sdk` and `Sunder.Package.Build` |
 
+GitHub CI resolves `Younics/sunder-core` `main` once at the start of each run and reuses that full commit SHA for every Core checkout in the run. Land coordinated Core changes on `main` before expecting Agent CI or releases to consume them; see [`docs/RELEASES.md`](docs/RELEASES.md).
+
 ## Tests
 
 ```powershell
@@ -146,16 +153,9 @@ dotnet test tests/Sunder.Package.Agent.Provider.OpenAI.Tests/Sunder.Package.Agen
 
 ## Release Tags
 
-Package releases are tag-driven. Examples:
+`agent/vX.Y.Z` releases `Sunder.Package.Agent.Contracts` and all 15 runtime packages as one family. The workflow builds once from one Agent commit and one Core `main` commit resolved at workflow start, validates the exact artifacts through Package Format, Runtime lifecycle, and App snapshot activation, publishes immutable versions without moving Registry tags, verifies downloaded bytes, and only then promotes `latest` for stable releases or `preview` for prereleases.
 
-| Tag | Package |
-| --- | --- |
-| `agent/v1.1.0` | `sunder.package.agent` |
-| `agent-provider-openai/v1.1.0` | `sunder.package.agent.provider.openai` |
-| `agent-tools-files/v1.1.0` | `sunder.package.agent.tools.files` |
-| `agent-execution-local/v1.1.0` | `sunder.package.agent.execution.local` |
-
-The release workflow builds, tests, packs a `.sunderpkg`, and uploads it to the GitHub release.
+Stable releases require `PublicAPI.Unshipped.txt` to contain no API entries. The initial baseline deliberately rejects `agent/v1.1.0-*`; use stable `agent/v1.1.0` first. Full operator steps and required repository configuration are in [`docs/RELEASES.md`](docs/RELEASES.md).
 
 ## Related Projects
 

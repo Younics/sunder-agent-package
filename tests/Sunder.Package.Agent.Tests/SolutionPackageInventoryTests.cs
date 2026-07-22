@@ -94,6 +94,8 @@ public sealed class SolutionPackageInventoryTests
         var repositoryRoot = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
         var workflowPath = Path.Combine(repositoryRoot, ".github", "workflows", "sunder-package-release.yml");
         var workflow = File.ReadAllText(workflowPath);
+        var nugetVerifier = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-nuget-package.sh"));
+        var familyPromoter = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "promote-family-dist-tag.sh"));
         var expected = AgentPackageRepositoryInventory.GetRuntimePackageProjects().ToDictionary(
             static package => GetReleaseKey(package.Name),
             package => NormalizeRepositoryPath(package.ProjectPath),
@@ -106,8 +108,19 @@ public sealed class SolutionPackageInventoryTests
                 static package => package.GetProperty("projectPath").GetString()!,
                 StringComparer.Ordinal);
 
-        Assert.Contains("- \"agent*/v*\"", workflow, StringComparison.Ordinal);
-        Assert.Contains("select(.key == $key and .artifactType == \"sunderpkg\")", workflow, StringComparison.Ordinal);
+        Assert.Contains("- \"agent/v*\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("map(select(.artifactType == \"sunderpkg\")) | sort_by(.key)[]", workflow, StringComparison.Ordinal);
+        Assert.Contains("dotnet nuget push \"$contracts_path\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("--skip-duplicate", workflow, StringComparison.Ordinal);
+        Assert.Contains("group: sunder-agent-family-dist-tag-promotion", workflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/release/verify-nuget-package.sh \"$contracts_path\" \"$remote\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/release/promote-family-dist-tag.sh", workflow, StringComparison.Ordinal);
+        Assert.Contains("-e 's/\\[/[[]/g'", nugetVerifier, StringComparison.Ordinal);
+        Assert.Contains("if ! entry_hash=", nugetVerifier, StringComparison.Ordinal);
+        Assert.Contains("rollback_changed_tags", familyPromoter, StringComparison.Ordinal);
+        Assert.Contains("Refusing to regress", familyPromoter, StringComparison.Ordinal);
+        Assert.Contains("existing_published_release=true", workflow, StringComparison.Ordinal);
+        Assert.Contains("Published release asset '$name' differs from this verified build.", workflow, StringComparison.Ordinal);
         Assert.Equal(expected.Count, releaseProjects.Count);
         foreach (var (releaseKey, projectPath) in expected)
         {

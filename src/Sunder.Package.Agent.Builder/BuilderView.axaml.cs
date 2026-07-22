@@ -162,30 +162,6 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
         }
     }
 
-    private async void OnLoadProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (DataContext is BuilderViewModel viewModel)
-        {
-            await viewModel.LoadSelectedProjectAsync();
-        }
-    }
-
-    private async void OnUnloadProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (DataContext is BuilderViewModel viewModel)
-        {
-            await viewModel.UnloadSelectedProjectAsync();
-        }
-    }
-
-    private async void OnRefreshProjectStatusClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (DataContext is BuilderViewModel viewModel)
-        {
-            await viewModel.RefreshSelectedStatusAsync();
-        }
-    }
-
     private void OnBackToProjectListClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         (DataContext as BuilderViewModel)?.BackToProjectList();

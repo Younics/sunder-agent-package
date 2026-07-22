@@ -100,7 +100,6 @@ public sealed class ExecutionPackageRoleBoundaryTests
 
         Assert.Contains(operationId, registry.OperationIds);
         Assert.Contains(PackageExtensionPoints.ExecutionTargets.Id, registry.ExtensionPointIds);
-        Assert.Contains(PackageExtensionPoints.WorkspaceBindingContributors.Id, registry.ExtensionPointIds);
         Assert.Contains(PackageExtensionPoints.WorkspacePathMigrationContributors.Id, registry.ExtensionPointIds);
         Assert.Contains(PackageExtensionPoints.WorkspaceEditorContributors.Id, registry.ExtensionPointIds);
     }
@@ -161,7 +160,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         Assert.Equal(DockerExecutionSettingsViewModel.ImagePullGroupKey, request.GroupKey);
         Assert.Equal(BackgroundProcessIndicator.Settings, request.Indicator);
         Assert.Equal(BackgroundProcessConcurrencyMode.SequentialWithinGroup, request.ConcurrencyMode);
-        Assert.Equal("agent0ai/agent-zero:latest", request.Metadata?[DockerExecutionSettingsViewModel.ImageReferenceMetadataKey]);
+        Assert.Equal("agent0ai/agent-zero:1.0", request.Metadata?[DockerExecutionSettingsViewModel.ImageReferenceMetadataKey]);
         Assert.Equal(DockerImageStatus.Pulling, viewModel.SelectedImage?.Status);
         Assert.False(viewModel.PullSelectedImageCommand.CanExecute(null));
     }
@@ -194,7 +193,8 @@ public sealed class ExecutionPackageRoleBoundaryTests
         public void RegisterRuntimeStream<TRequest, TEvent>(
             PackageRuntimeStream<TRequest, TEvent> stream,
             IPackageRuntimeStreamHandler<TRequest, TEvent> handler)
-            where TRequest : class where TEvent : class { }
+            where TRequest : class where TEvent : class
+        { }
     }
 
     private sealed class NoopBackgroundProcessQueue : IBackgroundProcessQueue
@@ -221,7 +221,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
             var response = new DockerExecutionOperationResponse(
                 "300",
                 string.Empty,
-                [new DockerImageDefinition("agent0ai/agent-zero:latest", DockerImageStatus.NotPulled, null, null)]);
+                [new DockerImageDefinition("agent0ai/agent-zero:1.0", DockerImageStatus.NotPulled, null, null)]);
             return ValueTask.FromResult((TResponse)(object)response);
         }
 

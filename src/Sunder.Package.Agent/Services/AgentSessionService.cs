@@ -390,6 +390,20 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
     internal bool CompleteParentContinuationWork(string workId, bool failed, string? error)
         => _store.CompleteParentContinuationWork(workId, failed, error);
 
+    internal bool RecordParentContinuationRetryPending(string workId, string error)
+        => _store.RecordParentContinuationRetryPending(workId, error);
+
+    internal AgentRunBudgetState ChargeRunBudget(
+        AgentDurableRunLease lease,
+        AgentRunBudgetCharge charge)
+    {
+        lock (lease.SyncRoot)
+        {
+            return _store.ChargeRunBudget(lease.Key, lease.Epoch, charge)
+                   ?? throw new AgentRunTranscriptWriteRejectedException();
+        }
+    }
+
     public void ReportRunActivity(Guid sessionId, long runRevision, AgentRunActivityKind kind, string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -645,13 +659,6 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
 
     internal AgentDurableRunRecord ReserveRun(Guid sessionId, string profileId, string userMessage)
         => _store.ReserveRun(sessionId, profileId, userMessage);
-
-    public AgentWorkingSummaryRecord? SaveWorkingSummary(Guid sessionId, string? summaryText)
-    {
-        var summary = _store.SaveWorkingSummary(sessionId, summaryText);
-        NotifySessionChanged(sessionId);
-        return summary;
-    }
 
     public AgentSessionContextCheckpointRecord SaveSessionContextCheckpoint(
         Guid sessionId,

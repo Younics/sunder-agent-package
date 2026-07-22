@@ -125,7 +125,7 @@ internal static class FileSearchHandler
 
     private static FileProcessCommand BuildGrepFallbackCommand(FileGrepArgs args, string path)
         => string.IsNullOrWhiteSpace(args.Include)
-            ? new FileProcessCommand("grep", ["-E", "-RIn", "--", args.Pattern, path])
+            ? new FileProcessCommand("grep", ["-E", "-rIn", "--", args.Pattern, path])
             : new FileProcessCommand("find", [path, "-type", "f", "-name", args.Include, "-exec", "grep", "-E", "-In", "--", args.Pattern, "{}", "+"]);
 
     private static FileProcessCommand BuildGlobFallbackCommand(FileGlobArgs args, string path)

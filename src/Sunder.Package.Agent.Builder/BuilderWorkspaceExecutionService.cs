@@ -1,44 +1,93 @@
 using System.Text;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Builder;
 
-public sealed record BuilderProcessResult(int ExitCode, string StandardOutput, string StandardError)
+public sealed record BuilderProcessResult(
+    int ExitCode,
+    string StandardOutput,
+    string StandardError,
+    bool WasTruncated = false)
 {
     public string CombinedOutput => (StandardOutput + Environment.NewLine + StandardError).Trim();
 }
 
-public sealed class BuilderWorkspaceExecutionService(IPackageExtensionCatalog extensionCatalog)
+public sealed class BuilderWorkspaceExecutionService
 {
-    public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces()
-        => ResolveResolver()?.ListWorkspaces() ?? [];
+    private readonly IBuilderRuntimeGateway _runtime;
+
+    public BuilderWorkspaceExecutionService(IPackageRuntimeClient runtimeClient)
+        : this(new BuilderAppRuntimeGateway(runtimeClient))
+    {
+    }
+
+    public BuilderWorkspaceExecutionService(IAgentWorkspaceExecutionResolver resolver)
+        : this(new BuilderLocalRuntimeGateway(resolver))
+    {
+    }
+
+    public BuilderWorkspaceExecutionService()
+        : this(EmptyBuilderRuntimeGateway.Instance)
+    {
+    }
+
+    private BuilderWorkspaceExecutionService(IBuilderRuntimeGateway runtime)
+    {
+        _runtime = runtime;
+    }
+
+    public async Task<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var invocation = Task.Run(
+            () => _runtime.InvokeAsync(
+                new BuilderRuntimeRequest(BuilderRuntimeOperationKind.ListWorkspaces),
+                cancellationToken).AsTask(),
+            CancellationToken.None);
+        var response = await invocation.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return response.Workspaces ?? [];
+    }
 
     public async ValueTask<BuilderWorkspaceExecution> ResolveAsync(
         string workspaceId,
         CancellationToken cancellationToken = default)
     {
-        var resolver = ResolveResolver()
-            ?? throw new InvalidOperationException("Agent workspace execution service is unavailable.");
-        var resolution = await resolver.ResolveAsync(workspaceId, cancellationToken);
+        var resolution = (await _runtime.InvokeAsync(new BuilderRuntimeRequest(
+                BuilderRuntimeOperationKind.ResolveWorkspace,
+                workspaceId), cancellationToken).ConfigureAwait(false)).Execution
+            ?? throw new InvalidDataException("Runtime did not return workspace execution details.");
         var context = new AgentExecutionTargetContext(null, null, resolution.Workspace, resolution.Binding);
-        var shell = await resolution.ExecutionTarget.GetShellAsync(context, cancellationToken);
+        var proxy = new BuilderRuntimeExecutionTargetProxy(_runtime, resolution);
         return new BuilderWorkspaceExecution(
             resolution.Workspace,
             resolution.Binding,
             resolution.Target,
             resolution.Scope,
-            resolution.ExecutionTarget,
+            proxy,
             context,
-            shell,
-            resolution.ExecutionTarget as IAgentExecutionPathMapper,
-            resolution.ExecutionTarget as IAgentExecutionPathEnvironment);
+            resolution.Shell,
+            resolution.SupportsPathMapping ? proxy : null,
+            resolution.SupportsPathEnvironment ? proxy : null);
     }
+}
 
-    private IAgentWorkspaceExecutionResolver? ResolveResolver()
-        => extensionCatalog.GetExtensions(PackageExtensionPoints.WorkspaceExecutionResolvers).FirstOrDefault();
+internal sealed class EmptyBuilderRuntimeGateway : IBuilderRuntimeGateway
+{
+    internal static EmptyBuilderRuntimeGateway Instance { get; } = new();
+
+    public ValueTask<BuilderRuntimeResponse> InvokeAsync(
+        BuilderRuntimeRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return request.Kind == BuilderRuntimeOperationKind.ListWorkspaces
+            ? ValueTask.FromResult(new BuilderRuntimeResponse(Workspaces: []))
+            : ValueTask.FromException<BuilderRuntimeResponse>(
+                new InvalidOperationException("Agent workspace execution service is unavailable."));
+    }
 }
 
 public sealed record BuilderWorkspaceExecution(
@@ -74,7 +123,7 @@ public sealed record BuilderWorkspaceExecution(
                 Context,
                 new AgentShellCommandRequest(BuildCommand(fileName, arguments), workingDirectory, timeoutSeconds),
                 cancellationToken);
-        return new BuilderProcessResult(result.ExitCode, result.Output, string.Empty);
+        return new BuilderProcessResult(result.ExitCode, result.Output, string.Empty, result.WasTruncated);
     }
 
     public async ValueTask<BuilderProcessResult> RunShellAsync(
@@ -87,7 +136,7 @@ public sealed record BuilderWorkspaceExecution(
             Context,
             new AgentShellCommandRequest(command, workingDirectory, timeoutSeconds),
             cancellationToken);
-        return new BuilderProcessResult(result.ExitCode, result.Output, string.Empty);
+        return new BuilderProcessResult(result.ExitCode, result.Output, string.Empty, result.WasTruncated);
     }
 
     public async ValueTask<AgentExecutionPathMapping> MapToHostPathAsync(

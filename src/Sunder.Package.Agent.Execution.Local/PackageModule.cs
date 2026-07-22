@@ -21,7 +21,6 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterSettingsSchema(LocalExecutionConfiguration.Schema);
         var target = services.GetRequiredService<LocalExecutionTarget>();
         registry.RegisterExtension(PackageExtensionPoints.ExecutionTargets, target);
-        registry.RegisterExtension(PackageExtensionPoints.WorkspaceBindingContributors, target);
         registry.RegisterExtension(PackageExtensionPoints.WorkspacePathMigrationContributors, services.GetRequiredService<LocalExecutionWorkspaceConfigService>());
         registry.RegisterExtension(PackageExtensionPoints.WorkspaceEditorContributors, services.GetRequiredService<LocalExecutionWorkspaceEditorContributor>());
         registry.RegisterRuntimeOperation(LocalExecutionRuntimeOperations.Execute, services.GetRequiredService<LocalExecutionRuntimeOperationHandler>());

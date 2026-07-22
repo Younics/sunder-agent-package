@@ -15,10 +15,11 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
     private readonly AgentProviderCycleRunner _providerCycleRunner;
     private readonly AgentToolCycleCoordinator _toolCycleCoordinator;
     private readonly AgentLoopTerminalHandler _terminalHandler;
+    private readonly AgentRunBudgetLimits _budgetLimits;
 
     public DefaultAgentBehaviorLoop(
         AgentSystemPromptComposer promptComposer,
-        IAgentAttachmentContentStore? attachmentStore = null,
+        AgentAttachmentService? attachmentStore = null,
         AgentSessionContextProjectionService? sessionContextProjectionService = null)
     {
         _terminalHandler = new AgentLoopTerminalHandler();
@@ -29,18 +30,21 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
             sessionContextProjectionService);
         _providerCycleRunner = new AgentProviderCycleRunner(streamingTurnWriter);
         _toolCycleCoordinator = new AgentToolCycleCoordinator(_terminalHandler);
+        _budgetLimits = AgentRunBudgetLimits.Default;
     }
 
     internal DefaultAgentBehaviorLoop(
         AgentPromptPreparationPipeline promptPreparationPipeline,
         AgentProviderCycleRunner providerCycleRunner,
         AgentToolCycleCoordinator toolCycleCoordinator,
-        AgentLoopTerminalHandler terminalHandler)
+        AgentLoopTerminalHandler terminalHandler,
+        AgentRunBudgetLimits? budgetLimits = null)
     {
         _promptPreparationPipeline = promptPreparationPipeline;
         _providerCycleRunner = providerCycleRunner;
         _toolCycleCoordinator = toolCycleCoordinator;
         _terminalHandler = terminalHandler;
+        _budgetLimits = budgetLimits ?? AgentRunBudgetLimits.Default;
     }
 
     public AgentBehaviorLoopDescriptor Descriptor { get; } = new(
@@ -63,18 +67,39 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
                 ["behavior.loop_id"] = Descriptor.LoopId,
             });
         var assistantTurnState = new AgentAssistantTurnState();
+        var budgetRuntime = host as IAgentRunBudgetRuntime;
+        Func<AgentRunBudgetCharge, AgentRunBudgetState>? durableCharge = budgetRuntime is null
+            ? null
+            : budgetRuntime.ChargeRunBudget;
+        var budgetTracker = new AgentRunBudgetTracker(
+            _budgetLimits,
+            budgetRuntime?.GetRunBudgetState() ?? default,
+            durableCharge);
+        var remainingWallClock = budgetTracker.GetRemainingWallClock(context.RunStartedAtUtc);
+        if (remainingWallClock <= TimeSpan.Zero)
+        {
+            return await FailBudgetAsync(
+                host,
+                assistantTurnState,
+                budgetTracker.CreateWallClockViolation(),
+                loopStopwatch);
+        }
+
+        using var runBudgetCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        runBudgetCancellation.CancelAfter(remainingWallClock);
+        var runCancellationToken = runBudgetCancellation.Token;
 
         try
         {
             var preparation = await _promptPreparationPipeline.PrepareAsync(
                 host,
                 context,
-                cancellationToken);
+                runCancellationToken);
             var providerSession = await _providerCycleRunner.CreateSessionAsync(
                 host,
                 context,
                 preparation,
-                cancellationToken);
+                runCancellationToken);
             var progressGuard = new AgentRunProgressGuard();
 
             while (true)
@@ -82,7 +107,7 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
                 var promptMessages = await _promptPreparationPipeline.BuildProviderMessagesAsync(
                     preparation,
                     context,
-                    cancellationToken);
+                    runCancellationToken);
                 var providerCycle = await _providerCycleRunner.RunCycleAsync(
                     host,
                     context,
@@ -90,7 +115,9 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
                     promptMessages,
                     assistantTurnState,
                     loopStopwatch,
-                    cancellationToken);
+                    runCancellationToken,
+                    budgetTracker,
+                    preparation.PromptOverheadTokens);
 
                 if (providerCycle.TerminalResult is not null)
                 {
@@ -104,7 +131,7 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
                         assistantTurnState,
                         providerCycle.Text,
                         loopStopwatch,
-                        cancellationToken);
+                        runCancellationToken);
                 }
 
                 if (assistantTurnState.Turn is { } toolPreamble)
@@ -119,7 +146,8 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
                     progressGuard,
                     assistantTurnState,
                     loopStopwatch,
-                    cancellationToken);
+                    runCancellationToken,
+                    budgetTracker);
                 if (!toolCycle.ShouldContinue)
                 {
                     return toolCycle.TerminalResult!;
@@ -130,7 +158,7 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
                     host,
                     context,
                     preparation,
-                    cancellationToken);
+                    runCancellationToken);
                 providerSession.Options.Instructions = preparation.SystemInstructions;
             }
         }
@@ -144,6 +172,24 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
             return new AgentBehaviorLoopResult(
                 context.RunningCheckpoint,
                 AgentBehaviorLoopCompletionKind.Interrupted);
+        }
+        catch (AgentRunBudgetExceededException ex)
+        {
+            return await FailBudgetAsync(
+                host,
+                assistantTurnState,
+                ex.Violation,
+                loopStopwatch);
+        }
+        catch (OperationCanceledException) when (
+            !cancellationToken.IsCancellationRequested
+            && runBudgetCancellation.IsCancellationRequested)
+        {
+            return await FailBudgetAsync(
+                host,
+                assistantTurnState,
+                budgetTracker.CreateWallClockViolation(),
+                loopStopwatch);
         }
         catch (OperationCanceledException ex)
         {
@@ -210,5 +256,31 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
                 ex,
                 loopStopwatch.ElapsedMilliseconds);
         }
+    }
+
+    private async Task<AgentBehaviorLoopResult> FailBudgetAsync(
+        IAgentBehaviorLoopRuntime host,
+        AgentAssistantTurnState assistantTurnState,
+        AgentRunBudgetViolation violation,
+        Stopwatch loopStopwatch)
+    {
+        var result = await _terminalHandler.FailAsync(
+            host,
+            assistantTurnState,
+            $"### Agent run budget exhausted\n\n{violation.VisibleMessage}",
+            violation.Summary,
+            CancellationToken.None);
+        host.LogEvent(
+            PackageLogLevel.Warning,
+            "behavior.loop.budget_exhausted",
+            violation.Summary,
+            loopStopwatch.ElapsedMilliseconds,
+            new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["budget.kind"] = violation.Kind.ToString(),
+                ["budget.consumed"] = violation.Consumed,
+                ["budget.limit"] = violation.Limit,
+            });
+        return result;
     }
 }

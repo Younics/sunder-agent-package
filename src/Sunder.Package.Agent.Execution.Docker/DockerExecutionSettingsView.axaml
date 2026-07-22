@@ -12,14 +12,14 @@
             <TextBlock Classes="section-title"
                        Text="Docker Images" />
             <TextBlock Classes="caption"
-                       Text="Manage Docker images that workspaces can use. Add an image, pull it here, then select it from a workspace's Docker image list."
+                       Text="Manage images pinned by explicit version tag or sha256 digest. Floating or implicit latest tags are rejected. Containers use bounded resources and no network by default, but writable bind mounts mean Docker execution is not a complete security sandbox."
                        TextWrapping="Wrap" />
           </StackPanel>
 
           <Grid ColumnDefinitions="*,Auto"
                 ColumnSpacing="10">
             <TextBox Text="{Binding NewImageReference, Mode=TwoWay}"
-                     PlaceholderText="agent0ai/agent-zero:latest" />
+                     PlaceholderText="repository/image:1.2.3 or repository/image@sha256:..." />
             <Button Grid.Column="1"
                     Classes="secondary-action"
                     Content="Add Image"

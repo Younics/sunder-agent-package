@@ -171,7 +171,7 @@
             <TextBlock Classes="builder-title"
                        Text="Package Builder Setup" />
             <TextBlock Classes="builder-caption"
-                       Text="Install package development prerequisites before creating, building, or loading Sunder packages." />
+                       Text="Install package development prerequisites before creating, building, or publishing Sunder packages." />
           </StackPanel>
 
           <ItemsControl ItemsSource="{Binding SetupItems}">
@@ -246,7 +246,7 @@
                 <TextBlock Grid.Row="1"
                            Grid.ColumnSpan="2"
                            Classes="builder-caption"
-                           Text="Create, build, and load local Sunder package projects." />
+                           Text="Create, build, and publish local Sunder package projects." />
               </Grid>
             </Border>
 
@@ -292,7 +292,7 @@
                 <TextBlock Classes="builder-title"
                            Text="Package Project" />
                 <TextBlock Classes="builder-caption"
-                           Text="Initialize, build, and load a package without leaving Sunder." />
+                           Text="Initialize, build, and publish a package without leaving Sunder." />
               </StackPanel>
             </Border>
 
@@ -408,53 +408,15 @@
                   </Border>
 
                   <Border Classes="builder-card"
-                          IsVisible="{Binding ShowRuntimeSection}">
+                          IsVisible="{Binding ShowBuildSection}">
                     <StackPanel Spacing="14">
-                      <Grid ColumnDefinitions="*,Auto"
-                            RowDefinitions="Auto,Auto"
-                            ColumnSpacing="12"
-                            RowSpacing="4">
-                        <TextBlock Grid.Column="0"
-                                   Text="Runtime"
+                      <StackPanel Spacing="4">
+                        <TextBlock Text="Build &amp; Publish"
                                    FontWeight="SemiBold"
-                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}"
-                                   VerticalAlignment="Center" />
-                        <Button Grid.Column="1"
-                                Classes="secondary-action compact-action builder-icon-action"
-                                Content="↻"
-                                ToolTip.Tip="Refresh package status"
-                                IsEnabled="{Binding CanUseSelectedProjectRuntimeActions}"
-                                IsVisible="{Binding HasSelectedProject}"
-                                Click="OnRefreshProjectStatusClicked" />
-                        <TextBlock Grid.Row="1"
-                                   Grid.ColumnSpan="2"
-                                   Classes="builder-caption"
-                                   Text="Build output is loaded from the generated sunder-dev folder into this running Sunder session." />
-                      </Grid>
-
-                      <StackPanel Spacing="5">
-                        <TextBlock Classes="builder-field-label"
-                                   Text="sunder-dev folder" />
-                        <TextBox Text="{Binding SelectedProject.DevPackageRelativePath, Mode=TwoWay}"
-                                 PlaceholderText="/bin/Debug/net10.0/sunder-dev" />
+                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+                        <TextBlock Classes="builder-caption"
+                                   Text="Build validates the project and creates local output. Publish creates the distributable package archive." />
                       </StackPanel>
-
-                      <CheckBox IsChecked="{Binding SelectedProject.AutoLoadOnStartup, Mode=TwoWay}"
-                                IsEnabled="{Binding CanUseDevelopmentSessions}">
-                        <TextBlock Text="Auto load on startup"
-                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                      </CheckBox>
-
-                      <CheckBox IsChecked="{Binding SelectedProject.Watch, Mode=TwoWay}"
-                                IsEnabled="{Binding CanUseDevelopmentSessions}">
-                        <TextBlock Text="Live reload"
-                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                      </CheckBox>
-
-                      <TextBlock Classes="builder-field-help"
-                                 IsVisible="{Binding !CanUseDevelopmentSessions}"
-                                 Text="{Binding DevelopmentSessionUnavailableReason}"
-                                 TextWrapping="Wrap" />
 
                       <Border Classes="builder-runtime-log"
                               IsVisible="{Binding HasRuntimeLog}">
@@ -472,7 +434,7 @@
                                 Classes="secondary-action compact-action"
                                 Content="Check setup"
                                 ToolTip.Tip="Check and install package builder prerequisites"
-                                IsEnabled="{Binding CanUseSelectedProjectRuntimeActions}"
+                                IsEnabled="{Binding CanRunSelectedProjectOperations}"
                                 IsVisible="{Binding IsSelectedProjectInitialized}"
                                 Click="OnEnsureSetupClicked" />
                         <StackPanel Grid.Column="2"
@@ -481,12 +443,12 @@
                                     Spacing="8">
                           <Button Classes="secondary-action compact-action"
                                   Content="Build"
-                                  IsEnabled="{Binding CanUseSelectedProjectRuntimeActions}"
+                                  IsEnabled="{Binding CanRunSelectedProjectOperations}"
                                   IsVisible="{Binding IsSelectedProjectInitialized}"
                                   Click="OnBuildProjectClicked" />
                           <Button Classes="secondary-action compact-action"
                                   Content="Publish"
-                                  IsEnabled="{Binding CanUseSelectedProjectRuntimeActions}"
+                                  IsEnabled="{Binding CanRunSelectedProjectOperations}"
                                   IsVisible="{Binding IsSelectedProjectInitialized}"
                                   Click="OnPublishProjectClicked" />
                         </StackPanel>
@@ -535,16 +497,6 @@
                             IsEnabled="{Binding CanInitializeSelectedProject}"
                             IsVisible="{Binding ShowInitializeSelectedProject}"
                             Click="OnInitializeProjectClicked" />
-                    <Button Classes="primary-action"
-                            Content="Load"
-                            IsEnabled="{Binding CanUseDevelopmentSessions}"
-                            IsVisible="{Binding ShowLoadSelectedProject}"
-                            Click="OnLoadProjectClicked" />
-                    <Button Classes="secondary-action compact-action"
-                            Content="Unload"
-                            IsEnabled="{Binding CanUseDevelopmentSessions}"
-                            IsVisible="{Binding ShowUnloadSelectedProject}"
-                            Click="OnUnloadProjectClicked" />
                   </StackPanel>
                 </Grid>
               </Grid>

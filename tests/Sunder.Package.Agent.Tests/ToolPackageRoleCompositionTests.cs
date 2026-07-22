@@ -17,7 +17,7 @@ public sealed class ToolPackageRoleCompositionTests
             [
                 Extension("sunder.package.agent:tool-sources", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
                 Extension("sunder.package.agent:permission-surfaces", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
-                Extension("sunder.package.agent:system-prompt-contributors", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
+                Extension("sunder.package.agent:prompt-context-contributors", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
             ]
         },
         {
@@ -25,6 +25,7 @@ public sealed class ToolPackageRoleCompositionTests
             [
                 Extension("sunder.package.agent:tool-sources", "Sunder.Package.Agent.Tools.Shell.ShellToolSource"),
                 Extension("sunder.package.agent:permission-surfaces", "Sunder.Package.Agent.Tools.Shell.ShellToolSource"),
+                Extension("sunder.package.agent:prompt-context-contributors", "Sunder.Package.Agent.Tools.Shell.ShellToolSource"),
             ]
         },
         {

@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.RegularExpressions;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -24,22 +23,60 @@ public sealed class AgentMemoryCoordinator(
         long runRevision,
         string userMessage,
         DateTimeOffset runStartedAtUtc,
+        AgentWorkspaceRecord? workspace = null,
+        AgentWorkspaceBindingRecord? executionBinding = null,
+        IReadOnlyList<AgentToolDescriptor>? availableTools = null,
         CancellationToken cancellationToken = default)
     {
         var turns = _sessionService.ListRecentTurns(session.SessionId, MaxPromptContextTurns);
         var recentLiveBufferTurns = BuildRecentLiveBufferTurns(turns);
-        var workingSummary = _sessionService.GetWorkingSummary(session.SessionId)?.SummaryText;
+        var workingSummary = _sessionService.GetLatestSessionContextCheckpoint(session.SessionId)?.SummaryText;
         var sessionContext = CreateSessionContext(session, profile, workingSummary);
         var runContext = new AgentRunContextRecord(runId, runRevision, AgentRunStatus.Running, IsInterrupted: false, runStartedAtUtc);
         var turnContext = new AgentTurnContextRecord(sessionContext, runContext, userMessage, workingSummary);
         var recallPlan = BuildRecallPlan(userMessage, workingSummary, recentLiveBufferTurns);
         var promptContextPlan = ToPromptContextPlan(recallPlan);
 
-        var promptContextBlocks = await CollectPromptContextBlocksAsync(
-            new AgentPromptContextRequest(sessionContext, runContext, turnContext, turns, recentLiveBufferTurns, promptContextPlan),
-            cancellationToken);
-        var composedInstructions = ComposeSystemInstructions(profile.Instructions, workingSummary, recallResult: null, promptContextBlocks);
-        return new AgentInstructionContext(composedInstructions, workingSummary, RecallResult: null, recallPlan, promptContextBlocks);
+        var promptContextBlocks = new List<AgentPromptContextBlock>();
+        if (!string.IsNullOrWhiteSpace(profile.Instructions))
+        {
+            promptContextBlocks.Add(new AgentPromptContextBlock(
+                "Profile Instructions",
+                profile.Instructions.Trim(),
+                Priority: 300,
+                SourceId: "sunder.package.agent.profile",
+                Provenance: AgentContextProvenance.User,
+                Trust: AgentContextTrust.UserProvided));
+        }
+
+        if (!string.IsNullOrWhiteSpace(workingSummary))
+        {
+            promptContextBlocks.Add(new AgentPromptContextBlock(
+                "Session Continuity Summary",
+                workingSummary,
+                Priority: 200,
+                SourceId: "sunder.package.agent.session-context",
+                Provenance: AgentContextProvenance.TranscriptSummary,
+                Trust: AgentContextTrust.Untrusted));
+        }
+
+        var promptContextRequest = new AgentPromptContextRequest(
+            sessionContext,
+            runContext,
+            turnContext,
+            turns,
+            recentLiveBufferTurns,
+            promptContextPlan)
+        {
+            Profile = profile,
+            Workspace = workspace,
+            ExecutionBinding = executionBinding,
+            AvailableTools = availableTools ?? [],
+        };
+        promptContextBlocks.AddRange(await CollectPromptContextBlocksAsync(
+            promptContextRequest,
+            cancellationToken));
+        return new AgentInstructionContext(null, workingSummary, RecallResult: null, recallPlan, promptContextBlocks);
     }
 
     public async Task PublishLifecycleEventAsync(
@@ -58,7 +95,7 @@ public sealed class AgentMemoryCoordinator(
     {
         var turns = _sessionService.ListRecentTurns(session.SessionId, MaxPromptContextTurns);
         var recentLiveBufferTurns = BuildRecentLiveBufferTurns(turns);
-        var workingSummary = _sessionService.GetWorkingSummary(session.SessionId)?.SummaryText;
+        var workingSummary = _sessionService.GetLatestSessionContextCheckpoint(session.SessionId)?.SummaryText;
         var sessionContext = CreateSessionContext(session, profile, workingSummary);
         var runContext = new AgentRunContextRecord(runId, runRevision, status, isInterrupted, runStartedAtUtc);
         var turnContext = new AgentTurnContextRecord(sessionContext, runContext, userMessage, workingSummary);
@@ -103,76 +140,6 @@ public sealed class AgentMemoryCoordinator(
             session.Title,
             session.State,
             workingSummary);
-
-    private static string? ComposeSystemInstructions(
-        string? profileInstructions,
-        string? workingSummary,
-        AgentMemoryRecallResult? recallResult,
-        IReadOnlyList<AgentPromptContextBlock> promptContextBlocks)
-    {
-        var builder = new StringBuilder();
-        if (!string.IsNullOrWhiteSpace(profileInstructions))
-        {
-            builder.AppendLine(profileInstructions.Trim());
-        }
-
-        if (!string.IsNullOrWhiteSpace(workingSummary))
-        {
-            if (builder.Length > 0)
-            {
-                builder.AppendLine().AppendLine();
-            }
-
-            builder.AppendLine("## Session Working Summary");
-            builder.AppendLine(workingSummary.Trim());
-        }
-
-        if (recallResult is { Entries.Count: > 0 })
-        {
-            if (builder.Length > 0)
-            {
-                builder.AppendLine().AppendLine();
-            }
-
-            builder.AppendLine("## Recalled Session Context");
-            builder.AppendLine("Use this context when it is relevant. Prefer direct current-turn user instructions if there is a conflict.");
-            foreach (var entry in recallResult.Entries.OrderByDescending(item => item.Score).ThenBy(item => item.Category, StringComparer.OrdinalIgnoreCase))
-            {
-                builder.Append("- [").Append(entry.Category).Append(" | ").Append(entry.TrustState).Append("] ").AppendLine(entry.Content.Trim());
-                if (!string.IsNullOrWhiteSpace(entry.EvidenceText))
-                {
-                    builder.Append("  Evidence: ").AppendLine(entry.EvidenceText.Trim());
-                }
-
-                if (entry.SourceTurnId is Guid sourceTurnId)
-                {
-                    builder.Append("  Source turn: `").Append(sourceTurnId).AppendLine("`");
-                }
-
-                if (entry.MatchReasons is { Count: > 0 })
-                {
-                    builder.Append("  Why recalled: ")
-                        .AppendLine(string.Join("; ", entry.MatchReasons.Select(reason => reason.Description.Trim())));
-                }
-            }
-        }
-
-        foreach (var block in promptContextBlocks
-                     .Where(block => !string.IsNullOrWhiteSpace(block.Title) && !string.IsNullOrWhiteSpace(block.Content))
-                     .OrderByDescending(block => block.Priority)
-                     .ThenBy(block => block.Title, StringComparer.OrdinalIgnoreCase))
-        {
-            if (builder.Length > 0)
-            {
-                builder.AppendLine().AppendLine();
-            }
-
-            builder.Append("## ").AppendLine(block.Title.Trim());
-            builder.AppendLine(block.Content.Trim());
-        }
-
-        return builder.Length == 0 ? null : builder.ToString();
-    }
 
     private async Task<IReadOnlyList<AgentPromptContextBlock>> CollectPromptContextBlocksAsync(
         AgentPromptContextRequest request,
@@ -329,7 +296,7 @@ public sealed class AgentMemoryCoordinator(
             : userMessage + "\n\nWorking summary: " + workingSummary.Trim();
 
     private static bool IsExplicitMemoryWriteRequest(string normalizedText)
-        => ContainsAny(normalizedText, "remember this", "remember that", "remember:" , "forget this", "forget that");
+        => ContainsAny(normalizedText, "remember this", "remember that", "remember:", "forget this", "forget that");
 
     private static bool ContainsAny(string normalizedText, params string[] signals)
         => signals.Any(signal => normalizedText.Contains(signal, StringComparison.Ordinal));

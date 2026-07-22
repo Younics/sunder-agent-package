@@ -10,8 +10,7 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
     : IAgentProfileSelectableCapabilityProvider,
         IAgentProfileSelectableCapabilityChangeNotifier,
         IAgentToolSource,
-        IAgentSystemPromptContributor,
-        IAgentExecutionResourceProvider
+        IAgentPromptContextContributor
 {
     private const int MaxSkillToolChars = 60000;
     private const int DefaultReadLimit = 2000;
@@ -145,19 +144,25 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
         }
     }
 
-    public async ValueTask<IReadOnlyList<AgentSystemPromptBlock>> ContributeAsync(
-        AgentSystemPromptRequest request,
+    public async ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
+        AgentPromptContextRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var enabledSkills = ListEnabledSkills(request.Profile).ToArray();
+        var profile = request.Profile ?? ResolveProfile(request.Session.ProfileId);
+        if (profile is null)
+        {
+            return null;
+        }
+
+        var enabledSkills = ListEnabledSkills(profile).ToArray();
         if (enabledSkills.Length == 0)
         {
-            return [];
+            return null;
         }
 
         var resolvedResources = await ResolveResourcesAsync(
-            request.Profile,
+            profile,
             request.Session.SessionId,
             request.Workspace,
             request.ExecutionBinding,
@@ -194,30 +199,20 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
                 .AppendLine("Executor paths are read-only skill folders. They are useful when a loaded skill asks you to pass bundled scripts or assets to shell commands. Host paths are not valid inside Docker containers.");
         }
 
-        return
+        return new AgentPromptContextContribution(
         [
-            new AgentSystemPromptBlock(
-                "enabled-skills",
+            new AgentPromptContextBlock(
                 "Skills",
                 content.ToString().Trim(),
                 Priority: 80,
-                Required: true,
-                MaxChars: 8000,
-                SourceId: SkillConstants.PackageId)
-        ];
+                SourceId: SkillConstants.PackageId,
+                Provenance: AgentContextProvenance.Extension,
+                Trust: AgentContextTrust.Untrusted)
+        ]);
     }
 
-    public ValueTask<IReadOnlyList<AgentExecutionResourceDescriptor>> ListResourcesAsync(
-        AgentExecutionResourceRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (request.Profile is null)
-        {
-            return ValueTask.FromResult<IReadOnlyList<AgentExecutionResourceDescriptor>>([]);
-        }
-
-        return ValueTask.FromResult<IReadOnlyList<AgentExecutionResourceDescriptor>>(ListEnabledSkills(request.Profile)
+    private IReadOnlyList<AgentExecutionResourceDescriptor> ListResources(AgentProfileRecord profile)
+        => ListEnabledSkills(profile)
             .Select(skill => new AgentExecutionResourceDescriptor(
                 skill.SkillId,
                 SkillConstants.CapabilityKind,
@@ -231,8 +226,7 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
                     ["skill_id"] = skill.SkillId,
                     ["name"] = skill.Name ?? string.Empty,
                 }))
-            .ToArray());
-    }
+            .ToArray();
 
     private async Task<AgentToolResult> ExecuteSkillAsync(
         AgentProfileRecord profile,
@@ -374,7 +368,8 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
             return [];
         }
 
-        var descriptors = await ListResourcesAsync(new AgentExecutionResourceRequest(sessionId, profile, workspace, executionBinding), cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        var descriptors = ListResources(profile);
         if (descriptors.Count == 0)
         {
             return [];

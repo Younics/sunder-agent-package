@@ -39,7 +39,8 @@ internal sealed class AgentRunExecutionService(
                 plan.RunKey.RunRevision,
                 plan.StartedAtUtc,
                 plan.UserMessage,
-                started.UserTurn.TurnId);
+                started.UserTurn.TurnId,
+                executionBinding);
             var behaviorLoop = _behaviorLoopResolver.Resolve(plan.Profile);
             _runEventLogger.LogRunEvent(
                 PackageLogLevel.Debug,

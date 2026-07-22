@@ -223,7 +223,7 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT CheckpointId, SessionId, RunRevision, Status, Summary, CreatedAtUtc FROM AgentRunCheckpoints WHERE SessionId = $sessionId ORDER BY CreatedAtUtc DESC, rowid DESC LIMIT 1;";
+        command.CommandText = "SELECT CheckpointId, SessionId, RunRevision, Status, Summary, CreatedAtUtc FROM AgentRunCheckpoints WHERE SessionId = $sessionId ORDER BY RunRevision DESC, CreatedAtUtc DESC, rowid DESC LIMIT 1;";
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
 
         using var reader = command.ExecuteReader();
@@ -235,24 +235,6 @@ public sealed partial class AgentLocalStore
                 Enum.Parse<AgentRunStatus>(reader.GetString(3), ignoreCase: true),
                 reader.IsDBNull(4) ? null : reader.GetString(4),
                 DateTimeOffset.Parse(reader.GetString(5)))
-            : null;
-    }
-
-    public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId)
-    {
-        using var connection = CreateConnection();
-        connection.Open();
-
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT SessionId, SummaryText, UpdatedAtUtc FROM AgentWorkingSummaries WHERE SessionId = $sessionId;";
-        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
-
-        using var reader = command.ExecuteReader();
-        return reader.Read()
-            ? new AgentWorkingSummaryRecord(
-                Guid.Parse(reader.GetString(0)),
-                reader.GetString(1),
-                DateTimeOffset.Parse(reader.GetString(2)))
             : null;
     }
 
@@ -294,36 +276,6 @@ public sealed partial class AgentLocalStore
         InsertSessionContextCheckpoint(connection, checkpoint);
         TouchSession(connection, sessionId, null, checkpoint.CreatedAtUtc, transaction: null);
         return checkpoint;
-    }
-
-    public AgentWorkingSummaryRecord? SaveWorkingSummary(Guid sessionId, string? summaryText)
-    {
-        using var connection = CreateConnection();
-        connection.Open();
-
-        if (string.IsNullOrWhiteSpace(summaryText))
-        {
-            using var deleteCommand = connection.CreateCommand();
-            deleteCommand.CommandText = "DELETE FROM AgentWorkingSummaries WHERE SessionId = $sessionId;";
-            deleteCommand.Parameters.AddWithValue("$sessionId", sessionId.ToString());
-            deleteCommand.ExecuteNonQuery();
-            return null;
-        }
-
-        var record = new AgentWorkingSummaryRecord(sessionId, summaryText.Trim(), DateTimeOffset.UtcNow);
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT INTO AgentWorkingSummaries (SessionId, SummaryText, UpdatedAtUtc)
-            VALUES ($sessionId, $summaryText, $updatedAtUtc)
-            ON CONFLICT(SessionId) DO UPDATE SET
-                SummaryText = excluded.SummaryText,
-                UpdatedAtUtc = excluded.UpdatedAtUtc;
-            """;
-        command.Parameters.AddWithValue("$sessionId", record.SessionId.ToString());
-        command.Parameters.AddWithValue("$summaryText", record.SummaryText);
-        command.Parameters.AddWithValue("$updatedAtUtc", record.UpdatedAtUtc.ToString("O"));
-        command.ExecuteNonQuery();
-        return record;
     }
 
     public long GetNextRunRevision(Guid sessionId)
@@ -519,12 +471,6 @@ public sealed partial class AgentLocalStore
         deleteParentContinuationWork.Parameters.AddWithValue("$sessionId", sessionId);
         deleteParentContinuationWork.ExecuteNonQuery();
 
-        using var deleteWorkingSummaries = connection.CreateCommand();
-        deleteWorkingSummaries.Transaction = transaction;
-        deleteWorkingSummaries.CommandText = "DELETE FROM AgentWorkingSummaries WHERE SessionId = $sessionId;";
-        deleteWorkingSummaries.Parameters.AddWithValue("$sessionId", sessionId);
-        deleteWorkingSummaries.ExecuteNonQuery();
-
         using var deleteSessionContextCheckpoints = connection.CreateCommand();
         deleteSessionContextCheckpoints.Transaction = transaction;
         deleteSessionContextCheckpoints.CommandText = "DELETE FROM AgentSessionContextCheckpoints WHERE SessionId = $sessionId;";
@@ -646,7 +592,17 @@ public sealed partial class AgentLocalStore
                     ) THEN $state
                     ELSE State
                 END,
-                UpdatedAtUtc = $updatedAtUtc
+                UpdatedAtUtc = CASE
+                    WHEN $runRevision >= (
+                        SELECT COALESCE(MAX(RunRevision), $runRevision)
+                        FROM (
+                            SELECT RunRevision FROM AgentRuns WHERE SessionId = $sessionId
+                            UNION ALL
+                            SELECT RunRevision FROM AgentRunCheckpoints WHERE SessionId = $sessionId
+                        )
+                    ) THEN $updatedAtUtc
+                    ELSE UpdatedAtUtc
+                END
             WHERE SessionId = $sessionId;
             """;
         command.Parameters.AddWithValue("$runRevision", checkpoint.RunRevision);

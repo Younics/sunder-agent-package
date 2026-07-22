@@ -6,28 +6,43 @@ namespace Sunder.Package.Agent.Memory.Semantic;
 
 internal sealed class MemoryRepository(string databasePath, EvidenceRepository evidenceRepository)
 {
+    internal const int MaxCategoryChars = 64;
+    internal const int MaxMemoryContentChars = 4_096;
     private const string Columns =
-        "MemoryId, SessionId, Category, Content, EvidenceText, SourceTurnId, Importance, Confidence, IsPinned, State, SupersededByMemoryId, CreatedAtUtc, UpdatedAtUtc, LastAccessedAtUtc, AccessCount";
+        "MemoryId, SessionId, Category, Content, EvidenceText, SourceTurnId, Importance, Confidence, IsPinned, State, SupersededByMemoryId, CreatedAtUtc, UpdatedAtUtc, LastAccessedAtUtc, AccessCount, Provenance";
 
     private readonly string _databasePath = databasePath;
     private readonly EvidenceRepository _evidenceRepository = evidenceRepository;
 
     public IReadOnlyList<StoredMemoryRecord> ListActive(Guid sessionId)
-        => Query($"SELECT {Columns} FROM SessionMemories WHERE SessionId = $sessionId AND State = $state ORDER BY IsPinned DESC, Importance DESC, UpdatedAtUtc DESC;",
+        => Query($"SELECT {Columns} FROM SessionMemories WHERE SessionId = $sessionId AND State = $state ORDER BY IsPinned DESC, Importance DESC, UpdatedAtUtc DESC LIMIT $limit;",
             command =>
             {
                 command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
                 command.Parameters.AddWithValue("$state", MemoryLocalStore.ActiveState);
+                command.Parameters.AddWithValue("$limit", MemoryLocalStore.MaxRecallableMemoriesPerSession);
             });
 
     public IReadOnlyList<StoredMemoryRecord> ListRecallable(Guid sessionId)
-        => Query($"SELECT {Columns} FROM SessionMemories WHERE SessionId = $sessionId AND (State = $active OR State = $contested) ORDER BY IsPinned DESC, Importance DESC, UpdatedAtUtc DESC;",
+        => Query($"SELECT {Columns} FROM SessionMemories WHERE SessionId = $sessionId AND (State = $active OR State = $contested) ORDER BY IsPinned DESC, Importance DESC, UpdatedAtUtc DESC LIMIT $limit;",
             command =>
             {
                 command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
                 command.Parameters.AddWithValue("$active", MemoryLocalStore.ActiveState);
                 command.Parameters.AddWithValue("$contested", MemoryLocalStore.ContestedState);
+                command.Parameters.AddWithValue("$limit", MemoryLocalStore.MaxRecallableMemoriesPerSession);
             });
+
+    public int CountRecallable(Guid sessionId)
+    {
+        using var connection = MemoryDatabase.OpenConnection(_databasePath);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM SessionMemories WHERE SessionId = $sessionId AND (State = $active OR State = $contested);";
+        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
+        command.Parameters.AddWithValue("$active", MemoryLocalStore.ActiveState);
+        command.Parameters.AddWithValue("$contested", MemoryLocalStore.ContestedState);
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
 
     public IReadOnlyList<StoredMemoryRecord> ListPriority(Guid sessionId, int limit)
         => Query($"""
@@ -118,7 +133,7 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
         var results = new List<StoredMemorySearchResult>();
         while (reader.Read())
         {
-            results.Add(new StoredMemorySearchResult(Read(reader), reader.GetDouble(15)));
+            results.Add(new StoredMemorySearchResult(Read(reader), reader.GetDouble(16)));
         }
 
         return results;
@@ -132,6 +147,7 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
 
     public StoredMemoryRecord Upsert(MemoryUpsertRequest request, Guid? targetMemoryId)
     {
+        ValidateMemoryText(request.Category, request.Content);
         using var connection = MemoryDatabase.OpenConnection(_databasePath);
         var existing = targetMemoryId is { } id
             ? Get(connection, id)
@@ -140,7 +156,7 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
         var memory = existing is null
             ? new StoredMemoryRecord(Guid.NewGuid(), request.SessionId, request.Category, request.Content, request.EvidenceText,
                 request.SourceTurnId, request.Importance, request.Confidence, request.IsPinned, MemoryLocalStore.ActiveState,
-                null, now, now, null, 0)
+                null, now, now, null, 0, request.Provenance)
             : existing with
             {
                 Content = request.Content,
@@ -149,6 +165,9 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
                 Importance = Math.Max(existing.Importance, request.Importance),
                 Confidence = Math.Max(existing.Confidence, request.Confidence),
                 IsPinned = existing.IsPinned || request.IsPinned,
+                Provenance = existing.Provenance == Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance.Unknown
+                    ? request.Provenance
+                    : existing.Provenance,
                 UpdatedAtUtc = now,
             };
 
@@ -188,6 +207,7 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
 
     public StoredMemoryRecord Update(Guid memoryId, string category, string content, string? note)
     {
+        ValidateMemoryText(category, content);
         using var connection = MemoryDatabase.OpenConnection(_databasePath);
         var existing = GetRequired(connection, memoryId);
         var normalized = Normalize(content);
@@ -209,6 +229,7 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
 
     public MemoryCorrectionResult CreateCorrection(Guid sourceMemoryId, string category, string content, string? note)
     {
+        ValidateMemoryText(category, content);
         using var connection = MemoryDatabase.OpenConnection(_databasePath);
         var source = GetRequired(connection, sourceMemoryId);
         var trimmedCategory = category.Trim();
@@ -233,7 +254,7 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
         var target = existingTarget ?? new StoredMemoryRecord(
             Guid.NewGuid(), source.SessionId, trimmedCategory, trimmedContent, note ?? source.EvidenceText, source.SourceTurnId,
             Math.Max(source.Importance, 0.85f), Math.Max(source.Confidence, 0.9f), source.IsPinned,
-            MemoryLocalStore.ActiveState, null, now, now, null, 0);
+            MemoryLocalStore.ActiveState, null, now, now, null, 0, source.Provenance);
         var updatedSource = source with
         {
             State = MemoryLocalStore.SupersededState,
@@ -373,6 +394,19 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
         if (Convert.ToInt32(command.ExecuteScalar()) > 0)
         {
             throw new InvalidOperationException("Another memory with the same category and normalized content already exists in this session.");
+        }
+    }
+
+    private static void ValidateMemoryText(string category, string content)
+    {
+        if (string.IsNullOrWhiteSpace(category) || category.Length > MaxCategoryChars)
+        {
+            throw new InvalidOperationException($"Memory category must contain between 1 and {MaxCategoryChars} characters.");
+        }
+
+        if (string.IsNullOrWhiteSpace(content) || content.Length > MaxMemoryContentChars)
+        {
+            throw new InvalidOperationException($"Memory content must contain between 1 and {MaxMemoryContentChars} characters.");
         }
     }
 

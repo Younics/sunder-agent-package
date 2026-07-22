@@ -15,6 +15,8 @@ public sealed class AgentLocalStoreMigrationTests
     [InlineData(6)]
     [InlineData(7)]
     [InlineData(8)]
+    [InlineData(9)]
+    [InlineData(10)]
     public void HistoricalSchemaFixture_UpgradesToCurrentSchema(int historicalVersion)
     {
         using var scope = RegressionTestPackageScope.Create();
@@ -24,9 +26,9 @@ public sealed class AgentLocalStoreMigrationTests
         var store = new AgentLocalStore(scope.Context);
 
         using var connection = OpenDatabase(store.DatabasePath);
-        Assert.Equal(9L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
-        Assert.Equal(9L, ExecuteInt64(connection, "SELECT MAX(Version) FROM SchemaMigrations;"));
-        Assert.Equal(9L, ExecuteInt64(connection,
+        Assert.Equal(11L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
+        Assert.Equal(11L, ExecuteInt64(connection, "SELECT MAX(Version) FROM SchemaMigrations;"));
+        Assert.Equal(11L, ExecuteInt64(connection,
             "SELECT COUNT(*) FROM SchemaMigrations WHERE length(Checksum) = 64;"));
         Assert.True(ColumnExists(connection, "AgentPendingPermissionRequests", "ExecutionSnapshotJson"));
         Assert.True(ColumnExists(connection, "AgentTurns", "ContentRevision"));
@@ -34,6 +36,59 @@ public sealed class AgentLocalStoreMigrationTests
         Assert.True(ColumnExists(connection, "AgentTurns", "RunId"));
         Assert.True(ColumnExists(connection, "AgentTurns", "RunRevision"));
         Assert.True(TableExists(connection, "AgentParentContinuationWork"));
+        Assert.True(ColumnExists(connection, "AgentRuns", "ProviderCycleCount"));
+        Assert.True(ColumnExists(connection, "AgentRuns", "ToolCallCount"));
+        Assert.True(ColumnExists(connection, "AgentRuns", "SubmittedContextTokenCount"));
+        Assert.False(TableExists(connection, "AgentWorkingSummaries"));
+        Assert.False(TableExists(connection, "AgentPermissionRules"));
+    }
+
+    [Fact]
+    public void DormantSchemaMigration_PreservesLegacyWorkingSummaryAsContextCheckpoint()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var databasePath = GetDatabasePath(scope);
+        CreateHistoricalFixture(databasePath, 9);
+        var sessionId = Guid.NewGuid();
+        using (var connection = OpenDatabase(databasePath))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                CREATE TABLE AgentWorkingSummaries (
+                    SessionId TEXT PRIMARY KEY,
+                    SummaryText TEXT NOT NULL,
+                    UpdatedAtUtc TEXT NOT NULL
+                );
+                CREATE TABLE AgentPermissionRules (
+                    RuleId TEXT PRIMARY KEY,
+                    ActionId TEXT NOT NULL,
+                    MatcherKind TEXT NOT NULL,
+                    Pattern TEXT NOT NULL,
+                    Decision TEXT NOT NULL,
+                    SortOrder INTEGER NOT NULL
+                );
+                INSERT INTO AgentWorkingSummaries (SessionId, SummaryText, UpdatedAtUtc)
+                VALUES ($sessionId, $summary, $updatedAtUtc);
+                """;
+            command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
+            command.Parameters.AddWithValue("$summary", "Legacy continuity summary");
+            command.Parameters.AddWithValue("$updatedAtUtc", "2026-01-01T00:00:00.0000000+00:00");
+            command.ExecuteNonQuery();
+        }
+
+        var store = new AgentLocalStore(scope.Context);
+
+        using var verification = OpenDatabase(store.DatabasePath);
+        using var select = verification.CreateCommand();
+        select.CommandText = "SELECT SummaryText, DetailsJson, CreatedAtUtc FROM AgentSessionContextCheckpoints WHERE SessionId = $sessionId;";
+        select.Parameters.AddWithValue("$sessionId", sessionId.ToString());
+        using var reader = select.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("Legacy continuity summary", reader.GetString(0));
+        Assert.Equal("{\"source\":\"legacy-working-summary\"}", reader.GetString(1));
+        Assert.Equal("2026-01-01T00:00:00.0000000+00:00", reader.GetString(2));
+        Assert.False(TableExists(verification, "AgentWorkingSummaries"));
+        Assert.False(TableExists(verification, "AgentPermissionRules"));
     }
 
     [Fact]
@@ -110,7 +165,7 @@ public sealed class AgentLocalStoreMigrationTests
             {
                 "name" => "UPDATE SchemaMigrations SET Name = 'renamed' WHERE Version = 3;",
                 "checksum" => "UPDATE SchemaMigrations SET Checksum = 'tampered' WHERE Version = 4;",
-                "newer" => "INSERT INTO SchemaMigrations VALUES (10, 'future', 'future', '2026-01-01T00:00:00Z');",
+                "newer" => "INSERT INTO SchemaMigrations VALUES (12, 'future', 'future', '2026-01-01T00:00:00Z');",
                 "unknown" => "UPDATE SchemaMigrations SET Version = 0 WHERE Version = 1;",
                 _ => throw new ArgumentOutOfRangeException(nameof(corruption)),
             };
@@ -145,7 +200,7 @@ public sealed class AgentLocalStoreMigrationTests
 
         using var verification = OpenDatabase(store.DatabasePath);
         Assert.True(ColumnExists(verification, "SchemaMigrations", "Checksum"));
-        Assert.Equal(9L, ExecuteInt64(verification,
+        Assert.Equal(11L, ExecuteInt64(verification,
             "SELECT COUNT(*) FROM SchemaMigrations WHERE length(Checksum) = 64;"));
     }
 

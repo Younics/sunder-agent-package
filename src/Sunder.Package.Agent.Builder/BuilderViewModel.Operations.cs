@@ -73,14 +73,11 @@ public sealed partial class BuilderViewModel
 
     private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
-        await _uiDispatcher.InvokeAsync(() =>
-        {
-            if (!_disposed)
-            {
-                ReloadWorkspaces();
-            }
-        });
-        var projects = await _applicationService.LoadProjectsAsync(cancellationToken);
+        var workspacesTask = _applicationService.ListWorkspacesAsync(cancellationToken);
+        var projectsTask = _applicationService.LoadProjectsAsync(cancellationToken);
+        await Task.WhenAll(workspacesTask, projectsTask).ConfigureAwait(false);
+        var workspaces = await workspacesTask.ConfigureAwait(false);
+        var projects = await projectsTask.ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         await _uiDispatcher.InvokeAsync(() =>
         {
@@ -88,6 +85,7 @@ public sealed partial class BuilderViewModel
             {
                 return;
             }
+            ApplyLoadedWorkspaces(workspaces);
             ApplyLoadedProjects(projects);
             _projectsLoaded = true;
         });
@@ -95,11 +93,6 @@ public sealed partial class BuilderViewModel
         if (_disposed)
         {
             return;
-        }
-        if (!_processedStartupAutoLoad)
-        {
-            await LoadStartupAutoLoadProjectsAsync(cancellationToken);
-            _processedStartupAutoLoad = true;
         }
     }
 
@@ -138,13 +131,8 @@ public sealed partial class BuilderViewModel
             Workspaces.FirstOrDefault()?.WorkspaceId ?? string.Empty,
             string.Empty,
             string.Empty,
-            string.Empty,
-            Watch: true,
             now,
-            now)
-        {
-            DevPackageRelativePath = BuilderPathService.DefaultDevPackageRelativePath,
-        });
+            now));
         Projects.Add(project);
         SelectedProject = project;
         IsEditorActive = true;
@@ -248,7 +236,6 @@ public sealed partial class BuilderViewModel
                 return CaptureProjects();
             });
             await _persistence.SaveNowAsync(projects, CancellationToken.None);
-            await RefreshSelectedStatusCoreAsync(Interlocked.Increment(ref _selectedProjectStatusVersion), false, context.CancellationToken);
             context.ReportProgress(100, "Sunder package project initialized.");
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
@@ -306,14 +293,10 @@ public sealed partial class BuilderViewModel
                 UpdateSelectedProjectInitialized();
                 StatusText = isPublish
                     ? "Publish completed."
-                    : $"Build completed. Dev output: {result.Project.DevPackageFolder}";
+                    : "Build completed.";
                 return CaptureProjects();
             });
             await _persistence.SaveNowAsync(projects, CancellationToken.None);
-            if (!isPublish)
-            {
-                await RefreshSelectedStatusCoreAsync(Interlocked.Increment(ref _selectedProjectStatusVersion), false, context.CancellationToken);
-            }
 
             context.ReportProgress(100, $"Sunder package {operationName.ToLowerInvariant()} completed.");
         }
@@ -377,98 +360,6 @@ public sealed partial class BuilderViewModel
                     : "Setup check failed. See runtime log.";
             });
             throw;
-        }
-    }
-
-    private async Task LoadStartupAutoLoadProjectsAsync(CancellationToken cancellationToken)
-    {
-        var projects = await _uiDispatcher.InvokeAsync(() => Projects.Where(project => project.AutoLoadOnStartup).ToArray());
-        foreach (var project in projects)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                var result = await _applicationService.LoadProjectAsync(project.ToRecord(), cancellationToken);
-                if (result.Status is null)
-                {
-                    continue;
-                }
-
-                var records = await _uiDispatcher.InvokeAsync(() =>
-                {
-                    ApplyProjectRecord(project, result.Project);
-                    if (ReferenceEquals(project, SelectedProject))
-                    {
-                        IsSelectedProjectLoaded = result.Status.IsLoaded;
-                        StatusText = FormatStatus(result.Status);
-                    }
-
-                    return CaptureProjects();
-                });
-                await _persistence.SaveNowAsync(records, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                await _uiDispatcher.InvokeAsync(() =>
-                {
-                    if (ReferenceEquals(project, SelectedProject))
-                    {
-                        StatusText = $"Auto load failed: {ex.Message}";
-                    }
-                });
-            }
-        }
-    }
-
-    private async Task RefreshSelectedStatusCoreAsync(int version, bool updateStatusText, CancellationToken cancellationToken)
-    {
-        var selection = await _uiDispatcher.InvokeAsync(() =>
-            SelectedProject is null || string.IsNullOrWhiteSpace(SelectedProject.PackageId)
-                ? default((BuilderProjectViewModel Project, string PackageId)?)
-                : (SelectedProject, SelectedProject.PackageId));
-        if (selection is null)
-        {
-            await _uiDispatcher.InvokeAsync(() => IsSelectedProjectLoaded = false);
-            return;
-        }
-
-        try
-        {
-            var status = await _applicationService.GetProjectStatusAsync(selection.Value.PackageId, cancellationToken);
-            await _uiDispatcher.InvokeAsync(() =>
-            {
-                if (version != Volatile.Read(ref _selectedProjectStatusVersion)
-                    || !ReferenceEquals(selection.Value.Project, SelectedProject))
-                {
-                    return;
-                }
-
-                IsSelectedProjectLoaded = status?.IsLoaded == true;
-                if (updateStatusText)
-                {
-                    StatusText = status is null
-                        ? $"Package '{selection.Value.PackageId}' is not active."
-                        : FormatStatus(status);
-                }
-            });
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
-        {
-            await _uiDispatcher.InvokeAsync(() =>
-            {
-                if (version == Volatile.Read(ref _selectedProjectStatusVersion)
-                    && ReferenceEquals(selection.Value.Project, SelectedProject))
-                {
-                    IsSelectedProjectLoaded = false;
-                    if (updateStatusText)
-                    {
-                        StatusText = $"Failed to read package status: {ex.Message}";
-                    }
-                }
-            });
         }
     }
 

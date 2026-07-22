@@ -133,12 +133,32 @@ public sealed class AgentPermissionService(
         long expectedEpoch)
         => _store.ResumeClaimedPermissionRequest(request, expectedEpoch);
 
-    internal bool MarkExecutionStarted(AgentPendingPermissionRequestRecord request)
-        => !string.IsNullOrWhiteSpace(request.ClaimToken)
-           && _store.MarkClaimedPermissionExecutionStarted(
-               request.SessionId,
-               request.RequestId,
-               request.ClaimToken);
+    internal bool MarkExecutionStarted(
+        AgentPendingPermissionRequestRecord request,
+        bool approveForSession = false)
+    {
+        if (string.IsNullOrWhiteSpace(request.ClaimToken))
+        {
+            return false;
+        }
+
+        var approval = approveForSession
+                       && !string.IsNullOrWhiteSpace(request.ActionId)
+                       && !string.IsNullOrWhiteSpace(request.BoundaryId)
+            ? new AgentSessionPermissionApproval(
+                Guid.NewGuid().ToString("N"),
+                request.SessionId,
+                request.ActionId.Trim(),
+                AgentPermissionMatcherKind.ActionId,
+                request.BoundaryId.Trim(),
+                DateTimeOffset.UtcNow)
+            : null;
+        return _store.MarkClaimedPermissionExecutionStarted(
+            request.SessionId,
+            request.RequestId,
+            request.ClaimToken,
+            approval);
+    }
 
     internal AgentCheckpointPersistenceResult? FinalizeClaimedRequest(
         AgentPendingPermissionRequestRecord request,

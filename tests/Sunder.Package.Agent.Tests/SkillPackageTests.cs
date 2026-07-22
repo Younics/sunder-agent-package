@@ -412,7 +412,8 @@ public sealed class SkillPackageTests
             var contributor = new SkillStackContributor(store, importer, context);
 
             var items = await contributor.ListExportItemsAsync(new StackExportDiscoveryContext(SkillsPackageId));
-            var contribution = await contributor.ExportAsync(new StackExportRequest(["docs-skill"]));
+            var contribution = await contributor.ExportAsync(new StackExportRequest(
+                [new StackExportItemSelection("docs-skill")]));
 
             Assert.Empty(items);
             Assert.Empty(contribution.Fragments);
@@ -438,9 +439,14 @@ public sealed class SkillPackageTests
             await importer.ImportGitHubFolderAsync(githubUrl);
             var contributor = new SkillStackContributor(store, importer, context);
 
-            var contribution = await contributor.ExportAsync(new StackExportRequest(["docs-skill"]));
+            var item = Assert.Single(await contributor.ListExportItemsAsync(
+                new StackExportDiscoveryContext(SkillsPackageId)));
+            var contribution = await contributor.ExportAsync(new StackExportRequest(
+                [new StackExportItemSelection("docs-skill")]));
 
             var fragment = Assert.Single(contribution.Fragments);
+            Assert.All(item.Details ?? [], detail => Assert.NotNull(detail.Sensitivity));
+            Assert.Equal("1.1.0", Assert.Single(contribution.PackageRequirements).MinimumVersion);
             Assert.Equal("github-skill.docs-skill", fragment.FragmentId);
             Assert.Null(fragment.Files);
             Assert.Contains(githubUrl, fragment.JsonPayload, StringComparison.OrdinalIgnoreCase);
@@ -466,7 +472,8 @@ public sealed class SkillPackageTests
             var sourceImporter = new SkillImportService(sourceStore, githubClient, sourceContext);
             await sourceImporter.ImportGitHubFolderAsync(githubUrl);
             var sourceContributor = new SkillStackContributor(sourceStore, sourceImporter, sourceContext);
-            var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(["docs-skill"]))).Fragments);
+            var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(
+                [new StackExportItemSelection("docs-skill")]))).Fragments);
 
             var targetContext = new TestPackageContext(Path.Combine(root, "target-install"));
             var targetStore = new SkillStore(targetContext);

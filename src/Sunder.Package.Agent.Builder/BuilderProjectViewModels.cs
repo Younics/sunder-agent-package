@@ -36,10 +36,6 @@ public sealed class BuilderProjectViewModel(BuilderProjectRecord record) : INoti
     private string _workspacePathId = record.WorkspacePathId ?? string.Empty;
     private string _executionProjectFolder = record.ExecutionProjectFolder ?? string.Empty;
     private string _projectFolder = record.ProjectFolder ?? string.Empty;
-    private string _devPackageFolder = record.DevPackageFolder ?? string.Empty;
-    private string _devPackageRelativePath = record.DevPackageRelativePath ?? string.Empty;
-    private bool _watch = record.Watch;
-    private bool _autoLoadOnStartup = record.AutoLoadOnStartup;
     private DateTimeOffset _updatedAtUtc = record.UpdatedAtUtc;
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -84,37 +80,11 @@ public sealed class BuilderProjectViewModel(BuilderProjectRecord record) : INoti
         set => SetField(ref _projectFolder, value);
     }
 
-    public string DevPackageFolder
-    {
-        get => _devPackageFolder;
-        set => SetField(ref _devPackageFolder, value);
-    }
-
-    public string DevPackageRelativePath
-    {
-        get => _devPackageRelativePath;
-        set => SetField(ref _devPackageRelativePath, value);
-    }
-
-    public bool Watch
-    {
-        get => _watch;
-        set => SetField(ref _watch, value);
-    }
-
-    public bool AutoLoadOnStartup
-    {
-        get => _autoLoadOnStartup;
-        set => SetField(ref _autoLoadOnStartup, value);
-    }
-
     public DateTimeOffset UpdatedAtUtc
     {
         get => _updatedAtUtc;
         private set => SetField(ref _updatedAtUtc, value);
     }
-
-    public void Touch() => UpdatedAtUtc = DateTimeOffset.UtcNow;
 
     public void Apply(BuilderProjectRecord value)
     {
@@ -124,10 +94,6 @@ public sealed class BuilderProjectViewModel(BuilderProjectRecord record) : INoti
         WorkspacePathId = value.WorkspacePathId ?? string.Empty;
         ExecutionProjectFolder = value.ExecutionProjectFolder ?? string.Empty;
         ProjectFolder = value.ProjectFolder ?? string.Empty;
-        DevPackageFolder = value.DevPackageFolder ?? string.Empty;
-        DevPackageRelativePath = value.DevPackageRelativePath ?? string.Empty;
-        Watch = value.Watch;
-        AutoLoadOnStartup = value.AutoLoadOnStartup;
         UpdatedAtUtc = value.UpdatedAtUtc;
     }
 
@@ -139,14 +105,10 @@ public sealed class BuilderProjectViewModel(BuilderProjectRecord record) : INoti
             WorkspaceId.Trim(),
             ExecutionProjectFolder.Trim(),
             ProjectFolder.Trim(),
-            DevPackageFolder.Trim(),
-            Watch,
             CreatedAtUtc,
             UpdatedAtUtc)
         {
-            AutoLoadOnStartup = AutoLoadOnStartup,
             WorkspacePathId = WorkspacePathId.Trim(),
-            DevPackageRelativePath = DevPackageRelativePath.Trim(),
         };
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

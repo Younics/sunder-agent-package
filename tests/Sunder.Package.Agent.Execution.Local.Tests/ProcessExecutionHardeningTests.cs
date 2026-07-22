@@ -169,8 +169,7 @@ public sealed class ProcessExecutionHardeningTests : IDisposable
             "Test",
             null,
             SupportsShell: true,
-            SupportsFiles: false,
-            SupportsSearch: false);
+            SupportsFiles: false);
 
         public int ExecuteCount { get; private set; }
 

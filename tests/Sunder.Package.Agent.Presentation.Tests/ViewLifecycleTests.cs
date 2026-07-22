@@ -373,7 +373,7 @@ public sealed class ViewLifecycleTests
         new Sunder.Package.Agent.AppPackageModule().ConfigureAppServices(services, scope.Context);
         new Sunder.Package.Agent.Memory.Semantic.AppPackageModule().ConfigureAppServices(services, scope.Context);
         new Sunder.Package.Agent.Subagents.AppPackageModule().ConfigureAppServices(services, scope.Context);
-        new Sunder.Package.Agent.Builder.PackageModule().ConfigureAppServices(services, scope.Context);
+        new Sunder.Package.Agent.Builder.AppPackageModule().ConfigureAppServices(services, scope.Context);
         await using var provider = services.BuildServiceProvider();
 
         var chat = ActivatorUtilities.CreateInstance<AgentChatView>(provider);
@@ -513,7 +513,7 @@ public sealed class ViewLifecycleTests
         await using var viewModel = new BuilderViewModel(
             new BuilderProjectApplicationService(
                 new BuilderSetupService(),
-                new BuilderWorkspaceExecutionService(new RegressionTestExtensionCatalog()),
+                new BuilderWorkspaceExecutionService(),
                 store,
                 pathService),
             new BuilderOperationQueue(new NoOpBackgroundProcessQueue()),
@@ -575,7 +575,7 @@ public sealed class ViewLifecycleTests
         await using var viewModel = new BuilderViewModel(
             new BuilderProjectApplicationService(
                 new BuilderSetupService(),
-                new BuilderWorkspaceExecutionService(new RegressionTestExtensionCatalog()),
+                new BuilderWorkspaceExecutionService(),
                 store,
                 pathService),
             new BuilderOperationQueue(new NoOpBackgroundProcessQueue()),
@@ -602,7 +602,7 @@ public sealed class ViewLifecycleTests
         var viewModel = new BuilderViewModel(
             new BuilderProjectApplicationService(
                 new BuilderSetupService(),
-                new BuilderWorkspaceExecutionService(new RegressionTestExtensionCatalog()),
+                new BuilderWorkspaceExecutionService(),
                 store,
                 pathService),
             new BuilderOperationQueue(new NoOpBackgroundProcessQueue()),

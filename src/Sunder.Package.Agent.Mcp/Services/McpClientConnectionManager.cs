@@ -5,10 +5,13 @@ using Sunder.Package.Agent.Shared.Threading;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
-public sealed class McpClientConnectionManager : IAsyncDisposable
+public sealed partial class McpClientConnectionManager : IAsyncDisposable
 {
     private const int MaxStandardErrorLines = 10;
     private const int MaxStatusCacheEntries = 256;
+    private const int DefaultMaxSessionScopedConnections = 64;
+    internal const int MaxDiscoveredToolsPerServer = 256;
+    internal const int MaxDiscoveryMetadataBytes = 1024 * 1024;
     private static readonly TimeSpan ShutdownWaitTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan LeaseDrainTimeout = TimeSpan.FromSeconds(2);
     private readonly ILogger<McpClientConnectionManager> _logger;
@@ -20,21 +23,36 @@ public sealed class McpClientConnectionManager : IAsyncDisposable
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _activeConnectionCancellations = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, McpConnectionStatus> _statuses = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, ConcurrentQueue<string>> _standardErrorLines = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<Guid, byte> _cleanedSessionScopes = new();
     private readonly CancellationTokenSource _disposeCancellation = new();
+    private readonly SemaphoreSlim _sessionConnectionCapacityGate = new(1, 1);
+    private readonly int _maxSessionScopedConnections;
     private volatile bool _disposed;
 
     internal int KeyedLockCount => _locks.Count;
     internal int CachedStatusCount => _statuses.Count;
+    internal int CachedConnectionCount => _connections.Count;
 
     public McpClientConnectionManager(ILoggerFactory loggerFactory, McpOAuthService? oauthService = null)
-        : this(loggerFactory, new McpClientConnectionFactory(loggerFactory, oauthService))
+        : this(
+            loggerFactory,
+            new McpClientConnectionFactory(loggerFactory, oauthService),
+            DefaultMaxSessionScopedConnections)
     {
     }
 
-    internal McpClientConnectionManager(ILoggerFactory loggerFactory, IMcpClientConnectionFactory connectionFactory)
+    internal McpClientConnectionManager(
+        ILoggerFactory loggerFactory,
+        IMcpClientConnectionFactory connectionFactory,
+        int maxSessionScopedConnections = DefaultMaxSessionScopedConnections)
     {
+        if (maxSessionScopedConnections <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxSessionScopedConnections));
+        }
         _logger = loggerFactory.CreateLogger<McpClientConnectionManager>();
         _connectionFactory = connectionFactory;
+        _maxSessionScopedConnections = maxSessionScopedConnections;
     }
 
     public event Action? StatusChanged;
@@ -177,6 +195,7 @@ public sealed class McpClientConnectionManager : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfScopeWasCleaned(scope);
         if (!acquireInvocationLease
             && _toolMetadata.TryGetValue(server.ServerId, out var metadata)
             && IsReusable(metadata, server))
@@ -185,81 +204,122 @@ public sealed class McpClientConnectionManager : IAsyncDisposable
         }
 
         var key = BuildConnectionKey(server.ServerId, scope);
-
-        using (await _locks.EnterAsync(key, cancellationToken).ConfigureAwait(false))
+        var capacityLease = false;
+        if (scope != McpConnectionScope.Shared)
         {
-            if (_connections.TryGetValue(key, out var existing) && IsReusable(existing, server))
-            {
-                if (!acquireInvocationLease)
-                {
-                    return new McpConnectionAccess(existing.Tools, null);
-                }
-
-                if (existing.TryAcquireLease(out var existingLease))
-                {
-                    return new McpConnectionAccess(existing.Tools, existingLease);
-                }
-            }
-
-            if (!acquireInvocationLease
-                && _toolMetadata.TryGetValue(server.ServerId, out metadata)
-                && IsReusable(metadata, server))
-            {
-                return new McpConnectionAccess(metadata.Tools, null);
-            }
-
-            await DisconnectCoreAsync(key);
-            IMcpClientConnection? connection = null;
-            using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCancellation.Token);
-            _activeConnectionCancellations[key] = operationCancellation;
-            using var timeout = CreateTimeoutScope(discoveryTimeoutMilliseconds, operationCancellation.Token);
+            using var capacityCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                _disposeCancellation.Token);
+            await _sessionConnectionCapacityGate
+                .WaitAsync(capacityCancellation.Token)
+                .ConfigureAwait(false);
+            capacityLease = true;
             try
             {
-                SetStatus(server, McpConnectionStatusKind.Connecting, $"Connecting to MCP server '{server.DisplayName}'.");
-                connection = await _connectionFactory.ConnectAsync(
-                    server,
-                    headers,
-                    environmentVariables,
-                    discoveryTimeoutMilliseconds,
-                    line => RecordStandardErrorLine(server.ServerId, line),
-                    timeout.Token);
-                SetStatus(server, McpConnectionStatusKind.DiscoveringTools, $"Discovering tools from MCP server '{server.DisplayName}'.");
-                var tools = (await connection.ListToolsAsync(timeout.Token)).ToArray();
-                var cached = new CachedMcpConnection(server.ServerId, scope, connection, tools, server.PersistenceVersion, server.UpdatedAtUtc);
-                McpClientInvocationLease? lease = null;
-                if (acquireInvocationLease && !cached.TryAcquireLease(out lease))
+                if (!_connections.ContainsKey(key))
                 {
-                    throw new InvalidOperationException($"MCP connection for server '{server.DisplayName}' completed before it could be leased.");
+                    await EnsureSessionConnectionCapacityAsync(key, cancellationToken).ConfigureAwait(false);
                 }
-
-                _connections[key] = cached;
-                _toolMetadata[server.ServerId] = new CachedMcpToolMetadata(tools, server.PersistenceVersion, server.UpdatedAtUtc);
-                connection = null;
-                SetStatus(server, McpConnectionStatusKind.Connected, $"Connected to MCP server '{server.DisplayName}'.", toolCount: tools.Length, toolNames: tools.Select(tool => tool.Name).ToArray());
-                return new McpConnectionAccess(tools, lease);
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _disposeCancellation.IsCancellationRequested || operationCancellation.IsCancellationRequested)
+            catch
             {
-                await DisposeFailedConnectionAsync(connection);
-                SetStatus(server, McpConnectionStatusKind.Disconnected, $"Connection to MCP server '{server.DisplayName}' was canceled.");
+                _sessionConnectionCapacityGate.Release();
                 throw;
             }
-            catch (OperationCanceledException ex)
+        }
+
+        try
+        {
+            using (await _locks.EnterAsync(key, cancellationToken).ConfigureAwait(false))
             {
-                await DisposeFailedConnectionAsync(connection);
-                SetStatus(server, McpConnectionStatusKind.Error, $"MCP server '{server.DisplayName}' timed out during discovery.", ex.Message);
-                return new McpConnectionAccess([], null);
+                if (_connections.TryGetValue(key, out var existing) && IsReusable(existing, server))
+                {
+                    existing.Touch();
+                    if (!acquireInvocationLease)
+                    {
+                        return new McpConnectionAccess(existing.Tools, null);
+                    }
+
+                    if (existing.TryAcquireLease(out var existingLease))
+                    {
+                        return new McpConnectionAccess(existing.Tools, existingLease);
+                    }
+                }
+
+                if (!acquireInvocationLease
+                    && _toolMetadata.TryGetValue(server.ServerId, out metadata)
+                    && IsReusable(metadata, server))
+                {
+                    return new McpConnectionAccess(metadata.Tools, null);
+                }
+
+                await DisconnectCoreAsync(key);
+                IMcpClientConnection? connection = null;
+                using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCancellation.Token);
+                _activeConnectionCancellations[key] = operationCancellation;
+                using var timeout = CreateTimeoutScope(discoveryTimeoutMilliseconds, operationCancellation.Token);
+                try
+                {
+                    SetStatus(server, McpConnectionStatusKind.Connecting, $"Connecting to MCP server '{server.DisplayName}'.");
+                    connection = await _connectionFactory.ConnectAsync(
+                        server,
+                        headers,
+                        environmentVariables,
+                        discoveryTimeoutMilliseconds,
+                        line => RecordStandardErrorLine(server.ServerId, line),
+                        timeout.Token);
+                    SetStatus(server, McpConnectionStatusKind.DiscoveringTools, $"Discovering tools from MCP server '{server.DisplayName}'.");
+                    var tools = (await connection.ListToolsAsync(timeout.Token)).ToArray();
+                    ValidateDiscoveredTools(server, tools);
+                    ThrowIfScopeWasCleaned(scope);
+                    var cached = new CachedMcpConnection(server.ServerId, scope, connection, tools, server.PersistenceVersion, server.UpdatedAtUtc);
+                    McpClientInvocationLease? lease = null;
+                    if (acquireInvocationLease && !cached.TryAcquireLease(out lease))
+                    {
+                        throw new InvalidOperationException($"MCP connection for server '{server.DisplayName}' completed before it could be leased.");
+                    }
+
+                    _connections[key] = cached;
+                    _toolMetadata[server.ServerId] = new CachedMcpToolMetadata(tools, server.PersistenceVersion, server.UpdatedAtUtc);
+                    connection = null;
+                    SetStatus(server, McpConnectionStatusKind.Connected, $"Connected to MCP server '{server.DisplayName}'.", toolCount: tools.Length, toolNames: tools.Select(tool => tool.Name).ToArray());
+                    return new McpConnectionAccess(tools, lease);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _disposeCancellation.IsCancellationRequested || operationCancellation.IsCancellationRequested)
+                {
+                    await DisposeFailedConnectionAsync(connection);
+                    SetStatus(server, McpConnectionStatusKind.Disconnected, $"Connection to MCP server '{server.DisplayName}' was canceled.");
+                    throw;
+                }
+                catch (OperationCanceledException ex)
+                {
+                    await DisposeFailedConnectionAsync(connection);
+                    SetStatus(server, McpConnectionStatusKind.Error, $"MCP server '{server.DisplayName}' timed out during discovery.", ex.Message);
+                    return new McpConnectionAccess([], null);
+                }
+                catch (InvalidOperationException) when (IsScopeCleaned(scope))
+                {
+                    await DisposeFailedConnectionAsync(connection);
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    await DisposeFailedConnectionAsync(connection);
+                    SetStatus(server, McpConnectionStatusKind.Error, $"MCP server '{server.DisplayName}' is unavailable: {ex.Message}", ex.Message);
+                    _logger.LogWarning(ex, "Failed to connect to MCP server '{ServerId}'.", server.ServerId);
+                    return new McpConnectionAccess([], null);
+                }
+                finally
+                {
+                    _activeConnectionCancellations.TryRemove(key, out _);
+                }
             }
-            catch (Exception ex)
+        }
+        finally
+        {
+            if (capacityLease)
             {
-                await DisposeFailedConnectionAsync(connection);
-                SetStatus(server, McpConnectionStatusKind.Error, $"MCP server '{server.DisplayName}' is unavailable: {ex.Message}", ex.Message);
-                _logger.LogWarning(ex, "Failed to connect to MCP server '{ServerId}'.", server.ServerId);
-                return new McpConnectionAccess([], null);
-            }
-            finally
-            {
-                _activeConnectionCancellations.TryRemove(key, out _);
+                _sessionConnectionCapacityGate.Release();
             }
         }
     }
@@ -335,6 +395,22 @@ public sealed class McpClientConnectionManager : IAsyncDisposable
         StatusChanged?.Invoke();
     }
 
+    internal async Task DisconnectSessionAsync(Guid sessionId)
+    {
+        _cleanedSessionScopes.TryAdd(sessionId, 0);
+        var keys = _connections
+            .Where(entry => entry.Value.Scope.IsForSession(sessionId))
+            .Select(entry => entry.Key)
+            .Concat(_activeConnectionCancellations.Keys.Where(key =>
+                IsConnectionKeyForSession(key, sessionId)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        foreach (var key in keys)
+        {
+            await DisconnectWithGateAsync(key).ConfigureAwait(false);
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -381,6 +457,7 @@ public sealed class McpClientConnectionManager : IAsyncDisposable
         _toolMetadata.Clear();
         _statuses.Clear();
         _standardErrorLines.Clear();
+        _cleanedSessionScopes.Clear();
 
         _disposeCancellation.Dispose();
     }
@@ -434,7 +511,14 @@ public sealed class McpClientConnectionManager : IAsyncDisposable
                 _logger.LogWarning(ex, "Failed to dispose MCP client for server '{ServerId}'.", connection.ServerId);
             }
 
-            SetStatus(connection.ServerId, McpConnectionStatusKind.Disconnected, "Disconnected from MCP server.");
+            if (CountActiveConnections(connection.ServerId) == 0)
+            {
+                SetStatus(connection.ServerId, McpConnectionStatusKind.Disconnected, "Disconnected from MCP server.");
+            }
+            else
+            {
+                StatusChanged?.Invoke();
+            }
         }
     }
 
@@ -502,10 +586,7 @@ public sealed class McpClientConnectionManager : IAsyncDisposable
     private TimeoutScope CreateTimeoutScope(int? milliseconds, CancellationToken cancellationToken)
     {
         var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCancellation.Token);
-        if (milliseconds is > 0)
-        {
-            source.CancelAfter(milliseconds.Value);
-        }
+        source.CancelAfter(McpTimeoutResolver.ResolveEffectiveTimeoutMilliseconds(milliseconds)!.Value);
 
         return new TimeoutScope(source.Token, source);
     }
@@ -535,6 +616,69 @@ public sealed class McpClientConnectionManager : IAsyncDisposable
     private static bool IsConnectionKeyForServer(string connectionKey, string serverId)
         => connectionKey.StartsWith(serverId + "\0", StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsConnectionKeyForSession(string connectionKey, Guid sessionId)
+    {
+        var separator = connectionKey.IndexOf('\0');
+        return separator >= 0
+               && connectionKey.AsSpan(separator + 1).StartsWith(
+                   $"session:{sessionId:N}:",
+                   StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsScopeCleaned(McpConnectionScope scope)
+        => scope.TryGetSessionId(out var sessionId)
+           && _cleanedSessionScopes.ContainsKey(sessionId);
+
+    private void ThrowIfScopeWasCleaned(McpConnectionScope scope)
+    {
+        if (IsScopeCleaned(scope))
+        {
+            throw new InvalidOperationException(
+                "The MCP session scope was cleaned and cannot create new connections.");
+        }
+    }
+
+    private async Task EnsureSessionConnectionCapacityAsync(
+        string requestedKey,
+        CancellationToken cancellationToken)
+    {
+        while (_connections.Values.Count(connection =>
+                   connection.Scope != McpConnectionScope.Shared) >= _maxSessionScopedConnections)
+        {
+            var candidate = _connections
+                .Where(entry => entry.Key != requestedKey
+                                && entry.Value.Scope != McpConnectionScope.Shared
+                                && entry.Value.CanEvict)
+                .OrderBy(entry => entry.Value.LastUsedAtUtc)
+                .FirstOrDefault();
+            if (candidate.Key is null)
+            {
+                throw new InvalidOperationException(
+                    "The MCP session connection limit is reached and every connection is in use.");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            await TryEvictIdleConnectionAsync(candidate.Key, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> TryEvictIdleConnectionAsync(
+        string connectionKey,
+        CancellationToken cancellationToken)
+    {
+        using (await _locks.EnterAsync(connectionKey, cancellationToken).ConfigureAwait(false))
+        {
+            if (!_connections.TryGetValue(connectionKey, out var connection)
+                || !connection.CanEvict)
+            {
+                return false;
+            }
+
+            await DisconnectCoreAsync(connectionKey).ConfigureAwait(false);
+            return true;
+        }
+    }
+
     private sealed class CachedMcpConnection(
         string serverId,
         McpConnectionScope scope,
@@ -547,6 +691,7 @@ public sealed class McpClientConnectionManager : IAsyncDisposable
         private TaskCompletionSource? _leasesDrained;
         private int _activeLeaseCount;
         private bool _retired;
+        private long _lastUsedUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
 
         public string ServerId { get; } = serverId;
         public McpConnectionScope Scope { get; } = scope;
@@ -554,6 +699,19 @@ public sealed class McpClientConnectionManager : IAsyncDisposable
         public IReadOnlyList<McpClientTool> Tools { get; } = tools;
         public int PersistenceVersion { get; } = persistenceVersion;
         public DateTimeOffset ServerUpdatedAtUtc { get; } = serverUpdatedAtUtc;
+        public DateTimeOffset LastUsedAtUtc => new(Interlocked.Read(ref _lastUsedUtcTicks), TimeSpan.Zero);
+        public bool CanEvict
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return !_retired && _activeLeaseCount == 0;
+                }
+            }
+        }
+
+        public void Touch() => Interlocked.Exchange(ref _lastUsedUtcTicks, DateTimeOffset.UtcNow.UtcTicks);
 
         public bool TryAcquireLease(out McpClientInvocationLease? lease)
         {
@@ -566,6 +724,7 @@ public sealed class McpClientConnectionManager : IAsyncDisposable
                 }
 
                 _activeLeaseCount++;
+                Touch();
                 lease = new McpClientInvocationLease(Connection.Client, ReleaseLease);
                 return true;
             }
@@ -596,6 +755,7 @@ public sealed class McpClientConnectionManager : IAsyncDisposable
             TaskCompletionSource? drained = null;
             lock (_sync)
             {
+                Touch();
                 if (--_activeLeaseCount == 0 && _retired)
                 {
                     drained = _leasesDrained;
@@ -621,28 +781,5 @@ public sealed class McpClientConnectionManager : IAsyncDisposable
         public CancellationToken Token { get; } = token;
 
         public void Dispose() => source.Dispose();
-    }
-}
-
-internal readonly record struct McpConnectionScope(string ScopeId)
-{
-    public static McpConnectionScope Shared { get; } = new("metadata");
-
-    public static McpConnectionScope For(Guid? sessionId, string? workspaceId)
-        => sessionId is null
-            ? Shared
-            : new($"session:{sessionId.Value:N}:workspace:{workspaceId?.Trim().ToLowerInvariant() ?? "none"}");
-}
-
-internal sealed class McpClientInvocationLease(McpClient? client, Action release) : IAsyncDisposable
-{
-    private Action? _release = release;
-
-    public McpClient? Client { get; } = client;
-
-    public ValueTask DisposeAsync()
-    {
-        Interlocked.Exchange(ref _release, null)?.Invoke();
-        return ValueTask.CompletedTask;
     }
 }

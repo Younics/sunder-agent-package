@@ -8,12 +8,12 @@ public static class DockerExecutionConfiguration
     public const string DefaultTimeoutSeconds = "300";
 
     public static PackageSettingsSchema Schema { get; } = new(
-        "Configure Docker images and defaults for Docker-backed execution workspaces.",
+        "Configure pinned Docker images and defaults for resource-bounded container execution. Docker is not a complete security sandbox.",
         [
             new PackageSettingsSection(
                 "docker",
                 "Docker Execution",
-                "Docker image management is available in the package settings view.",
+                "Docker image management is available in the package settings view. Runtime containers use no-new-privileges, drop all capabilities, enforce CPU/memory/PID limits, and have networking disabled.",
                 [
                     new PackageSettingsField(
                         TimeoutKey,

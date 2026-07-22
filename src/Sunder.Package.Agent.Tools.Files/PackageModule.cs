@@ -16,6 +16,6 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         var source = services.GetRequiredService<FilesToolSource>();
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, source);
         registry.RegisterExtension(PackageExtensionPoints.PermissionSurfaces, source);
-        registry.RegisterExtension(PackageExtensionPoints.SystemPromptContributors, source);
+        registry.RegisterExtension(PackageExtensionPoints.PromptContextContributors, source);
     }
 }

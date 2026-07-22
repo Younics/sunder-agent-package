@@ -23,9 +23,10 @@ internal sealed partial class AgentBehaviorLoopHost(
     DateTimeOffset runStartedAtUtc,
     string userMessage,
     Guid userTurnId,
+    AgentWorkspaceBindingRecord? executionBinding,
     AgentDurableRunLease runLease,
     IAgentBehaviorLoop defaultBehaviorLoop,
-    Func<bool> isCurrentRun) : IAgentBehaviorLoopRuntime, IAgentInnerBehaviorLoopRuntime, IAgentRunActivitySink
+    Func<bool> isCurrentRun) : IAgentBehaviorLoopRuntime, IAgentInnerBehaviorLoopRuntime, IAgentRunActivitySink, IAgentRunBudgetRuntime
 {
     private const int MaxParallelToolExecutions = 4;
 
@@ -43,6 +44,7 @@ internal sealed partial class AgentBehaviorLoopHost(
     private readonly DateTimeOffset _runStartedAtUtc = runStartedAtUtc;
     private readonly string _userMessage = userMessage;
     private readonly Guid _userTurnId = userTurnId;
+    private readonly AgentWorkspaceBindingRecord? _executionBinding = executionBinding;
     private readonly AgentDurableRunLease _runLease = runLease;
     private readonly IAgentBehaviorLoop _defaultBehaviorLoop = defaultBehaviorLoop;
     private readonly Func<bool> _isCurrentRun = isCurrentRun;
@@ -54,6 +56,13 @@ internal sealed partial class AgentBehaviorLoopHost(
     private readonly Dictionary<Guid, AgentTurnRecord> _openAssistantTurns = [];
 
     public bool IsCurrentRun() => _isCurrentRun();
+
+    AgentRunBudgetState IAgentRunBudgetRuntime.GetRunBudgetState()
+        => _sessionService.GetRun(_runId)?.BudgetState
+           ?? throw new AgentRunTranscriptWriteRejectedException();
+
+    AgentRunBudgetState IAgentRunBudgetRuntime.ChargeRunBudget(AgentRunBudgetCharge charge)
+        => _sessionService.ChargeRunBudget(_runLease, charge);
 
     private AgentToolBatchCoordinator ToolBatchCoordinator
         => _toolBatchCoordinator ??= new AgentToolBatchCoordinator(this);
@@ -115,6 +124,9 @@ internal sealed partial class AgentBehaviorLoopHost(
                 _runRevision,
                 _userMessage,
                 _runStartedAtUtc,
+                _workspace,
+                _executionBinding,
+                _availableToolsById?.Values.ToArray() ?? [],
                 cancellationToken);
 
             LogEvent(
@@ -129,7 +141,10 @@ internal sealed partial class AgentBehaviorLoopHost(
                     ["memory.prompt_context_block_count"] = context.PromptContextBlocks?.Count ?? 0,
                     ["memory.recall_entry_count"] = context.RecallResult?.Entries.Count ?? 0,
                 });
-            return new AgentBehaviorInstructionContext(context.SystemInstructions, context.HasSupplementaryContext);
+            return new AgentBehaviorInstructionContext(
+                context.SystemInstructions,
+                context.HasSupplementaryContext,
+                context.PromptContextBlocks);
         }
         catch (OperationCanceledException)
         {
@@ -459,7 +474,9 @@ internal sealed partial class AgentBehaviorLoopHost(
                 }
 
 
-                var waitingCheckpoint = _sessionService.GetLatestCheckpoint(_session.SessionId)
+                var waitingCheckpoint = _sessionService.GetLatestCheckpoint(
+                        _session.SessionId,
+                        _runRevision)
                     ?? throw new InvalidOperationException("The permission suspension checkpoint was not persisted.");
                 return new AgentToolCallOutcome(AgentToolCallOutcomeKind.WaitingForApproval, waitingCheckpoint);
             }
@@ -749,19 +766,29 @@ internal sealed partial class AgentBehaviorLoopHost(
         CancellationToken cancellationToken)
     {
         var allowOutsideConfiguredScope = string.Equals(pending.BoundaryId, AgentPermissionBoundaryIds.OutsideConfiguredScope, StringComparison.OrdinalIgnoreCase);
-        return await _toolService.ExecuteAsync(
-            pending.ToolId ?? string.Empty,
-            pending.ArgumentsJson,
-            pending.SessionId,
-            _profile.ProfileId,
-            _workspace,
-            allowOutsideConfiguredScope: allowOutsideConfiguredScope,
-            runId: pending.RunId,
-            runRevision: pending.RunRevision,
-            userTurnId: pending.UserTurnId,
-            toolCallId: pending.CallId,
-            advertisedDescriptor: advertisedDescriptor,
-            cancellationToken: cancellationToken);
+        try
+        {
+            return await _toolService.ExecuteAsync(
+                pending.ToolId ?? string.Empty,
+                pending.ArgumentsJson,
+                pending.SessionId,
+                _profile.ProfileId,
+                _workspace,
+                allowOutsideConfiguredScope: allowOutsideConfiguredScope,
+                runId: pending.RunId,
+                runRevision: pending.RunRevision,
+                userTurnId: pending.UserTurnId,
+                toolCallId: pending.CallId,
+                advertisedDescriptor: advertisedDescriptor,
+                cancellationToken: cancellationToken);
+        }
+        finally
+        {
+            if (!advertisedDescriptor.IsReadOnly)
+            {
+                InvalidateReadOnlyToolResultCache();
+            }
+        }
     }
 
 }

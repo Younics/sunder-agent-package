@@ -40,7 +40,9 @@ internal sealed class AgentProviderCycleRunner(AgentStreamingTurnWriter streamin
         IReadOnlyList<ChatMessage> promptMessages,
         AgentAssistantTurnState assistantTurnState,
         Stopwatch loopStopwatch,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AgentRunBudgetTracker? budgetTracker = null,
+        int promptOverheadTokens = 0)
     {
         var streamState = _streamingTurnWriter.BeginCycle(
             host,
@@ -58,6 +60,7 @@ internal sealed class AgentProviderCycleRunner(AgentStreamingTurnWriter streamin
         {
             await retryPipeline.ExecuteAsync(async attemptCancellationToken =>
             {
+                budgetTracker?.ChargeProviderAttempt(promptMessages, promptOverheadTokens);
                 if (streamAttempt > 0)
                 {
                     _streamingTurnWriter.ResetForRetry(streamState);

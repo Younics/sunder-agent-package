@@ -187,6 +187,25 @@ public sealed partial class AgentLocalStore
         return command.ExecuteNonQuery() == 1;
     }
 
+    internal bool RecordParentContinuationRetryPending(string workId, string error)
+    {
+        using var connection = CreateConnection();
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE AgentParentContinuationWork
+            SET UpdatedAtUtc = $updatedAtUtc,
+                LastError = $lastError
+            WHERE WorkId = $workId
+              AND Status IN ('Ready', 'Dispatching')
+              AND ExecutionStartedAtUtc IS NULL;
+            """;
+        command.Parameters.AddWithValue("$updatedAtUtc", DateTimeOffset.UtcNow.ToString("O"));
+        command.Parameters.AddWithValue("$lastError", error);
+        command.Parameters.AddWithValue("$workId", workId);
+        return command.ExecuteNonQuery() == 1;
+    }
+
     private void RecoverAmbiguousParentContinuationWork()
     {
         using var connection = CreateConnection();

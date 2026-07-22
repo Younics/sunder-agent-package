@@ -510,12 +510,15 @@ public sealed partial class AgentLocalStore
     internal bool MarkClaimedPermissionExecutionStarted(
         Guid sessionId,
         string requestId,
-        string claimToken)
+        string claimToken,
+        AgentSessionPermissionApproval? approval = null)
     {
         using var connection = CreateConnection();
         connection.Open();
+        using var transaction = connection.BeginTransaction(deferred: false);
         var now = DateTimeOffset.UtcNow;
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             UPDATE AgentPendingPermissionRequests
             SET ExecutionStartedAtUtc = $executionStartedAtUtc,
@@ -532,7 +535,28 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
         command.Parameters.AddWithValue("$requestId", requestId);
         command.Parameters.AddWithValue("$claimToken", claimToken);
-        return command.ExecuteNonQuery() == 1;
+        if (command.ExecuteNonQuery() != 1)
+        {
+            transaction.Rollback();
+            return false;
+        }
+
+        if (approval is not null)
+        {
+            using var approvalCommand = connection.CreateCommand();
+            approvalCommand.Transaction = transaction;
+            approvalCommand.CommandText = "INSERT OR REPLACE INTO AgentSessionPermissionApprovals (ApprovalId, SessionId, ActionId, MatcherKind, Pattern, CreatedAtUtc) VALUES ($approvalId, $sessionId, $actionId, $matcherKind, $pattern, $createdAtUtc);";
+            approvalCommand.Parameters.AddWithValue("$approvalId", approval.ApprovalId);
+            approvalCommand.Parameters.AddWithValue("$sessionId", approval.SessionId.ToString());
+            approvalCommand.Parameters.AddWithValue("$actionId", approval.ActionId);
+            approvalCommand.Parameters.AddWithValue("$matcherKind", approval.MatcherKind.ToString());
+            approvalCommand.Parameters.AddWithValue("$pattern", approval.Pattern);
+            approvalCommand.Parameters.AddWithValue("$createdAtUtc", approval.CreatedAtUtc.ToString("O"));
+            approvalCommand.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+        return true;
     }
 
     internal AgentCheckpointPersistenceResult? FinalizeClaimedPermissionRequest(

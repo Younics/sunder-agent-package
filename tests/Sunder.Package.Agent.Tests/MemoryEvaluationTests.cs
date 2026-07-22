@@ -32,8 +32,8 @@ public sealed class MemoryEvaluationTests
         await harness.AddUserTurnAsync("My name is Micha.");
         await harness.AddUserTurnAsync("I prefer concise final summaries.");
         await harness.AddUserTurnAsync("Always use apply_patch for file edits.");
-        await harness.AddAssistantTurnAsync("The project uses Blazor Server on .NET 10.");
-        await harness.AddToolResultAsync("Inspect workspace", "Working directory is /workspace/app.");
+        await harness.AddUserTurnAsync("The project uses Blazor Server on .NET 10.");
+        await harness.AddUserTurnAsync("The working directory is /workspace/app.");
 
         var memories = harness.ListActiveMemories();
         var report = BuildPromotionReport("long-session-promotion", memories,
@@ -55,8 +55,8 @@ public sealed class MemoryEvaluationTests
 
         await harness.AddUserTurnAsync("I prefer concise final summaries.");
         await harness.AddUserTurnAsync("Always use apply_patch for file edits.");
-        await harness.AddAssistantTurnAsync("The project uses Blazor Server on .NET 10.");
-        await harness.AddToolResultAsync("Inspect workspace", "Working directory is /workspace/app.");
+        await harness.AddUserTurnAsync("The project uses Blazor Server on .NET 10.");
+        await harness.AddUserTurnAsync("The working directory is /workspace/app.");
         await harness.ReindexAsync();
 
         var preferenceEntries = await harness.RecallAsync(
@@ -98,8 +98,8 @@ public sealed class MemoryEvaluationTests
 
         await harness.AddUserTurnAsync("Always use apply_patch for file edits.");
         await harness.AddUserTurnAsync("I prefer concise final summaries.");
-        await harness.AddAssistantTurnAsync("The project uses Blazor Server on .NET 10.");
-        await harness.AddToolResultAsync("Inspect workspace", "Working directory is /workspace/app.");
+        await harness.AddUserTurnAsync("The project uses Blazor Server on .NET 10.");
+        await harness.AddUserTurnAsync("The working directory is /workspace/app.");
         await harness.ReindexAsync();
 
         var entries = await harness.RecallAsync(
@@ -125,9 +125,9 @@ public sealed class MemoryEvaluationTests
 
         await harness.AddUserTurnAsync("Always use apply_patch for file edits.");
         await harness.AddUserTurnAsync("I prefer concise final summaries.");
-        await harness.AddAssistantTurnAsync("The project uses Blazor Server on .NET 10.");
-        await harness.AddAssistantTurnAsync("The project also uses SignalR for real-time updates.");
-        await harness.AddToolResultAsync("Inspect workspace", "Working directory is /workspace/app.");
+        await harness.AddUserTurnAsync("The project uses Blazor Server on .NET 10.");
+        await harness.AddUserTurnAsync("The project also uses SignalR for real-time updates.");
+        await harness.AddUserTurnAsync("The working directory is /workspace/app.");
         await harness.ReindexAsync();
 
         var entries = await harness.RecallAsync(
@@ -145,7 +145,7 @@ public sealed class MemoryEvaluationTests
     }
 
     [Fact]
-    public async Task ContestedEvaluation_RanksActiveMemoryAboveContestedMemory()
+    public async Task ContestedEvaluation_RanksUserProvidedMemoryAboveContestedMemory()
     {
         await using var harness = new MemoryEvaluationHarness();
 
@@ -158,7 +158,8 @@ public sealed class MemoryEvaluationTests
             SourceTurnId: Guid.NewGuid(),
             IsPinned: true,
             Importance: 0.8f,
-            Confidence: 0.85f));
+            Confidence: 0.85f,
+            Provenance: AgentMemoryProvenance.User));
         var contestedMemory = harness.Store.UpsertMemory(new MemoryUpsertRequest(
             harness.SessionId,
             Category: "preference",
@@ -168,7 +169,8 @@ public sealed class MemoryEvaluationTests
             SourceTurnId: Guid.NewGuid(),
             IsPinned: true,
             Importance: 0.8f,
-            Confidence: 0.85f));
+            Confidence: 0.85f,
+            Provenance: AgentMemoryProvenance.User));
         harness.Store.SetContested(contestedMemory.MemoryId);
 
         var entries = await harness.RecallAsync(
@@ -178,11 +180,11 @@ public sealed class MemoryEvaluationTests
             maxEntryCount: 4,
             maxChars: 1200);
 
-        var report = BuildRecallReport("contested-vs-active", entries, maxEntryCount: 4, maxChars: 1200, entry => entry.TrustState == AgentMemoryTrustState.Active || entry.TrustState == AgentMemoryTrustState.Contested);
+        var report = BuildRecallReport("contested-vs-user-provided", entries, maxEntryCount: 4, maxChars: 1200, entry => entry.TrustState == AgentMemoryTrustState.UserProvided || entry.TrustState == AgentMemoryTrustState.Contested);
         WriteReport(report);
 
         Assert.NotEmpty(entries);
-        Assert.Equal(AgentMemoryTrustState.Active, entries[0].TrustState);
+        Assert.Equal(AgentMemoryTrustState.UserProvided, entries[0].TrustState);
         Assert.Equal(activeMemory.MemoryId.ToString("N"), entries[0].MemoryId);
         Assert.Contains(entries, entry => entry.TrustState == AgentMemoryTrustState.Contested);
     }
@@ -216,12 +218,11 @@ public sealed class MemoryEvaluationTests
 
         Assert.NotEmpty(entries);
         Assert.Equal(correction.CorrectedMemory.MemoryId.ToString("N"), entries[0].MemoryId);
-        Assert.DoesNotContain(entries, entry => entry.TrustState == AgentMemoryTrustState.Superseded);
         Assert.DoesNotContain(entries, entry => entry.MemoryId == source.MemoryId.ToString("N"));
     }
 
     [Fact]
-    public async Task NoisySessionEvaluation_MaintainsUsefulPrecisionForEnvironmentRecall()
+    public async Task NoisySessionEvaluation_DoesNotPromoteAssistantOrToolClaims()
     {
         await using var harness = new MemoryEvaluationHarness(enableEmbeddings: true);
 
@@ -241,12 +242,10 @@ public sealed class MemoryEvaluationTests
             maxEntryCount: 4,
             maxChars: 1200);
 
-        var report = BuildRecallReport("noisy-environment-recall", entries, maxEntryCount: 4, maxChars: 1200, entry => entry.Category is "environment-fact" or "project-fact");
+        var report = BuildRecallReport("noisy-untrusted-claim-recall", entries, maxEntryCount: 4, maxChars: 1200, entry => entry.Category is "environment-fact" or "project-fact");
         WriteReport(report);
 
-        Assert.NotEmpty(entries);
-        Assert.Contains(entries[0].Category, new[] { "environment-fact", "project-fact" });
-        Assert.True(report.RelevantRatio >= 0.5d);
+        Assert.Empty(entries);
     }
 
     private PromotionEvaluationReport BuildPromotionReport(

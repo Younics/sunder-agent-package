@@ -233,9 +233,10 @@ public sealed class SemanticMemoryRecallService(
                 item.Memory.EvidenceText,
                 item.Score,
                 item.Memory.IsPinned,
-                MapTrustState(item.Memory.State),
+                MapTrustState(item.Memory),
                 item.Memory.SourceTurnId,
-                item.MatchReasons));
+                item.MatchReasons,
+                item.Memory.Provenance));
         }
 
         return entries;
@@ -247,14 +248,22 @@ public sealed class SemanticMemoryRecallService(
     private static int CountDistinctCategories(IReadOnlyList<AgentMemoryRecallEntry> entries)
         => entries.Select(entry => entry.Category).Distinct(StringComparer.OrdinalIgnoreCase).Count();
 
-    private static AgentMemoryTrustState MapTrustState(string state)
-        => state switch
+    private static AgentMemoryTrustState MapTrustState(StoredMemoryRecord memory)
+    {
+        if (string.Equals(memory.State, MemoryLocalStore.ContestedState, StringComparison.OrdinalIgnoreCase))
         {
-            MemoryLocalStore.ContestedState => AgentMemoryTrustState.Contested,
-            MemoryLocalStore.ForgottenState => AgentMemoryTrustState.Forgotten,
-            MemoryLocalStore.SupersededState => AgentMemoryTrustState.Superseded,
-            _ => AgentMemoryTrustState.Active,
-        };
+            return AgentMemoryTrustState.Contested;
+        }
+
+        if (memory.Provenance != AgentMemoryProvenance.User)
+        {
+            return AgentMemoryTrustState.Untrusted;
+        }
+
+        return string.Equals(memory.Category, "standing-instruction", StringComparison.OrdinalIgnoreCase)
+            ? AgentMemoryTrustState.UserConfirmedInstruction
+            : AgentMemoryTrustState.UserProvided;
+    }
 
     private static bool IsAlwaysIncludeCategory(string category)
         => string.Equals(category, "standing-instruction", StringComparison.OrdinalIgnoreCase)

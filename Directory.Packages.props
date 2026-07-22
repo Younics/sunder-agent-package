@@ -6,13 +6,17 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Sunder package development -->
-    <PackageVersion Include="Sunder.Sdk" Version="1.1.0" />
-    <PackageVersion Include="Sunder.Sdk.Avalonia" Version="1.1.0" />
-    <PackageVersion Include="Sunder.Sdk.Stacks" Version="1.1.0" />
-    <PackageVersion Include="Sunder.Package.Build" Version="1.1.0" />
+    <PackageVersion Include="Sunder.Sdk" Version="[1.1.0,1.2.0)" />
+    <PackageVersion Include="Sunder.Sdk.Avalonia" Version="[1.1.0,1.2.0)" />
+    <PackageVersion Include="Sunder.Sdk.Stacks" Version="[1.1.0,1.2.0)" />
+    <PackageVersion Include="Sunder.Package.Build" Version="[1.1.0,1.2.0)" />
     <!-- UI -->
-    <PackageVersion Include="Avalonia" Version="12.0.3" />
-    <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.0.3" />
+    <PackageVersion Include="Avalonia" Version="12.0.3"
+                    Condition="'$(MSBuildProjectName)' != 'Sunder.Package.Agent.Presentation.Tests'" />
+    <!-- 12.0.4 fixes intermittent xUnit v3 TestContext loss in Avalonia headless tests. -->
+    <PackageVersion Include="Avalonia" Version="12.0.4"
+                    Condition="'$(MSBuildProjectName)' == 'Sunder.Package.Agent.Presentation.Tests'" />
+    <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.0.4" />
     <PackageVersion Include="Avalonia.Controls.ItemsRepeater" Version="12.0.0" />
     <PackageVersion Include="Avalonia.AvaloniaEdit" Version="12.0.0" />
     <PackageVersion Include="AvaloniaEdit.TextMate" Version="12.0.0" />
@@ -35,7 +39,7 @@
     <PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
     <PackageVersion Include="SQLitePCLRaw.core" Version="3.0.3" />
     <!-- Tests -->
-    <PackageVersion Include="Avalonia.Headless.XUnit" Version="12.0.3" />
+    <PackageVersion Include="Avalonia.Headless.XUnit" Version="12.0.4" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.5.1" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.v3" Version="3.2.2" />

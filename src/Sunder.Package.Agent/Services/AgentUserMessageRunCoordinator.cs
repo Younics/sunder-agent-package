@@ -12,6 +12,7 @@ public sealed class AgentUserMessageRunCoordinator
     private readonly AgentRunExecutionService _executionService;
     private readonly AgentActiveRunRegistry _activeRunRegistry;
     private readonly AgentSessionTransitionGate _transitionGate;
+    private readonly AgentSessionDeletionFence _deletionFence;
 
     internal AgentUserMessageRunCoordinator(
         AgentSessionService sessionService,
@@ -19,7 +20,8 @@ public sealed class AgentUserMessageRunCoordinator
         AgentRunStartService startService,
         AgentRunExecutionService executionService,
         AgentActiveRunRegistry activeRunRegistry,
-        AgentSessionTransitionGate? transitionGate = null)
+        AgentSessionTransitionGate? transitionGate = null,
+        AgentSessionDeletionFence? deletionFence = null)
     {
         _sessionService = sessionService;
         _preparationService = preparationService;
@@ -27,6 +29,7 @@ public sealed class AgentUserMessageRunCoordinator
         _executionService = executionService;
         _activeRunRegistry = activeRunRegistry;
         _transitionGate = transitionGate ?? AgentSessionTransitionGate.Shared;
+        _deletionFence = deletionFence ?? AgentSessionDeletionFence.Shared;
     }
 
     public AgentUserMessageRunCoordinator(
@@ -66,7 +69,8 @@ public sealed class AgentUserMessageRunCoordinator
                 runEventLogger,
                 behaviorLoopHostFactory,
                 behaviorLoopResolver),
-            activeRunRegistry)
+            activeRunRegistry,
+            deletionFence: AgentSessionDeletionFence.Shared)
     {
     }
 
@@ -170,6 +174,12 @@ public sealed class AgentUserMessageRunCoordinator
         AgentActiveRunHandle runHandle;
         using (await _transitionGate.EnterAsync(sessionId, cancellationToken).ConfigureAwait(false))
         {
+            session = _sessionService.GetSession(sessionId)
+                ?? throw new InvalidOperationException($"Session '{sessionId}' was deleted before the run could start.");
+            if (_deletionFence.IsFenced(session))
+            {
+                throw new InvalidOperationException("The session is being deleted and cannot start a new run.");
+            }
             reservedRun = _sessionService.ReserveRun(sessionId, profileId, userMessage);
             var runCancellationSource = cancellationToken.CanBeCanceled
                 ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
@@ -267,7 +277,7 @@ public sealed class AgentUserMessageRunCoordinator
         }
         finally
         {
-            _activeRunRegistry.TryCleanupCurrent(
+            _activeRunRegistry.Complete(
                 sessionId,
                 reservedRun.Key.RunId,
                 reservedRun.Key.RunRevision);

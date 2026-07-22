@@ -84,6 +84,7 @@ internal sealed class McpClientConnectionFactory(
         int? timeoutMilliseconds,
         CancellationToken cancellationToken)
     {
+        McpTransportSecurity.ValidateRemoteEndpoint(server, headers);
         if (string.IsNullOrWhiteSpace(server.EndpointUrl))
         {
             throw new InvalidOperationException($"MCP server '{server.DisplayName}' is missing an endpoint URL.");
@@ -118,7 +119,9 @@ internal sealed class McpClientConnectionFactory(
         => new() { InitializationTimeout = ToSdkTimeout(timeoutMilliseconds) };
 
     private static TimeSpan ToSdkTimeout(int? timeoutMilliseconds)
-        => timeoutMilliseconds is > 0 ? TimeSpan.FromMilliseconds(timeoutMilliseconds.Value) : Timeout.InfiniteTimeSpan;
+        => TimeSpan.FromMilliseconds(timeoutMilliseconds is > 0
+            ? Math.Min(timeoutMilliseconds.Value, McpTimeoutResolver.MaximumToolTimeoutMilliseconds)
+            : McpTimeoutResolver.DefaultDiscoveryTimeoutMilliseconds);
 
     private sealed class SdkMcpClientConnection(McpClient client, HttpClient? ownedHttpClient) : IMcpClientConnection
     {

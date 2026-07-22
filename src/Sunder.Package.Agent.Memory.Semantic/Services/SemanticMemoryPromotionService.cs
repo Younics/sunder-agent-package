@@ -10,6 +10,7 @@ public sealed partial class SemanticMemoryPromotionService(
 {
     private const int MinMergeTokenOverlap = 3;
     private const double MinMergeOverlapRatio = 0.6;
+    internal const int MaxPromotionCandidatesPerEvent = 8;
 
     private readonly MemoryLocalStore _store = store;
     private readonly SemanticMemoryIndexingBackgroundService _indexingBackgroundService = indexingBackgroundService;
@@ -17,8 +18,10 @@ public sealed partial class SemanticMemoryPromotionService(
 
     public async Task PromoteDurableMemoriesAsync(AgentLifecycleEvent lifecycleEvent, CancellationToken cancellationToken)
     {
-        var candidates = ExtractPromotionCandidates(lifecycleEvent);
-        if (candidates.Count == 0)
+        var candidates = ExtractPromotionCandidates(lifecycleEvent)
+            .Take(MaxPromotionCandidatesPerEvent)
+            .ToArray();
+        if (candidates.Length == 0)
         {
             return;
         }
@@ -32,7 +35,7 @@ public sealed partial class SemanticMemoryPromotionService(
                 ? candidate
                 : MergeCandidate(candidate, mergeTarget);
 
-            var upserted = _store.UpsertMemory(
+            var upserted = _store.TryUpsertMemoryWithinLimit(
                 new MemoryUpsertRequest(
                     lifecycleEvent.Session.SessionId,
                     mergedCandidate.Category,
@@ -42,8 +45,13 @@ public sealed partial class SemanticMemoryPromotionService(
                     mergedCandidate.SourceTurnId,
                     mergedCandidate.IsPinned,
                     mergedCandidate.Importance,
-                    mergedCandidate.Confidence),
+                    mergedCandidate.Confidence,
+                    AgentMemoryProvenance.User),
                 mergeTarget?.MemoryId);
+            if (upserted is null)
+            {
+                continue;
+            }
 
             var existingIndex = activeMemories.FindIndex(memory => memory.MemoryId == upserted.MemoryId);
             if (existingIndex >= 0)
@@ -59,7 +67,7 @@ public sealed partial class SemanticMemoryPromotionService(
             committedCount++;
         }
 
-        _metricsService.RecordPromotion(candidates.Count, committedCount);
+        _metricsService.RecordPromotion(candidates.Length, committedCount);
     }
 
     private static IReadOnlyList<MemoryCandidate> ExtractPromotionCandidates(AgentLifecycleEvent lifecycleEvent)
@@ -73,22 +81,8 @@ public sealed partial class SemanticMemoryPromotionService(
                 AddCandidates(candidates, seen, ExtractUserCandidates(lifecycleEvent.TriggerTurn));
                 break;
 
-            case AgentLifecycleEventKind.AssistantTurnCompleted when lifecycleEvent.TriggerTurn is not null:
-                AddCandidates(candidates, seen, ExtractAssistantCandidates(lifecycleEvent.TriggerTurn));
-                break;
-
-            case AgentLifecycleEventKind.ToolResultRecorded when lifecycleEvent.TriggerTurn is not null:
-                AddCandidates(candidates, seen, ExtractToolResultCandidates(lifecycleEvent.TriggerTurn));
-                break;
-
-            case AgentLifecycleEventKind.RunInterrupted:
-            case AgentLifecycleEventKind.RunStopped:
-            case AgentLifecycleEventKind.RunFailed:
-                if (SemanticMemoryTextHelpers.GetLatestTurn(lifecycleEvent.RecentLiveBufferTurns, AgentTurnKind.ToolResult) is { } recentToolResult)
-                {
-                    AddCandidates(candidates, seen, ExtractToolResultCandidates(recentToolResult));
-                }
-                break;
+                // Assistant claims and tool output remain transcript evidence. They are never
+                // promoted into durable memory without a later, direct user confirmation.
         }
 
         return candidates;
@@ -144,64 +138,6 @@ public sealed partial class SemanticMemoryPromotionService(
         return candidates;
     }
 
-    private static IReadOnlyList<MemoryCandidate> ExtractAssistantCandidates(AgentTurnRecord turn)
-    {
-        if (turn.Role != AgentMessageRole.Assistant || turn.Kind != AgentTurnKind.Message)
-        {
-            return [];
-        }
-
-        var text = SemanticMemoryTextHelpers.RenderTurnText(turn);
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return [];
-        }
-
-        var candidates = new List<MemoryCandidate>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        AddFactCandidateFromMatch(candidates, seen, "preference", text, AssistantPreferencePattern(), turn.TurnId, 0.7f, 0.68f);
-        AddFactCandidateFromMatch(candidates, seen, "standing-instruction", text, AssistantStandingInstructionPattern(), turn.TurnId, 0.74f, 0.7f);
-        AddFactCandidateFromMatch(candidates, seen, "project-fact", text, AssistantProjectFactPattern(), turn.TurnId, 0.72f, 0.66f);
-        AddFactCandidateFromMatch(candidates, seen, "environment-fact", text, AssistantEnvironmentFactPattern(), turn.TurnId, 0.7f, 0.64f);
-
-        return candidates;
-    }
-
-    private static IReadOnlyList<MemoryCandidate> ExtractToolResultCandidates(AgentTurnRecord turn)
-    {
-        if (turn.Kind != AgentTurnKind.ToolResult)
-        {
-            return [];
-        }
-
-        var candidates = new List<MemoryCandidate>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var item in turn.Items.Where(item => item.Kind == AgentTurnItemKind.ToolResult))
-        {
-            var evidenceText = SemanticMemoryTextHelpers.BuildToolEvidenceText(item);
-            if (string.IsNullOrWhiteSpace(evidenceText))
-            {
-                continue;
-            }
-
-            foreach (var line in SemanticMemoryTextHelpers.EnumerateFactLines(evidenceText))
-            {
-                if (ToolProjectFactPattern().IsMatch(line))
-                {
-                    AddCandidate(candidates, seen, "project-fact", line, evidenceText, turn.TurnId, isPinned: false, importance: 0.78f, confidence: 0.74f);
-                }
-
-                if (ToolEnvironmentFactPattern().IsMatch(line))
-                {
-                    AddCandidate(candidates, seen, "environment-fact", line, evidenceText, turn.TurnId, isPinned: false, importance: 0.76f, confidence: 0.72f);
-                }
-            }
-        }
-
-        return candidates;
-    }
-
     private static void AddCandidates(
         ICollection<MemoryCandidate> target,
         ISet<string> seen,
@@ -213,23 +149,6 @@ public sealed partial class SemanticMemoryPromotionService(
             {
                 target.Add(candidate);
             }
-        }
-    }
-
-    private static void AddFactCandidateFromMatch(
-        ICollection<MemoryCandidate> candidates,
-        ISet<string> seen,
-        string category,
-        string evidenceText,
-        Regex matcher,
-        Guid sourceTurnId,
-        float importance,
-        float confidence)
-    {
-        foreach (Match match in matcher.Matches(evidenceText))
-        {
-            var content = SemanticMemoryTextHelpers.BuildFactContent(match.Value);
-            AddCandidate(candidates, seen, category, content, evidenceText, sourceTurnId, isPinned: false, importance, confidence);
         }
     }
 
@@ -306,23 +225,11 @@ public sealed partial class SemanticMemoryPromotionService(
     [GeneratedRegex(@"\b(i prefer|i like|i dislike|i don't like|please prefer)\b", RegexOptions.IgnoreCase)]
     private static partial Regex PreferencePattern();
 
-    [GeneratedRegex(@"\b(always|never|please|do not|don't|make sure|use)\b", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?:^|[.!?]\s+)(?:please\s+)?(?:always\b|never\b|from now on\b|for (?:all )?future (?:requests|turns)\b|remember to\b|standing instruction\b)", RegexOptions.IgnoreCase)]
     private static partial Regex StandingInstructionPattern();
 
     [GeneratedRegex(@"\b(my name is|i am |i'm |call me )\b", RegexOptions.IgnoreCase)]
     private static partial Regex ParticipantFactPattern();
-
-    [GeneratedRegex(@"\b(user prefers|user asked for|preferred style|please keep|prefer concise|prefer detailed)\b", RegexOptions.IgnoreCase)]
-    private static partial Regex AssistantPreferencePattern();
-
-    [GeneratedRegex(@"\b(use |avoid |make sure |do not |don't |always |never )\b", RegexOptions.IgnoreCase)]
-    private static partial Regex AssistantStandingInstructionPattern();
-
-    [GeneratedRegex(@"\b(project uses|repository uses|this project uses|stack includes|framework is|target framework|dependencies include)\b", RegexOptions.IgnoreCase)]
-    private static partial Regex AssistantProjectFactPattern();
-
-    [GeneratedRegex(@"\b(working directory is|running on|operating system|environment uses|path is)\b", RegexOptions.IgnoreCase)]
-    private static partial Regex AssistantEnvironmentFactPattern();
 
     [GeneratedRegex(@"\b(this project|the project|repo|repository|stack|we use|we are using|architecture)\b", RegexOptions.IgnoreCase)]
     private static partial Regex ProjectFactPattern();
@@ -330,11 +237,6 @@ public sealed partial class SemanticMemoryPromotionService(
     [GeneratedRegex(@"\b(environment|machine|os|working directory|path|running on|local)\b", RegexOptions.IgnoreCase)]
     private static partial Regex EnvironmentFactPattern();
 
-    [GeneratedRegex(@"\b(project|repository|repo|framework|targetframework|dependency|dependencies|packagereference|package.json|csproj|docker|blazor|react|asp.net|dotnet|postgres|solution)\b", RegexOptions.IgnoreCase)]
-    private static partial Regex ToolProjectFactPattern();
-
-    [GeneratedRegex(@"\b(environment|machine|os|working directory|current directory|path|windows|linux|macos|localhost|port|container)\b", RegexOptions.IgnoreCase)]
-    private static partial Regex ToolEnvironmentFactPattern();
 }
 
 internal sealed record MemoryCandidate(

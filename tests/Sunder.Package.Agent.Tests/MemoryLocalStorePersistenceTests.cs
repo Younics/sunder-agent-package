@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Memory.Semantic;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
@@ -26,9 +27,10 @@ public sealed class MemoryLocalStorePersistenceTests
         Assert.NotNull(memory);
         Assert.Equal("project-fact", memory.Category);
         Assert.Equal(sourceTurnId, memory.SourceTurnId);
+        Assert.Equal(AgentMemoryProvenance.Unknown, memory.Provenance);
         Assert.Single(store.SearchMemories(sessionId, "legacy", null, includeInactive: false, limit: 10));
         Assert.Equal([0.25f, 0.75f], store.GetEmbedding(memoryId)!.Values);
-        Assert.Equal([1, 2, 3, 4], ReadMigrationVersions(storage.DatabasePath));
+        Assert.Equal([1, 2, 3, 4, 5], ReadMigrationVersions(storage.DatabasePath));
     }
 
     [Fact]
@@ -38,7 +40,7 @@ public sealed class MemoryLocalStorePersistenceTests
 
         Parallel.For(0, 12, _ => storage.OpenStore());
 
-        Assert.Equal([1, 2, 3, 4], ReadMigrationVersions(storage.DatabasePath));
+        Assert.Equal([1, 2, 3, 4, 5], ReadMigrationVersions(storage.DatabasePath));
     }
 
     [Fact]
@@ -80,7 +82,7 @@ public sealed class MemoryLocalStorePersistenceTests
         var reopened = storage.OpenStore();
 
         Assert.Equal(memory.MemoryId, Assert.Single(reopened.SearchMemories(sessionId, "missing", null, false, 10)).Memory.MemoryId);
-        Assert.Equal([1, 2, 3, 4], ReadMigrationVersions(storage.DatabasePath));
+        Assert.Equal([1, 2, 3, 4, 5], ReadMigrationVersions(storage.DatabasePath));
     }
 
     [Fact]
@@ -191,6 +193,35 @@ public sealed class MemoryLocalStorePersistenceTests
         Assert.Equal(sourceTurnId, updated.SourceTurnId);
         Assert.Equal(updated, canonical);
         Assert.Equal(updated, searchResult);
+    }
+
+    [Fact]
+    public void UpsertMemory_TrimsEvidenceCountAndTextLength()
+    {
+        const int maxEvidenceRecords = 16;
+        const int maxEvidenceChars = 4_096;
+        using var storage = new TemporaryMemoryStorage();
+        var store = storage.OpenStore();
+        var sessionId = Guid.NewGuid();
+        StoredMemoryRecord? memory = null;
+        for (var index = 0; index < maxEvidenceRecords + 4; index++)
+        {
+            memory = store.UpsertMemory(new MemoryUpsertRequest(
+                sessionId,
+                "project-fact",
+                "The project has bounded evidence.",
+                "the project has bounded evidence.",
+                $"{index:D2}:" + new string('x', maxEvidenceChars + 100),
+                Guid.NewGuid(),
+                false,
+                0.8f,
+                0.9f,
+                AgentMemoryProvenance.User));
+        }
+
+        var evidence = store.ListEvidence(memory!.MemoryId);
+        Assert.Equal(maxEvidenceRecords, evidence.Count);
+        Assert.All(evidence, item => Assert.InRange(item.EvidenceText!.Length, 1, maxEvidenceChars));
     }
 
     private sealed class TemporaryMemoryStorage : IDisposable

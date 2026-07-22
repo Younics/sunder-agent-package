@@ -174,6 +174,11 @@ internal sealed class AgentRuntimeChangeHub :
                 Revision = Interlocked.Increment(ref _revision),
                 RuntimeInstanceId = _instanceId,
             };
+            change = AgentRuntimePayloadLimits.ProjectChange(change);
+            change = AgentRuntimePayloadLimits.ReplaceWithResnapshotIfOversized(
+                change,
+                ProjectForSubscriber(change, supportsTurnMutations: true),
+                ProjectForSubscriber(change, supportsTurnMutations: false));
             _replay.Enqueue(change);
             while (_replay.Count > ReplayCapacity)
             {
@@ -362,8 +367,9 @@ internal sealed class AgentTranscriptPageHandler(
             : request.Direction is AgentTranscriptPageDirection.Recent or AgentTranscriptPageDirection.Before
                 ? turns.Skip(turns.Count - limit).ToArray()
                 : turns.Take(limit).ToArray();
-        return ValueTask.FromResult(new AgentTranscriptPage(
-            changes.Revision, pageTurns, hasMore));
+        return ValueTask.FromResult(AgentRuntimePayloadLimits.FitTranscriptPage(
+            new AgentTranscriptPage(changes.Revision, pageTurns, hasMore),
+            request.Direction));
     }
 }
 
@@ -441,6 +447,7 @@ internal sealed class AgentProfileCommandHandler(
 internal sealed class AgentWorkspaceCommandHandler(
     AgentWorkspaceService workspaces,
     AgentExecutionTargetWarmupService warmup,
+    AgentSessionDeletionService deletion,
     AgentRuntimeChangeHub changes)
     : IPackageRuntimeOperationHandler<AgentWorkspaceCommand, AgentWorkspaceCommandResult>
 {
@@ -461,7 +468,9 @@ internal sealed class AgentWorkspaceCommandHandler(
                 workspace = workspaces.GetWorkspace(workspaceId);
                 break;
             case AgentWorkspaceCommandKind.Delete:
-                workspaces.DeleteWorkspace(Require(request.WorkspaceId));
+                await deletion.DeleteWorkspaceAsync(
+                    Require(request.WorkspaceId),
+                    cancellationToken).ConfigureAwait(false);
                 workspace = null;
                 break;
             case AgentWorkspaceCommandKind.Warmup:
@@ -481,10 +490,12 @@ internal sealed class AgentWorkspaceCommandHandler(
 
 internal sealed class AgentSessionCommandHandler(
     AgentSessionService sessions,
+    AgentSessionDeletionService deletion,
+    AgentSessionDeletionFence deletionFence,
     AgentRuntimeChangeHub changes)
     : IPackageRuntimeOperationHandler<AgentSessionCommand, AgentSessionCommandResult>
 {
-    public ValueTask<AgentSessionCommandResult> HandleAsync(
+    public async ValueTask<AgentSessionCommandResult> HandleAsync(
         AgentSessionCommand request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -492,6 +503,10 @@ internal sealed class AgentSessionCommandHandler(
         switch (request.Kind)
         {
             case AgentSessionCommandKind.Create:
+                if (deletionFence.IsWorkspaceFenced(request.WorkspaceId))
+                {
+                    throw new InvalidOperationException("The workspace is being deleted and cannot create a session.");
+                }
                 session = sessions.CreateSession(request.Title ?? "New Session", profileId: request.ProfileId,
                     behaviorLoopId: request.BehaviorLoopId, workspaceId: request.WorkspaceId);
                 break;
@@ -501,22 +516,24 @@ internal sealed class AgentSessionCommandHandler(
                 break;
             case AgentSessionCommandKind.Delete:
                 session = request.Session ?? throw new InvalidOperationException("Session is required.");
-                sessions.DeleteSession(session.SessionId);
+                await deletion.DeleteSessionAsync(
+                    session.SessionId,
+                    cancellationToken).ConfigureAwait(false);
                 session = null;
                 break;
             default:
                 throw new InvalidOperationException("Unknown session command.");
         }
-        return ValueTask.FromResult(new AgentSessionCommandResult(
+        return new AgentSessionCommandResult(
             changes.Revision,
-            session is null ? null : new AgentSessionSnapshot(session, sessions.GetLatestCheckpoint(session.SessionId))));
+            session is null ? null : new AgentSessionSnapshot(session, sessions.GetLatestCheckpoint(session.SessionId)));
     }
 }
 
 internal sealed class AgentRunCommandHandler(
     AgentRunCoordinator runs,
-    AgentPermissionService permissions,
     AgentSessionService sessions,
+    AgentAttachmentTransferService attachmentTransfers,
     AgentRuntimeChangeHub changes)
     : IPackageRuntimeOperationHandler<AgentRunCommand, AgentRunCommandResult>,
       IPackageRuntimeOperationHandler<AgentRunCommandStatusRequest, AgentRunCommandStatusResult>
@@ -535,41 +552,43 @@ internal sealed class AgentRunCommandHandler(
         }
         try
         {
-            if (request.Kind == AgentRunCommandKind.ApprovePermission && request.ApproveForSession)
+            IReadOnlyList<AgentAttachmentUploadRequest> attachments = [];
+            if (request.Kind is AgentRunCommandKind.Start or AgentRunCommandKind.RollbackAndStart)
             {
-                var sessionId = request.SessionId;
-                var requestId = Require(request.PermissionRequestId, "Permission request id");
-                if (permissions.GetPendingRequest(sessionId, requestId) is { } pending)
+                if ((request.UserMessage?.Length ?? 0) > AgentRuntimePayloadLimits.MaximumRunMessageCharacters)
                 {
-                    permissions.SaveSessionApproval(
-                        sessionId,
-                        pending.ActionId,
-                        pending.BoundaryId);
+                    throw new InvalidOperationException(
+                        $"Agent message exceeds the {AgentRuntimePayloadLimits.MaximumRunMessageCharacters} character Runtime transport limit.");
                 }
+                attachments = attachmentTransfers.ConsumeUploads(request.AttachmentHandles ?? []);
             }
+
             var checkpoint = request.Kind switch
             {
                 AgentRunCommandKind.Start => request.UserTurnId is { } startUserTurnId
                     ? await ((IAgentCorrelatedRunGateway)runs).QueueUserMessageAsync(request.SessionId,
                         Require(request.ProfileId, "Profile id"), request.UserMessage ?? string.Empty,
-                        Require(request.WorkspaceId, "Workspace id"), request.Attachments ?? [], startUserTurnId,
+                        Require(request.WorkspaceId, "Workspace id"), attachments, startUserTurnId,
                         cancellationToken)
                     : await runs.QueueUserMessageAsync(request.SessionId,
                         Require(request.ProfileId, "Profile id"), request.UserMessage ?? string.Empty,
-                        Require(request.WorkspaceId, "Workspace id"), request.Attachments ?? [], cancellationToken),
+                        Require(request.WorkspaceId, "Workspace id"), attachments, cancellationToken),
                 AgentRunCommandKind.RollbackAndStart => request.UserTurnId is { } rollbackUserTurnId
                     ? await ((IAgentCorrelatedRunGateway)runs).RollbackAndQueueUserMessageAsync(request.SessionId,
                         request.RollbackAnchorTurnId ?? throw new InvalidOperationException("Rollback anchor is required."),
                         Require(request.ProfileId, "Profile id"), request.UserMessage ?? string.Empty,
-                        Require(request.WorkspaceId, "Workspace id"), request.Attachments ?? [], rollbackUserTurnId,
+                        Require(request.WorkspaceId, "Workspace id"), attachments, rollbackUserTurnId,
                         cancellationToken)
                     : await runs.RollbackAndQueueUserMessageAsync(request.SessionId,
                         request.RollbackAnchorTurnId ?? throw new InvalidOperationException("Rollback anchor is required."),
                         Require(request.ProfileId, "Profile id"), request.UserMessage ?? string.Empty,
-                        Require(request.WorkspaceId, "Workspace id"), request.Attachments ?? [], cancellationToken),
+                        Require(request.WorkspaceId, "Workspace id"), attachments, cancellationToken),
                 AgentRunCommandKind.Stop => await ((IAgentRunGateway)runs).StopAsync(request.SessionId, cancellationToken),
-                AgentRunCommandKind.ApprovePermission => await ((IAgentRunGateway)runs).ApprovePendingPermissionAsync(
-                    request.SessionId, Require(request.PermissionRequestId, "Permission request id"), cancellationToken),
+                AgentRunCommandKind.ApprovePermission => await runs.ApprovePendingPermissionAsync(
+                    request.SessionId,
+                    Require(request.PermissionRequestId, "Permission request id"),
+                    request.ApproveForSession,
+                    cancellationToken),
                 AgentRunCommandKind.DenyPermission => await ((IAgentRunGateway)runs).DenyPendingPermissionAsync(
                     request.SessionId, Require(request.PermissionRequestId, "Permission request id"), cancellationToken),
                 _ => throw new InvalidOperationException("Unknown run command."),
@@ -664,10 +683,50 @@ internal sealed class AgentPermissionCommandHandler(
         => string.IsNullOrWhiteSpace(value) ? throw new InvalidOperationException("Permission identifier is required.") : value;
 }
 
-internal sealed class AgentAttachmentReadHandler(AgentAttachmentService attachments)
-    : IPackageRuntimeOperationHandler<AgentAttachmentReadRequest, AgentAttachmentReadResult>
+internal sealed class AgentAttachmentTransferHandler(
+    AgentAttachmentTransferService transfers,
+    AgentAttachmentService attachments)
+    : IPackageRuntimeOperationHandler<AgentAttachmentTransferRequest, AgentAttachmentTransferResult>
 {
-    public async ValueTask<AgentAttachmentReadResult> HandleAsync(
-        AgentAttachmentReadRequest request, CancellationToken cancellationToken = default)
-        => new(await attachments.ReadAttachmentBytesAsync(request.Metadata, cancellationToken).ConfigureAwait(false));
+    public async ValueTask<AgentAttachmentTransferResult> HandleAsync(
+        AgentAttachmentTransferRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        switch (request.Kind)
+        {
+            case AgentAttachmentTransferKind.BeginUpload:
+                return transfers.BeginUpload(request.Upload
+                    ?? throw new InvalidOperationException("Attachment upload descriptor is required."));
+            case AgentAttachmentTransferKind.WriteUploadChunk:
+                return transfers.WriteUploadChunk(
+                    RequireTransferId(request),
+                    request.Offset,
+                    request.Content ?? throw new InvalidOperationException("Attachment upload content is required."));
+            case AgentAttachmentTransferKind.CompleteUpload:
+                return transfers.CompleteUpload(RequireTransferId(request));
+            case AgentAttachmentTransferKind.AbortUpload:
+                transfers.AbortUpload(RequireTransferId(request));
+                return new AgentAttachmentTransferResult(IsComplete: true);
+            case AgentAttachmentTransferKind.ReadDownloadChunk:
+                var metadata = request.Metadata
+                    ?? throw new InvalidOperationException("Attachment metadata is required.");
+                var chunk = await attachments.ReadAttachmentChunkAsync(
+                    metadata,
+                    request.Offset,
+                    cancellationToken).ConfigureAwait(false);
+                return new AgentAttachmentTransferResult(
+                    NextOffset: request.Offset + chunk.Content.Length,
+                    TotalBytes: chunk.TotalBytes,
+                    Content: chunk.Content,
+                    IsComplete: chunk.IsComplete);
+            default:
+                throw new InvalidOperationException("Unknown attachment transfer operation.");
+        }
+    }
+
+    private static string RequireTransferId(AgentAttachmentTransferRequest request)
+        => string.IsNullOrWhiteSpace(request.TransferId)
+            ? throw new InvalidOperationException("Attachment transfer id is required.")
+            : request.TransferId;
 }

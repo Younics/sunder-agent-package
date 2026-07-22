@@ -66,8 +66,7 @@ public sealed class BuilderSetupServiceTests
             "Local",
             null,
             SupportsShell: true,
-            SupportsFiles: true,
-            SupportsSearch: true);
+            SupportsFiles: true);
 
         public List<string> ShellCommands { get; } = [];
 

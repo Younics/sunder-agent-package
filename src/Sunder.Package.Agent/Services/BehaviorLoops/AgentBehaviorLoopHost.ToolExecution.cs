@@ -156,7 +156,14 @@ internal sealed partial class AgentBehaviorLoopHost
     {
         if (!IsCacheableReadOnlyTool(call.ToolId, availableToolsById))
         {
-            return await ExecuteToolAsync(call, availableToolsById[call.ToolId], cancellationToken);
+            try
+            {
+                return await ExecuteToolAsync(call, availableToolsById[call.ToolId], cancellationToken);
+            }
+            finally
+            {
+                InvalidateReadOnlyToolResultCache();
+            }
         }
 
         var key = BuildToolCallCacheKey(call);
@@ -217,6 +224,14 @@ internal sealed partial class AgentBehaviorLoopHost
             WasTruncated: cached.WasTruncated,
             BackendId: cached.BackendId,
             PresentationPayloadJson: cached.PresentationPayloadJson);
+
+    internal void InvalidateReadOnlyToolResultCache()
+    {
+        lock (_readOnlyToolResultCacheSync)
+        {
+            _readOnlyToolResultCache.Clear();
+        }
+    }
 
     internal sealed record ExecutedToolResult(
         AgentToolCallRequest ToolCall,

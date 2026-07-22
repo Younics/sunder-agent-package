@@ -9,7 +9,7 @@ public sealed class SubagentFeature :
     IAgentProfileSelectableCapabilityProvider,
     IAgentProfileSelectableCapabilityChangeNotifier,
     IAgentToolSource,
-    IAgentSystemPromptContributor,
+    IAgentPromptContextContributor,
     IAgentToolPresentationResolver
 {
     private readonly SubagentService _subagentService;
@@ -81,10 +81,10 @@ public sealed class SubagentFeature :
         CancellationToken cancellationToken = default)
         => _orchestrator.ExecuteAsync(context, request, cancellationToken);
 
-    public ValueTask<IReadOnlyList<AgentSystemPromptBlock>> ContributeAsync(
-        AgentSystemPromptRequest request,
+    public ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
+        AgentPromptContextRequest request,
         CancellationToken cancellationToken = default)
-        => _descriptors.ContributeAsync(request, cancellationToken);
+        => _descriptors.ContributeContextAsync(request, cancellationToken);
 
     internal static string BuildDelegateTasksResultContent(IReadOnlyList<SubagentTaskResult> results)
         => SubagentBatchResultRenderer.BuildDelegateTasksResultContent(results);

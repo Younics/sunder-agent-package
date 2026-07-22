@@ -9,7 +9,7 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.Tools.Shell;
 
 public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
-    : IAgentToolSource, IAgentPermissionAwareToolSource, IAgentPermissionSurface, IAgentToolPresentationResolver
+    : IAgentToolSource, IAgentPermissionAwareToolSource, IAgentPermissionSurface, IAgentPromptContextContributor, IAgentToolPresentationResolver
 {
     private static readonly AgentToolDescriptor Descriptor = new(
         "shell",
@@ -34,6 +34,8 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
 
     public string SurfaceId => "shell";
 
+    public string ContributorId => SourceId;
+
     public AgentToolPresentation? ResolveToolPresentation(AgentToolPresentationRequest request)
     {
         if (!IsShellToolId(request.ToolId))
@@ -52,23 +54,43 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
             OutputText: request.TextContent);
     }
 
-    public async ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(
+    public ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(
         AgentToolSourceContext context,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var target = ResolveTarget(context.ExecutionBinding);
-        if (target is null || context.Workspace is null || context.ExecutionBinding is null)
+        return ValueTask.FromResult<IReadOnlyList<AgentToolDescriptor>>([Descriptor]);
+    }
+
+    public async ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
+        AgentPromptContextRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.Workspace is null
+            || request.ExecutionBinding is null
+            || !request.AvailableTools.Any(tool => IsShellToolId(tool.ToolId))
+            || ResolveTarget(request.ExecutionBinding) is not { } target)
         {
-            return [Descriptor];
+            return null;
         }
 
-        var shell = await target.GetShellAsync(new AgentExecutionTargetContext(context.SessionId, context.Profile?.ProfileId, context.Workspace, context.ExecutionBinding), cancellationToken);
-        return [Descriptor with
-        {
-            Description = ShellDescription + " " + shell.Description,
-            RuntimeInstructions = ShellInstructions + Environment.NewLine + Environment.NewLine + "Selected executor shell:" + Environment.NewLine + shell.Description,
-        }];
+        var shell = await target.GetShellAsync(
+            new AgentExecutionTargetContext(
+                request.Session.SessionId,
+                request.Profile?.ProfileId,
+                request.Workspace,
+                request.ExecutionBinding),
+            cancellationToken);
+        return new AgentPromptContextContribution(
+        [
+            new AgentPromptContextBlock(
+                "Selected Executor Shell",
+                shell.Description,
+                Priority: 70,
+                SourceId: SourceId,
+                Provenance: AgentContextProvenance.Extension,
+                Trust: AgentContextTrust.Untrusted),
+        ]);
     }
 
     public async ValueTask<AgentToolReadiness?> GetReadinessAsync(

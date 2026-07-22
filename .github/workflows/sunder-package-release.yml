@@ -1,155 +1,256 @@
-name: Sunder Agent Package Release
+name: Sunder Agent Family Release
 
 on:
   push:
     tags:
-      - "agent*/v*"
+      - "agent/v*"
 
 permissions: {}
 
 concurrency:
-  group: sunder-agent-package-release-${{ github.ref }}
+  group: sunder-agent-family-release-${{ github.ref }}
   cancel-in-progress: false
 
 env:
   DOTNET_VERSION: "10.0.100"
   MSBUILDDISABLENODEREUSE: "1"
+  NUGET_SOURCE: https://api.nuget.org/v3/index.json
+  NUGET_FLAT_CONTAINER: https://api.nuget.org/v3-flatcontainer
 
 jobs:
   prepare:
-    name: Prepare release metadata
+    name: Prepare coordinated family release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
-      artifact_name: ${{ steps.release.outputs.artifact_name }}
+      core_commit: ${{ steps.core.outputs.commit }}
+      dist_tag: ${{ steps.release.outputs.dist_tag }}
       is_prerelease: ${{ steps.release.outputs.is_prerelease }}
-      package_id: ${{ steps.release.outputs.package_id }}
-      project_path: ${{ steps.release.outputs.project_path }}
-      release_title: ${{ steps.release.outputs.release_title }}
       version: ${{ steps.release.outputs.version }}
     steps:
-      - name: Checkout repository
+      - name: Resolve Core main commit
+        id: core
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r commit ref < <(git ls-remote --exit-code https://github.com/Younics/sunder-core.git refs/heads/main)
+          if [[ ! "$commit" =~ ^[0-9a-f]{40}$ || "$ref" != "refs/heads/main" ]]; then
+            echo "Could not resolve exactly one full commit SHA for Younics/sunder-core main." >&2
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Agent repository
         uses: actions/checkout@v4
 
-      - name: Validate release tag
+      - name: Validate family release tag and inventory
         id: release
         shell: bash
         run: |
           set -euo pipefail
-
           tag="${GITHUB_REF_NAME}"
-          if [[ ! "$tag" =~ ^([a-z0-9-]+)/v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$ ]]; then
-            echo "Sunder Agent package release tags must use '<package>/v<semver>', for example agent/v0.8.0 or agent-provider-openai/v0.8.0-beta.1." >&2
+          if [[ ! "$tag" =~ ^agent/v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)$ ]]; then
+            echo "Agent family releases must use agent/v<semver>, for example agent/v1.1.0 or agent/v1.1.1-beta.1." >&2
             exit 1
           fi
-
-          package_key="${BASH_REMATCH[1]}"
-          version="${BASH_REMATCH[2]}"
-
-          package="$(jq -cer --arg key "$package_key" '.packages[] | select(.key == $key and .artifactType == "sunderpkg")' packages.json)" \
-            || { echo "Unsupported Sunder Agent package release tag prefix '$package_key'." >&2; exit 1; }
+          version="${BASH_REMATCH[1]}"
+          if [[ "$version" == *-* ]]; then
+            prerelease="${version#*-}"
+            IFS='.' read -ra identifiers <<< "$prerelease"
+            for identifier in "${identifiers[@]}"; do
+              if [[ "$identifier" =~ ^[0-9]+$ && "$identifier" == 0* && "$identifier" != "0" ]]; then
+                echo "Numeric SemVer prerelease identifiers must not contain leading zeroes." >&2
+                exit 1
+              fi
+            done
+          fi
           release_version="$(jq -er '.releaseVersion' packages.json)"
           if [[ "$version" != "$release_version" ]]; then
             echo "Release tag version '$version' must match packages.json releaseVersion '$release_version'." >&2
             exit 1
           fi
-          project_path="$(jq -r '.projectPath' <<< "$package")"
-          package_id="$(jq -r '.packageId' <<< "$package")"
-          release_title="$(jq -r '.releaseTitle' <<< "$package")"
-          artifact_name="$(jq -r '.artifactName' <<< "$package")"
-
-          is_prerelease="false"
-          if [[ "$version" == *-* ]]; then
-            is_prerelease="true"
+          if [[ "$version" == 1.1.0-* ]]; then
+            echo "The Agent 1.1 baseline starts at stable 1.1.0; initial-baseline prereleases cannot satisfy >=1.1.0 <1.2.0." >&2
+            exit 1
           fi
 
-          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
-          echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
-          echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
-          echo "project_path=$project_path" >> "$GITHUB_OUTPUT"
-          echo "release_title=$release_title" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          runtime_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
+          contracts_count="$(jq '[.packages[] | select(.artifactType == "nuget" and .packageId == "Sunder.Package.Agent.Contracts")] | length' packages.json)"
+          test "$runtime_count" -eq 15 || { echo "packages.json must contain exactly 15 runtime packages." >&2; exit 1; }
+          test "$contracts_count" -eq 1 || { echo "packages.json must contain exactly one Agent Contracts NuGet package." >&2; exit 1; }
 
-  package:
-    name: Package .sunderpkg
+          is_prerelease=false
+          dist_tag=latest
+          if [[ "$version" == *-* ]]; then
+            is_prerelease=true
+            dist_tag=preview
+          else
+            unshipped="$(grep -Ev '^[[:space:]]*(#|$)' src/Sunder.Package.Agent.Contracts/PublicAPI.Unshipped.txt || true)"
+            if [[ -n "$unshipped" ]]; then
+              echo "Stable Agent releases require PublicAPI.Unshipped.txt to contain no API entries. Promote the finalized API to PublicAPI.Shipped.txt first." >&2
+              printf '%s\n' "$unshipped" >&2
+              exit 1
+            fi
+          fi
+
+          {
+            echo "dist_tag=$dist_tag"
+            echo "is_prerelease=$is_prerelease"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+  build-verify:
+    name: Build and verify exact family artifacts
     needs: prepare
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Checkout repository
+      - name: Checkout Agent repository
         uses: actions/checkout@v4
+        with:
+          path: sunder-agent-package
+
+      - name: Checkout resolved Core commit
+        uses: actions/checkout@v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ needs.prepare.outputs.core_commit }}
+          path: sunder-core
+
+      - name: Verify exact source commits
+        shell: bash
+        env:
+          EXPECTED_AGENT_COMMIT: ${{ github.sha }}
+          EXPECTED_CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+        run: |
+          set -euo pipefail
+          test "$(git -C sunder-agent-package rev-parse HEAD)" = "$EXPECTED_AGENT_COMMIT"
+          test "$(git -C sunder-core rev-parse HEAD)" = "$EXPECTED_CORE_COMMIT"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore packages
-        shell: bash
-        run: dotnet restore Sunder.AgentPackage.slnx --locked-mode -p:SunderUseSourceSdk=false
-
-      - name: Build solution
-        shell: bash
-        run: dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 -p:SunderUseSourceSdk=false -p:Version=${{ needs.prepare.outputs.version }} -p:InformationalVersion=${{ needs.prepare.outputs.version }} -p:ContinuousIntegrationBuild=true
-
-      - name: Test solution
-        shell: bash
-        run: dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore -p:SunderUseSourceSdk=false
-
-      - name: Shutdown build servers
-        shell: bash
-        run: dotnet build-server shutdown
-
-      - name: Publish package archive
+      - name: Restore, build, and test coordinated Agent sources once
+        working-directory: sunder-agent-package
         shell: bash
         env:
-          PROJECT_PATH: ${{ needs.prepare.outputs.project_path }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
+          dotnet restore Sunder.AgentPackage.slnx --force-evaluate -p:SunderUseSourceSdk=true
+          dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 \
+            -p:SunderUseSourceSdk=true -p:Version="$VERSION" -p:PackageVersion="$VERSION" \
+            -p:InformationalVersion="$VERSION" -p:ContinuousIntegrationBuild=true
+          dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore -m:1 -p:SunderUseSourceSdk=true
 
-          release_dir="$PWD/artifacts/release"
-          output_path="$release_dir/${{ needs.prepare.outputs.package_id }}.$VERSION.sunderpkg"
-          if [[ -e "$output_path" ]]; then
-            echo "Refusing to overwrite immutable release artifact '$output_path'." >&2
+      - name: Pack Contracts and complete runtime family
+        working-directory: sunder-agent-package
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          output="$PWD/artifacts/family"
+          mkdir -p "$output"
+
+          dotnet pack src/Sunder.Package.Agent.Contracts/Sunder.Package.Agent.Contracts.csproj \
+            -c Release --no-build --no-restore -o "$output" \
+            -p:SunderUseSourceSdk=true -p:Version="$VERSION" -p:PackageVersion="$VERSION" \
+            -p:InformationalVersion="$VERSION" -p:ContinuousIntegrationBuild=true
+
+          while IFS=$'\t' read -r package_id project_path; do
+            output_path="$output/$package_id.$VERSION.sunderpkg"
+            test ! -e "$output_path" || { echo "Refusing to overwrite '$output_path'." >&2; exit 1; }
+            dotnet msbuild "$project_path" -t:PackSunderPackage -m:1 \
+              -p:Configuration=Release -p:SunderUseSourceSdk=true \
+              -p:Version="$VERSION" -p:PackageVersion="$VERSION" \
+              -p:InformationalVersion="$VERSION" -p:ContinuousIntegrationBuild=true \
+              -p:SunderPackageOutputPath="$output_path"
+          done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, .projectPath] | @tsv' packages.json)
+
+          runtime_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
+          test "$(find "$output" -maxdepth 1 -name '*.sunderpkg' -type f | wc -l)" -eq "$runtime_count"
+          test -f "$output/Sunder.Package.Agent.Contracts.$VERSION.nupkg"
+          test "$(find "$output" -maxdepth 1 -type f | wc -l)" -eq "$((runtime_count + 1))"
+
+          contracts_nuspec="$(unzip -p "$output/Sunder.Package.Agent.Contracts.$VERSION.nupkg" '*.nuspec')"
+          if ! grep -Eq 'id="Sunder\.Sdk" version="\[1\.1\.0, ?1\.2\.0\)"' <<< "$contracts_nuspec"; then
+            echo "Agent Contracts does not bound its Sunder.Sdk dependency to the 1.1 minor line." >&2
             exit 1
           fi
 
-          dotnet msbuild "$PROJECT_PATH" \
-            -t:PackSunderPackage \
-            -m:1 \
-            -p:Configuration=Release \
-            -p:Version="$VERSION" \
-            -p:InformationalVersion="$VERSION" \
-            -p:ContinuousIntegrationBuild=true \
-            -p:SunderUseSourceSdk=false \
-            -p:SunderPackageOutputPath="$output_path"
+      - name: Build Core validation and smoke paths
+        working-directory: sunder-core
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore src/Host/Sunder.Cli/Sunder.Cli.csproj --locked-mode
+          dotnet restore tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj --locked-mode
+          dotnet restore tests/Sunder.App.Tests/Sunder.App.Tests.csproj --locked-mode
+          dotnet build src/Host/Sunder.Cli/Sunder.Cli.csproj -c Release --no-restore
+          dotnet build tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-restore
+          dotnet build tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-restore
 
-          shopt -s nullglob
-          packages=("$release_dir"/*.sunderpkg)
-          if [[ ${#packages[@]} -ne 1 ]]; then
-            echo "Expected exactly one .sunderpkg in '$release_dir', found ${#packages[@]}." >&2
-            exit 1
-          fi
+      - name: Validate exact archives through Package Format
+        working-directory: sunder-agent-package
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r archive; do
+            dotnet ../sunder-core/src/Host/Sunder.Cli/bin/Release/net10.0/sunder.dll package validate "$archive"
+          done < <(find artifacts/family -maxdepth 1 -name '*.sunderpkg' -type f | sort)
 
-      - name: Upload package artifact
+      - name: Runtime lifecycle smoke for exact family bytes
+        working-directory: sunder-core
+        shell: bash
+        env:
+          SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/family
+          SUNDER_AGENT_UI_SNAPSHOT_DIR: ${{ github.workspace }}/agent-ui-snapshot
+        run: |
+          set -euo pipefail
+          mkdir -p "$SUNDER_AGENT_UI_SNAPSHOT_DIR"
+          test_fqn="Sunder.Runtime.Host.Tests.AgentPackageReleaseSmokeTests.ReleaseArchives_InstallActivateUnloadReloadAndReinstallAsOneFamily"
+          discovered="$(dotnet test tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-build --no-restore --list-tests --filter "FullyQualifiedName=$test_fqn")"
+          grep -Fqx "    $test_fqn" <<< "$discovered"
+          dotnet test tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
+
+      - name: App activation smoke for Runtime-produced snapshot
+        working-directory: sunder-core
+        shell: bash
+        env:
+          SUNDER_AGENT_UI_SNAPSHOT_DIR: ${{ github.workspace }}/agent-ui-snapshot
+        run: |
+          set -euo pipefail
+          test_fqn="Sunder.App.Tests.AgentPackageReleaseSmokeTests.RuntimeProducedAgentSnapshot_MaterializesAndActivatesInApp"
+          discovered="$(dotnet test tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --list-tests --filter "FullyQualifiedName=$test_fqn")"
+          grep -Fqx "    $test_fqn" <<< "$discovered"
+          dotnet test tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
+
+      - name: Upload verified family artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ needs.prepare.outputs.artifact_name }}
-          path: artifacts/release/*
+          name: sunder-agent-family-release
+          path: sunder-agent-package/artifacts/family/*
           if-no-files-found: error
           retention-days: 7
 
   publish:
-    name: Publish GitHub Release
+    name: Publish verified family and dist tags
     needs:
       - prepare
-      - package
+      - build-verify
     runs-on: ubuntu-latest
+    concurrency:
+      group: sunder-agent-family-dist-tag-promotion
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
-      - name: Checkout repository
+      - name: Checkout Agent repository
         uses: actions/checkout@v4
 
       - name: Setup .NET
@@ -157,45 +258,162 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Download package artifact
+      - name: Download exact verified family artifacts
         uses: actions/download-artifact@v4
         with:
+          name: sunder-agent-family-release
           path: release-assets
 
-      - name: Upload release assets
+      - name: Publish immutable artifacts, then promote family dist tags
         shell: bash
         env:
+          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+          DIST_TAG: ${{ needs.prepare.outputs.dist_tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
-          RELEASE_TITLE: ${{ needs.prepare.outputs.release_title }}
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+          REGISTRY_TOKEN: ${{ secrets.SUNDER_REGISTRY_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           shopt -s nullglob
 
-          tag="${GITHUB_REF_NAME}"
-          artifact_dir="release-assets/${{ needs.prepare.outputs.artifact_name }}"
-          bash scripts/generate-release-evidence.sh "$artifact_dir" "sunder-agent-package=$GITHUB_SHA"
-          assets=("$artifact_dir"/*)
-          if [[ ${#assets[@]} -lt 5 ]]; then
-            echo "No Sunder package release assets were downloaded." >&2
-            exit 1
-          fi
+          [[ -n "${NUGET_API_KEY:-}" ]] || { echo "NUGET_API_KEY is not configured." >&2; exit 1; }
+          [[ -n "${REGISTRY_API_URL:-}" ]] || { echo "SUNDER_REGISTRY_API_URL is not configured." >&2; exit 1; }
+          [[ -n "${REGISTRY_TOKEN:-}" ]] || { echo "SUNDER_REGISTRY_TOKEN is not configured." >&2; exit 1; }
+          registry_api="${REGISTRY_API_URL%/}"
+          tag="agent/v$VERSION"
+
+          runtime_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
+          runtime_packages=(release-assets/*.sunderpkg)
+          nuget_packages=(release-assets/*.nupkg)
+          test "${#runtime_packages[@]}" -eq "$runtime_count" || { echo "Expected $runtime_count runtime archives, found ${#runtime_packages[@]}." >&2; exit 1; }
+          test "${#nuget_packages[@]}" -eq 1 || { echo "Expected one Contracts package, found ${#nuget_packages[@]}." >&2; exit 1; }
+          test -f "release-assets/Sunder.Package.Agent.Contracts.$VERSION.nupkg"
+          while IFS= read -r package_id; do
+            test -f "release-assets/$package_id.$VERSION.sunderpkg" || { echo "Missing runtime archive for $package_id." >&2; exit 1; }
+          done < <(jq -r '.packages[] | select(.artifactType == "sunderpkg") | .packageId' packages.json)
+
+          bash scripts/generate-release-evidence.sh release-assets \
+            "sunder-agent-package=$GITHUB_SHA" \
+            "sunder-core=$CORE_COMMIT"
+
+          created_draft=false
+          existing_published_release=false
+          cleanup_failed_draft() {
+            exit_code=$?
+            if [[ $exit_code -ne 0 && "$created_draft" == "true" ]] && gh release view "$tag" >/dev/null 2>&1; then
+              if [[ "$(gh release view "$tag" --json isDraft --jq .isDraft)" == "true" ]]; then
+                gh release delete "$tag" --yes || true
+              fi
+            fi
+            exit "$exit_code"
+          }
+          trap cleanup_failed_draft EXIT
 
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release '$tag' already exists; immutable release assets cannot be overwritten." >&2
+            if [[ "$(gh release view "$tag" --json isDraft --jq .isDraft)" == "true" ]]; then
+              gh release upload "$tag" release-assets/* --clobber
+            else
+              existing_published_release=true
+              existing_assets="$RUNNER_TEMP/existing-release-assets"
+              mkdir -p "$existing_assets"
+              gh release download "$tag" --dir "$existing_assets" --pattern '*.sunderpkg' --pattern '*.nupkg'
+              for asset in "${runtime_packages[@]}" "${nuget_packages[@]}"; do
+                name="$(basename "$asset")"
+                test -f "$existing_assets/$name" || { echo "Published release '$tag' is missing '$name'." >&2; exit 1; }
+                expected_sha="$(sha256sum "$asset" | cut -d ' ' -f 1)"
+                actual_sha="$(sha256sum "$existing_assets/$name" | cut -d ' ' -f 1)"
+                [[ "$actual_sha" == "$expected_sha" ]] || { echo "Published release asset '$name' differs from this verified build." >&2; exit 1; }
+              done
+            fi
+          else
+            create_args=(
+              release create "$tag"
+              --title "Sunder Agent Family $VERSION"
+              --notes "Coordinated Agent Contracts and 15-package runtime family release for $VERSION."
+              --latest=false
+              --draft
+            )
+            if [[ "$IS_PRERELEASE" == "true" ]]; then
+              create_args+=(--prerelease)
+            fi
+            gh "${create_args[@]}" release-assets/*
+            created_draft=true
+          fi
+
+          contracts_path="release-assets/Sunder.Package.Agent.Contracts.$VERSION.nupkg"
+          contracts_version_lower="${VERSION,,}"
+          contracts_url="$NUGET_FLAT_CONTAINER/sunder.package.agent.contracts/$contracts_version_lower/sunder.package.agent.contracts.$contracts_version_lower.nupkg"
+          verify_contracts() {
+            local remote="$RUNNER_TEMP/Sunder.Package.Agent.Contracts.$VERSION.nupkg"
+            for _ in {1..30}; do
+              if curl -fsSL "$contracts_url" -o "$remote" 2>/dev/null; then
+                bash scripts/release/verify-nuget-package.sh "$contracts_path" "$remote"
+                return
+              fi
+              sleep 10
+            done
+            echo "NuGet.org did not expose Agent Contracts $VERSION after publication." >&2
             exit 1
+          }
+          if ! dotnet nuget push "$contracts_path" --source "$NUGET_SOURCE" --api-key "$NUGET_API_KEY" --skip-duplicate; then
+            verify_contracts
           fi
+          verify_contracts
 
-          create_args=(
-            release create "$tag"
-            --title "$RELEASE_TITLE $VERSION"
-            --notes "Automated $RELEASE_TITLE package release for $VERSION."
-          )
+          while IFS= read -r package_id; do
+            archive="release-assets/$package_id.$VERSION.sunderpkg"
+            expected_sha="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+            encoded_id="$(jq -rn --arg value "$package_id" '$value | @uri')"
+            encoded_version="$(jq -rn --arg value "$VERSION" '$value | @uri')"
+            details_url="$registry_api/api/v1/packages/$encoded_id/versions/$encoded_version"
+            download_url="$details_url/download"
+            details_path="$RUNNER_TEMP/registry-details.json"
+            status="$(curl -sS -o "$details_path" -w '%{http_code}' "$details_url")"
+            case "$status" in
+              200)
+                ;;
+              404)
+                response="$(curl --fail-with-body -sS \
+                  -H "Authorization: Bearer $REGISTRY_TOKEN" \
+                  -F "package=@$archive" \
+                  -F "setLatest=false" \
+                  "$registry_api/api/v1/packages/publish")"
+                jq -e --arg id "$package_id" --arg version "$VERSION" \
+                  '.success == true and .packageId == $id and .version == $version' <<< "$response" >/dev/null
+                ;;
+              *)
+                echo "Registry version preflight for '$package_id' returned HTTP $status." >&2
+                exit 1
+                ;;
+            esac
 
-          if [[ "$IS_PRERELEASE" == "true" ]]; then
-            create_args+=(--prerelease)
+            remote_archive="$RUNNER_TEMP/$package_id.$VERSION.sunderpkg"
+            curl --fail-with-body -sS "$download_url" -o "$remote_archive"
+            actual_sha="$(sha256sum "$remote_archive" | cut -d ' ' -f 1)"
+            [[ "$actual_sha" == "$expected_sha" ]] || { echo "Registry bytes differ for $package_id $VERSION." >&2; exit 1; }
+          done < <(jq -r '.packages[] | select(.artifactType == "sunderpkg") | .packageId' packages.json)
+
+          package_ids=()
+          while IFS= read -r package_id; do
+            package_ids+=("$package_id")
+          done < <(jq -r '.packages[] | select(.artifactType == "sunderpkg") | .packageId' packages.json)
+          bash scripts/release/promote-family-dist-tag.sh \
+            "$registry_api" "$DIST_TAG" "$VERSION" "${package_ids[@]}"
+
+          release_json="$(gh release view "$tag" --json isDraft,assets)"
+          if [[ "$existing_published_release" == "true" ]]; then
+            [[ "$(jq -r '.isDraft' <<< "$release_json")" == "false" ]] || { echo "Existing Agent family release unexpectedly became a draft." >&2; exit 1; }
+          else
+            [[ "$(jq -r '.isDraft' <<< "$release_json")" == "true" ]] || { echo "Agent family release must remain draft through external publication." >&2; exit 1; }
           fi
+          expected_asset_count="$((runtime_count + 1 + 4))"
+          [[ "$(jq '.assets | length' <<< "$release_json")" == "$expected_asset_count" ]] || { echo "Draft release asset inventory is incomplete." >&2; exit 1; }
 
-          gh "${create_args[@]}" "${assets[@]}"
+          if [[ "$existing_published_release" != "true" ]]; then
+            gh release edit "$tag" --draft=false
+          fi
+          trap - EXIT

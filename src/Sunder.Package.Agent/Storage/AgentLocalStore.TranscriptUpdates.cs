@@ -76,11 +76,6 @@ public sealed partial class AgentLocalStore
             .ToArray();
     }
 
-    public AgentTranscriptMessageRecord UpdateMessageContent(Guid messageId, string content)
-    {
-        return ProjectTurnToTranscriptMessage(UpdateTextTurn(messageId, content));
-    }
-
     public AgentTurnRecord UpdateTextTurn(Guid messageId, string content)
     {
         using var connection = CreateConnection();

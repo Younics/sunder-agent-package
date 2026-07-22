@@ -7,8 +7,14 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.Execution.Docker;
 
 public sealed class DockerExecutionTarget
-    : IAgentProcessExecutionTarget, IAgentRangedFileExecutionTarget, IAgentWorkspaceBindingContributor, IAgentExecutionScopeProvider, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment
+    : IAgentProcessExecutionTarget, IAgentRangedFileExecutionTarget, IAgentExecutionScopeProvider, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment
 {
+    internal const string DefaultNetworkPolicy = "none";
+    internal const string DefaultMemoryLimit = "2g";
+    internal const string DefaultCpuLimit = "2";
+    internal const string DefaultPidLimit = "256";
+    private const string ContainerSecurityPolicyVersion = "2";
+
     private readonly DockerExecutionWorkspaceConfigService _configService;
     private readonly DockerContainerLifecycleService _lifecycleService;
     private readonly DockerImageCatalogService _imageCatalogService;
@@ -34,25 +40,9 @@ public sealed class DockerExecutionTarget
         "docker",
         "docker",
         "Docker Container",
-        "Creates or reuses a Docker container from a workspace image and mounts configured workspace paths.",
+        "Creates a resource-bounded Docker container with networking disabled by default. Mounted workspace paths remain writable host data; this is not a complete security sandbox.",
         SupportsShell: true,
-        SupportsFiles: true,
-        SupportsSearch: true);
-
-    AgentWorkspaceBindingDescriptor IAgentWorkspaceBindingContributor.Descriptor { get; } = new(
-        "sunder.package.agent:execution-targets",
-        "docker",
-        "primary-execution-target",
-        "Docker Container",
-        "Run shell and file tools inside a Docker container with configured workspace paths mounted.");
-
-    public async ValueTask<AgentWorkspaceBindingReadiness> GetReadinessAsync(
-        AgentWorkspaceBindingContext context,
-        CancellationToken cancellationToken = default)
-    {
-        var readiness = await GetReadinessAsync(new AgentExecutionTargetContext(null, null, context.Workspace, context.Binding), cancellationToken);
-        return new AgentWorkspaceBindingReadiness(context.Binding.BindingId, readiness.Status, readiness.Message);
-    }
+        SupportsFiles: true);
 
     public async ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
         AgentExecutionTargetContext context,
@@ -263,7 +253,14 @@ public sealed class DockerExecutionTarget
         var container = ResolveContainerName(config, context.Binding.BindingId);
         _configService.EnsureHostMountPaths(config);
         var mounts = _configService.ResolveMounts(config);
-        var signature = BuildContainerSignature(config, mounts);
+        if (string.IsNullOrWhiteSpace(config.ImageReference))
+        {
+            throw new InvalidOperationException("Configure a Docker image before using Docker execution.");
+        }
+
+        var imageReference = config.ImageReference;
+        var imageIdentity = await ResolveImageIdentityAsync(imageReference, cancellationToken);
+        var signature = BuildContainerSignature(config, mounts, imageIdentity);
         var inspect = await RunDockerAsync(["inspect", "-f", "{{.State.Running}} {{ index .Config.Labels \"sunder.resources.signature\" }}", container], cancellationToken);
         var existing = ParseInspectResult(inspect.Output);
         if (inspect.ExitCode == 0 && existing.Running)
@@ -291,14 +288,9 @@ public sealed class DockerExecutionTarget
             await RunDockerAsync(["rm", "-f", container], cancellationToken);
         }
 
-        if (string.IsNullOrWhiteSpace(config.ImageReference))
-        {
-            throw new InvalidOperationException("Configure a Docker image before using Docker execution.");
-        }
-
-        var image = config.ImageReference;
         var root = DockerPathResolver.ResolveDefaultBaseDirectory(config);
         var args = new List<string> { "run", "--pull", "never", "-d", "--name", container, "--label", $"sunder.resources.signature={signature}", "-w", root };
+        AddSecurityOptions(args);
         AddNonInteractiveEnvironment(args);
         foreach (var mount in mounts)
         {
@@ -308,7 +300,7 @@ public sealed class DockerExecutionTarget
                 ",target=", mount.ContainerPath));
         }
 
-        args.Add(image);
+        args.Add(imageIdentity);
         args.Add("tail");
         args.Add("-f");
         args.Add("/dev/null");
@@ -318,7 +310,7 @@ public sealed class DockerExecutionTarget
             return container;
         }
 
-        throw new InvalidOperationException(FormatDockerContainerRunFailure(container, image, run.Output));
+        throw new InvalidOperationException(FormatDockerContainerRunFailure(container, imageReference, run.Output));
     }
 
     private static string FormatDockerContainerStartFailure(string containerName, string output)
@@ -365,6 +357,23 @@ public sealed class DockerExecutionTarget
         }
     }
 
+    private static void AddSecurityOptions(ICollection<string> args)
+    {
+        AddOption(args, "--security-opt", "no-new-privileges=true");
+        AddOption(args, "--cap-drop", "ALL");
+        AddOption(args, "--network", DefaultNetworkPolicy);
+        AddOption(args, "--memory", DefaultMemoryLimit);
+        AddOption(args, "--cpus", DefaultCpuLimit);
+        AddOption(args, "--pids-limit", DefaultPidLimit);
+        args.Add("--init");
+    }
+
+    private static void AddOption(ICollection<string> args, string name, string value)
+    {
+        args.Add(name);
+        args.Add(value);
+    }
+
     private static (bool Running, string? Signature) ParseInspectResult(string output)
     {
         var normalized = output.Trim();
@@ -386,10 +395,13 @@ public sealed class DockerExecutionTarget
 
     private static string BuildContainerSignature(
         DockerExecutionRuntimeConfig config,
-        IReadOnlyList<DockerExecutionMount> mounts)
+        IReadOnlyList<DockerExecutionMount> mounts,
+        string imageIdentity)
     {
         var builder = new StringBuilder();
-        builder.AppendLine(config.ImageReference ?? string.Empty)
+        builder.Append("security-policy:").AppendLine(ContainerSecurityPolicyVersion)
+            .AppendLine(config.ImageReference ?? string.Empty)
+            .AppendLine(imageIdentity)
             .AppendLine(config.DefaultWorkingDirectory ?? string.Empty)
             .AppendLine(config.ShellPath ?? string.Empty);
 
@@ -401,6 +413,27 @@ public sealed class DockerExecutionTarget
         }
 
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()))).ToLowerInvariant();
+    }
+
+    private async Task<string> ResolveImageIdentityAsync(
+        string imageReference,
+        CancellationToken cancellationToken)
+    {
+        var inspect = await RunDockerAsync(
+            ["image", "inspect", "--format", "{{.Id}}", imageReference],
+            cancellationToken);
+        var identity = inspect.Output.Trim();
+        if (inspect.ExitCode != 0
+            || !identity.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)
+            || identity.Length != "sha256:".Length + 64
+            || !identity["sha256:".Length..].All(Uri.IsHexDigit))
+        {
+            throw new InvalidOperationException(AppendDockerOutput(
+                $"Docker image '{imageReference}' does not have a resolvable immutable image id.",
+                inspect.Output));
+        }
+
+        return identity.ToLowerInvariant();
     }
 
     private async Task<DockerCliRunResult> RunDockerAsync(IReadOnlyList<string> args, CancellationToken cancellationToken)

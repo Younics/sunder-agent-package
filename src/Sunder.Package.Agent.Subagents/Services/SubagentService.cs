@@ -86,10 +86,10 @@ public sealed class SubagentService(SubagentStore store)
         var existingById = _store.List().ToDictionary(record => record.SubagentId, StringComparer.OrdinalIgnoreCase);
         var now = DateTimeOffset.UtcNow;
         var saved = records.Select(record => record with
-            {
-                CreatedAtUtc = existingById.GetValueOrDefault(record.SubagentId)?.CreatedAtUtc ?? now,
-                UpdatedAtUtc = now,
-            })
+        {
+            CreatedAtUtc = existingById.GetValueOrDefault(record.SubagentId)?.CreatedAtUtc ?? now,
+            UpdatedAtUtc = now,
+        })
             .ToArray();
         _store.SaveMany(saved);
         SubagentsChanged?.Invoke();

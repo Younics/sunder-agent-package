@@ -33,9 +33,6 @@ public sealed partial class AgentSessionService
 
     public AgentTurnRecord? GetTurn(Guid turnId) => _store.GetTurn(turnId);
 
-    public IReadOnlyList<AgentTranscriptMessageRecord> ListMessages(Guid sessionId)
-        => _store.ListMessages(sessionId);
-
     public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId)
         => _store.GetLatestCheckpoint(sessionId);
 
@@ -56,7 +53,7 @@ public sealed partial class AgentSessionService
     {
         var contextCheckpoint = _store.GetLatestSessionContextCheckpoint(sessionId);
         return contextCheckpoint is null
-            ? _store.GetWorkingSummary(sessionId)
+            ? null
             : new AgentWorkingSummaryRecord(
                 sessionId,
                 contextCheckpoint.SummaryText,

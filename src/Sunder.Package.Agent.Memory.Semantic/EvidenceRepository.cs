@@ -4,6 +4,8 @@ namespace Sunder.Package.Agent.Memory.Semantic;
 
 internal sealed class EvidenceRepository(string databasePath)
 {
+    internal const int MaxEvidenceRecordsPerMemory = 16;
+    internal const int MaxEvidenceChars = 4_096;
     private readonly string _databasePath = databasePath;
 
     public IReadOnlyList<StoredMemoryEvidenceRecord> List(Guid memoryId)
@@ -14,9 +16,11 @@ internal sealed class EvidenceRepository(string databasePath)
             SELECT EvidenceId, MemoryId, SessionId, SourceTurnId, EvidenceText, CreatedAtUtc
             FROM SessionMemoryEvidence
             WHERE MemoryId = $memoryId
-            ORDER BY CreatedAtUtc DESC;
+            ORDER BY CreatedAtUtc DESC
+            LIMIT $limit;
             """;
         command.Parameters.AddWithValue("$memoryId", memoryId.ToString());
+        command.Parameters.AddWithValue("$limit", MaxEvidenceRecordsPerMemory);
         using var reader = command.ExecuteReader();
         var items = new List<StoredMemoryEvidenceRecord>();
         while (reader.Read())
@@ -57,9 +61,28 @@ internal sealed class EvidenceRepository(string databasePath)
         command.Parameters.AddWithValue("$memoryId", memoryId.ToString());
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
         command.Parameters.AddWithValue("$sourceTurnId", sourceTurnId?.ToString() ?? (object)DBNull.Value);
-        command.Parameters.AddWithValue("$evidenceText", (object?)evidenceText ?? DBNull.Value);
+        var boundedEvidence = string.IsNullOrWhiteSpace(evidenceText)
+            ? null
+            : evidenceText.Trim()[..Math.Min(evidenceText.Trim().Length, MaxEvidenceChars)];
+        command.Parameters.AddWithValue("$evidenceText", (object?)boundedEvidence ?? DBNull.Value);
         command.Parameters.AddWithValue("$createdAtUtc", createdAtUtc.ToString("O"));
         command.ExecuteNonQuery();
+
+        using var trim = connection.CreateCommand();
+        trim.Transaction = transaction;
+        trim.CommandText = """
+            DELETE FROM SessionMemoryEvidence
+            WHERE EvidenceId IN (
+                SELECT EvidenceId
+                FROM SessionMemoryEvidence
+                WHERE MemoryId = $memoryId
+                ORDER BY CreatedAtUtc DESC, EvidenceId DESC
+                LIMIT -1 OFFSET $limit
+            );
+            """;
+        trim.Parameters.AddWithValue("$memoryId", memoryId.ToString());
+        trim.Parameters.AddWithValue("$limit", MaxEvidenceRecordsPerMemory);
+        trim.ExecuteNonQuery();
     }
 
     internal static void DeleteSession(SqliteConnection connection, SqliteTransaction transaction, Guid sessionId)

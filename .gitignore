@@ -12,6 +12,8 @@
 
 [Dd]ebug/
 [Rr]elease/
+!scripts/release/
+!scripts/release/*.sh
 x64/
 [Bb]in/
 [Oo]bj/

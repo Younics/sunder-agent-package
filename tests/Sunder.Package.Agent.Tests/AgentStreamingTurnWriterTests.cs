@@ -85,7 +85,7 @@ public sealed class AgentStreamingTurnWriterTests
         var session = await runner.CreateSessionAsync(
             host,
             context,
-            new AgentPromptPreparation([], [], false, null!, null!, null, 0),
+            new AgentPromptPreparation([], [], false, null!, null!, null, [], 0),
             CancellationToken.None);
 
         await runner.RunCycleAsync(

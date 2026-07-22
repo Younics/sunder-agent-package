@@ -32,7 +32,6 @@ internal sealed class McpServerStackContributor(
                 "mcp-server",
                 Description: null,
                 DefaultSelected: true,
-                Sensitivities: BuildSensitivities(server),
                 Details: await BuildExportDetailsAsync(server, cancellationToken)));
         }
 
@@ -43,7 +42,9 @@ internal sealed class McpServerStackContributor(
         StackExportRequest request,
         CancellationToken cancellationToken = default)
     {
-        var selectedIds = request.ItemIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectedIds = request.ItemSelections
+            .Select(selection => selection.ItemId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var servers = (await serverCatalog.ListServersAsync(cancellationToken))
             .Where(server => selectedIds.Contains(server.ServerId))
             .ToArray();
@@ -235,43 +236,7 @@ internal sealed class McpServerStackContributor(
     }
 
     private StackPackageRequirement CreatePackageRequirement()
-        => new(PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.0.0");
-
-    private static IReadOnlyList<StackValueSensitivity> BuildSensitivities(ConfiguredMcpServerRecord server)
-    {
-        var sensitivities = new List<StackValueSensitivity>();
-        if (!string.IsNullOrWhiteSpace(server.Description))
-        {
-            sensitivities.Add(StackValueSensitivity.Public);
-        }
-
-        if (server.HeaderNames.Length > 0 || server.EnvironmentVariableNames.Length > 0)
-        {
-            sensitivities.Add(StackValueSensitivity.Secret);
-        }
-
-        if (server.TransportType == ConfiguredMcpTransportType.Stdio)
-        {
-            sensitivities.Add(StackValueSensitivity.Public);
-        }
-
-        if (!string.IsNullOrWhiteSpace(server.WorkingDirectory))
-        {
-            sensitivities.Add(StackValueSensitivity.Public);
-        }
-
-        if (server.TransportType == ConfiguredMcpTransportType.HttpSse)
-        {
-            sensitivities.Add(StackValueSensitivity.Public);
-        }
-
-        if (server.OAuthEnabled)
-        {
-            sensitivities.Add(StackValueSensitivity.Public);
-        }
-
-        return sensitivities.Count == 0 ? [StackValueSensitivity.Public] : sensitivities.Distinct().ToArray();
-    }
+        => new(PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.1.0");
 
     private async Task<IReadOnlyList<StackExportItemDetail>> BuildExportDetailsAsync(
         ConfiguredMcpServerRecord server,

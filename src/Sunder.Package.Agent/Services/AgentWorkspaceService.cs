@@ -143,6 +143,11 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
     public void DeleteWorkspace(string workspaceId)
     {
         _sessionService?.DeleteSessionsForWorkspace(workspaceId);
+        DeleteWorkspacePersistence(workspaceId);
+    }
+
+    internal void DeleteWorkspacePersistence(string workspaceId)
+    {
         _store.DeleteWorkspace(workspaceId);
         WorkspacesChanged?.Invoke();
     }

@@ -37,7 +37,6 @@ public sealed class AgentProfileStackContributor(
                 "agent-profile",
                 Description: null,
                 DefaultSelected: true,
-                Sensitivities: [StackValueSensitivity.Public],
                 Details: BuildExportDetails(profile)))
             .ToArray();
         return ValueTask.FromResult<IReadOnlyList<StackExportItemDescriptor>>(profiles);
@@ -47,7 +46,9 @@ public sealed class AgentProfileStackContributor(
         StackExportRequest request,
         CancellationToken cancellationToken = default)
     {
-        var selectedIds = request.ItemIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectedIds = request.ItemSelections
+            .Select(selection => selection.ItemId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var profiles = profileService.ListProfiles()
             .Where(profile => selectedIds.Contains(profile.ProfileId) && !profile.IsInternal)
             .ToArray();
@@ -218,9 +219,10 @@ public sealed class AgentProfileStackContributor(
         return packageIds
             .OrderBy(packageId => string.Equals(packageId, PackageId, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .ThenBy(packageId => packageId, StringComparer.OrdinalIgnoreCase)
-            .Select(packageId => string.Equals(packageId, PackageId, StringComparison.OrdinalIgnoreCase)
-                ? new StackPackageRequirement(PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.0.0")
-                : new StackPackageRequirement(packageId))
+            .Select(packageId => AgentStackPackageRequirements.Create(
+                packageId,
+                PackageId,
+                packageContext.Version.ToString()))
             .ToArray();
     }
 

@@ -10,7 +10,8 @@ namespace Sunder.Package.Agent.Services;
 public sealed partial class AgentSessionTitleService(
     AgentSessionService sessionService,
     AgentRunProviderResolver providerResolver,
-    AgentRunEventLogger runEventLogger)
+    AgentRunEventLogger runEventLogger,
+    AgentBackgroundWorkService? backgroundWork = null)
 {
     private const int MaxPromptMessageChars = 2_000;
     private const int MaxTitleChars = 64;
@@ -19,6 +20,7 @@ public sealed partial class AgentSessionTitleService(
     private readonly AgentSessionService _sessionService = sessionService;
     private readonly AgentRunProviderResolver _providerResolver = providerResolver;
     private readonly AgentRunEventLogger _runEventLogger = runEventLogger;
+    private readonly AgentBackgroundWorkService? _backgroundWork = backgroundWork;
 
     public bool ShouldGenerateTitleForFirstUserMessage(AgentSessionRecord session) =>
         IsAutoTitleCandidate(session) && _sessionService.ListTurns(session.SessionId).Count == 0;
@@ -35,7 +37,13 @@ public sealed partial class AgentSessionTitleService(
             return;
         }
 
-        _ = Task.Run(() => GenerateAndApplyTitleAsync(session.SessionId, profile, userMessage, runId, runRevision));
+        _backgroundWork?.TryQueue(cancellationToken => GenerateAndApplyTitleAsync(
+            session.SessionId,
+            profile,
+            userMessage,
+            runId,
+            runRevision,
+            cancellationToken));
     }
 
     private async Task GenerateAndApplyTitleAsync(
@@ -43,7 +51,8 @@ public sealed partial class AgentSessionTitleService(
         AgentProfileRecord profile,
         string userMessage,
         Guid runId,
-        long runRevision)
+        long runRevision,
+        CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
         try
@@ -55,13 +64,13 @@ public sealed partial class AgentSessionTitleService(
                 return;
             }
 
-            var modelId = await ResolveUtilityModelIdAsync(provider, CancellationToken.None).ConfigureAwait(false);
+            var modelId = await ResolveUtilityModelIdAsync(provider, cancellationToken).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(modelId))
             {
                 return;
             }
 
-            var readiness = await provider.GetReadinessAsync(CancellationToken.None).ConfigureAwait(false);
+            var readiness = await provider.GetReadinessAsync(cancellationToken).ConfigureAwait(false);
             if (readiness.Status != AgentProviderReadinessStatus.Ready)
             {
                 Log(
@@ -92,7 +101,7 @@ public sealed partial class AgentSessionTitleService(
                         ["run.revision"] = runRevision,
                         ["utility.task"] = "session-title",
                     }),
-                CancellationToken.None).ConfigureAwait(false);
+                cancellationToken).ConfigureAwait(false);
 
             var response = await chatClient.GetResponseAsync(
                 [new ChatMessage(ChatRole.User, $"First user message:\n{TruncatePromptMessage(userMessage)}")],
@@ -103,7 +112,7 @@ public sealed partial class AgentSessionTitleService(
                     ModelId = modelId,
                     ToolMode = ChatToolMode.None,
                 },
-                CancellationToken.None).ConfigureAwait(false);
+                cancellationToken).ConfigureAwait(false);
             var title = NormalizeGeneratedTitle(response.Text);
             if (title is null || AgentSessionTitleDefaults.IsGeneratedDefaultTitle(title))
             {

@@ -301,7 +301,11 @@ public sealed partial class AgentLocalStore
                   AND SessionId = $sessionId
                   AND RunRevision = $runRevision
                   AND Status IN ('Preparing', 'Idle', 'Running', 'WaitingForApproval')
-                  AND FinishedAtUtc IS NULL;
+                  AND FinishedAtUtc IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM AgentRuns newer
+                      WHERE newer.SessionId = $sessionId
+                        AND newer.RunRevision > $runRevision);
                 """;
             runCommand.Parameters.AddWithValue("$status", runStatus.ToString());
             runCommand.Parameters.AddWithValue("$updatedAtUtc", now.ToString("O"));

@@ -99,10 +99,10 @@ internal static class AnthropicOptionsTranslator
                 parameters.RawQueryData,
                 parameters.RawBodyData)
             with
-            {
-                Speed = BetaSpeed.Fast,
-                Betas = [AnthropicBeta.FastMode2026_02_01],
-            };
+        {
+            Speed = BetaSpeed.Fast,
+            Betas = [AnthropicBeta.FastMode2026_02_01],
+        };
 
     internal static AnthropicTokenBudget TranslateTokenBudget(
         ChatOptions? options,

@@ -4,6 +4,15 @@ using System.Text.Json;
 
 namespace Sunder.Package.Agent.Contracts.Models;
 
+/// <summary>
+/// Provides bounded, case-insensitive access to a tool call's JSON object arguments.
+/// </summary>
+/// <remarks>
+/// Parsing enforces the shared byte, depth, and property-count limits and rejects duplicate or
+/// case-colliding property names within each object. It does not validate a tool's JSON Schema,
+/// impose value-specific limits, canonicalize paths, or redact values; callers must perform those
+/// security checks before using model-supplied arguments.
+/// </remarks>
 public sealed class AgentToolArgumentObject
 {
     private readonly JsonElement _root;
@@ -13,6 +22,11 @@ public sealed class AgentToolArgumentObject
         _root = root;
     }
 
+    /// <summary>Parses a bounded JSON object and takes an independent copy of its document root.</summary>
+    /// <param name="argumentsJson">The untrusted argument JSON; blank input is treated as an empty object.</param>
+    /// <param name="arguments">The parsed argument object when successful; otherwise <see langword="null" />.</param>
+    /// <param name="error">A caller-safe validation message when parsing fails; otherwise <see langword="null" />.</param>
+    /// <returns><see langword="true" /> when the input is a valid bounded JSON object; otherwise <see langword="false" />.</returns>
     public static bool TryParse(string? argumentsJson, out AgentToolArgumentObject? arguments, out string? error)
     {
         arguments = null;
@@ -57,9 +71,18 @@ public sealed class AgentToolArgumentObject
         }
     }
 
+    /// <summary>Looks up a root property using an ordinal, case-insensitive comparison.</summary>
+    /// <param name="propertyName">The property name to find.</param>
+    /// <param name="value">The retained JSON value when found; otherwise the default <see cref="JsonElement" />.</param>
+    /// <returns><see langword="true" /> when the property exists; otherwise <see langword="false" />.</returns>
     public bool TryGetProperty(string propertyName, out JsonElement value)
         => TryGetProperty(_root, propertyName, out value);
 
+    /// <summary>Reads a required root property as a JSON string.</summary>
+    /// <param name="propertyName">The case-insensitive property name.</param>
+    /// <param name="value">The string value when valid; otherwise <see langword="null" />.</param>
+    /// <param name="error">A validation message when the property is missing, null, or not a string.</param>
+    /// <returns><see langword="true" /> when a string value was read; otherwise <see langword="false" />.</returns>
     public bool TryReadRequiredString(string propertyName, out string? value, out string? error)
     {
         if (!TryGetProperty(propertyName, out var property) || property.ValueKind == JsonValueKind.Null)
@@ -72,6 +95,11 @@ public sealed class AgentToolArgumentObject
         return TryReadStringProperty(propertyName, property, out value, out error);
     }
 
+    /// <summary>Reads an optional root property as a JSON string.</summary>
+    /// <param name="propertyName">The case-insensitive property name.</param>
+    /// <param name="value">The string value, or <see langword="null" /> when the property is absent or null.</param>
+    /// <param name="error">A validation message when a present value is not a string.</param>
+    /// <returns><see langword="true" /> when the property is absent, null, or a string; otherwise <see langword="false" />.</returns>
     public bool TryReadOptionalString(string propertyName, out string? value, out string? error)
     {
         if (!TryGetProperty(propertyName, out var property) || property.ValueKind == JsonValueKind.Null)
@@ -84,6 +112,11 @@ public sealed class AgentToolArgumentObject
         return TryReadStringProperty(propertyName, property, out value, out error);
     }
 
+    /// <summary>Reads an optional 32-bit integer from a JSON integer or invariant-culture integer string.</summary>
+    /// <param name="propertyName">The case-insensitive property name.</param>
+    /// <param name="value">The integer value, or <see langword="null" /> when the property is absent or null.</param>
+    /// <param name="error">A validation message when a present value is not a 32-bit integer.</param>
+    /// <returns><see langword="true" /> when the property is absent, null, or valid; otherwise <see langword="false" />.</returns>
     public bool TryReadOptionalInt32(string propertyName, out int? value, out string? error)
     {
         value = null;
@@ -110,6 +143,11 @@ public sealed class AgentToolArgumentObject
         return false;
     }
 
+    /// <summary>Reads an optional Boolean from JSON Boolean, numeric <c>0</c>/<c>1</c>, or common string forms.</summary>
+    /// <param name="propertyName">The case-insensitive property name.</param>
+    /// <param name="value">The Boolean value, or <see langword="null" /> when the property is absent or null.</param>
+    /// <param name="error">A validation message when a present value cannot be interpreted as true or false.</param>
+    /// <returns><see langword="true" /> when the property is absent, null, or valid; otherwise <see langword="false" />.</returns>
     public bool TryReadOptionalBoolean(string propertyName, out bool? value, out string? error)
     {
         value = null;
@@ -155,6 +193,12 @@ public sealed class AgentToolArgumentObject
         return false;
     }
 
+    /// <summary>Reads an optional array containing only JSON objects.</summary>
+    /// <param name="propertyName">The case-insensitive property name.</param>
+    /// <param name="allowSingleObject">Whether one object may be accepted and normalized to a one-item list.</param>
+    /// <param name="values">Independent copies of the object values, or an empty list when absent or null.</param>
+    /// <param name="error">A validation message when the value has the wrong shape.</param>
+    /// <returns><see langword="true" /> when the value is absent, null, or has an accepted shape; otherwise <see langword="false" />.</returns>
     public bool TryReadObjectArray(string propertyName, bool allowSingleObject, out IReadOnlyList<JsonElement> values, out string? error)
     {
         values = [];
@@ -192,9 +236,18 @@ public sealed class AgentToolArgumentObject
         return false;
     }
 
+    /// <summary>Deserializes the root into a new dictionary suitable for generic tool transports.</summary>
+    /// <remarks>Nested values retain normal <see cref="JsonSerializer" /> object-deserialization shapes and are not redacted.</remarks>
+    /// <returns>A new dictionary containing all root properties.</returns>
     public IReadOnlyDictionary<string, object?> ToDictionary()
         => JsonSerializer.Deserialize<Dictionary<string, object?>>(_root.GetRawText()) ?? new Dictionary<string, object?>();
 
+    /// <summary>Reads an optional string property from an arbitrary JSON object.</summary>
+    /// <param name="element">The object to inspect; a non-object is treated as having no such property.</param>
+    /// <param name="propertyName">The case-insensitive property name.</param>
+    /// <param name="value">The string value, or <see langword="null" /> when the property is absent or null.</param>
+    /// <param name="error">A validation message when a present value is not a string.</param>
+    /// <returns><see langword="true" /> when the property is absent, null, or a string; otherwise <see langword="false" />.</returns>
     public static bool TryReadOptionalString(JsonElement element, string propertyName, out string? value, out string? error)
     {
         if (!TryGetProperty(element, propertyName, out var property) || property.ValueKind == JsonValueKind.Null)

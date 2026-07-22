@@ -34,7 +34,6 @@ internal sealed class SubagentStackContributor(
                 "subagent",
                 Description: null,
                 DefaultSelected: true,
-                Sensitivities: BuildSensitivities(subagent),
                 Details: BuildExportDetails(subagent)))
             .ToArray());
 
@@ -42,7 +41,9 @@ internal sealed class SubagentStackContributor(
         StackExportRequest request,
         CancellationToken cancellationToken = default)
     {
-        var selectedIds = request.ItemIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectedIds = request.ItemSelections
+            .Select(selection => selection.ItemId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var subagents = subagentService.ListSubagents()
             .Where(subagent => selectedIds.Contains(subagent.SubagentId))
             .ToArray();
@@ -166,7 +167,7 @@ internal sealed class SubagentStackContributor(
     }
 
     private StackPackageRequirement CreatePackageRequirement()
-        => new(SubagentConstants.PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.0.0");
+        => new(SubagentConstants.PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.1.0");
 
     private IReadOnlyList<StackPackageRequirement> BuildPackageRequirements(IReadOnlyList<SubagentStackPayload> payloads)
     {
@@ -209,7 +210,9 @@ internal sealed class SubagentStackContributor(
             .ThenBy(packageId => packageId, StringComparer.OrdinalIgnoreCase)
             .Select(packageId => string.Equals(packageId, SubagentConstants.PackageId, StringComparison.OrdinalIgnoreCase)
                 ? CreatePackageRequirement()
-                : new StackPackageRequirement(packageId))
+                : new StackPackageRequirement(
+                    packageId,
+                    MinimumVersion: IsCoordinatedFamilyPackage(packageId) ? "1.1.0" : null))
             .ToArray();
     }
 
@@ -221,10 +224,9 @@ internal sealed class SubagentStackContributor(
         }
     }
 
-    private static IReadOnlyList<StackValueSensitivity> BuildSensitivities(SubagentRecord subagent)
-    {
-        return [StackValueSensitivity.Public];
-    }
+    private static bool IsCoordinatedFamilyPackage(string packageId)
+        => string.Equals(packageId, "sunder.package.agent", StringComparison.OrdinalIgnoreCase)
+           || packageId.StartsWith("sunder.package.agent.", StringComparison.OrdinalIgnoreCase);
 
     private static IReadOnlyList<StackExportItemDetail> BuildExportDetails(SubagentRecord subagent)
     {

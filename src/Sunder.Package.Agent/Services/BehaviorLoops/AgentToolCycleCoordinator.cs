@@ -19,7 +19,8 @@ internal sealed class AgentToolCycleCoordinator(AgentLoopTerminalHandler termina
         AgentRunProgressGuard progressGuard,
         AgentAssistantTurnState assistantTurnState,
         Stopwatch loopStopwatch,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AgentRunBudgetTracker? budgetTracker = null)
     {
         if (providerToolCalls.Count > 1 && !allowMultipleToolCalls)
         {
@@ -32,6 +33,7 @@ internal sealed class AgentToolCycleCoordinator(AgentLoopTerminalHandler termina
             return AgentToolCycleResult.Terminal(result);
         }
 
+        budgetTracker?.ChargeToolCalls(providerToolCalls.Count);
         var toolCalls = providerToolCalls.Select(CreateToolCallRequest).ToArray();
         var outcomes = await host.InvokeToolsAsync(toolCalls, assistantTurn: null, cancellationToken);
         var keyedOutcomes = outcomes

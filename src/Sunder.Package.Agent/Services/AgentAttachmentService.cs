@@ -7,7 +7,7 @@ using Sunder.Package.Agent.Runtime;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentAttachmentService : IAgentAttachmentContentStore, IAgentSessionDataCleaner, IAgentAttachmentGateway
+public sealed class AgentAttachmentService : IAgentSessionDataCleaner, IAgentAttachmentGateway
 {
     public const int MaxAttachmentsPerMessage = 10;
     public const long MaxAttachmentBytes = 25 * 1024 * 1024;
@@ -212,6 +212,48 @@ public sealed class AgentAttachmentService : IAgentAttachmentContentStore, IAgen
         }
 
         return await File.ReadAllBytesAsync(fullPath, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<(byte[] Content, int TotalBytes, bool IsComplete)> ReadAttachmentChunkAsync(
+        AgentAttachmentMetadata metadata,
+        int offset,
+        CancellationToken cancellationToken = default)
+    {
+        var fullPath = ResolveStoredAttachmentPath(metadata.StorageRelativePath);
+        var fileInfo = new FileInfo(fullPath);
+        if (!fileInfo.Exists)
+        {
+            throw new FileNotFoundException($"Attachment '{metadata.FileName}' was not found.", fullPath);
+        }
+        if (fileInfo.Length > MaxAttachmentBytes || fileInfo.Length > int.MaxValue)
+        {
+            throw new InvalidDataException("Stored attachment exceeds the supported size limit.");
+        }
+
+        var totalBytes = checked((int)fileInfo.Length);
+        if (offset < 0 || offset > totalBytes)
+        {
+            throw new InvalidOperationException("Attachment read offset is invalid.");
+        }
+
+        var count = Math.Min(
+            AgentRuntimePayloadLimits.AttachmentDownloadChunkBytes,
+            totalBytes - offset);
+        var content = new byte[count];
+        if (count > 0)
+        {
+            await using var stream = new FileStream(
+                fullPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 64 * 1024,
+                useAsync: true);
+            stream.Position = offset;
+            await stream.ReadExactlyAsync(content, cancellationToken).ConfigureAwait(false);
+        }
+
+        return (content, totalBytes, offset + count == totalBytes);
     }
 
     internal void DeleteStoredAttachment(AgentAttachmentMetadata metadata)

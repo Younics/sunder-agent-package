@@ -473,7 +473,7 @@ public sealed partial class AgentLocalStore
 
 internal static class AgentChatSnapshotPayload
 {
-    internal const int RuntimeMaximumBytes = 4 * 1024 * 1024;
+    internal const int RuntimeMaximumBytes = AgentRuntimePayloadLimits.RuntimeMaximumResponseBytes;
     internal const int MaximumSerializedBytes = RuntimeMaximumBytes - (64 * 1024);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 

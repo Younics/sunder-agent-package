@@ -188,27 +188,49 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
             throw new InvalidOperationException("Docker image reference cannot contain whitespace.");
         }
 
+        if (normalized[0] == '-')
+        {
+            throw new InvalidOperationException("Docker image reference cannot start with '-'.");
+        }
+
+        var digestSeparator = normalized.LastIndexOf('@');
+        if (digestSeparator >= 0)
+        {
+            var digest = normalized[(digestSeparator + 1)..];
+            if (digestSeparator == 0
+                || !digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)
+                || digest.Length != "sha256:".Length + 64
+                || !digest["sha256:".Length..].All(Uri.IsHexDigit))
+            {
+                throw new InvalidOperationException("Docker image digests must use the complete '@sha256:<64 hex characters>' form.");
+            }
+
+            return normalized;
+        }
+
+        var lastSlash = normalized.LastIndexOf('/');
+        var tagSeparator = normalized.LastIndexOf(':');
+        if (tagSeparator <= lastSlash || tagSeparator == normalized.Length - 1)
+        {
+            throw new InvalidOperationException("Docker image references must include an explicit version tag or sha256 digest.");
+        }
+
+        var tag = normalized[(tagSeparator + 1)..];
+        if (string.Equals(tag, "latest", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Docker image tag 'latest' is not allowed. Use an explicit version tag or sha256 digest.");
+        }
+
         return normalized;
     }
 
     private async Task<DockerImageCatalogState> LoadStateAsync(CancellationToken cancellationToken)
     {
-        var initialized = bool.TryParse(
-            await packageContext.Storage.State.GetValueAsync(InitializedKey, cancellationToken),
-            out var parsedInitialized) && parsedInitialized;
+        _ = await packageContext.Storage.State.GetValueAsync(InitializedKey, cancellationToken);
         var json = await packageContext.Storage.State.GetValueAsync(ImagesKey, cancellationToken);
         if (string.IsNullOrWhiteSpace(json))
         {
-            return initialized
-                ? new DockerImageCatalogState(1, [])
-                : new DockerImageCatalogState(1,
-                [
-                    new DockerImageDefinition(
-                        DockerExecutionWorkspaceConfigService.DefaultImageReference,
-                        DockerImageStatus.NotPulled,
-                        null,
-                        "Default image has not been pulled yet."),
-                ]);
+            return new DockerImageCatalogState(1, []);
         }
 
         try
@@ -229,16 +251,7 @@ public sealed class DockerImageCatalogService(IPackageContext packageContext, Do
         }
         catch
         {
-            return initialized
-                ? new DockerImageCatalogState(1, [])
-                : new DockerImageCatalogState(1,
-                [
-                    new DockerImageDefinition(
-                        DockerExecutionWorkspaceConfigService.DefaultImageReference,
-                        DockerImageStatus.NotPulled,
-                        null,
-                        "Default image has not been pulled yet."),
-                ]);
+            return new DockerImageCatalogState(1, []);
         }
     }
 

@@ -14,9 +14,9 @@
       },
       "Sunder.Sdk": {
         "type": "Direct",
-        "requested": "[1.1.0, )",
+        "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "RcbCpd502dU15IXoe5Foy+CggGz0YRveS/bZzaT6Om5MNwQx1hPP1W/kxHWNHzoU2kTqMmIvjBMjhvfklSeZBA==",
+        "contentHash": "qbBDgVS5otbNfuCDyOoG8oRzttwq3PhAa36kkh9Qc4j93m23Z3zjBt3+YOOUqh1elalsZbOTp+gNKSQ0QPginA==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.8"
@@ -24,9 +24,9 @@
       },
       "Sunder.Sdk.Avalonia": {
         "type": "Direct",
-        "requested": "[1.1.0, )",
+        "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "Ll9JC6upeJQZvycp4thigSxxibvqTTOnTbnn6V2dpnuqQjSIF4Yc+RV3tyqpB/tiGW0rU0UmHuRdeuR9bqHshg==",
+        "contentHash": "Ajo7d8Yrk2lZkNz66SyWzr5Y0cncLFykHkgdU7Q6Ou9hDMhQPIIVr9asEQ2xljwLOUdxWSqv75cWLbVkS2qqeg==",
         "dependencies": {
           "Avalonia": "12.0.3",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
@@ -35,9 +35,9 @@
       },
       "Sunder.Sdk.Stacks": {
         "type": "Direct",
-        "requested": "[1.1.0, )",
+        "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "Cgm0DdQ7uzCqtJoi0EeBr8IOsZPsXbguPD6yJaavrddO+ijMA14nPiuivmQj/yXl2VRphDFztyj7xYc9NAJgRg==",
+        "contentHash": "Ym0OnNoasnOrFUV1lyS/zluDiC2ROrxwLTpFx23Mb822uEAHHKRAbrSAWxsPrdJI/I60eiYeOx51rCr+Jz8ixw==",
         "dependencies": {
           "Sunder.Sdk": "1.1.0"
         }
@@ -548,9 +548,9 @@
           "Microsoft.Extensions.AI": "[10.5.2, )",
           "Microsoft.Extensions.Http.Resilience": "[10.5.0, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )",
-          "Sunder.Sdk.Avalonia": "[1.1.0, )",
-          "Sunder.Sdk.Stacks": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.builder": {
@@ -558,15 +558,15 @@
         "dependencies": {
           "Avalonia": "[12.0.3, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )",
-          "Sunder.Sdk.Avalonia": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.contracts": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.AI.Abstractions": "[10.5.2, )",
-          "Sunder.Sdk": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.execution.docker": {
@@ -576,9 +576,9 @@
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "Sunder.Agent.Execution.Common": "[1.1.0, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )",
-          "Sunder.Sdk.Avalonia": "[1.1.0, )",
-          "Sunder.Sdk.Stacks": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.execution.local": {
@@ -588,8 +588,8 @@
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "Sunder.Agent.Execution.Common": "[1.1.0, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )",
-          "Sunder.Sdk.Avalonia": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.mcp": {
@@ -601,9 +601,9 @@
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "ModelContextProtocol": "[1.3.0, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )",
-          "Sunder.Sdk.Avalonia": "[1.1.0, )",
-          "Sunder.Sdk.Stacks": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.memory.semantic": {
@@ -613,8 +613,8 @@
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "Microsoft.Data.Sqlite": "[10.0.8, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )",
-          "Sunder.Sdk.Avalonia": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.provider.anthropic": {
@@ -624,8 +624,8 @@
           "Avalonia": "[12.0.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )",
-          "Sunder.Sdk.Avalonia": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.provider.gemini": {
@@ -635,8 +635,8 @@
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "Google.GenAI": "[1.6.1, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )",
-          "Sunder.Sdk.Avalonia": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.provider.lmstudio": {
@@ -646,8 +646,8 @@
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "OpenAI": "[2.10.0, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )",
-          "Sunder.Sdk.Avalonia": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.provider.openai": {
@@ -658,8 +658,8 @@
           "Microsoft.Extensions.AI.OpenAI": "[10.5.2, )",
           "OpenAI": "[2.10.0, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )",
-          "Sunder.Sdk.Avalonia": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.skills": {
@@ -669,9 +669,9 @@
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "Octokit": "[14.0.0, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )",
-          "Sunder.Sdk.Avalonia": "[1.1.0, )",
-          "Sunder.Sdk.Stacks": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.subagents": {
@@ -681,9 +681,9 @@
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "LiveMarkdown.Avalonia": "[2.2.0, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )",
-          "Sunder.Sdk.Avalonia": "[1.1.0, )",
-          "Sunder.Sdk.Stacks": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.tools.files": {
@@ -691,7 +691,7 @@
         "dependencies": {
           "Sunder.Agent.Execution.Common": "[1.1.0, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.tools.shell": {
@@ -699,7 +699,7 @@
         "dependencies": {
           "Sunder.Agent.Execution.Common": "[1.1.0, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.tools.web": {
@@ -707,7 +707,7 @@
         "dependencies": {
           "Sunder.Agent.Execution.Common": "[1.1.0, )",
           "Sunder.Package.Agent.Contracts": "[1.1.0, )",
-          "Sunder.Sdk": "[1.1.0, )"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "Anthropic": {

@@ -150,6 +150,13 @@ public sealed partial class RepositoryArchitectureTests
         var packageProperties = XDocument.Load(Path.Combine(repositoryRoot, "Directory.Packages.props"));
         Assert.Equal("true", GetSingleProperty(packageProperties, "ManagePackageVersionsCentrally"));
         Assert.Equal("false", GetSingleProperty(packageProperties, "CentralPackageVersionOverrideEnabled"));
+        var sunderPackageVersions = packageProperties.Descendants("PackageVersion")
+            .Where(reference => reference.Attribute("Include")?.Value.StartsWith("Sunder.", StringComparison.Ordinal) == true)
+            .ToArray();
+        Assert.Equal(4, sunderPackageVersions.Length);
+        Assert.All(sunderPackageVersions, reference => Assert.Equal(
+            "[1.1.0,1.2.0)",
+            reference.Attribute("Version")?.Value));
 
         foreach (var package in AgentPackageRepositoryInventory.GetRuntimePackageProjects()
                      .Where(static package => !string.Equals(package.Name, "Sunder.Package.Agent", StringComparison.Ordinal)))

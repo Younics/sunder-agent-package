@@ -141,12 +141,6 @@ public sealed partial class AgentLocalStore
                 CreatedAtUtc TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS AgentWorkingSummaries (
-                SessionId TEXT PRIMARY KEY,
-                SummaryText TEXT NOT NULL,
-                UpdatedAtUtc TEXT NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS AgentSessionContextCheckpoints (
                 ContextCheckpointId TEXT PRIMARY KEY,
                 SessionId TEXT NOT NULL,
@@ -156,15 +150,6 @@ public sealed partial class AgentLocalStore
                 SummaryText TEXT NOT NULL,
                 DetailsJson TEXT NULL,
                 CreatedAtUtc TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS AgentPermissionRules (
-                RuleId TEXT PRIMARY KEY,
-                ActionId TEXT NOT NULL,
-                MatcherKind TEXT NOT NULL,
-                Pattern TEXT NOT NULL,
-                Decision TEXT NOT NULL,
-                SortOrder INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS AgentPermissionOverrides (

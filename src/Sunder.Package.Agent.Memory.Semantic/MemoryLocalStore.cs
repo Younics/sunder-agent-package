@@ -1,14 +1,18 @@
 using Microsoft.Data.Sqlite;
+using Sunder.Package.Agent.Shared.Threading;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
 
 public sealed class MemoryLocalStore
 {
+    public const int MaxRecallableMemoriesPerSession = 512;
     public const string ActiveState = "Active";
     public const string ContestedState = "Contested";
     public const string ForgottenState = "Forgotten";
     public const string SupersededState = "Superseded";
+
+    private static readonly ReferenceCountedKeyedLock<string> MemoryWriteLocks = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly MemoryRepository _memories;
     private readonly EvidenceRepository _evidence;
@@ -35,6 +39,20 @@ public sealed class MemoryLocalStore
     public IReadOnlyList<StoredMemoryRecord> ListPriorityMemories(Guid sessionId, int limit) => _memories.ListPriority(sessionId, limit);
 
     public StoredMemoryRecord UpsertMemory(MemoryUpsertRequest request, Guid? targetMemoryId = null) => _memories.Upsert(request, targetMemoryId);
+
+    internal StoredMemoryRecord? TryUpsertMemoryWithinLimit(MemoryUpsertRequest request, Guid? targetMemoryId = null)
+    {
+        using (MemoryWriteLocks.Enter($"{DatabasePath}\0{request.SessionId:N}"))
+        {
+            if (targetMemoryId is null
+                && _memories.CountRecallable(request.SessionId) >= MaxRecallableMemoriesPerSession)
+            {
+                return null;
+            }
+
+            return _memories.Upsert(request, targetMemoryId);
+        }
+    }
 
     public void RecordRecall(IReadOnlyList<Guid> memoryIds) => _memories.RecordRecall(memoryIds);
 

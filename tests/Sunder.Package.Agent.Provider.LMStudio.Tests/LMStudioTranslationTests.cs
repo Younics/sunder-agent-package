@@ -49,10 +49,10 @@ public sealed class LMStudioTranslationTests
         var updates = new List<ChatResponseUpdate>();
 
         await foreach (var update in client.GetStreamingResponseAsync(messages, new ChatOptions
-                       {
-                           Instructions = "Use tools safely.",
-                           MaxOutputTokens = 321,
-                       }))
+        {
+            Instructions = "Use tools safely.",
+            MaxOutputTokens = 321,
+        }))
         {
             updates.Add(update);
         }

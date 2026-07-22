@@ -133,15 +133,15 @@
   ],
   "capabilities": {
     "sunder.package.agent": [
-      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.v1", "logging.v1",
+      "background-services.v1", "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.v1", "logging.v1",
       "notifications.v1", "packaging.v1", "role-local-workspace.v1", "runtime-operations.v1",
       "sdk-baseline-1-1.v1", "settings-navigation.v1", "settings-views.v1", "shell-view.v1",
       "stacks.contributions.v1", "stacks.v1", "storage.v1", "theming.v1", "views.v1"
     ],
     "sunder.package.agent.builder": [
-      "background-processes.v1", "contributions.v1", "core.v1", "development-package-sessions.v1",
-      "extensions.changes.v1", "extensions.v1", "logging.v1", "packaging.v1",
-      "sdk-baseline-1-1.v1", "shell-view.v1", "storage.v1", "theming.v1", "views.v1"
+      "background-processes.v1", "contributions.v1", "core.v1", "extensions.changes.v1",
+      "extensions.v1", "logging.v1", "packaging.v1",
+      "runtime-operations.v1", "sdk-baseline-1-1.v1", "shell-view.v1", "storage.v1", "theming.v1", "views.v1"
     ],
     "sunder.package.agent.execution.docker": [
       "background-processes.v1", "contributions.v1", "core.v1", "extensions.changes.v1",

@@ -3,7 +3,6 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Presentation;
-using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Builder;
 
@@ -22,23 +21,19 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
     private readonly object _initializationSync = new();
     private BuilderProjectViewModel? _selectedProject;
     private Task? _initializationTask;
-    private Task? _statusRefreshTask;
     private Task? _statusVisibilityTask;
     private string _statusText = string.Empty;
     private string _runtimeLogText = string.Empty;
     private bool _isBusy;
     private bool _isSetupComplete;
     private bool _projectsLoaded;
-    private bool _processedStartupAutoLoad;
     private bool _isCompactLayout;
     private bool _isEditorActive;
     private bool _isSelectedProjectInitialized;
-    private bool _isSelectedProjectLoaded;
     private bool _isSelectedProjectInitializing;
     private bool _showStatusMessage;
     private bool _suppressSelectedProjectChanges;
     private bool _disposed;
-    private int _selectedProjectStatusVersion;
 
     public BuilderViewModel(
         BuilderProjectApplicationService applicationService,
@@ -104,16 +99,9 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
 
     public bool IsProjectIdentityReadOnly => !CanEditProjectIdentity;
 
-    public bool CanUseSelectedProjectRuntimeActions => CanEditSelectedProject;
+    public bool CanRunSelectedProjectOperations => CanEditSelectedProject;
 
-    public bool CanUseDevelopmentSessions => CanEditSelectedProject && _applicationService.DevelopmentSessionAvailability.IsAvailable;
-
-    public string? DevelopmentSessionUnavailableReason
-        => _applicationService.DevelopmentSessionAvailability.IsAvailable
-            ? null
-            : _applicationService.DevelopmentSessionAvailability.UnavailableReason;
-
-    public bool ShowRuntimeSection => HasSelectedProject && IsSelectedProjectInitialized;
+    public bool ShowBuildSection => HasSelectedProject && IsSelectedProjectInitialized;
 
     public bool IsSelectedProjectInitialized
     {
@@ -121,18 +109,6 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         private set
         {
             if (SetField(ref _isSelectedProjectInitialized, value))
-            {
-                NotifyProjectStatePropertiesChanged();
-            }
-        }
-    }
-
-    public bool IsSelectedProjectLoaded
-    {
-        get => _isSelectedProjectLoaded;
-        private set
-        {
-            if (SetField(ref _isSelectedProjectLoaded, value))
             {
                 NotifyProjectStatePropertiesChanged();
             }
@@ -164,10 +140,6 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
                                                 && !string.IsNullOrWhiteSpace(SelectedProject?.PackageId)
                                                 && !string.IsNullOrWhiteSpace(SelectedProject?.WorkspaceId)
                                                 && !string.IsNullOrWhiteSpace(SelectedProject?.WorkspacePathId);
-
-    public bool ShowLoadSelectedProject => HasSelectedProject && IsSelectedProjectInitialized && !IsSelectedProjectLoaded;
-
-    public bool ShowUnloadSelectedProject => HasSelectedProject && IsSelectedProjectLoaded;
 
     public bool IsCompactLayout
     {
@@ -243,7 +215,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
                     value.WorkspaceId = Workspaces.FirstOrDefault()?.WorkspaceId ?? string.Empty;
                 }
 
-                ApplyProjectRecord(value, _pathService.NormalizeProject(value.ToRecord()));
+                ApplyProjectRecord(value, value.ToRecord());
                 RefreshWorkspacePathOptions(preserveSelection: true);
                 value.PropertyChanged += OnSelectedProjectPropertyChanged;
                 if (IsCompactLayout)
@@ -253,10 +225,8 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
             }
 
             UpdateSelectedProjectInitialized();
-            IsSelectedProjectLoaded = false;
             RuntimeLogText = string.Empty;
             NotifyProjectStatePropertiesChanged();
-            QueueSelectedStatusRefresh(updateStatusText: false);
         }
     }
 
@@ -310,69 +280,6 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         return Task.CompletedTask;
     }
 
-    public Task LoadSelectedProjectAsync()
-        => RunBusyAsync(async cancellationToken =>
-        {
-            var selection = await _uiDispatcher.InvokeAsync(() =>
-                TryValidateSelectedProject(true, true, out var project, out var record)
-                    ? (Project: project, Record: record)
-                    : default((BuilderProjectViewModel Project, BuilderProjectRecord Record)?));
-            if (selection is null)
-            {
-                return;
-            }
-
-            var result = await _operationQueue.RunAsync(
-                () => _applicationService.LoadProjectAsync(selection.Value.Record, cancellationToken),
-                cancellationToken);
-            IReadOnlyList<BuilderProjectRecord>? projects = null;
-            await _uiDispatcher.InvokeAsync(() =>
-            {
-                RuntimeLogText = string.Empty;
-                ApplyProjectRecord(selection.Value.Project, result.Project);
-                if (result.Status is null)
-                {
-                    StatusText = result.Message ?? "The dev package could not be loaded.";
-                    return;
-                }
-
-                IsSelectedProjectLoaded = result.Status.IsLoaded;
-                StatusText = FormatStatus(result.Status);
-                projects = CaptureProjects();
-            });
-            if (projects is not null)
-            {
-                await _persistence.SaveNowAsync(projects, CancellationToken.None);
-            }
-        });
-
-    public Task UnloadSelectedProjectAsync()
-        => RunBusyAsync(async cancellationToken =>
-        {
-            var project = await _uiDispatcher.InvokeAsync(() => SelectedProject);
-            if (project is null || string.IsNullOrWhiteSpace(project.PackageId))
-            {
-                await _uiDispatcher.InvokeAsync(() => StatusText = "Select a package with a package id first.");
-                return;
-            }
-
-            var result = await _operationQueue.RunAsync(
-                () => _applicationService.UnloadProjectAsync(project.PackageId, cancellationToken),
-                cancellationToken);
-            await _uiDispatcher.InvokeAsync(() =>
-            {
-                IsSelectedProjectLoaded = false;
-                StatusText = result.Message;
-            });
-            await RefreshSelectedStatusCoreAsync(Interlocked.Increment(ref _selectedProjectStatusVersion), false, cancellationToken);
-        });
-
-    public Task RefreshSelectedStatusAsync()
-        => RefreshSelectedStatusCoreAsync(
-            Interlocked.Increment(ref _selectedProjectStatusVersion),
-            updateStatusText: true,
-            _lifetime.Token);
-
     public void ActivateProject(BuilderProjectViewModel? project)
     {
         if (project is null)
@@ -401,10 +308,10 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
             return;
         }
 
-        ApplyProjectRecord(SelectedProject, _pathService.NormalizeProject(SelectedProject.ToRecord() with
+        ApplyProjectRecord(SelectedProject, SelectedProject.ToRecord() with
         {
             ProjectFolder = folder,
-        }));
+        });
     }
 
     public async ValueTask DisposeAsync()
@@ -448,17 +355,6 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         {
             await _persistence.SaveNowAsync(projects, CancellationToken.None).ConfigureAwait(false);
         }
-        if (_statusRefreshTask is not null)
-        {
-            try
-            {
-                await _statusRefreshTask.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
-            {
-            }
-        }
-
         await _persistence.DisposeAsync().ConfigureAwait(false);
         _lifetime.Dispose();
     }
@@ -469,18 +365,18 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         Projects.Clear();
         foreach (var project in projects)
         {
-            Projects.Add(new BuilderProjectViewModel(_pathService.NormalizeProject(project)));
+            Projects.Add(new BuilderProjectViewModel(project));
         }
 
         SelectedProject = Projects.FirstOrDefault(project => project.Id == selectedProjectId)
             ?? (IsCompactLayout ? null : Projects.FirstOrDefault());
     }
 
-    private void ReloadWorkspaces()
+    private void ApplyLoadedWorkspaces(IReadOnlyList<AgentWorkspaceRecord> workspaces)
     {
         var selectedWorkspaceId = SelectedProject?.WorkspaceId;
         Workspaces.Clear();
-        foreach (var workspace in _applicationService.ListWorkspaces().OrderBy(workspace => workspace.DisplayName, StringComparer.OrdinalIgnoreCase))
+        foreach (var workspace in workspaces.OrderBy(workspace => workspace.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
             Workspaces.Add(workspace);
         }
@@ -594,30 +490,8 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
             project.PackageId = _pathService.ToPackageId(project.DisplayName);
         }
 
-        if (e.PropertyName == nameof(BuilderProjectViewModel.DevPackageRelativePath)
-            && !string.IsNullOrWhiteSpace(project.ProjectFolder))
-        {
-            try
-            {
-                ApplyProjectRecord(project, _pathService.NormalizeProject(project.ToRecord()));
-            }
-            catch (Exception ex)
-            {
-                StatusText = ex.Message;
-                return;
-            }
-        }
-
         UpdateSelectedProjectInitialized();
-        IsSelectedProjectLoaded = false;
         NotifyProjectStatePropertiesChanged();
-        QueueSelectedStatusRefresh(updateStatusText: false);
-
-        if (IsSelectedProjectInitialized && IsRuntimeSetting(e.PropertyName))
-        {
-            project.Touch();
-            _persistence.RequestSave(CaptureProjects());
-        }
     }
 
     private void ApplyProjectRecord(BuilderProjectViewModel project, BuilderProjectRecord record)
@@ -689,12 +563,6 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
     private void UpdateSelectedProjectInitialized()
         => IsSelectedProjectInitialized = _pathService.IsProjectInitialized(SelectedProject?.ToRecord());
 
-    private void QueueSelectedStatusRefresh(bool updateStatusText)
-    {
-        var version = Interlocked.Increment(ref _selectedProjectStatusVersion);
-        _statusRefreshTask = RefreshSelectedStatusCoreAsync(version, updateStatusText, _lifetime.Token);
-    }
-
     private void OnPersistenceSaveFailed(object? sender, BuilderPersistenceFailedEventArgs e)
         => _tasks.Run(_ => _uiDispatcher.InvokeAsync(() =>
         {
@@ -730,15 +598,11 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         OnPropertyChanged(nameof(CanEditSelectedProject));
         OnPropertyChanged(nameof(CanEditProjectIdentity));
         OnPropertyChanged(nameof(IsProjectIdentityReadOnly));
-        OnPropertyChanged(nameof(CanUseSelectedProjectRuntimeActions));
-        OnPropertyChanged(nameof(CanUseDevelopmentSessions));
-        OnPropertyChanged(nameof(DevelopmentSessionUnavailableReason));
-        OnPropertyChanged(nameof(ShowRuntimeSection));
+        OnPropertyChanged(nameof(CanRunSelectedProjectOperations));
+        OnPropertyChanged(nameof(ShowBuildSection));
         OnPropertyChanged(nameof(ShowInitializeSelectedProject));
         OnPropertyChanged(nameof(ShowSelectedProjectSetup));
         OnPropertyChanged(nameof(CanInitializeSelectedProject));
-        OnPropertyChanged(nameof(ShowLoadSelectedProject));
-        OnPropertyChanged(nameof(ShowUnloadSelectedProject));
     }
 
     private void NotifyLayoutPropertiesChanged()
@@ -751,26 +615,12 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         OnPropertyChanged(nameof(ShowEditorPane));
     }
 
-    private static bool IsRuntimeSetting(string? propertyName)
-        => propertyName is nameof(BuilderProjectViewModel.DevPackageFolder)
-            or nameof(BuilderProjectViewModel.DevPackageRelativePath)
-            or nameof(BuilderProjectViewModel.Watch)
-            or nameof(BuilderProjectViewModel.AutoLoadOnStartup);
-
     private static string BuildMissingPrerequisitesMessage(IReadOnlyList<BuilderPrerequisiteStatus> statuses)
     {
         var missing = statuses.Where(status => !status.IsInstalled).Select(status => $"{status.Name}: {status.Detail}").ToArray();
         return missing.Length == 0
             ? "Package builder setup is incomplete."
             : "Package builder setup is incomplete." + Environment.NewLine + string.Join(Environment.NewLine, missing);
-    }
-
-    private static string FormatStatus(PackageDevelopmentSessionStatus status)
-    {
-        var overlay = status.OverridesInstalledPackage ? " overriding installed package" : string.Empty;
-        var watch = status.WatchEnabled ? " Watch is enabled." : string.Empty;
-        var error = string.IsNullOrWhiteSpace(status.ErrorMessage) ? string.Empty : $" Last error: {status.ErrorMessage}";
-        return $"{status.PackageId} {status.Version} loaded from development output{overlay}.{watch}{error}";
     }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

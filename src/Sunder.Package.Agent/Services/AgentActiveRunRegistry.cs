@@ -4,6 +4,7 @@ public sealed class AgentActiveRunRegistry
 {
     private readonly object _syncRoot = new();
     private readonly Dictionary<Guid, AgentActiveRunHandle> _activeRuns = new();
+    private readonly Dictionary<Guid, Dictionary<Guid, AgentActiveRunHandle>> _inFlightRuns = new();
 
     public void Set(Guid sessionId, AgentActiveRunHandle activeRun)
     {
@@ -23,6 +24,7 @@ public sealed class AgentActiveRunRegistry
             if (!_activeRuns.TryGetValue(sessionId, out var current))
             {
                 _activeRuns[sessionId] = candidate;
+                TrackInFlight(sessionId, candidate);
                 return new AgentRunActivationResult(
                     AgentRunActivationOutcome.Activated,
                     candidate,
@@ -38,6 +40,7 @@ public sealed class AgentActiveRunRegistry
             }
 
             _activeRuns[sessionId] = candidate;
+            TrackInFlight(sessionId, candidate);
             return new AgentRunActivationResult(
                 AgentRunActivationOutcome.Replaced,
                 candidate,
@@ -96,6 +99,45 @@ public sealed class AgentActiveRunRegistry
         }
     }
 
+    internal IReadOnlyList<AgentActiveRunHandle> ListInFlight(IReadOnlySet<Guid> sessionIds)
+    {
+        lock (_syncRoot)
+        {
+            return sessionIds
+                .Where(_inFlightRuns.ContainsKey)
+                .SelectMany(sessionId => _inFlightRuns[sessionId].Values)
+                .DistinctBy(run => (run.RunId, run.RunRevision))
+                .ToArray();
+        }
+    }
+
+    internal void Complete(Guid sessionId, Guid runId, long runRevision)
+    {
+        AgentActiveRunHandle? completed = null;
+        lock (_syncRoot)
+        {
+            if (_activeRuns.TryGetValue(sessionId, out var current)
+                && Matches(current, runId, runRevision))
+            {
+                _activeRuns.Remove(sessionId);
+            }
+
+            if (_inFlightRuns.TryGetValue(sessionId, out var inFlight)
+                && inFlight.TryGetValue(runId, out var candidate)
+                && candidate.RunRevision == runRevision)
+            {
+                inFlight.Remove(runId);
+                if (inFlight.Count == 0)
+                {
+                    _inFlightRuns.Remove(sessionId);
+                }
+                completed = candidate;
+            }
+        }
+
+        completed?.MarkCompleted();
+    }
+
     internal AgentActiveRunHandle? GetCurrent(Guid sessionId, Guid runId, long runRevision)
     {
         lock (_syncRoot)
@@ -134,6 +176,16 @@ public sealed class AgentActiveRunRegistry
         => activeRun.RunRevision == runRevision
             // Persisted permission continuations created before RunId was added use Guid.Empty.
             && (runId == Guid.Empty || activeRun.RunId == runId);
+
+    private void TrackInFlight(Guid sessionId, AgentActiveRunHandle candidate)
+    {
+        if (!_inFlightRuns.TryGetValue(sessionId, out var inFlight))
+        {
+            inFlight = new Dictionary<Guid, AgentActiveRunHandle>();
+            _inFlightRuns.Add(sessionId, inFlight);
+        }
+        inFlight[candidate.RunId] = candidate;
+    }
 }
 
 internal sealed record AgentRunActivationResult(
@@ -159,5 +211,12 @@ public sealed record AgentActiveRunHandle(
     string UserMessage,
     CancellationTokenSource CancellationTokenSource)
 {
+    private readonly TaskCompletionSource _completion = new(
+        TaskCreationOptions.RunContinuationsAsynchronously);
+
     internal Sunder.Package.Agent.Models.AgentDurableRunLease? DurableLease { get; init; }
+
+    internal Task Completion => _completion.Task;
+
+    internal void MarkCompleted() => _completion.TrySetResult();
 }

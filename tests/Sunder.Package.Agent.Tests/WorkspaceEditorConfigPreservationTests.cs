@@ -43,12 +43,12 @@ public sealed class WorkspaceEditorConfigPreservationTests
         const string bindingId = "workspace:docker";
         var dockerRunner = new ReadyDockerCliRunner(scope.Context);
         var imageCatalog = new DockerImageCatalogService(scope.Context, dockerRunner);
-        await imageCatalog.AddImageAsync("test-image:latest");
+        await imageCatalog.AddImageAsync("test-image:1.0");
         var configService = new DockerExecutionWorkspaceConfigService(scope.Context, imageCatalog);
         await configService.SaveConfigAsync(
             bindingId,
             new DockerExecutionWorkspaceConfig(
-                "test-image:latest",
+                "test-image:1.0",
                 "preserved-container",
                 "/bin/sh",
                 ["/opt/tools", "/usr/local/bin"]));
@@ -60,13 +60,13 @@ public sealed class WorkspaceEditorConfigPreservationTests
                 "docker-execution-settings",
                 new Dictionary<string, AgentEditorFieldValue>
                 {
-                    ["image"] = new("test-image:latest"),
+                    ["image"] = new("test-image:1.0"),
                     ["shell-path"] = new("/bin/bash"),
                 }));
 
         Assert.True(result.Success);
         var saved = await configService.GetConfigAsync(bindingId);
-        Assert.Equal("test-image:latest", saved.ImageReference);
+        Assert.Equal("test-image:1.0", saved.ImageReference);
         Assert.Equal("preserved-container", saved.ContainerName);
         Assert.Equal("/bin/bash", saved.ShellPath);
         Assert.Equal(["/opt/tools", "/usr/local/bin"], saved.PathEntries);

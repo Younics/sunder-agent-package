@@ -18,7 +18,9 @@ public sealed class AgentPermissionResumeCoordinator(
     AgentBehaviorLoopHostFactory behaviorLoopHostFactory,
     AgentBehaviorLoopResolver behaviorLoopResolver,
     AgentParentRunContinuationService parentRunContinuationService,
-    AgentSessionTransitionGate? transitionGate = null
+    AgentSessionTransitionGate? transitionGate = null,
+    AgentSessionDeletionFence? deletionFence = null,
+    AgentBackgroundWorkService? backgroundWork = null
 )
 {
     private readonly AgentSessionService _sessionService = sessionService;
@@ -35,12 +37,39 @@ public sealed class AgentPermissionResumeCoordinator(
         parentRunContinuationService;
     private readonly AgentSessionTransitionGate _transitionGate =
         transitionGate ?? AgentSessionTransitionGate.Shared;
+    private readonly AgentSessionDeletionFence _deletionFence =
+        deletionFence ?? AgentSessionDeletionFence.Shared;
+    private readonly AgentBackgroundWorkService? _backgroundWork = backgroundWork;
 
-    public async Task<AgentRunCheckpointRecord?> ApproveAsync(Guid sessionId, string requestId)
+    public Task<AgentRunCheckpointRecord?> ApproveAsync(
+        Guid sessionId,
+        string requestId,
+        bool approveForSession = false,
+        CancellationToken cancellationToken = default)
+        => _backgroundWork is null
+            ? ApproveCoreAsync(sessionId, requestId, approveForSession, cancellationToken)
+            : _backgroundWork.RunOwnedAsync(
+                ownedToken => ApproveCoreAsync(
+                    sessionId,
+                    requestId,
+                    approveForSession,
+                    ownedToken),
+                cancellationToken);
+
+    private async Task<AgentRunCheckpointRecord?> ApproveCoreAsync(
+        Guid sessionId,
+        string requestId,
+        bool approveForSession,
+        CancellationToken cancellationToken)
     {
         AgentPendingPermissionClaimResult claim;
-        using (await _transitionGate.EnterAsync(sessionId).ConfigureAwait(false))
+        using (await _transitionGate.EnterAsync(sessionId, cancellationToken).ConfigureAwait(false))
         {
+            if (_sessionService.GetSession(sessionId) is { } claimSession
+                && _deletionFence.IsFenced(claimSession))
+            {
+                return _sessionService.GetLatestCheckpoint(sessionId);
+            }
             claim = _permissionService.TryClaimPendingRequest(sessionId, requestId);
         }
         if (!claim.IsClaimed || claim.Request is not { } pending)
@@ -59,7 +88,10 @@ public sealed class AgentPermissionResumeCoordinator(
 
         try
         {
-            return await ApproveClaimedAsync(pending).ConfigureAwait(false);
+            return await ApproveClaimedAsync(
+                pending,
+                approveForSession,
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -102,7 +134,9 @@ public sealed class AgentPermissionResumeCoordinator(
     }
 
     private async Task<AgentRunCheckpointRecord?> ApproveClaimedAsync(
-        AgentPendingPermissionRequestRecord pending)
+        AgentPendingPermissionRequestRecord pending,
+        bool approveForSession,
+        CancellationToken cancellationToken)
     {
         var sessionId = pending.SessionId;
 
@@ -181,8 +215,14 @@ public sealed class AgentPermissionResumeCoordinator(
 
         AgentActiveRunHandle? runHandle = null;
         AgentDurableRunLease? runLease = null;
-        using (await _transitionGate.EnterAsync(sessionId).ConfigureAwait(false))
+        DateTimeOffset runStartedAtUtc = default;
+        using (await _transitionGate.EnterAsync(sessionId, cancellationToken).ConfigureAwait(false))
         {
+            if (_deletionFence.IsFenced(session))
+            {
+                Complete(AgentPendingPermissionStatus.Expired, "The session is being deleted.");
+                return _sessionService.GetLatestCheckpoint(sessionId);
+            }
             var suspendedRun = _sessionService.GetRun(pending.RunId);
             if (suspendedRun?.Key != new AgentDurableRunKey(
                     pending.RunId,
@@ -204,14 +244,15 @@ public sealed class AgentPermissionResumeCoordinator(
 
             var resumedRun = _sessionService.GetRun(pending.RunId)
                 ?? throw new InvalidOperationException("Resumed permission run was not found.");
+            runStartedAtUtc = resumedRun.StartedAtUtc;
             runLease = new AgentDurableRunLease(resumedRun);
             runHandle = new AgentActiveRunHandle(
                 pending.RunId,
                 pending.RunRevision,
-                pending.CreatedAtUtc,
+                runStartedAtUtc,
                 profile.ProfileId,
                 pending.UserMessage,
-                new CancellationTokenSource())
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
                 DurableLease = runLease,
             };
@@ -267,9 +308,10 @@ public sealed class AgentPermissionResumeCoordinator(
                 workspace,
                 pending.RunId,
                 pending.RunRevision,
-                pending.CreatedAtUtc,
+                runStartedAtUtc,
                 pending.UserMessage,
-                pending.UserTurnId
+                pending.UserTurnId,
+                ResolveExecutionBinding(workspace)
             );
             var approvedToolOutcome = await host.HandleApprovedToolCallAsync(
                     pending,
@@ -360,7 +402,7 @@ public sealed class AgentPermissionResumeCoordinator(
                         session,
                         failedCheckpoint,
                         workspace.WorkspaceId,
-                        CancellationToken.None)
+                        cancellationToken)
                     .ConfigureAwait(false);
                 return failedParentCheckpoint ?? failedCheckpoint;
             }
@@ -398,7 +440,7 @@ public sealed class AgentPermissionResumeCoordinator(
                         pending.RunId,
                         pending.RunRevision,
                         runningCheckpoint,
-                        pending.CreatedAtUtc,
+                        runStartedAtUtc,
                         pending.UserMessage,
                         pending.UserTurnId,
                         modelVariant,
@@ -470,12 +512,17 @@ public sealed class AgentPermissionResumeCoordinator(
                 return null;
             }
 
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return canceledCheckpoint;
+            }
+
             var canceledParentCheckpoint = await _parentRunContinuationService
                 .TryResumeAfterChildCompletionAsync(
                     session,
                     canceledCheckpoint,
                     workspace.WorkspaceId,
-                    CancellationToken.None)
+                    cancellationToken)
                 .ConfigureAwait(false);
             return canceledParentCheckpoint ?? canceledCheckpoint;
         }
@@ -497,13 +544,13 @@ public sealed class AgentPermissionResumeCoordinator(
                     session,
                     failedCheckpoint,
                     workspace.WorkspaceId,
-                    CancellationToken.None)
+                    cancellationToken)
                 .ConfigureAwait(false);
             return failedParentCheckpoint ?? failedCheckpoint;
         }
         finally
         {
-            _activeRunRegistry.CleanupCurrent(sessionId, pending.RunId, pending.RunRevision);
+            _activeRunRegistry.Complete(sessionId, pending.RunId, pending.RunRevision);
             runHandle.CancellationTokenSource.Dispose();
         }
 
@@ -519,20 +566,26 @@ public sealed class AgentPermissionResumeCoordinator(
                 }
                 var currentProviderSelection = _providerResolver.ResolveChatProvider(currentProfile);
                 var currentBinding = ResolveExecutionBinding(currentWorkspace);
-                return !cancellationToken.IsCancellationRequested
-                       && AgentPermissionFingerprint.MatchesExecutionContext(
-                           pending.ExecutionSnapshotJson,
-                           pending,
-                           currentProfile,
-                           currentProviderSelection.Provider?.Descriptor.ProviderId,
-                           currentProviderSelection.ChatBinding?.ModelId,
-                           currentWorkspace,
-                           currentBinding)
-                       && _activeRunRegistry.IsCurrent(
-                           sessionId,
-                           pending.RunId,
-                           pending.RunRevision)
-                       && _permissionService.MarkExecutionStarted(pending);
+                if (cancellationToken.IsCancellationRequested
+                    || !AgentPermissionFingerprint.MatchesExecutionContext(
+                        pending.ExecutionSnapshotJson,
+                        pending,
+                        currentProfile,
+                        currentProviderSelection.Provider?.Descriptor.ProviderId,
+                        currentProviderSelection.ChatBinding?.ModelId,
+                        currentWorkspace,
+                        currentBinding)
+                    || !_activeRunRegistry.IsCurrent(
+                        sessionId,
+                        pending.RunId,
+                        pending.RunRevision))
+                {
+                    return false;
+                }
+
+                return _permissionService.MarkExecutionStarted(
+                    pending,
+                    approveForSession);
             }
         }
 
@@ -542,10 +595,23 @@ public sealed class AgentPermissionResumeCoordinator(
                ?? throw new InvalidOperationException("Permission continuation has no durable checkpoint.");
     }
 
-    public async Task<AgentRunCheckpointRecord?> DenyAsync(Guid sessionId, string requestId)
+    public Task<AgentRunCheckpointRecord?> DenyAsync(
+        Guid sessionId,
+        string requestId,
+        CancellationToken cancellationToken = default)
+        => _backgroundWork is null
+            ? DenyCoreAsync(sessionId, requestId, cancellationToken)
+            : _backgroundWork.RunOwnedAsync(
+                ownedToken => DenyCoreAsync(sessionId, requestId, ownedToken),
+                cancellationToken);
+
+    private async Task<AgentRunCheckpointRecord?> DenyCoreAsync(
+        Guid sessionId,
+        string requestId,
+        CancellationToken cancellationToken)
     {
         AgentPendingPermissionDecisionResult decision;
-        using (await _transitionGate.EnterAsync(sessionId).ConfigureAwait(false))
+        using (await _transitionGate.EnterAsync(sessionId, cancellationToken).ConfigureAwait(false))
         {
             decision = _permissionService.TryDenyPendingRequest(
                 sessionId,
@@ -572,7 +638,7 @@ public sealed class AgentPermissionResumeCoordinator(
                 session,
                 stoppedCheckpoint,
                 session.WorkspaceId ?? string.Empty,
-                CancellationToken.None).ConfigureAwait(false);
+                cancellationToken).ConfigureAwait(false);
         }
 
         return stoppedCheckpoint;

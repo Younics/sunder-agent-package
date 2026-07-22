@@ -2,17 +2,32 @@ using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
+using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Builder;
 
-public sealed class PackageModule : ISunderAppPackageModule
+public sealed class PackageModule : ISunderRuntimePackageModule
+{
+    public void ConfigureRuntimeServices(IServiceCollection services, IPackageContext context)
+        => services.AddSingleton<BuilderRuntimeHandler>();
+
+    public void RegisterRuntimeContributions(
+        ISunderRuntimeContributionRegistry registry,
+        IServiceProvider services)
+        => registry.RegisterRuntimeOperation(
+            BuilderRuntimeOperations.Execute,
+            services.GetRequiredService<BuilderRuntimeHandler>());
+}
+
+public sealed class AppPackageModule : ISunderAppPackageModule
 {
     public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
     {
         services.AddSingleton<IBuilderUiDispatcher, AvaloniaBuilderUiDispatcher>();
         services.AddSingleton<BuilderPathService>();
         services.AddSingleton<BuilderSetupService>();
-        services.AddSingleton<BuilderWorkspaceExecutionService>();
+        services.AddSingleton(provider => new BuilderWorkspaceExecutionService(
+            provider.GetRequiredService<IPackageRuntimeClient>()));
         services.AddSingleton<BuilderProjectStore>();
         services.AddSingletonAlias<IBuilderProjectStore, BuilderProjectStore>();
         services.AddSingleton<BuilderProjectApplicationService>();

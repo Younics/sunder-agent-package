@@ -48,22 +48,6 @@ public sealed partial class AgentLocalStore
         return AttachItems(turns, items);
     }
 
-    public IReadOnlyList<AgentTranscriptMessageRecord> ListMessages(Guid sessionId)
-    {
-        return ListTurns(sessionId)
-            .Select(ProjectTurnToTranscriptMessage)
-            .ToArray();
-    }
-
-    public AgentTranscriptMessageRecord? GetMessage(Guid messageId)
-    {
-        using var connection = CreateConnection();
-        connection.Open();
-
-        var turn = GetTurn(connection, messageId);
-        return turn is null ? null : ProjectTurnToTranscriptMessage(turn);
-    }
-
     public AgentTurnRecord? GetTurn(Guid turnId)
     {
         using var connection = CreateConnection();

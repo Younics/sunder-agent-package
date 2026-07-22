@@ -6,7 +6,7 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.Tools.Files;
 
 public sealed class FilesToolSource(IPackageExtensionCatalog extensionCatalog)
-    : IAgentToolSource, IAgentPermissionAwareToolSource, IAgentPermissionSurface, IAgentSystemPromptContributor, IAgentToolPresentationResolver
+    : IAgentToolSource, IAgentPermissionAwareToolSource, IAgentPermissionSurface, IAgentPromptContextContributor, IAgentToolPresentationResolver
 {
     public string SourceId => FileToolDescriptorRegistry.SourceId;
 
@@ -108,8 +108,8 @@ public sealed class FilesToolSource(IPackageExtensionCatalog extensionCatalog)
     public IReadOnlyList<AgentPermissionActionDescriptor> ListActions()
         => FilePermissionPlanner.Actions;
 
-    public ValueTask<IReadOnlyList<AgentSystemPromptBlock>> ContributeAsync(
-        AgentSystemPromptRequest request,
+    public ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
+        AgentPromptContextRequest request,
         CancellationToken cancellationToken = default)
         => FileSystemPromptBuilder.BuildAsync(ResolveTarget(request.ExecutionBinding), request, cancellationToken);
 

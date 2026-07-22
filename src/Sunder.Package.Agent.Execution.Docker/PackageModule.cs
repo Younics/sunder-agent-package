@@ -29,7 +29,6 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterExtension(SunderStackExtensionPoints.StackImportAppliedHandlers, stackContributor);
         var target = services.GetRequiredService<DockerExecutionTarget>();
         registry.RegisterExtension(PackageExtensionPoints.ExecutionTargets, target);
-        registry.RegisterExtension(PackageExtensionPoints.WorkspaceBindingContributors, target);
         registry.RegisterExtension(PackageExtensionPoints.WorkspacePathMigrationContributors, services.GetRequiredService<DockerExecutionWorkspaceConfigService>());
         registry.RegisterExtension(PackageExtensionPoints.WorkspaceEditorContributors, services.GetRequiredService<DockerExecutionWorkspaceEditorContributor>());
         registry.RegisterRuntimeOperation(DockerExecutionRuntimeOperations.Execute, services.GetRequiredService<DockerExecutionRuntimeOperationHandler>());

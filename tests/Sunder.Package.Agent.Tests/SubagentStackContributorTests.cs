@@ -30,10 +30,16 @@ public sealed class SubagentStackContributorTests
                 "{\"temperature\":0.1}");
             var contributor = new SubagentStackContributor(service, context, new RegressionTestExtensionCatalog());
 
-            var contribution = await contributor.ExportAsync(new StackExportRequest([subagent.SubagentId]));
+            var item = Assert.Single(await contributor.ListExportItemsAsync(
+                new StackExportDiscoveryContext(context.PackageId)));
+            var contribution = await contributor.ExportAsync(new StackExportRequest(
+                [new StackExportItemSelection(subagent.SubagentId)]));
 
             var fragment = Assert.Single(contribution.Fragments);
-            Assert.Equal("sunder.package.agent.subagents", Assert.Single(contribution.PackageRequirements).PackageId);
+            Assert.All(item.Details ?? [], detail => Assert.NotNull(detail.Sensitivity));
+            var requirement = Assert.Single(contribution.PackageRequirements);
+            Assert.Equal("sunder.package.agent.subagents", requirement.PackageId);
+            Assert.Equal("1.1.0", requirement.MinimumVersion);
             Assert.Contains("Focus on bugs", fragment.JsonPayload, StringComparison.Ordinal);
             Assert.Contains("gpt-5.5", fragment.JsonPayload, StringComparison.Ordinal);
         }
@@ -54,7 +60,8 @@ public sealed class SubagentStackContributorTests
             var subagent = sourceService.CreateSubagent("Researcher");
             serviceSaveResearcher(sourceService, subagent.SubagentId);
             var sourceContributor = new SubagentStackContributor(sourceService, sourceContext, new RegressionTestExtensionCatalog());
-            var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest([subagent.SubagentId]))).Fragments);
+            var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(
+                [new StackExportItemSelection(subagent.SubagentId)]))).Fragments);
 
             var targetContext = new TestPackageContext(Path.Combine(root, "target"));
             var targetService = new SubagentService(new SubagentStore(targetContext));

@@ -30,8 +30,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         var feature = services.GetRequiredService<SkillsFeature>();
         registry.RegisterExtension(PackageExtensionPoints.ProfileSelectableCapabilityProviders, feature);
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, feature);
-        registry.RegisterExtension(PackageExtensionPoints.SystemPromptContributors, feature);
-        registry.RegisterExtension(PackageExtensionPoints.ExecutionResourceProviders, feature);
+        registry.RegisterExtension(PackageExtensionPoints.PromptContextContributors, feature);
         var stackContributor = services.GetRequiredService<SkillStackContributor>();
         registry.RegisterExtension(SunderStackExtensionPoints.StackExporters, stackContributor);
         registry.RegisterExtension(SunderStackExtensionPoints.StackImporters, stackContributor);

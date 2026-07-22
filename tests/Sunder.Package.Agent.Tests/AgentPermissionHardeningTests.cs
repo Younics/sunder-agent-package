@@ -1,4 +1,5 @@
 using Microsoft.Extensions.AI;
+using Microsoft.Data.Sqlite;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -152,12 +153,16 @@ public sealed class AgentPermissionHardeningTests
             runtime.Workspace.WorkspaceId,
             PermissionHardeningExecutionTarget.SecondaryTargetId);
 
-        await runtime.ResumeCoordinator.ApproveAsync(runtime.Session.SessionId, pending.RequestId);
+        await runtime.ResumeCoordinator.ApproveAsync(
+            runtime.Session.SessionId,
+            pending.RequestId,
+            approveForSession: true);
 
         var persisted = runtime.Store.GetPermissionRequest(runtime.Session.SessionId, pending.RequestId);
         Assert.Equal(AgentPendingPermissionStatus.Expired, persisted?.Status);
         Assert.Equal(0, source.ExecutionCount);
         Assert.Contains("context changed", persisted?.DecisionSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(runtime.Store.ListSessionPermissionApprovals(runtime.Session.SessionId));
     }
 
     [Fact]
@@ -168,7 +173,10 @@ public sealed class AgentPermissionHardeningTests
         var pending = await runtime.CreatePendingRequestAsync();
         source.BlockPermissionResolution();
 
-        var approval = runtime.ResumeCoordinator.ApproveAsync(runtime.Session.SessionId, pending.RequestId);
+        var approval = runtime.ResumeCoordinator.ApproveAsync(
+            runtime.Session.SessionId,
+            pending.RequestId,
+            approveForSession: true);
         await source.PermissionResolutionStarted.WaitAsync(TimeSpan.FromSeconds(10));
         runtime.WorkspaceService.SaveWorkspace(
             runtime.Workspace.WorkspaceId,
@@ -181,6 +189,67 @@ public sealed class AgentPermissionHardeningTests
         Assert.Equal(
             AgentPendingPermissionStatus.Expired,
             runtime.Store.GetPermissionRequest(runtime.Session.SessionId, pending.RequestId)?.Status);
+        Assert.Empty(runtime.Store.ListSessionPermissionApprovals(runtime.Session.SessionId));
+    }
+
+    [Fact]
+    public async Task SessionApproval_IsPersistedOnlyWhenValidatedExecutionStarts()
+    {
+        var source = new PermissionAwareMutationToolSource("mutate");
+        await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
+        var pending = await runtime.CreatePendingRequestAsync();
+        source.BlockPermissionResolution();
+        source.BlockExecution();
+
+        var approval = runtime.ResumeCoordinator.ApproveAsync(
+            runtime.Session.SessionId,
+            pending.RequestId,
+            approveForSession: true);
+        await source.PermissionResolutionStarted.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Empty(runtime.Store.ListSessionPermissionApprovals(runtime.Session.SessionId));
+
+        source.ReleasePermissionResolution();
+        await source.ExecutionStarted.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var persistedApproval = Assert.Single(
+            runtime.Store.ListSessionPermissionApprovals(runtime.Session.SessionId));
+        Assert.Equal(pending.ActionId, persistedApproval.ActionId);
+        Assert.Equal(pending.BoundaryId, persistedApproval.Pattern);
+        source.ReleaseExecution();
+        await approval.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task SessionApprovalInsertFailure_RollsBackExecutionStart()
+    {
+        var source = new PermissionAwareMutationToolSource("mutate");
+        await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
+        var pending = await runtime.CreatePendingRequestAsync();
+        using (var connection = new SqliteConnection($"Data Source={runtime.Store.DatabasePath}"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TRIGGER RejectSessionApproval
+                BEFORE INSERT ON AgentSessionPermissionApprovals
+                BEGIN
+                    SELECT RAISE(ABORT, 'injected approval failure');
+                END;
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var checkpoint = await runtime.ResumeCoordinator.ApproveAsync(
+            runtime.Session.SessionId,
+            pending.RequestId,
+            approveForSession: true);
+
+        var persisted = runtime.Store.GetPermissionRequest(runtime.Session.SessionId, pending.RequestId);
+        Assert.Equal(AgentRunStatus.Failed, checkpoint?.Status);
+        Assert.Equal(AgentPendingPermissionStatus.Failed, persisted?.Status);
+        Assert.Null(persisted?.ExecutionStartedAtUtc);
+        Assert.Equal(0, source.ExecutionCount);
+        Assert.Empty(runtime.Store.ListSessionPermissionApprovals(runtime.Session.SessionId));
     }
 
     [Fact]
@@ -259,7 +328,8 @@ public sealed class AgentPermissionHardeningTests
             pending.RunId,
             pending.RunRevision);
         Assert.NotNull(active);
-        active!.CancellationTokenSource.Cancel();
+        Assert.Equal(runtime.Store.GetRun(pending.RunId)?.StartedAtUtc, active!.StartedAtUtc);
+        active.CancellationTokenSource.Cancel();
         source.ReleaseExecution();
 
         var checkpoint = await approval.WaitAsync(TimeSpan.FromSeconds(10));
@@ -684,8 +754,7 @@ internal sealed class PermissionHardeningExecutionTarget(string targetId) : IAge
         targetId,
         null,
         SupportsShell: false,
-        SupportsFiles: false,
-        SupportsSearch: false);
+        SupportsFiles: false);
 
     public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
         AgentExecutionTargetContext context,

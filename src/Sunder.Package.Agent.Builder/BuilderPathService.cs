@@ -6,49 +6,7 @@ namespace Sunder.Package.Agent.Builder;
 
 public sealed class BuilderPathService
 {
-    public const string DefaultDevPackageRelativePath = "/bin/Debug/net10.0/sunder-dev";
     private const int MaximumSymbolicLinkDepth = 40;
-
-    public BuilderProjectRecord NormalizeProject(BuilderProjectRecord project)
-    {
-        var relativePath = string.IsNullOrWhiteSpace(project.DevPackageRelativePath)
-            ? TryResolveRelativeDevPackagePath(project.ProjectFolder, project.DevPackageFolder) ?? DefaultDevPackageRelativePath
-            : project.DevPackageRelativePath;
-        relativePath = NormalizeDevPackageRelativePath(relativePath);
-        var devPackageFolder = string.IsNullOrWhiteSpace(project.ProjectFolder)
-            ? project.DevPackageFolder
-            : ResolveDevPackageFolder(project.ProjectFolder, relativePath);
-        return project with
-        {
-            DevPackageRelativePath = relativePath,
-            DevPackageFolder = devPackageFolder,
-        };
-    }
-
-    public string NormalizeDevPackageRelativePath(string? relativePath)
-    {
-        var value = string.IsNullOrWhiteSpace(relativePath)
-            ? DefaultDevPackageRelativePath
-            : relativePath.Trim().Replace('\\', '/');
-        value = "/" + value.TrimStart('/');
-        if (value.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(part => part == ".."))
-        {
-            throw new InvalidOperationException("sunder-dev folder must stay inside the package project folder.");
-        }
-
-        return value;
-    }
-
-    public string ResolveDevPackageFolder(BuilderProjectRecord project)
-        => ResolveDevPackageFolder(project.ProjectFolder, project.DevPackageRelativePath ?? DefaultDevPackageRelativePath);
-
-    public string ResolveDevPackageFolder(string projectFolder, string devPackageRelativePath)
-    {
-        var normalized = NormalizeDevPackageRelativePath(devPackageRelativePath);
-        var parts = normalized.TrimStart('/', '\\')
-            .Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return Path.GetFullPath(Path.Combine([Path.GetFullPath(projectFolder), .. parts]));
-    }
 
     public string ResolveContainedHostPath(string hostPath, string allowedRoot)
     {
@@ -60,29 +18,6 @@ public sealed class BuilderPathService
         }
 
         return physicalPath;
-    }
-
-    public string? TryResolveRelativeDevPackagePath(string projectFolder, string devPackageFolder)
-    {
-        if (string.IsNullOrWhiteSpace(projectFolder) || string.IsNullOrWhiteSpace(devPackageFolder))
-        {
-            return null;
-        }
-
-        var projectRoot = Path.GetFullPath(projectFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var devFolder = Path.GetFullPath(devPackageFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var comparison = PathComparison;
-        if (!string.Equals(projectRoot, devFolder, comparison)
-            && !devFolder.StartsWith(projectRoot + Path.DirectorySeparatorChar, comparison)
-            && !devFolder.StartsWith(projectRoot + Path.AltDirectorySeparatorChar, comparison))
-        {
-            return null;
-        }
-
-        var relative = Path.GetRelativePath(projectRoot, devFolder).Replace(Path.DirectorySeparatorChar, '/');
-        return string.IsNullOrWhiteSpace(relative) || relative == "."
-            ? "/"
-            : NormalizeDevPackageRelativePath(relative);
     }
 
     public string ResolveExecutionProjectFolder(BuilderProjectRecord project)

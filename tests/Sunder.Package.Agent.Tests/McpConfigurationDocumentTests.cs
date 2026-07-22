@@ -202,12 +202,67 @@ public sealed class McpConfigurationDocumentTests
     }
 
     [Fact]
-    public void TimeoutResolver_DefaultsToNoTimeout()
+    public void TimeoutResolver_UsesFiniteDefaults()
     {
         var server = new ConfiguredMcpServerRecord();
 
-        Assert.Null(McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server));
-        Assert.Null(McpTimeoutResolver.ResolveToolTimeoutMilliseconds(server));
-        Assert.Null(McpTimeoutResolver.ResolveEffectiveTimeoutMilliseconds(null));
+        Assert.Equal(15_000, McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server));
+        Assert.Equal(120_000, McpTimeoutResolver.ResolveToolTimeoutMilliseconds(server));
+        Assert.Equal(15_000, McpTimeoutResolver.ResolveEffectiveTimeoutMilliseconds(null));
+    }
+
+    [Fact]
+    public void TimeoutResolver_ClampsConfiguredTimeouts()
+    {
+        var server = new ConfiguredMcpServerRecord
+        {
+            DiscoveryTimeoutMilliseconds = int.MaxValue,
+            ToolTimeoutMilliseconds = int.MaxValue,
+        };
+
+        Assert.Equal(120_000, McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server));
+        Assert.Equal(1_800_000, McpTimeoutResolver.ResolveToolTimeoutMilliseconds(server));
+    }
+
+    [Fact]
+    public void TransportSecurity_RejectsCredentialsOverRemoteHttp()
+    {
+        var server = new ConfiguredMcpServerRecord
+        {
+            TransportType = ConfiguredMcpTransportType.HttpSse,
+            EndpointUrl = "http://mcp.example.test/events",
+            HeaderNames = ["Authorization"],
+        };
+
+        var exception = Assert.Throws<InvalidOperationException>(() => McpTransportSecurity.ValidateRemoteEndpoint(server));
+
+        Assert.Contains("must use HTTPS", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TransportSecurity_RejectsUrlUserInfo()
+    {
+        var server = new ConfiguredMcpServerRecord
+        {
+            TransportType = ConfiguredMcpTransportType.HttpSse,
+            EndpointUrl = "https://user:password@mcp.example.test/events",
+        };
+
+        var exception = Assert.Throws<InvalidOperationException>(() => McpTransportSecurity.ValidateRemoteEndpoint(server));
+
+        Assert.Contains("user-info credentials", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TransportSecurity_AllowsCredentialedLoopbackHttp()
+    {
+        var server = new ConfiguredMcpServerRecord
+        {
+            TransportType = ConfiguredMcpTransportType.HttpSse,
+            EndpointUrl = "http://127.0.0.1:3000/events",
+            HeaderNames = ["Authorization"],
+        };
+
+        McpTransportSecurity.ValidateRemoteEndpoint(server);
     }
 }

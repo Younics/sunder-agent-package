@@ -90,29 +90,31 @@ internal static class McpConfigurationDocument
 
         var parsed = ParseDocument(document.RootElement);
         var now = DateTimeOffset.UtcNow;
+        var server = new ConfiguredMcpServerRecord
+        {
+            ServerId = serverId,
+            Name = normalizedName,
+            DisplayName = string.IsNullOrWhiteSpace(parsed.DisplayName) ? normalizedName : parsed.DisplayName.Trim(),
+            Description = string.IsNullOrWhiteSpace(parsed.Description) ? null : parsed.Description.Trim(),
+            IsEnabled = parsed.Enabled,
+            TransportType = parsed.TransportType,
+            CommandParts = parsed.CommandParts,
+            WorkingDirectory = string.IsNullOrWhiteSpace(parsed.WorkingDirectory) ? null : parsed.WorkingDirectory.Trim(),
+            EndpointUrl = string.IsNullOrWhiteSpace(parsed.EndpointUrl) ? null : parsed.EndpointUrl.Trim(),
+            TimeoutMilliseconds = parsed.LegacyTimeoutMilliseconds,
+            DiscoveryTimeoutMilliseconds = parsed.DiscoveryTimeoutMilliseconds,
+            ToolTimeoutMilliseconds = parsed.ToolTimeoutMilliseconds,
+            HeaderNames = [.. parsed.Headers.Keys],
+            EnvironmentVariableNames = [.. parsed.EnvironmentVariables.Keys],
+            OAuthEnabled = parsed.OAuthEnabled,
+            OAuthScopes = parsed.OAuthScopes,
+            OAuthClientId = parsed.OAuthClientId,
+            CreatedAtUtc = existingServer?.CreatedAtUtc ?? now,
+            UpdatedAtUtc = now,
+        };
+        McpTransportSecurity.ValidateRemoteEndpoint(server, parsed.Headers);
         return new ParsedMcpServerConfiguration(
-            new ConfiguredMcpServerRecord
-            {
-                ServerId = serverId,
-                Name = normalizedName,
-                DisplayName = string.IsNullOrWhiteSpace(parsed.DisplayName) ? normalizedName : parsed.DisplayName.Trim(),
-                Description = string.IsNullOrWhiteSpace(parsed.Description) ? null : parsed.Description.Trim(),
-                IsEnabled = parsed.Enabled,
-                TransportType = parsed.TransportType,
-                CommandParts = parsed.CommandParts,
-                WorkingDirectory = string.IsNullOrWhiteSpace(parsed.WorkingDirectory) ? null : parsed.WorkingDirectory.Trim(),
-                EndpointUrl = string.IsNullOrWhiteSpace(parsed.EndpointUrl) ? null : parsed.EndpointUrl.Trim(),
-                TimeoutMilliseconds = parsed.LegacyTimeoutMilliseconds,
-                DiscoveryTimeoutMilliseconds = parsed.DiscoveryTimeoutMilliseconds,
-                ToolTimeoutMilliseconds = parsed.ToolTimeoutMilliseconds,
-                HeaderNames = [.. parsed.Headers.Keys],
-                EnvironmentVariableNames = [.. parsed.EnvironmentVariables.Keys],
-                OAuthEnabled = parsed.OAuthEnabled,
-                OAuthScopes = parsed.OAuthScopes,
-                OAuthClientId = parsed.OAuthClientId,
-                CreatedAtUtc = existingServer?.CreatedAtUtc ?? now,
-                UpdatedAtUtc = now,
-            },
+            server,
             parsed.Headers,
             parsed.EnvironmentVariables);
     }

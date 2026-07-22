@@ -31,6 +31,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<McpServerConnectionService>();
         services.AddSingleton<McpOAuthCoordinator>();
         services.AddSingleton<McpToolSource>();
+        services.AddSingleton<McpSessionConnectionCleaner>();
         services.AddSingleton<McpServerStackContributor>();
         services.AddSingleton<McpRuntimeHandler>();
         services.AddSingleton<McpRuntimeChangeStream>();
@@ -41,6 +42,9 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.GetRequiredService<McpConfigurationCoordinator>().Start();
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, services.GetRequiredService<McpToolSource>());
         registry.RegisterExtension(PackageExtensionPoints.ProfileSelectableCapabilityProviders, services.GetRequiredService<McpToolSource>());
+        registry.RegisterExtension(
+            PackageExtensionPoints.SessionDataCleaners,
+            services.GetRequiredService<McpSessionConnectionCleaner>());
         var stackContributor = services.GetRequiredService<McpServerStackContributor>();
         registry.RegisterExtension(SunderStackExtensionPoints.StackExporters, stackContributor);
         registry.RegisterExtension(SunderStackExtensionPoints.StackImporters, stackContributor);

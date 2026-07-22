@@ -39,9 +39,11 @@ public sealed class McpServerStackContributorTests
                 """);
             await catalog.SaveServerAsync(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
 
-            var contribution = await contributor.ExportAsync(new StackExportRequest(["server-1"]));
+            var contribution = await contributor.ExportAsync(new StackExportRequest(
+                [new StackExportItemSelection("server-1")]));
 
             var fragment = Assert.Single(contribution.Fragments);
+            Assert.Equal("1.1.0", Assert.Single(contribution.PackageRequirements).MinimumVersion);
             Assert.DoesNotContain("super-secret-token", fragment.JsonPayload, StringComparison.Ordinal);
             var requiredInput = Assert.Single(fragment.RequiredInputs ?? []);
             Assert.Equal("GITHUB_TOKEN", ReadFirstSecretName(fragment.JsonPayload, "environmentVariables"));
@@ -76,7 +78,8 @@ public sealed class McpServerStackContributorTests
                 }
                 """);
             await sourceCatalog.SaveServerAsync(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
-            var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(["server-1"]))).Fragments);
+            var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(
+                [new StackExportItemSelection("server-1")]))).Fragments);
 
             var targetContext = new TestPackageContext(Path.Combine(root, "target"));
             var targetCatalog = new McpServerCatalogService(targetContext);
@@ -137,10 +140,12 @@ public sealed class McpServerStackContributorTests
 
             var discovery = await contributor.ListExportItemsAsync(new StackExportDiscoveryContext("sunder.package.agent.mcp"));
             var item = Assert.Single(discovery);
+            Assert.All(item.Details ?? [], detail => Assert.NotNull(detail.Sensitivity));
             Assert.Contains(item.Details ?? [], detail => detail.DetailId == "header.accept" && detail.Sensitivity == StackValueSensitivity.Public && detail.Value == "application/json");
             Assert.Contains(item.Details ?? [], detail => detail.DetailId == "header.x-goog-api-key" && detail.Sensitivity == StackValueSensitivity.Secret && detail.Value == "Value not exported");
 
-            var contribution = await contributor.ExportAsync(new StackExportRequest(["server-1"]));
+            var contribution = await contributor.ExportAsync(new StackExportRequest(
+                [new StackExportItemSelection("server-1")]));
 
             var fragment = Assert.Single(contribution.Fragments);
             Assert.Contains("application/json", fragment.JsonPayload, StringComparison.Ordinal);

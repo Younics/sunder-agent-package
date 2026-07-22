@@ -125,6 +125,42 @@ public sealed class AgentPermissionStoreTests
         }
     }
 
+    [Fact]
+    public void ClaimedPermissionFinalization_IsRejectedAfterNewerRunRevisionStarts()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var workspace = new AgentWorkspaceService(store).CreateWorkspace("Stale permission");
+        var session = store.CreateSession("Session", workspaceId: workspace.WorkspaceId);
+        var first = store.ReserveRun(session.SessionId, "profile", "first");
+        var firstRunning = Assert.IsType<AgentRunTransitionResult>(store.TryTransitionRun(
+            first.Key,
+            first.Epoch,
+            AgentRunStatus.Running,
+            "First running."));
+        Assert.NotNull(store.SavePendingPermissionRequestAndSuspendRun(
+            CreateRequest(session.SessionId, first.Key.RunId, first.Key.RunRevision),
+            firstRunning.Run.Epoch));
+        var claimed = Assert.IsType<AgentPendingPermissionRequestRecord>(
+            store.TryClaimPendingPermissionRequest(session.SessionId, "request-1").Request);
+        var newer = store.ReserveRun(session.SessionId, "profile", "newer");
+        Assert.NotNull(store.TryTransitionRun(
+            newer.Key,
+            newer.Epoch,
+            AgentRunStatus.Running,
+            "Newer running."));
+
+        var staleFinalization = store.FinalizeClaimedPermissionRequest(
+            claimed,
+            AgentPendingPermissionStatus.Failed,
+            AgentRunStatus.Failed,
+            "Stale failure.");
+
+        Assert.Null(staleFinalization);
+        Assert.Equal(AgentDurableRunStatus.WaitingForApproval, store.GetRun(first.Key.RunId)?.Status);
+        Assert.Equal(newer.Key.RunRevision, store.GetLatestCheckpoint(session.SessionId)?.RunRevision);
+    }
+
     [Theory]
     [InlineData("deny")]
     [InlineData("claimed-finalize")]
