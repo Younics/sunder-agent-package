@@ -1,10 +1,13 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Data.Sqlite;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Threading;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
 
-public sealed class MemoryLocalStore
+public sealed partial class MemoryLocalStore
 {
     public const int MaxRecallableMemoriesPerSession = 512;
     public const string ActiveState = "Active";
@@ -17,9 +20,18 @@ public sealed class MemoryLocalStore
     private readonly MemoryRepository _memories;
     private readonly EvidenceRepository _evidence;
     private readonly EmbeddingRepository _embeddings;
+    private readonly IMemoryPhysicalMaintenance _physicalMaintenance;
 
     public MemoryLocalStore(IPackageContext packageContext)
+        : this(packageContext, SqliteMemoryPhysicalMaintenance.Instance)
     {
+    }
+
+    internal MemoryLocalStore(
+        IPackageContext packageContext,
+        IMemoryPhysicalMaintenance physicalMaintenance)
+    {
+        ArgumentNullException.ThrowIfNull(physicalMaintenance);
         MemoryDatabase.Initialize(packageContext.ContentRootPath);
         DatabasePath = packageContext.Storage.RoleLocalWorkspace.GetLocalPath("memory/agent-memory.db");
         Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
@@ -27,7 +39,7 @@ public sealed class MemoryLocalStore
         _evidence = new EvidenceRepository(DatabasePath);
         _embeddings = new EmbeddingRepository(DatabasePath);
         _memories = new MemoryRepository(DatabasePath, _evidence);
-        _embeddings.CleanupStagingGenerations();
+        _physicalMaintenance = physicalMaintenance;
     }
 
     public string DatabasePath { get; }
@@ -120,29 +132,135 @@ public sealed class MemoryLocalStore
     public IReadOnlyDictionary<Guid, StoredMemoryEmbeddingRecord> ListEmbeddings(Guid sessionId, string providerId, string modelId)
         => _embeddings.List(sessionId, providerId, modelId);
 
+    internal IReadOnlyDictionary<Guid, StoredMemoryEmbeddingRecord> ListStagedEmbeddings(string generationId)
+        => _embeddings.ListGeneration(generationId);
+
+    internal StoredMemoryEmbeddingGenerationRecord? GetActiveEmbeddingGeneration(
+        Guid sessionId,
+        string providerId,
+        string modelId)
+        => _embeddings.GetActiveGeneration(sessionId, providerId, modelId);
+
+    internal IReadOnlyList<StoredMemoryEmbeddingGenerationRecord> ListActiveEmbeddingGenerations(Guid sessionId)
+        => _embeddings.ListActiveGenerations(sessionId);
+
+    internal bool HasEmbeddingRetractions(Guid sessionId, IReadOnlySet<Guid> retainedMemoryIds)
+        => _embeddings.HasRetractions(sessionId, retainedMemoryIds);
+
     public void UpsertEmbedding(StoredMemoryEmbeddingRecord embedding) => _embeddings.Upsert(embedding);
 
-    internal string BeginEmbeddingGeneration(Guid sessionId, string providerId, string modelId, int expectedMemoryCount)
-        => _embeddings.BeginGeneration(sessionId, providerId, modelId, expectedMemoryCount);
+    internal bool TryUpsertEmbedding(
+        StoredMemoryEmbeddingRecord embedding,
+        long expectedMemoryRevision,
+        string expectedCanonicalTextHash,
+        int maxCanonicalTextChars,
+        string configurationFingerprint = "")
+        => _embeddings.TryUpsertFenced(
+            embedding,
+            expectedMemoryRevision,
+            expectedCanonicalTextHash,
+            maxCanonicalTextChars,
+            configurationFingerprint);
 
-    internal void StageEmbedding(string generationId, StoredMemoryEmbeddingRecord embedding) => _embeddings.Stage(generationId, embedding);
+    internal string GetOrBeginEmbeddingGeneration(
+        Guid sessionId,
+        string providerId,
+        string modelId,
+        string configurationFingerprint,
+        string sourceFingerprint,
+        int maxCanonicalTextChars,
+        int expectedMemoryCount)
+        => _embeddings.GetOrBeginGeneration(
+            sessionId,
+            providerId,
+            modelId,
+            configurationFingerprint,
+            sourceFingerprint,
+            maxCanonicalTextChars,
+            expectedMemoryCount);
+
+    internal bool TryStageEmbedding(
+        string generationId,
+        StoredMemoryEmbeddingRecord embedding,
+        long expectedMemoryRevision,
+        string expectedCanonicalTextHash,
+        int maxCanonicalTextChars)
+        => _embeddings.TryStageFenced(
+            generationId,
+            embedding,
+            expectedMemoryRevision,
+            expectedCanonicalTextHash,
+            maxCanonicalTextChars);
 
     internal void CompleteEmbeddingGeneration(string generationId) => _embeddings.CompleteGeneration(generationId);
 
     internal void AbortEmbeddingGeneration(string generationId) => _embeddings.AbortGeneration(generationId);
 
-    internal int CleanupStagingEmbeddingGenerations() => _embeddings.CleanupStagingGenerations();
+    internal int PruneEmbeddingGeneration(string generationId, IReadOnlySet<Guid> retainedMemoryIds)
+        => _embeddings.PruneGeneration(generationId, retainedMemoryIds);
+
+    internal int PruneEmbeddingGenerations(Guid sessionId, IReadOnlySet<Guid> retainedMemoryIds)
+        => _embeddings.PruneSessionGenerations(sessionId, retainedMemoryIds);
 
     public void DeleteEmbeddings(Guid sessionId) => _embeddings.DeleteSession(sessionId);
 
     public void DeleteSessionData(Guid sessionId)
     {
         using var connection = MemoryDatabase.OpenConnection(DatabasePath);
-        using var transaction = connection.BeginTransaction();
+        using var transaction = MemoryDatabase.BeginImmediateTransaction(connection);
+        using (var tombstone = connection.CreateCommand())
+        {
+            var receiptHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+                $"semantic-memory-session-cleaner-v1\n{sessionId:N}"))).ToLowerInvariant();
+            tombstone.Transaction = transaction;
+            tombstone.CommandText = """
+                INSERT OR IGNORE INTO SessionMemoryDeletionTombstones (
+                    SessionId, WorkspaceId, EventId, PayloadHash, DeletedAtUtc)
+                VALUES ($sessionId, NULL, $eventId, $payloadHash, $deletedAtUtc);
+                """;
+            tombstone.Parameters.AddWithValue("$sessionId", sessionId.ToString());
+            tombstone.Parameters.AddWithValue("$eventId", $"session-cleaner_{receiptHash}");
+            tombstone.Parameters.AddWithValue("$payloadHash", receiptHash);
+            tombstone.Parameters.AddWithValue("$deletedAtUtc", DateTimeOffset.UtcNow.ToString("O"));
+            var affected = tombstone.ExecuteNonQuery();
+            if (affected is not (0 or 1))
+            {
+                throw new InvalidOperationException(
+                    $"Session deletion tombstone for '{sessionId}' could not be persisted.");
+            }
+        }
         EmbeddingRepository.DeleteSession(connection, transaction, sessionId);
         EvidenceRepository.DeleteSession(connection, transaction, sessionId);
+        using (var contributions = connection.CreateCommand())
+        {
+            contributions.Transaction = transaction;
+            contributions.CommandText = "DELETE FROM SessionMemoryContributions WHERE SessionId = $sessionId;";
+            contributions.Parameters.AddWithValue("$sessionId", sessionId.ToString());
+            contributions.ExecuteNonQuery();
+        }
         MemoryRepository.DeleteSession(connection, transaction, sessionId);
         transaction.Commit();
+        using var maintenanceLock = MemoryDatabase.AcquireMaintenanceLock(DatabasePath);
+        _physicalMaintenance.SecurePurge(connection);
+    }
+
+    internal bool HasLifecycleInboxReceipt(AgentMemoryConsistencyBarrier barrier)
+    {
+        using var connection = MemoryDatabase.OpenConnection(DatabasePath);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 FROM SemanticLifecycleInbox WHERE EventId = $eventId AND PayloadHash = $payloadHash LIMIT 1;";
+        command.Parameters.AddWithValue("$eventId", barrier.EventId);
+        command.Parameters.AddWithValue("$payloadHash", barrier.PayloadHash);
+        return command.ExecuteScalar() is not null;
+    }
+
+    internal bool HasSessionDeletionTombstone(Guid sessionId)
+    {
+        using var connection = MemoryDatabase.OpenConnection(DatabasePath);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 FROM SessionMemoryDeletionTombstones WHERE SessionId = $sessionId LIMIT 1;";
+        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
+        return command.ExecuteScalar() is not null;
     }
 
     private static string CreateConnectionString(string databasePath) => MemoryDatabase.CreateConnectionString(databasePath);

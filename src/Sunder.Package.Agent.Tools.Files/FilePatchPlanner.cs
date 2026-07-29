@@ -12,6 +12,12 @@ internal static class FilePatchPlanner
         IReadOnlyList<FilePatchOperation> operations,
         CancellationToken cancellationToken)
     {
+        if (operations.Count > FilePatchParser.MaximumOperations)
+        {
+            throw new InvalidOperationException(
+                $"Patches support at most {FilePatchParser.MaximumOperations} file operations.");
+        }
+
         var duplicate = operations.GroupBy(operation => operation.Path, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault(group => group.Count() > 1);
         if (duplicate is not null)
@@ -20,15 +26,16 @@ internal static class FilePatchPlanner
         }
 
         var planned = new List<PlannedFilePatchOperation>(operations.Count);
-        foreach (var operation in operations)
+        for (var resourceIndex = 0; resourceIndex < operations.Count; resourceIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var operation = operations[resourceIndex];
             var resource = await target.ResolveFileResourceAsync(context, operation.Path, cancellationToken);
             planned.Add(operation.Kind switch
             {
-                FilePatchOperationKind.Add => PlanAdd(operation, resource),
-                FilePatchOperationKind.Update => await PlanUpdateAsync(target, context, operation, resource, cancellationToken),
-                FilePatchOperationKind.Delete => await PlanDeleteAsync(target, context, operation, resource, cancellationToken),
+                FilePatchOperationKind.Add => PlanAdd(operation, resourceIndex, resource),
+                FilePatchOperationKind.Update => await PlanUpdateAsync(target, context, operation, resourceIndex, resource, cancellationToken),
+                FilePatchOperationKind.Delete => await PlanDeleteAsync(target, context, operation, resourceIndex, resource, cancellationToken),
                 _ => throw new InvalidOperationException($"Unsupported patch operation for {operation.Path}."),
             });
         }
@@ -36,7 +43,10 @@ internal static class FilePatchPlanner
         return new FilePatchPlan(planned);
     }
 
-    private static PlannedFilePatchOperation PlanAdd(FilePatchOperation operation, AgentResolvedResource resource)
+    private static PlannedFilePatchOperation PlanAdd(
+        FilePatchOperation operation,
+        int resourceIndex,
+        AgentResolvedResource resource)
     {
         if (resource.Exists)
         {
@@ -47,9 +57,11 @@ internal static class FilePatchPlanner
         return new PlannedFilePatchOperation(
             operation.Kind,
             operation.Path,
+            resourceIndex,
             OriginalContent: null,
             NextContent: content,
             ExpectedContentHash: null,
+            resource.CanonicalReference,
             FileDiffPresentation.AddedFile(operation.Path, content));
     }
 
@@ -57,17 +69,21 @@ internal static class FilePatchPlanner
         IAgentExecutionTarget target,
         AgentExecutionTargetContext context,
         FilePatchOperation operation,
+        int resourceIndex,
         AgentResolvedResource resource,
         CancellationToken cancellationToken)
     {
         var current = await ReadExistingFileAsync(target, context, operation.Path, resource, cancellationToken);
+        var mutationResource = await target.ResolveFileResourceAsync(context, operation.Path, cancellationToken);
         var next = FileDiffPresentation.ApplyHunks(current, operation.Hunks, out var diffLines);
         return new PlannedFilePatchOperation(
             operation.Kind,
             operation.Path,
+            resourceIndex,
             current,
             next,
             FileOperation.ComputeContentHash(current),
+            mutationResource.CanonicalReference,
             FileDiffPresentation.UpdatedFile(operation.Path, diffLines));
     }
 
@@ -75,16 +91,20 @@ internal static class FilePatchPlanner
         IAgentExecutionTarget target,
         AgentExecutionTargetContext context,
         FilePatchOperation operation,
+        int resourceIndex,
         AgentResolvedResource resource,
         CancellationToken cancellationToken)
     {
         var current = await ReadExistingFileAsync(target, context, operation.Path, resource, cancellationToken);
+        var mutationResource = await target.ResolveFileResourceAsync(context, operation.Path, cancellationToken);
         return new PlannedFilePatchOperation(
             operation.Kind,
             operation.Path,
+            resourceIndex,
             current,
             NextContent: null,
             FileOperation.ComputeContentHash(current),
+            mutationResource.CanonicalReference,
             FileDiffPresentation.DeletedFile(operation.Path));
     }
 

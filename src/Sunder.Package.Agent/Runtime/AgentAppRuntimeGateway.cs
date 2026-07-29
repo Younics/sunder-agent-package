@@ -4,7 +4,6 @@ using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Sdk.Runtime;
-
 namespace Sunder.Package.Agent.Runtime;
 
 internal enum AgentRuntimeConnectionState
@@ -23,6 +22,13 @@ internal interface IAgentRuntimeAvailability
     event Action<AgentRuntimeConnectionState>? ConnectionStateChanged;
 }
 
+internal interface IAgentRuntimeFailureClassifier
+{
+    bool IsRetryableRuntimeFailure(
+        Exception exception,
+        CancellationToken callerCancellationToken = default);
+}
+
 internal sealed partial class AgentAppRuntimeGateway :
     IAgentProfileGateway,
     IAgentWorkspaceGateway,
@@ -34,6 +40,7 @@ internal sealed partial class AgentAppRuntimeGateway :
     IAgentExecutionGateway,
     IAgentChatSnapshotGateway,
     IAgentTranscriptPageGateway,
+    IAgentTranscriptToolDetailGateway,
     IAgentChatSessionCommandGateway,
     IAgentChatPermissionCommandGateway,
     IAgentChatRunGateway,
@@ -42,6 +49,7 @@ internal sealed partial class AgentAppRuntimeGateway :
     IAgentPresentationInitialization,
     IAgentExecutionTargetLoader,
     IAgentRuntimeAvailability,
+    IAgentRuntimeFailureClassifier,
     IDisposable
 {
     private static readonly TimeSpan InitialReconnectDelay = TimeSpan.FromMilliseconds(100);
@@ -80,6 +88,12 @@ internal sealed partial class AgentAppRuntimeGateway :
 
     public AgentRuntimeConnectionState ConnectionState => _connectionState;
     public bool IsRuntimeAvailable => _connectionState == AgentRuntimeConnectionState.Connected;
+
+    public bool IsRetryableRuntimeFailure(
+        Exception exception,
+        CancellationToken callerCancellationToken = default)
+        => IsRuntimeAvailabilityFailure(exception, callerCancellationToken);
+
     public event Action<AgentRuntimeConnectionState>? ConnectionStateChanged;
     public event Action<string>? ProfileChanged;
     public event Action? SelectableCapabilitiesChanged;
@@ -425,7 +439,7 @@ internal sealed partial class AgentAppRuntimeGateway :
             sessionId,
             profileId,
             userMessage,
-            workspaceId), attachments, cancellationToken).ConfigureAwait(false))
+            workspaceId, UserTurnId: Guid.NewGuid()), attachments, cancellationToken).ConfigureAwait(false))
             .Checkpoint ?? throw new InvalidOperationException("Runtime did not start the run.");
     async Task<AgentRunCheckpointRecord> IAgentCorrelatedRunGateway.QueueUserMessageAsync(Guid sessionId, string profileId,
         string userMessage, string workspaceId, IReadOnlyList<AgentAttachmentUploadRequest> attachments,
@@ -447,7 +461,7 @@ internal sealed partial class AgentAppRuntimeGateway :
             profileId,
             userMessage,
             workspaceId,
-            RollbackAnchorTurnId: rollbackAnchorTurnId), attachments, cancellationToken)
+            RollbackAnchorTurnId: rollbackAnchorTurnId, UserTurnId: Guid.NewGuid()), attachments, cancellationToken)
             .ConfigureAwait(false)).Checkpoint ?? throw new InvalidOperationException("Runtime did not start the run.");
     async Task<AgentRunCheckpointRecord> IAgentCorrelatedRunGateway.RollbackAndQueueUserMessageAsync(Guid sessionId,
         Guid rollbackAnchorTurnId, string profileId, string userMessage, string workspaceId,
@@ -634,10 +648,12 @@ internal sealed partial class AgentAppRuntimeGateway :
             SetConnectionState(AgentRuntimeConnectionState.Connected);
             return response;
         }
-        catch (OperationCanceledException) { throw; }
-        catch
+        catch (Exception exception)
         {
-            SetConnectionState(AgentRuntimeConnectionState.Unavailable);
+            if (IsRuntimeAvailabilityFailure(exception, cancellationToken))
+            {
+                SetConnectionState(AgentRuntimeConnectionState.Unavailable);
+            }
             throw;
         }
     }
@@ -688,12 +704,6 @@ internal sealed partial class AgentAppRuntimeGateway :
     private static TimeSpan NextReconnectDelay(TimeSpan current)
         => TimeSpan.FromMilliseconds(Math.Min(current.TotalMilliseconds * 2, MaximumReconnectDelay.TotalMilliseconds));
 
-    private void ThrowIfUnavailable()
-    {
-        if (_disposed) throw new ObjectDisposedException(nameof(AgentAppRuntimeGateway));
-        if (!_transport.IsAvailable)
-            throw new InvalidOperationException("Agent Runtime is unavailable. Reconnect Runtime and try again.");
-    }
     private void InvalidateDashboard() { lock (_cacheLock) { _dashboard = null; _dashboardLoad = null; } }
     private void InvalidateSessions()
     {
@@ -775,26 +785,4 @@ internal sealed partial class AgentAppRuntimeGateway :
         _lifetime.Dispose();
         SetConnectionState(AgentRuntimeConnectionState.Disposed);
     }
-}
-internal sealed class AgentRuntimeTransport(IPackageRuntimeClient client)
-{
-    private readonly IPackageRuntimeClient _client = client;
-
-    public bool IsAvailable => _client.IsAvailable;
-
-    public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-        PackageRuntimeOperation<TRequest, TResponse> operation,
-        TRequest request,
-        CancellationToken cancellationToken)
-        where TRequest : class
-        where TResponse : class
-        => _client.InvokeAsync(operation, request, cancellationToken);
-
-    public IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-        PackageRuntimeStream<TRequest, TEvent> stream,
-        TRequest request,
-        CancellationToken cancellationToken)
-        where TRequest : class
-        where TEvent : class
-        => _client.SubscribeAsync(stream, request, cancellationToken);
 }

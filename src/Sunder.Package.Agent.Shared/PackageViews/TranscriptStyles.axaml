@@ -8,6 +8,33 @@
     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
   </Style>
 
+  <Style Selector="Border.navigation-highlight-overlay">
+    <Setter Property="Background" Value="#0DD79B42" />
+    <Setter Property="BorderBrush" Value="#70D79B42" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+    <Setter Property="IsHitTestVisible" Value="False" />
+    <Setter Property="Opacity" Value="1" />
+  </Style>
+
+  <Style Selector="Border.navigation-highlight-overlay.fading">
+    <Style.Animations>
+      <Animation Duration="0:0:0.65"
+                 FillMode="Forward">
+        <KeyFrame Cue="0%">
+          <Setter Property="Opacity" Value="1" />
+        </KeyFrame>
+        <KeyFrame Cue="100%">
+          <Setter Property="Opacity" Value="0" />
+        </KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+
+  <Style Selector="Border.timeline-spine.navigation-target">
+    <Setter Property="Background" Value="#8AD79B42" />
+  </Style>
+
   <Style Selector=".transcript-items"
          x:SetterTargetType="Control">
     <Setter Property="MinWidth" Value="0" />
@@ -393,6 +420,15 @@
     <Setter Property="VerticalContentAlignment" Value="Stretch" />
   </Style>
 
+  <Style Selector="Border.tool-ambiguous-warning">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Warning.Soft}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Warning}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+    <Setter Property="Padding" Value="12,10" />
+    <Setter Property="Margin" Value="16,12,16,16" />
+  </Style>
+
   <Style Selector="Border.tool-state-dot">
     <Setter Property="Width" Value="18" />
     <Setter Property="Height" Value="18" />
@@ -427,6 +463,20 @@
     <Setter Property="FontSize" Value="14" />
     <Setter Property="HorizontalAlignment" Value="Center" />
     <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-status">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+    <Setter Property="FontSize" Value="11" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+
+  <Style Selector="TextBlock.tool-detail-load-error">
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Danger}" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+    <Setter Property="Margin" Value="28,8,0,0" />
   </Style>
 
   <Style Selector="TextBlock.tool-diff-section-title">

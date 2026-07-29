@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Runtime;
+using Sunder.Package.Agent.Shared.PackageViews;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -26,6 +27,112 @@ public sealed partial class AgentChatViewModel
             new AgentChatSnapshotRequest(InitialTranscriptTurnLimit),
             operation.Generation,
             operation.CancellationToken).ConfigureAwait(false);
+    }
+
+    internal void ReportStartupFailure(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        if (_runtimeFailureClassifier?.IsRetryableRuntimeFailure(exception) == true)
+        {
+            Interlocked.Exchange(ref _startupRecoveryPending, 1);
+            RunOnUiThread(() =>
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _hasStartupError = false;
+                SetGlobalStatus("Agent Runtime is unavailable. Reconnecting...");
+                RefreshSetupState();
+            });
+            RequestStartupRecovery();
+            return;
+        }
+
+        Interlocked.Exchange(ref _startupRecoveryPending, 0);
+        RunOnUiThread(ApplyPermanentStartupFailure);
+    }
+
+    private void TryScheduleStartupRecovery()
+    {
+        var connectionGeneration = Volatile.Read(ref _startupRecoveryConnectionGeneration);
+        if (_disposed
+            || Volatile.Read(ref _startupRecoveryPending) == 0
+            || _runtimeAvailability?.ConnectionState != AgentRuntimeConnectionState.Connected
+            || connectionGeneration == Volatile.Read(ref _startupRecoveryAttemptedConnectionGeneration)
+            || Interlocked.CompareExchange(ref _startupRecoveryScheduled, 1, 0) != 0)
+        {
+            return;
+        }
+
+        connectionGeneration = Volatile.Read(ref _startupRecoveryConnectionGeneration);
+        Volatile.Write(ref _startupRecoveryAttemptedConnectionGeneration, connectionGeneration);
+        _backgroundTasks.Run(RecoverStartupAsync);
+    }
+
+    private void RequestStartupRecovery()
+    {
+        if (_disposed
+            || _runtimeAvailability?.ConnectionState != AgentRuntimeConnectionState.Connected)
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref _startupRecoveryConnectionGeneration);
+        TryScheduleStartupRecovery();
+    }
+
+    private async Task RecoverStartupAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await InitializeAsync(cancellationToken).ConfigureAwait(false);
+            Interlocked.Exchange(ref _startupRecoveryPending, 0);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (_runtimeFailureClassifier?.IsRetryableRuntimeFailure(
+                    exception,
+                    cancellationToken) == true)
+            {
+                Interlocked.Exchange(ref _startupRecoveryPending, 1);
+                await InvokeOnUiThreadAsync(() =>
+                {
+                    if (!_disposed)
+                    {
+                        _hasStartupError = false;
+                        SetGlobalStatus("Agent Runtime is unavailable. Reconnecting...");
+                        RefreshSetupState();
+                    }
+                }).ConfigureAwait(false);
+            }
+            else
+            {
+                Interlocked.Exchange(ref _startupRecoveryPending, 0);
+                await InvokeOnUiThreadAsync(ApplyPermanentStartupFailure).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _startupRecoveryScheduled, 0);
+            TryScheduleStartupRecovery();
+        }
+    }
+
+    private void ApplyPermanentStartupFailure()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _hasStartupError = true;
+        SetGlobalStatus("Unable to load Agent Chat. Navigate away and return to retry.");
+        RefreshSetupState();
     }
 
     private void ScheduleChatSnapshotRequest(
@@ -108,7 +215,8 @@ public sealed partial class AgentChatViewModel
             }).ConfigureAwait(false);
             if (applied)
             {
-                await PersistAppliedSelectionAsync(snapshot, generation).ConfigureAwait(false);
+                await PersistAppliedSelectionAsync(snapshot, generation, cancellationToken)
+                    .ConfigureAwait(false);
             }
         }
         finally
@@ -119,31 +227,52 @@ public sealed partial class AgentChatViewModel
 
     private async Task PersistAppliedSelectionAsync(
         AgentChatSnapshotProjection snapshot,
-        int generation)
+        int generation,
+        CancellationToken cancellationToken)
+        => await PersistAppliedSelectionAsync(
+            snapshot.SelectedProfile?.ProfileId,
+            snapshot.SelectedWorkspace?.WorkspaceId,
+            snapshot.SelectedSession?.Session.SessionId,
+            generation,
+            cancellationToken).ConfigureAwait(false);
+
+    private async Task PersistAppliedSelectionAsync(
+        string? profileId,
+        string? workspaceId,
+        Guid? sessionId,
+        int generation,
+        CancellationToken cancellationToken)
     {
         if (_selectionState is null)
         {
             return;
         }
 
-        await _selectionPersistenceGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetimeCancellation.Token);
+        var operationCancellation = linkedCancellation.Token;
+        await _selectionPersistenceGate.WaitAsync(operationCancellation).ConfigureAwait(false);
         try
         {
+            operationCancellation.ThrowIfCancellationRequested();
             if (!IsCurrentChatSnapshotRequest(generation))
             {
                 return;
             }
 
             await _selectionState.SaveSelectedProfileIdAsync(
-                snapshot.SelectedProfile?.ProfileId,
-                _lifetimeCancellation.Token).ConfigureAwait(false);
+                profileId,
+                operationCancellation).ConfigureAwait(false);
+            operationCancellation.ThrowIfCancellationRequested();
             await _selectionState.SaveSelectedWorkspaceIdAsync(
-                snapshot.SelectedWorkspace?.WorkspaceId,
-                _lifetimeCancellation.Token).ConfigureAwait(false);
+                workspaceId,
+                operationCancellation).ConfigureAwait(false);
+            operationCancellation.ThrowIfCancellationRequested();
             await _selectionState.SaveSelectedSessionIdAsync(
-                snapshot.SelectedWorkspace?.WorkspaceId,
-                snapshot.SelectedSession?.Session.SessionId,
-                _lifetimeCancellation.Token).ConfigureAwait(false);
+                workspaceId,
+                sessionId,
+                operationCancellation).ConfigureAwait(false);
         }
         finally
         {
@@ -200,8 +329,15 @@ public sealed partial class AgentChatViewModel
             : sessionSnapshots.First(item => item.Session.SessionId == selectedSessionRecord.SessionId);
         var limit = Math.Clamp(request.InitialTranscriptLimit, 1, 500);
         IReadOnlyList<AgentTurnRecord> turns = selectedSession is null
+            || !request.IncludeInitialTranscript
             ? []
-            : _sessionService.ListRecentTurns(selectedSession.Session.SessionId, limit + 1);
+            : _sessionService is IAgentTranscriptHeaderGateway transcriptHeaders
+                ? transcriptHeaders.ListRecentTranscriptHeaders(
+                    selectedSession.Session.SessionId,
+                    limit + 1)
+                : _sessionService.ListRecentTurns(selectedSession.Session.SessionId, limit + 1)
+                    .Select(TranscriptTurnTransportProjection.ProjectToolHeaders)
+                    .ToArray();
         var hasMoreTurns = turns.Count > limit;
         if (hasMoreTurns)
         {
@@ -217,7 +353,11 @@ public sealed partial class AgentChatViewModel
             selectedWorkspace,
             selectedSession,
             sessionSnapshots,
-            new AgentTranscriptPage(0, turns, hasMoreTurns),
+            new AgentTranscriptPage(
+                0,
+                turns,
+                hasMoreTurns,
+                turns.Count == 0 ? null : TranscriptPageCursor.FromTurn(turns[0])),
             new AgentChatPermissionProjection(
                 0,
                 selectedSession is null
@@ -232,6 +372,12 @@ public sealed partial class AgentChatViewModel
     private void ApplyChatSnapshot(
         AgentChatSnapshotProjection snapshot,
         bool forceTranscriptReplacement)
+        => ApplyChatSnapshotCore(snapshot, forceTranscriptReplacement, applyTranscript: true);
+
+    private void ApplyChatSnapshotCore(
+        AgentChatSnapshotProjection snapshot,
+        bool forceTranscriptReplacement,
+        bool applyTranscript)
     {
         if (_disposed)
         {
@@ -328,7 +474,10 @@ public sealed partial class AgentChatViewModel
                     snapshot.Permissions.SessionState,
                     snapshot.Permissions.PendingRequests);
             }
-            ApplySnapshotTranscript(snapshot, forceTranscriptReplacement || !wasInitialized);
+            if (applyTranscript)
+            {
+                ApplySnapshotTranscript(snapshot, forceTranscriptReplacement || !wasInitialized);
+            }
         }
         finally
         {
@@ -399,7 +548,8 @@ public sealed partial class AgentChatViewModel
             var applied = _timeline.TryCompleteInitialLoad(
                 ticket,
                 snapshot.InitialTranscript.Turns,
-                snapshot.InitialTranscript.HasMore);
+                snapshot.InitialTranscript.HasMore,
+                snapshot.InitialTranscript.Continuation);
             if (applied && previousRunActivityTurns is not null)
             {
                 ReconcileRunActivityAfterAuthoritativeReplacement(previousRunActivityTurns);
@@ -448,7 +598,7 @@ public sealed partial class AgentChatViewModel
     {
         var orderedTurns = turns
             .OrderBy(turn => turn.CreatedAtUtc)
-            .ThenBy(turn => turn.TurnId)
+            .ThenBy(turn => turn.TurnId.ToString("D"), StringComparer.Ordinal)
             .ToArray();
         var latestUserIndex = Array.FindLastIndex(
             orderedTurns,

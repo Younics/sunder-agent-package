@@ -15,9 +15,6 @@ public sealed partial class AgentLocalStore
         DatabasePath = packageContext.Storage.RoleLocalWorkspace.GetLocalPath("agent/agent.db");
         Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
         ApplySchemaMigrations();
-        RecoverInterruptedPermissionClaims();
-        RecoverAmbiguousParentContinuationWork();
-        RecoverUnownedActiveRuns();
     }
 
     public string DatabasePath { get; }

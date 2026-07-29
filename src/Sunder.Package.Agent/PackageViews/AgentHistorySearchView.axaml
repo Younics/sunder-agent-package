@@ -1,0 +1,582 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Sunder.Package.Agent.PackageViews"
+             xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
+             x:Class="Sunder.Package.Agent.PackageViews.AgentHistorySearchView"
+             x:DataType="vm:AgentHistorySearchViewModel"
+             Focusable="True"
+             KeyDown="OnViewKeyDown"
+             mc:Ignorable="d">
+  <UserControl.Styles>
+    <Style Selector="Border.history-shell">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
+      <Setter Property="ClipToBounds" Value="True" />
+    </Style>
+    <Style Selector="Border.history-content">
+      <Setter Property="Padding" Value="24,20,24,30" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+    </Style>
+    <Style Selector="Border.history-content.compact">
+      <Setter Property="Padding" Value="10,12,10,22" />
+    </Style>
+    <Style Selector="Border.history-content.micro">
+      <Setter Property="Padding" Value="5,10,5,18" />
+    </Style>
+    <Style Selector="Border.history-content.medium, Border.history-content.intermediate">
+      <Setter Property="Padding" Value="18,18,18,28" />
+    </Style>
+    <Style Selector="Border.history-content.wide">
+      <Setter Property="Padding" Value="30,24,30,36" />
+    </Style>
+    <Style Selector="TextBlock.history-title">
+      <Setter Property="FontSize" Value="21" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    </Style>
+    <Style Selector="TextBlock.history-caption">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="Label.history-label">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="0,0,0,4" />
+    </Style>
+    <Style Selector="Border.history-search-host">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="4,3,5,3" />
+    </Style>
+    <Style Selector="Border.history-search-host:focus-within">
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+    <Style Selector="TextBox.history-query">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="Padding" Value="8,6" />
+    </Style>
+    <Style Selector="Button.history-icon-button">
+      <Setter Property="MinWidth" Value="28" />
+      <Setter Property="MinHeight" Value="28" />
+      <Setter Property="Padding" Value="4" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+    </Style>
+    <Style Selector="ToggleButton.history-disclosure">
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+      <Setter Property="Padding" Value="2,8" />
+    </Style>
+    <Style Selector="Border.history-section">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="12" />
+      <Setter Property="MinWidth" Value="0" />
+    </Style>
+    <Style Selector="TextBlock.history-section-title">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    </Style>
+    <Style Selector="Border.history-pill">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Full}" />
+      <Setter Property="Padding" Value="7,2" />
+    </Style>
+    <Style Selector="Button.history-filter-chip">
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Full}" />
+      <Setter Property="Padding" Value="8,4" />
+      <Setter Property="Margin" Value="0,0,0,5" />
+    </Style>
+    <Style Selector="Border.history-notice">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="9,7" />
+    </Style>
+    <Style Selector="Border.history-error">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Danger.Soft}" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="9,7" />
+    </Style>
+    <Style Selector="Border.history-warning">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Warning.Soft}" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="9,7" />
+    </Style>
+    <Style Selector="Button.history-result">
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="VerticalContentAlignment" Value="Stretch" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+    </Style>
+    <Style Selector="Button.history-result:pointerover, Button.history-result:pressed, Button.history-result:focus, Button.history-result:focus-visible">
+      <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Border.history-result-surface">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+      <Setter Property="Padding" Value="14,12" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+    </Style>
+    <Style Selector="Border.history-result-surface.user">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+    <Style Selector="Border.history-result-surface.assistant">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+    </Style>
+    <Style Selector="Border.history-result-surface.activity">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+    </Style>
+    <Style Selector="Button.history-result:pointerover Border.history-result-surface, Button.history-result:pressed Border.history-result-surface">
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+    </Style>
+    <Style Selector="Button.history-result:focus Border.history-result-surface, Button.history-result:focus-visible Border.history-result-surface">
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
+    </Style>
+    <Style Selector="Border.history-shell.compact Border.history-result-surface">
+      <Setter Property="Padding" Value="11,10" />
+    </Style>
+    <Style Selector="Border.history-shell.micro Border.history-result-surface">
+      <Setter Property="Padding" Value="8,9" />
+    </Style>
+    <Style Selector="TextBlock.history-result-header">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+    </Style>
+    <Style Selector="TextBlock.history-result-metadata-label">
+      <Setter Property="FontSize" Value="10" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="TextBlock.history-result-metadata-value">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontFamily" Value="Menlo,Consolas,monospace" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+      <Setter Property="TextWrapping" Value="NoWrap" />
+      <Setter Property="MinWidth" Value="0" />
+    </Style>
+    <Style Selector="ItemsRepeater.history-results">
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="MinWidth" Value="0" />
+    </Style>
+  </UserControl.Styles>
+
+  <Border x:Name="HistoryLayoutRoot" Classes="history-shell compact">
+    <ScrollViewer x:Name="HistoryScrollViewer"
+                  VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled"
+                  HorizontalContentAlignment="Stretch">
+      <Border x:Name="HistoryContent"
+              Classes="history-content compact"
+              HorizontalAlignment="Stretch">
+        <StackPanel Spacing="12" MinWidth="0" HorizontalAlignment="Stretch">
+          <StackPanel Spacing="2">
+            <TextBlock Classes="history-title" Text="History" />
+             <TextBlock Classes="history-caption"
+                        Text="Local messages, paths, and activity." />
+          </StackPanel>
+
+          <Grid x:Name="HistorySearchProgressHost"
+                RowDefinitions="Auto,2"
+                RowSpacing="0"
+                MinWidth="0">
+            <Border x:Name="HistorySearchHost"
+                    Grid.Row="0"
+                    Classes="history-search-host">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="3" MinWidth="0">
+                <TextBox x:Name="HistoryQueryTextBox"
+                         Grid.Column="0"
+                         Classes="history-query"
+                         PlaceholderText="Search local history"
+                         Text="{Binding QueryText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                          MaxLength="1024"
+                          AutomationProperties.Name="History search query"
+                          AutomationProperties.HelpText="Search local conversation text, paths, and safe activity metadata." />
+                <Button Grid.Column="1"
+                        Classes="history-icon-button"
+                        Content="x"
+                        Command="{Binding ClearQueryCommand}"
+                        IsVisible="{Binding HasQuery}"
+                        ToolTip.Tip="Clear query"
+                        AutomationProperties.Name="Clear history search query" />
+              </Grid>
+            </Border>
+            <ProgressBar x:Name="HistorySearchProgress"
+                         Grid.Row="1"
+                         Height="2"
+                         MinHeight="2"
+                         Margin="1,0"
+                         VerticalAlignment="Stretch"
+                         HorizontalAlignment="Stretch"
+                         IsIndeterminate="True"
+                         IsVisible="{Binding IsSearchProgressActive}"
+                         AutomationProperties.Name="Searching history" />
+          </Grid>
+
+          <Grid RowDefinitions="Auto,Auto" RowSpacing="6" MinWidth="0">
+            <TextBlock x:Name="HistoryScopeContext"
+                       Grid.Row="0"
+                       Classes="history-caption"
+                       Text="{Binding ScopeContextText}"
+                       MinWidth="0" />
+            <Border Grid.Row="1"
+                    Classes="history-pill"
+                    HorizontalAlignment="Left">
+              <TextBlock Classes="history-caption" Text="{Binding IndexStatusText}" />
+            </Border>
+          </Grid>
+
+          <ItemsControl ItemsSource="{Binding ActiveFilters}"
+                        IsVisible="{Binding HasActiveFilters}"
+                        MinWidth="0">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:HistoryActiveFilterChipViewModel">
+                <Button Classes="history-filter-chip"
+                        Command="{Binding $parent[UserControl].DataContext.RemoveFilterCommand}"
+                        CommandParameter="{Binding}"
+                        AutomationProperties.Name="{Binding AutomationName}">
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" MinWidth="0">
+                    <TextBlock Grid.Column="0"
+                               Text="{Binding Label}"
+                               TextWrapping="Wrap"
+                               MinWidth="0" />
+                    <TextBlock Grid.Column="1" Text="x" VerticalAlignment="Center" />
+                  </Grid>
+                </Button>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <ToggleButton x:Name="HistoryAdvancedToggle"
+                        Classes="history-disclosure"
+                        IsChecked="{Binding IsAdvancedExpanded, Mode=TwoWay}"
+                        AutomationProperties.Name="Advanced history filters"
+                        AutomationProperties.HelpText="{Binding AdvancedAutomationHelpText}">
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8" MinWidth="0">
+              <TextBlock Grid.Column="0"
+                         Text="{Binding AdvancedChevron}"
+                         Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+              <TextBlock Grid.Column="1" Text="Advanced" FontWeight="SemiBold" />
+              <ProgressBar Grid.Column="2"
+                           Width="14"
+                           Height="14"
+                           IsIndeterminate="True"
+                           IsVisible="{Binding IsAdvancedLoading}" />
+            </Grid>
+          </ToggleButton>
+
+          <StackPanel IsVisible="{Binding IsAdvancedExpanded}"
+                      IsTabStop="False"
+                      Spacing="10"
+                      MinWidth="0">
+            <Grid x:Name="AdvancedSectionsGrid"
+                  RowDefinitions="Auto,Auto,Auto"
+                  RowSpacing="10"
+                  ColumnSpacing="10"
+                  MinWidth="0">
+              <Border x:Name="ScopeSection" Classes="history-section">
+                <StackPanel Spacing="9" MinWidth="0">
+                  <TextBlock Classes="history-section-title" Text="Scope" />
+                  <StackPanel MinWidth="0">
+                    <Label Classes="history-label" Target="HistoryScopeComboBox" Content="Workspace scope" />
+                    <shared:SunderComboBox x:Name="HistoryScopeComboBox"
+                                            ItemsSource="{Binding ScopeOptions}"
+                                            SelectedItem="{Binding SelectedScope}"
+                                            HorizontalAlignment="Stretch"
+                                            AutomationProperties.Name="Workspace scope">
+                      <shared:SunderComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:HistoryChoiceViewModel">
+                          <TextBlock Text="{Binding DisplayName}" TextWrapping="Wrap" />
+                        </DataTemplate>
+                      </shared:SunderComboBox.ItemTemplate>
+                    </shared:SunderComboBox>
+                  </StackPanel>
+                  <StackPanel IsVisible="{Binding IsSpecificWorkspaceScope}" MinWidth="0">
+                    <Label Classes="history-label" Target="HistoryWorkspaceComboBox" Content="Workspace" />
+                    <shared:SunderComboBox x:Name="HistoryWorkspaceComboBox"
+                                            ItemsSource="{Binding WorkspaceOptions}"
+                                            SelectedItem="{Binding SelectedWorkspace}"
+                                            HorizontalAlignment="Stretch"
+                                            AutomationProperties.Name="Specific workspace">
+                      <shared:SunderComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:HistoryFilterOptionViewModel">
+                          <TextBlock Text="{Binding DisplayName}"
+                                     TextWrapping="Wrap"
+                                     TextTrimming="CharacterEllipsis" />
+                        </DataTemplate>
+                      </shared:SunderComboBox.ItemTemplate>
+                    </shared:SunderComboBox>
+                  </StackPanel>
+                  <StackPanel MinWidth="0">
+                    <Label Classes="history-label" Target="HistorySessionComboBox" Content="Session" />
+                    <shared:SunderComboBox x:Name="HistorySessionComboBox"
+                                            ItemsSource="{Binding SessionOptions}"
+                                            SelectedItem="{Binding SelectedSession}"
+                                            HorizontalAlignment="Stretch"
+                                            AutomationProperties.Name="Session filter">
+                      <shared:SunderComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:HistoryFilterOptionViewModel">
+                          <TextBlock Text="{Binding DisplayName}"
+                                     TextWrapping="Wrap"
+                                     TextTrimming="CharacterEllipsis" />
+                        </DataTemplate>
+                      </shared:SunderComboBox.ItemTemplate>
+                    </shared:SunderComboBox>
+                  </StackPanel>
+                  <CheckBox IsChecked="{Binding IncludeChildSessions}"
+                            IsVisible="{Binding IsSpecificSessionSelected}"
+                            IsEnabled="{Binding IsSpecificSessionSelected}">
+                    <TextBlock Text="Include child sessions" TextWrapping="Wrap" />
+                  </CheckBox>
+                </StackPanel>
+              </Border>
+
+              <Border x:Name="ContentSection" Classes="history-section">
+                <StackPanel Spacing="9" MinWidth="0">
+                  <TextBlock Classes="history-section-title" Text="Content" />
+                  <StackPanel MinWidth="0">
+                    <Label Classes="history-label" Target="HistoryProfileComboBox" Content="Profile" />
+                    <shared:SunderComboBox x:Name="HistoryProfileComboBox"
+                                            ItemsSource="{Binding ProfileOptions}"
+                                            SelectedItem="{Binding SelectedProfile}"
+                                            HorizontalAlignment="Stretch"
+                                            AutomationProperties.Name="Profile filter">
+                      <shared:SunderComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:HistoryFilterOptionViewModel">
+                          <TextBlock Text="{Binding DisplayName}" TextWrapping="Wrap" />
+                        </DataTemplate>
+                      </shared:SunderComboBox.ItemTemplate>
+                    </shared:SunderComboBox>
+                  </StackPanel>
+                  <StackPanel MinWidth="0">
+                    <Label Classes="history-label" Target="HistoryRoleComboBox" Content="Role" />
+                    <shared:SunderComboBox x:Name="HistoryRoleComboBox"
+                                            ItemsSource="{Binding RoleOptions}"
+                                            SelectedItem="{Binding SelectedRole}"
+                                            HorizontalAlignment="Stretch"
+                                            AutomationProperties.Name="Role filter">
+                      <shared:SunderComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:HistoryChoiceViewModel">
+                          <TextBlock Text="{Binding DisplayName}" />
+                        </DataTemplate>
+                      </shared:SunderComboBox.ItemTemplate>
+                    </shared:SunderComboBox>
+                  </StackPanel>
+                  <StackPanel MinWidth="0">
+                    <Label Classes="history-label" Target="HistoryActivityComboBox" Content="Activity" />
+                    <shared:SunderComboBox x:Name="HistoryActivityComboBox"
+                                            ItemsSource="{Binding ActivityOptions}"
+                                            SelectedItem="{Binding SelectedActivity}"
+                                            HorizontalAlignment="Stretch"
+                                            AutomationProperties.Name="Activity filter">
+                      <shared:SunderComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:HistoryChoiceViewModel">
+                          <TextBlock Text="{Binding DisplayName}" />
+                        </DataTemplate>
+                      </shared:SunderComboBox.ItemTemplate>
+                    </shared:SunderComboBox>
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+
+              <Border x:Name="TimeSection" Classes="history-section">
+                <StackPanel Spacing="9" MinWidth="0">
+                  <TextBlock Classes="history-section-title" Text="Time" />
+                  <StackPanel MinWidth="0">
+                    <Label Classes="history-label" Target="HistoryWhenComboBox" Content="When" />
+                    <shared:SunderComboBox x:Name="HistoryWhenComboBox"
+                                            ItemsSource="{Binding WhenOptions}"
+                                            SelectedItem="{Binding SelectedWhen}"
+                                            HorizontalAlignment="Stretch"
+                                            AutomationProperties.Name="Time range">
+                      <shared:SunderComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:HistoryChoiceViewModel">
+                          <TextBlock Text="{Binding DisplayName}" />
+                        </DataTemplate>
+                      </shared:SunderComboBox.ItemTemplate>
+                    </shared:SunderComboBox>
+                  </StackPanel>
+                  <StackPanel IsVisible="{Binding IsCustomRange}" Spacing="9" MinWidth="0">
+                    <StackPanel MinWidth="0">
+                      <Label Classes="history-label" Target="HistoryFromDatePicker" Content="From" />
+                      <DatePicker x:Name="HistoryFromDatePicker"
+                                  SelectedDate="{Binding FromDate}"
+                                  HorizontalAlignment="Stretch"
+                                  AutomationProperties.Name="Custom range start date" />
+                    </StackPanel>
+                    <StackPanel MinWidth="0">
+                      <Label Classes="history-label" Target="HistoryToDatePicker" Content="To" />
+                      <DatePicker x:Name="HistoryToDatePicker"
+                                  SelectedDate="{Binding ToDate}"
+                                  HorizontalAlignment="Stretch"
+                                  AutomationProperties.Name="Custom range end date" />
+                    </StackPanel>
+                    <Border Classes="history-warning" IsVisible="{Binding HasDateValidation}">
+                      <TextBlock Text="{Binding DateValidationMessage}" TextWrapping="Wrap" />
+                    </Border>
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+            </Grid>
+            <Button Content="Reset filters"
+                    Command="{Binding ResetFiltersCommand}"
+                    IsEnabled="{Binding HasActiveFilters}"
+                    HorizontalAlignment="Left" />
+          </StackPanel>
+
+          <Border Classes="history-notice" IsVisible="{Binding HasRuntimeNotice}">
+            <TextBlock Text="{Binding RuntimeNotice}"
+                       TextWrapping="Wrap"
+                       AutomationProperties.LiveSetting="Polite" />
+          </Border>
+          <Border Classes="history-error" IsVisible="{Binding HasSearchError}">
+            <TextBlock Text="{Binding SearchError}"
+                       TextWrapping="Wrap"
+                       AutomationProperties.LiveSetting="Assertive" />
+          </Border>
+          <Border Classes="history-error" IsVisible="{Binding HasNavigationError}">
+            <TextBlock Text="{Binding NavigationError}"
+                       TextWrapping="Wrap"
+                       AutomationProperties.LiveSetting="Assertive" />
+          </Border>
+
+          <TextBlock Classes="history-caption"
+                     Text="Some history changed while this page was loading. Current local matches are shown."
+                     IsVisible="{Binding IsPartial}" />
+
+          <ItemsRepeater x:Name="HistoryResultsRepeater"
+                         Classes="history-results"
+                         ItemsSource="{Binding Results}"
+                         IsVisible="{Binding HasResults}"
+                         MinWidth="0"
+                         HorizontalAlignment="Stretch">
+            <ItemsRepeater.Layout>
+              <StackLayout Orientation="Vertical" Spacing="8" />
+            </ItemsRepeater.Layout>
+            <ItemsRepeater.ItemTemplate>
+              <DataTemplate x:DataType="vm:AgentHistorySearchResultViewModel">
+                <Button Classes="history-result"
+                        HorizontalAlignment="Stretch"
+                        Command="{Binding $parent[UserControl].DataContext.OpenResultCommand}"
+                        CommandParameter="{Binding}"
+                        AutomationProperties.Name="{Binding AutomationName}"
+                        AutomationProperties.HelpText="{Binding AutomationHelpText}">
+                  <Border Classes="history-result-surface"
+                          Classes.user="{Binding IsUserResult}"
+                          Classes.assistant="{Binding IsAssistantResult}"
+                          Classes.activity="{Binding IsActivityResult}"
+                          HorizontalAlignment="Stretch"
+                          MinWidth="0">
+                    <StackPanel Spacing="7" MinWidth="0" HorizontalAlignment="Stretch">
+                      <WrapPanel Orientation="Horizontal">
+                        <TextBlock Classes="history-result-header" Text="{Binding SenderText}" />
+                        <TextBlock Classes="history-result-header" Text="  -  " />
+                        <TextBlock Classes="history-result-header" Text="{Binding TimestampText}" />
+                      </WrapPanel>
+                      <TextBlock Text="{Binding Snippet}"
+                                 TextWrapping="Wrap"
+                                 MaxLines="8"
+                                 TextTrimming="CharacterEllipsis"
+                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}"
+                                 MinWidth="0" />
+                      <Border Classes="history-pill"
+                              HorizontalAlignment="Left"
+                              IsVisible="{Binding HasActivityLabel}">
+                        <TextBlock Text="{Binding ActivityLabel}"
+                                   FontSize="10"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+                      </Border>
+                      <StackPanel Spacing="4" MinWidth="0">
+                        <Grid ColumnDefinitions="Auto,*"
+                              ColumnSpacing="7"
+                              MinWidth="0"
+                              IsVisible="{Binding HasPaths}">
+                          <TextBlock Grid.Column="0"
+                                     Classes="history-result-metadata-label"
+                                     Text="{Binding PathLabel}" />
+                          <TextBlock Grid.Column="1"
+                                     Classes="history-result-metadata-value"
+                                     Text="{Binding PathSummary}"
+                                     ToolTip.Tip="{Binding PathToolTip}" />
+                        </Grid>
+                      </StackPanel>
+                      <TextBlock Classes="history-caption"
+                                 Text="{Binding DisplayReasonsText}"
+                                 TextTrimming="CharacterEllipsis"
+                                 IsVisible="{Binding HasMatchReasons}"
+                                 ToolTip.Tip="{Binding DisplayReasonsText}"
+                                 MinWidth="0" />
+                      <TextBlock Classes="history-caption"
+                                 Text="{Binding ContextText}"
+                                 TextWrapping="Wrap"
+                                 MaxLines="2"
+                                 TextTrimming="CharacterEllipsis"
+                                 MinWidth="0" />
+                    </StackPanel>
+                  </Border>
+                </Button>
+              </DataTemplate>
+            </ItemsRepeater.ItemTemplate>
+          </ItemsRepeater>
+
+          <StackPanel IsVisible="{Binding ShowEmptyState}"
+                       HorizontalAlignment="Center"
+                       Margin="8,30"
+                       Spacing="4"
+                       AutomationProperties.LiveSetting="Polite">
+            <TextBlock Text="{Binding EmptyTitle}"
+                       FontSize="17"
+                       FontWeight="SemiBold"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap" />
+            <TextBlock Classes="history-caption"
+                       Text="{Binding EmptyDescription}"
+                       TextAlignment="Center"
+                       HorizontalAlignment="Center" />
+          </StackPanel>
+
+          <Button Content="Load more"
+                  Command="{Binding LoadMoreCommand}"
+                  HorizontalAlignment="Center"
+                  IsVisible="{Binding CanLoadMore}" />
+        </StackPanel>
+      </Border>
+    </ScrollViewer>
+  </Border>
+</UserControl>

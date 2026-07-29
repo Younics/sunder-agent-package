@@ -36,6 +36,8 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
     private Guid? _sessionId;
     private object? _selectedAnchorKey;
     private TranscriptViewportAnchorData? _viewportAnchor;
+    private TranscriptPageCursor? _olderPageCursor;
+    private TranscriptPageCursor? _newerPageCursor;
 
     public TranscriptTimelineState(
         TranscriptRowProjector<TRow> projector,
@@ -101,6 +103,8 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
         if (!sameSession)
         {
             _authoritativeTurnVersions.Clear();
+            _olderPageCursor = null;
+            _newerPageCursor = null;
         }
         var preserveReaderState = sameSession && !IsFollowingLatest;
         var preserveWindow = sameSession;
@@ -134,15 +138,7 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
             _selectedAnchorKey = null;
             _viewportAnchor = null;
         }
-        if (!preserveWindow)
-        {
-            _projector.Reset();
-        }
         NotifyAllState();
-        if (!preserveReaderState)
-        {
-            RowsChanged?.Invoke();
-        }
         return new TranscriptLoadTicket(
             sessionId,
             generation,
@@ -152,17 +148,68 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
             pendingOverflowRevision);
     }
 
+    public TranscriptLoadTicket BeginAnchoredInitialLoad(Guid sessionId)
+    {
+        var ticket = BeginInitialLoad(sessionId, forceReplacement: true);
+        _isFollowingLatest = false;
+        OnPropertyChanged(nameof(IsFollowingLatest));
+        return ticket;
+    }
+
+    public bool TryCompleteAnchoredInitialLoad(
+        TranscriptLoadTicket ticket,
+        IReadOnlyList<AgentTurnRecord> turns,
+        bool hasOlderRows,
+        bool hasNewerRows,
+        object targetAnchorKey)
+        => TryCompleteInitialLoad(
+            ticket,
+            turns,
+            hasOlderRows,
+            null,
+            targetAnchorKey,
+            hasNewerRows);
+
     public bool TryCompleteInitialLoad(
         TranscriptLoadTicket ticket,
         IReadOnlyList<AgentTurnRecord> turns,
-        bool? hasOlderRows = null)
+        bool? hasOlderRows = null,
+        TranscriptPageCursor? olderContinuation = null)
+        => TryCompleteInitialLoad(ticket, turns, hasOlderRows, olderContinuation, null, null);
+
+    private bool TryCompleteInitialLoad(
+        TranscriptLoadTicket ticket,
+        IReadOnlyList<AgentTurnRecord> turns,
+        bool? hasOlderRows,
+        TranscriptPageCursor? olderContinuation,
+        object? protectedAnchorKey,
+        bool? anchoredHasNewerRows)
     {
         if (!IsCurrent(ticket))
         {
             return false;
         }
 
+        if (protectedAnchorKey is not null && anchoredHasNewerRows.HasValue)
+        {
+            _isFollowingLatest = false;
+            _selectedAnchorKey = protectedAnchorKey;
+            SetViewportAnchor(new TranscriptViewportAnchorData(protectedAnchorKey, 0, 0, 28));
+            OnPropertyChanged(nameof(IsFollowingLatest));
+            OnPropertyChanged(nameof(SelectedAnchorKey));
+        }
+
         var orderedTurns = TranscriptRowProjector<TRow>.OrderTurns(turns);
+        if (!ticket.PreserveWindow || ticket.ReconcileAuthoritative)
+        {
+            _olderPageCursor = olderContinuation
+                               ?? (orderedTurns.FirstOrDefault() is { } oldestTurn
+                                   ? TranscriptPageCursor.FromTurn(oldestTurn)
+                                   : null);
+            _newerPageCursor = orderedTurns.LastOrDefault() is { } newestTurn
+                ? TranscriptPageCursor.FromTurn(newestTurn)
+                : null;
+        }
         if (ticket.ReconcileAuthoritative)
         {
             var authoritativeSelectedTurns = TranscriptRowProjector<TRow>.SelectLatestTurns(
@@ -201,7 +248,11 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
             _projector.ReconcileAuthoritativeTurns(authoritativeTurns);
             SetHasOlderRows(hasOlderRows ?? orderedTurns.Length > _initialTurnLimit);
             SetHasNewerRows(_pendingTurnsOverflowed || _pendingTurnsById.Count > 0);
-            ApplyTrim(AgentTranscriptTrimDirection.Oldest);
+            ApplyTrim(AgentTranscriptTrimDirection.Oldest, protectedAnchorKey);
+            if (anchoredHasNewerRows is { } reconciledAnchoredHasNewer)
+            {
+                SetHasNewerRows(HasNewerRows || reconciledAnchoredHasNewer);
+            }
             PruneExpandedAnchorKeys();
             _isInitialLoading = false;
             _isReplacingRows = false;
@@ -243,12 +294,16 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
             ApplyPendingHistoricalUpdates(ticket.SessionId);
             ApplyTrim(
                 AgentTranscriptTrimDirection.Oldest,
-                _viewportAnchor?.AnchorKey);
+                protectedAnchorKey ?? _viewportAnchor?.AnchorKey);
             SetHasNewerRows(
                 HasNewerRows
                 || hasNewerSnapshotRows
                 || _pendingTurnsOverflowed
                 || _pendingTurnsById.Count > 0);
+            if (anchoredHasNewerRows is { } preservedAnchoredHasNewer)
+            {
+                SetHasNewerRows(HasNewerRows || preservedAnchoredHasNewer);
+            }
             _isInitialLoading = false;
             _isReplacingRows = false;
             _initialOperation.TryComplete(ticket.Generation);
@@ -270,12 +325,12 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
         foreach (var turn in turnsToProject)
         {
             RemovePendingTurn(turn.TurnId);
-            _projector.ApplyTurn(turn, TranscriptInsertMode.Append);
             projectedTurns.Add((
                 turn,
                 pendingTurnsById.TryGetValue(turn.TurnId, out var pendingTurn)
                 && ReferenceEquals(turn, pendingTurn)));
         }
+        _projector.ReconcileAuthoritativeTurns(turnsToProject);
 
         SetHasOlderRows(hasOlderRows ?? orderedTurns.Length > _initialTurnLimit);
         if (IsFollowingLatest)
@@ -291,7 +346,11 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
             }
             SetHasNewerRows(_pendingTurnsOverflowed || _pendingTurnsById.Count > 0);
         }
-        ApplyTrim(AgentTranscriptTrimDirection.Oldest);
+        ApplyTrim(AgentTranscriptTrimDirection.Oldest, protectedAnchorKey);
+        if (anchoredHasNewerRows is { } projectedAnchoredHasNewer)
+        {
+            SetHasNewerRows(HasNewerRows || projectedAnchoredHasNewer);
+        }
         PruneExpandedAnchorKeys();
         _isInitialLoading = false;
         _isReplacingRows = false;
@@ -352,6 +411,8 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
         _initialOperation.CancelCurrent();
         _pageOperation.CancelCurrent();
         _sessionId = null;
+        _olderPageCursor = null;
+        _newerPageCursor = null;
         _isReplacingRows = false;
         _isInitialLoading = false;
         _isLoadingOlder = false;
@@ -547,6 +608,7 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
 
     private void PreserveViewportAnchor(object? protectedAnchorKey)
     {
+        protectedAnchorKey = ResolvePageProtectedAnchorKey(protectedAnchorKey);
         if (protectedAnchorKey is null)
         {
             return;
@@ -556,6 +618,11 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
             ? anchor with { AnchorKey = protectedAnchorKey }
             : new TranscriptViewportAnchorData(protectedAnchorKey, 0, 0));
     }
+
+    private static object? ResolvePageProtectedAnchorKey(object? protectedAnchorKey)
+        => protectedAnchorKey is TranscriptPageAnchorAuthority authority
+            ? authority.ResolveCurrentAnchorKey()
+            : protectedAnchorKey;
 
     public void SelectRow(TRow? row)
     {
@@ -628,10 +695,12 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
 
         if (result.HasFlag(TranscriptTrimResult.Oldest))
         {
+            _olderPageCursor = null;
             SetHasOlderRows(true);
         }
         if (result.HasFlag(TranscriptTrimResult.Newest))
         {
+            _newerPageCursor = null;
             SetHasNewerRows(true);
         }
     }
@@ -657,10 +726,22 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
 
     private void OnRowCreated(TRow row)
     {
+        if (row is ITranscriptToolExpansionOwner owner)
+        {
+            owner.DetailVisualInvalidated += () => OnDetailVisualInvalidated(row);
+        }
         var anchorKey = _projector.GetAnchorKey(row);
         if (_expandedAnchorKeys.Contains(anchorKey))
         {
             _projector.SetExpanded(row, true);
+        }
+    }
+
+    private void OnDetailVisualInvalidated(TRow row)
+    {
+        if (_expandedAnchorKeys.Remove(_projector.GetAnchorKey(row)))
+        {
+            OnPropertyChanged(nameof(ExpandedAnchorKeys));
         }
     }
 
@@ -713,13 +794,4 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-}
-
-internal enum TranscriptLiveTurnResult
-{
-    Ignored,
-    Buffered,
-    Applied,
-    ReloadRequired,
-    OutsideWindow,
 }

@@ -141,21 +141,49 @@ public sealed class AgentAttachmentService : IAgentSessionDataCleaner, IAgentAtt
     }
 
     public async Task<AgentStoredAttachment> StoreAttachmentAsync(Guid sessionId, AgentAttachmentUploadRequest upload, CancellationToken cancellationToken = default)
+        => await StoreAttachmentAsync(
+            sessionId,
+            Guid.NewGuid(),
+            upload,
+            cancellationToken).ConfigureAwait(false);
+
+    internal async Task<AgentStoredAttachment> StoreAttachmentAsync(
+        Guid sessionId,
+        Guid userTurnId,
+        AgentAttachmentUploadRequest upload,
+        CancellationToken cancellationToken = default)
     {
         var info = InspectUpload(upload);
         var attachmentId = Guid.NewGuid();
-        var sessionDirectory = Path.Combine(_attachmentRootPath, sessionId.ToString("N"));
-        Directory.CreateDirectory(sessionDirectory);
+        var turnDirectory = Path.Combine(
+            _attachmentRootPath,
+            sessionId.ToString("N"),
+            userTurnId.ToString("N"));
+        Directory.CreateDirectory(turnDirectory);
 
         var fileName = $"{attachmentId:N}-{info.FileName}";
-        var fullPath = Path.Combine(sessionDirectory, fileName);
+        var fullPath = Path.Combine(turnDirectory, fileName);
+        var temporaryPath = fullPath + ".tmp";
         try
         {
-            await File.WriteAllBytesAsync(fullPath, upload.Content, cancellationToken).ConfigureAwait(false);
+            await using (var stream = new FileStream(
+                             temporaryPath,
+                             FileMode.CreateNew,
+                             FileAccess.Write,
+                             FileShare.None,
+                             bufferSize: 64 * 1024,
+                             FileOptions.Asynchronous | FileOptions.WriteThrough))
+            {
+                await stream.WriteAsync(upload.Content, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporaryPath, fullPath);
         }
         catch
         {
-            TryDeleteIncompleteAttachment(fullPath, sessionDirectory);
+            TryDeleteIncompleteAttachment(temporaryPath, turnDirectory);
+            TryDeleteIncompleteAttachment(fullPath, turnDirectory);
             throw;
         }
 
@@ -167,7 +195,11 @@ public sealed class AgentAttachmentService : IAgentSessionDataCleaner, IAgentAtt
             wasTruncated = true;
         }
 
-        var relativePath = Path.Combine(sessionId.ToString("N"), fileName).Replace(Path.DirectorySeparatorChar, '/');
+        var relativePath = Path.Combine(
+                sessionId.ToString("N"),
+                userTurnId.ToString("N"),
+                fileName)
+            .Replace(Path.DirectorySeparatorChar, '/');
         var metadata = new AgentAttachmentMetadata(
             attachmentId,
             info.FileName,
@@ -264,13 +296,39 @@ public sealed class AgentAttachmentService : IAgentSessionDataCleaner, IAgentAtt
             File.Delete(fullPath);
         }
 
-        var sessionDirectory = Path.GetDirectoryName(fullPath);
-        if (!string.IsNullOrWhiteSpace(sessionDirectory)
-            && Directory.Exists(sessionDirectory)
-            && !Directory.EnumerateFileSystemEntries(sessionDirectory).Any())
+        DeleteEmptyParentDirectories(Path.GetDirectoryName(fullPath));
+    }
+
+    internal int CleanupOrphans(
+        IReadOnlySet<string> referencedRelativePaths,
+        DateTimeOffset cutoffUtc,
+        int maximumFiles = 4096)
+    {
+        var deleted = 0;
+        foreach (var path in Directory
+                     .EnumerateFiles(_attachmentRootPath, "*", SearchOption.AllDirectories)
+                     .Take(Math.Clamp(maximumFiles, 1, 16_384)))
         {
-            Directory.Delete(sessionDirectory);
+            var relativePath = Path.GetRelativePath(_attachmentRootPath, path)
+                .Replace(Path.DirectorySeparatorChar, '/');
+            if (referencedRelativePaths.Contains(relativePath)
+                || File.GetLastWriteTimeUtc(path) > cutoffUtc.UtcDateTime)
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Delete(path);
+                deleted++;
+                DeleteEmptyParentDirectories(Path.GetDirectoryName(path));
+            }
+            catch
+            {
+                // A later bounded startup sweep retries files that are temporarily unavailable.
+            }
         }
+        return deleted;
     }
 
     private string ResolveStoredAttachmentPath(string relativePath)
@@ -284,6 +342,20 @@ public sealed class AgentAttachmentService : IAgentSessionDataCleaner, IAgentAtt
         }
 
         return fullPath;
+    }
+
+    private void DeleteEmptyParentDirectories(string? path)
+    {
+        var root = Path.GetFullPath(_attachmentRootPath);
+        while (!string.IsNullOrWhiteSpace(path)
+               && !string.Equals(Path.GetFullPath(path), root, StringComparison.Ordinal)
+               && Directory.Exists(path)
+               && !Directory.EnumerateFileSystemEntries(path).Any())
+        {
+            var parent = Path.GetDirectoryName(path);
+            Directory.Delete(path);
+            path = parent;
+        }
     }
 
     private static void ValidateContentSize(string fileName, int byteCount)

@@ -69,9 +69,28 @@ public sealed partial class SubsessionListItemViewModel : ObservableObject
         }
 
         StatusText = $"Run revision {checkpoint.RunRevision}: {checkpoint.Status} · {checkpoint.Summary}";
-        StatusBadgeText = checkpoint.Status == AgentRunStatus.Completed ? "Done" : checkpoint.Status.ToString();
+        StatusBadgeText = checkpoint.Status switch
+        {
+            AgentRunStatus.Completed => "Done",
+            AgentRunStatus.Idle => "Queued",
+            _ => checkpoint.Status.ToString(),
+        };
         StatusBrush = ResolveStatusBrush(checkpoint.Status);
-        IsRunActive = checkpoint.Status == AgentRunStatus.Running;
+        IsRunActive = checkpoint.Status is AgentRunStatus.Idle or AgentRunStatus.Running;
+    }
+
+    internal void UpdateFrom(SubsessionListItemViewModel incoming)
+    {
+        if (SessionId != incoming.SessionId)
+        {
+            throw new InvalidOperationException("Cannot reconcile subsession rows with different session ids.");
+        }
+
+        UpdateSession(incoming.Session, incoming.Subtitle);
+        StatusText = incoming.StatusText;
+        StatusBadgeText = incoming.StatusBadgeText;
+        StatusBrush = incoming.StatusBrush;
+        IsRunActive = incoming.IsRunActive;
     }
 
     private static IBrush? ResolveStatusBrush(AgentRunStatus status)
@@ -79,7 +98,7 @@ public sealed partial class SubsessionListItemViewModel : ObservableObject
         var resourceKey = status switch
         {
             AgentRunStatus.Completed => SunderThemeKeys.SuccessBrush,
-            AgentRunStatus.Running => SunderThemeKeys.AccentBrush,
+            AgentRunStatus.Idle or AgentRunStatus.Running => SunderThemeKeys.AccentBrush,
             AgentRunStatus.Failed => SunderThemeKeys.DangerBrush,
             AgentRunStatus.Interrupted or AgentRunStatus.Stopped => SunderThemeKeys.WarningBrush,
             _ => SunderThemeKeys.ForegroundMutedBrush,

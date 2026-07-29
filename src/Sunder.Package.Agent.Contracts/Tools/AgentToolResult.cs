@@ -30,4 +30,8 @@ public sealed record AgentToolResult(
     bool IsError = false,
     string? ErrorCode = null,
     string? BackendId = null,
-    string? PresentationPayloadJson = null);
+    string? PresentationPayloadJson = null)
+{
+    /// <summary>Gets whether the host must rebuild supplementary prompt context before the next provider cycle.</summary>
+    public bool RequiresPromptContextRefresh { get; init; }
+}

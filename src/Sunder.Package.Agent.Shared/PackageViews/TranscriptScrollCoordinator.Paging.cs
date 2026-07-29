@@ -4,6 +4,11 @@ namespace Sunder.Package.Agent.Shared.PackageViews;
 
 internal sealed partial class TranscriptScrollCoordinator
 {
+    private long _pagingReevaluationGeneration;
+    private long _queuedPagingReevaluationGeneration;
+    private object? _activePageProtectedAnchorKey;
+    private Task _pagingReevaluationOperation = Task.CompletedTask;
+
     internal Task PendingPagingOperations => WaitForPendingOperationsAsync();
 
     public void ReevaluatePagingEdges()
@@ -35,6 +40,10 @@ internal sealed partial class TranscriptScrollCoordinator
                 _scrollToBottomOperation,
                 _focusBringIntoViewOperation,
                 _userScrollEvaluationOperation,
+                _viewportMutationOperation,
+                _viewportMutationCompletionOperation,
+                _viewportMutationWatchdogOperation,
+                _pagingReevaluationOperation,
             };
             await Task.WhenAll(operations);
             if (ReferenceEquals(operations[0], _loadOlderOperation)
@@ -44,11 +53,40 @@ internal sealed partial class TranscriptScrollCoordinator
                 && ReferenceEquals(operations[4], _restoreAnchorOperation)
                 && ReferenceEquals(operations[5], _scrollToBottomOperation)
                 && ReferenceEquals(operations[6], _focusBringIntoViewOperation)
-                && ReferenceEquals(operations[7], _userScrollEvaluationOperation))
+                && ReferenceEquals(operations[7], _userScrollEvaluationOperation)
+                && ReferenceEquals(operations[8], _viewportMutationOperation)
+                && ReferenceEquals(operations[9], _viewportMutationCompletionOperation)
+                && ReferenceEquals(operations[10], _viewportMutationWatchdogOperation)
+                && ReferenceEquals(operations[11], _pagingReevaluationOperation))
             {
                 return;
             }
         }
+    }
+
+    private void QueueReevaluatePagingEdges(long authorityRevision)
+    {
+        if (_disposed || !_presentationActive || authorityRevision != _viewportAuthorityRevision)
+        {
+            return;
+        }
+
+        var generation = ++_pagingReevaluationGeneration;
+        _queuedPagingReevaluationGeneration = generation;
+        var operation = InvokeOnDispatcherAsync(() =>
+        {
+            if (_disposed
+                || !_presentationActive
+                || generation != _queuedPagingReevaluationGeneration
+                || authorityRevision != _viewportAuthorityRevision)
+            {
+                return;
+            }
+
+            _queuedPagingReevaluationGeneration = 0;
+            ReevaluatePagingEdges();
+        }, DispatcherPriority.Background);
+        _pagingReevaluationOperation = ObservePagingOperationAsync(operation);
     }
 
     private async Task RestorePendingAnchorAsync(CancellationToken cancellationToken)
@@ -60,17 +98,20 @@ internal sealed partial class TranscriptScrollCoordinator
         finally
         {
             _restoreAnchorPending = false;
-            if (!_disposed && _presentationActive && _pendingAnchor is not null)
+            if (_pendingAnchor is { } pendingAnchor
+                && (_disposed
+                    || !_presentationActive
+                    || pendingAnchor.InteractionRevision != _interactionRevision
+                    || pendingAnchor.AuthorityRevision != _viewportAuthorityRevision))
             {
-                if (_renderedContentChangedDuringAnchorRestore)
-                {
-                    _renderedContentChangedDuringAnchorRestore = false;
-                    QueueRestoreScrollAnchor();
-                }
+                ClearPendingAnchor(pendingAnchor);
+            }
+            else if (_pendingAnchor is { } completedAnchor)
+            {
+                ClearPendingAnchor(completedAnchor);
             }
             else
             {
-                _renderedContentChangedDuringAnchorRestore = false;
                 ReevaluatePagingEdges();
             }
         }
@@ -91,10 +132,15 @@ internal sealed partial class TranscriptScrollCoordinator
             {
                 return;
             }
-            _pendingAnchor = null;
+            ClearPendingAnchor();
             var protectedAnchorKey = anchor.Items.FirstOrDefault()?.Item
                                      ?? CaptureCurrentScrollAnchorKey();
-            loaded = await _loadOlderRowsAsync(protectedAnchorKey, cancellationToken);
+            Volatile.Write(ref _activePageProtectedAnchorKey, protectedAnchorKey);
+            loaded = await _loadOlderRowsAsync(
+                new TranscriptPageAnchorAuthority(
+                    protectedAnchorKey,
+                    ResolveActivePageProtectedAnchorKey),
+                cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (loaded
                 && interactionRevision == _interactionRevision
@@ -122,6 +168,7 @@ internal sealed partial class TranscriptScrollCoordinator
                 {
                     if (loaded
                         && pagingContextRevision == _pagingContextRevision
+                        && anchor.AuthorityRevision == _viewportAuthorityRevision
                         && ShouldRestoreOlderRowsAnchor(
                             interactionRevision,
                             _interactionRevision))
@@ -136,13 +183,6 @@ internal sealed partial class TranscriptScrollCoordinator
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (!_disposed
-                        && loaded
-                        && interactionRevision == _interactionRevision
-                        && pagingContextRevision == _pagingContextRevision)
-                    {
-                        _suppressEdgeLoadsUntilNextScroll = true;
-                    }
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -163,7 +203,9 @@ internal sealed partial class TranscriptScrollCoordinator
                 }
                 _activePageInteractionRevision = -1;
                 _loadOlderPending = false;
+                Volatile.Write(ref _activePageProtectedAnchorKey, null);
                 _anchorHost?.SetFollowingTail(IsFollowingTail);
+                ReleaseOlderPagingAnchor(anchor);
             }
         }
     }
@@ -190,9 +232,14 @@ internal sealed partial class TranscriptScrollCoordinator
             {
                 return;
             }
-            _pendingAnchor = null;
+            ClearPendingAnchor();
             var protectedAnchorKey = CaptureCurrentScrollAnchorKey();
-            loaded = await _loadNewerRowsAsync(protectedAnchorKey, cancellationToken);
+            Volatile.Write(ref _activePageProtectedAnchorKey, protectedAnchorKey);
+            loaded = await _loadNewerRowsAsync(
+                new TranscriptPageAnchorAuthority(
+                    protectedAnchorKey,
+                    ResolveActivePageProtectedAnchorKey),
+                cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (pagingContextRevision == _pagingContextRevision)
             {
@@ -217,13 +264,16 @@ internal sealed partial class TranscriptScrollCoordinator
                 {
                     if (loaded
                         && interactionRevision == _interactionRevision
+                        && anchor.AuthorityRevision == _viewportAuthorityRevision
                         && pagingContextRevision == _pagingContextRevision)
                     {
                         if (wasFollowingTail)
                         {
                             await YieldForRenderedContent(cancellationToken);
                             cancellationToken.ThrowIfCancellationRequested();
-                            if (!_disposed && interactionRevision == _interactionRevision)
+                            if (!_disposed
+                                && interactionRevision == _interactionRevision
+                                && anchor.AuthorityRevision == _viewportAuthorityRevision)
                             {
                                 ScrollToBottom(resumeFollowing: true);
                             }
@@ -245,15 +295,11 @@ internal sealed partial class TranscriptScrollCoordinator
                         && loaded
                         && pagingContextRevision == _pagingContextRevision)
                     {
-                        if (_loadNewerResumeInteractionRevision == _interactionRevision
+                        if (anchor.AuthorityRevision == _viewportAuthorityRevision
+                            && _loadNewerResumeInteractionRevision == _interactionRevision
                             && !_hasNewerRows())
                         {
                             ScrollToBottom(resumeFollowing: true);
-                        }
-                        if (interactionRevision == _interactionRevision
-                            && !_hasNewerRows())
-                        {
-                            _suppressEdgeLoadsUntilNextScroll = true;
                         }
                     }
                 }
@@ -271,6 +317,7 @@ internal sealed partial class TranscriptScrollCoordinator
             finally
             {
                 var tailIntentIsCurrent = pagingContextRevision == _pagingContextRevision
+                                          && anchor.AuthorityRevision == _viewportAuthorityRevision
                                           && _loadNewerResumeInteractionRevision == _interactionRevision;
                 continueToLatest = loaded
                                    && tailIntentIsCurrent
@@ -286,12 +333,30 @@ internal sealed partial class TranscriptScrollCoordinator
                 {
                     _loadNewerResumeInteractionRevision = -1;
                 }
+                Volatile.Write(ref _activePageProtectedAnchorKey, null);
                 _loadNewerPending = false;
                 if (continueToLatest)
                 {
                     QueueLoadNewerRows(resumeFollowingWhenCaughtUp: true);
                 }
+                ReleaseNewerPagingAnchor(anchor);
             }
+        }
+    }
+
+    private object? ResolveActivePageProtectedAnchorKey()
+        => Volatile.Read(ref _activePageProtectedAnchorKey);
+
+    private object? CaptureCurrentPageProtectedAnchorKey()
+        => CaptureCurrentScrollAnchorKey()
+           ?? Volatile.Read(ref _activePageProtectedAnchorKey);
+
+    private void RefreshActivePageProtectedAnchorKey()
+    {
+        if ((_loadOlderPending || _loadNewerPending)
+            && CaptureCurrentPageProtectedAnchorKey() is { } anchorKey)
+        {
+            Volatile.Write(ref _activePageProtectedAnchorKey, anchorKey);
         }
     }
 

@@ -43,6 +43,102 @@ public sealed class BuilderViewModelTests
     }
 
     [Fact]
+    public async Task CreateProject_DuringBlockedInitializationPreservesDraftAndSelection()
+    {
+        var store = new BlockingBuilderProjectStore();
+        await using var viewModel = CreateViewModel(store: store);
+        var initialization = viewModel.InitializeAsync();
+        await store.LoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await viewModel.CreateProjectAsync();
+        var draft = Assert.IsType<BuilderProjectViewModel>(viewModel.SelectedProject);
+        draft.DisplayName = "Draft created during initialization";
+
+        await store.SecondLoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        store.ReleaseLoad.TrySetResult();
+        await initialization;
+
+        Assert.Equal(2, store.LoadCount);
+        Assert.Same(draft, viewModel.SelectedProject);
+        Assert.Same(draft, Assert.Single(viewModel.Projects));
+        Assert.Equal("Draft created during initialization", draft.DisplayName);
+    }
+
+    [Fact]
+    public async Task BackDuringBlockedInitialization_PreservesCreatedRowAndExplicitListRoute()
+    {
+        var store = new BlockingBuilderProjectStore();
+        await using var viewModel = CreateViewModel(store: store);
+        var initialization = viewModel.InitializeAsync();
+        await store.LoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await viewModel.CreateProjectAsync();
+        var draft = Assert.IsType<BuilderProjectViewModel>(viewModel.SelectedProject);
+        draft.DisplayName = "Draft kept in list";
+
+        viewModel.BackToProjectList();
+        viewModel.IsCompactLayout = true;
+        viewModel.IsCompactLayout = false;
+        store.ReleaseLoad.TrySetResult();
+        await initialization;
+
+        Assert.Same(draft, Assert.Single(viewModel.Projects));
+        Assert.Null(viewModel.SelectedProject);
+        Assert.Equal("Draft kept in list", draft.DisplayName);
+        Assert.True(viewModel.ShowListPane);
+        Assert.True(viewModel.ShowEditorPane);
+    }
+
+    [Theory]
+    [InlineData(nameof(BuilderProjectViewModel.DisplayName))]
+    [InlineData(nameof(BuilderProjectViewModel.PackageId))]
+    [InlineData(nameof(BuilderProjectViewModel.WorkspaceId))]
+    [InlineData(nameof(BuilderProjectViewModel.WorkspacePathId))]
+    [InlineData(nameof(BuilderProjectViewModel.ExecutionProjectFolder))]
+    [InlineData(nameof(BuilderProjectViewModel.ProjectFolder))]
+    [InlineData("SelectedFolder")]
+    public async Task EditingAutoSelectedProject_PreservesDetailAcrossCompactResize(string field)
+    {
+        var persistedProject = CreateProject("one", "One Package");
+        await using var viewModel = CreateViewModel(
+            store: new SnapshotBuilderProjectStore(persistedProject.ToRecord()));
+        await viewModel.InitializeAsync();
+        var selectedProject = Assert.IsType<BuilderProjectViewModel>(viewModel.SelectedProject);
+
+        switch (field)
+        {
+            case nameof(BuilderProjectViewModel.DisplayName):
+                selectedProject.DisplayName = "Edited Package";
+                break;
+            case nameof(BuilderProjectViewModel.PackageId):
+                selectedProject.PackageId = "local.edited";
+                break;
+            case nameof(BuilderProjectViewModel.WorkspaceId):
+                selectedProject.WorkspaceId = "workspace.edited";
+                break;
+            case nameof(BuilderProjectViewModel.WorkspacePathId):
+                selectedProject.WorkspacePathId = "workspace.edited.path";
+                break;
+            case nameof(BuilderProjectViewModel.ExecutionProjectFolder):
+                selectedProject.ExecutionProjectFolder = "/tmp/execution-edited";
+                break;
+            case nameof(BuilderProjectViewModel.ProjectFolder):
+                selectedProject.ProjectFolder = "/tmp/project-edited";
+                break;
+            case "SelectedFolder":
+                viewModel.ApplySelectedFolder("/tmp/selected-folder-edited");
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(field), field, null);
+        }
+
+        viewModel.IsCompactLayout = true;
+
+        Assert.Same(selectedProject, viewModel.SelectedProject);
+        Assert.True(viewModel.ShowCompactEditor);
+        Assert.False(viewModel.ShowCompactList);
+    }
+
+    [Fact]
     public async Task DeleteSelectedProjectAsync_WhenCompactLayout_ClearsSelectionAndReturnsToList()
     {
         var viewModel = CreateViewModel();
@@ -82,6 +178,29 @@ public sealed class BuilderViewModelTests
         Assert.True(viewModel.ShowEditorPane);
         Assert.Equal("Deleted package project 'One Package'.", viewModel.StatusText);
         Assert.True(viewModel.ShowStatusMessage);
+    }
+
+    [Fact]
+    public async Task DeleteSelectedProjectAsync_LateSaveCannotClearNewSelectionAfterResize()
+    {
+        var store = new BlockingSaveBuilderProjectStore();
+        await using var viewModel = CreateViewModel(store: store);
+        var deletedProject = CreateProject("one", "One Package");
+        var remainingProject = CreateProject("two", "Two Package");
+        viewModel.Projects.Add(deletedProject);
+        viewModel.Projects.Add(remainingProject);
+        viewModel.IsCompactLayout = true;
+        viewModel.ActivateProject(deletedProject);
+
+        var deletion = viewModel.DeleteSelectedProjectAsync();
+        await store.SaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.IsCompactLayout = false;
+        viewModel.ActivateProject(remainingProject);
+        store.ReleaseSave.TrySetResult();
+        await deletion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Same(remainingProject, viewModel.SelectedProject);
+        Assert.True(viewModel.ShowEditorPane);
     }
 
     [Fact]
@@ -461,28 +580,48 @@ public sealed class BuilderViewModelTests
 
     private sealed class TestKeyValueStore : IPackageKeyValueStore
     {
-        private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
 
         public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
-            => Task.FromResult(_values.GetValueOrDefault(key));
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.FromResult(_values.GetValueOrDefault(key));
+        }
 
         public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            TestPackageStorageGuards.Value(value);
             _values[key] = value;
             return Task.CompletedTask;
         }
 
         public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default)
-            => Task.FromResult(_values.ContainsKey(key));
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.FromResult(_values.ContainsKey(key));
+        }
 
         public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
             _values.Remove(key);
             return Task.CompletedTask;
         }
 
         public Task<IReadOnlyList<string>> ListKeysAsync(string? prefix = null, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<string>>(_values.Keys.Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray());
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Prefix(prefix);
+            return Task.FromResult<IReadOnlyList<string>>(_values.Keys
+                .Where(key => prefix is null || key.StartsWith(prefix, StringComparison.Ordinal))
+                .Order(StringComparer.Ordinal)
+                .ToArray());
+        }
     }
 
     private sealed class TestSettings : EmptyPackageSettings;
@@ -530,17 +669,52 @@ public sealed class BuilderViewModelTests
         public int LoadCount { get; private set; }
         public TaskCompletionSource LoadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseLoad { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource SecondLoadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public async Task<IReadOnlyList<BuilderProjectRecord>> LoadAsync(CancellationToken cancellationToken = default)
         {
             LoadCount++;
             LoadStarted.TrySetResult();
+            if (LoadCount >= 2)
+            {
+                SecondLoadStarted.TrySetResult();
+            }
             await ReleaseLoad.Task.WaitAsync(cancellationToken);
             return [];
         }
 
         public Task SaveAsync(IReadOnlyList<BuilderProjectRecord> projects, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
+    }
+
+    private sealed class SnapshotBuilderProjectStore(params BuilderProjectRecord[] projects) : IBuilderProjectStore
+    {
+        public Task<IReadOnlyList<BuilderProjectRecord>> LoadAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<BuilderProjectRecord>>(projects);
+
+        public Task SaveAsync(IReadOnlyList<BuilderProjectRecord> updatedProjects, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+    }
+
+    private sealed class BlockingSaveBuilderProjectStore : IBuilderProjectStore
+    {
+        public TaskCompletionSource SaveStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseSave { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<IReadOnlyList<BuilderProjectRecord>> LoadAsync(
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<BuilderProjectRecord>>([]);
+
+        public async Task SaveAsync(
+            IReadOnlyList<BuilderProjectRecord> projects,
+            CancellationToken cancellationToken = default)
+        {
+            SaveStarted.TrySetResult();
+            await ReleaseSave.Task.WaitAsync(cancellationToken);
+        }
     }
 
     private sealed class FailingBuilderProjectStore : IBuilderProjectStore

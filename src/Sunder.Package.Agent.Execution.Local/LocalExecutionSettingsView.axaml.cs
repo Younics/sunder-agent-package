@@ -3,8 +3,10 @@ using Avalonia.Platform.Storage;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
-public partial class LocalExecutionSettingsView : UserControl
+public partial class LocalExecutionSettingsView : UserControl, IDisposable
 {
+    private LocalExecutionSettingsViewModel? _viewModel;
+
     public LocalExecutionSettingsView()
     {
         InitializeComponent();
@@ -13,7 +15,15 @@ public partial class LocalExecutionSettingsView : UserControl
     public LocalExecutionSettingsView(LocalExecutionSettingsViewModel viewModel)
         : this()
     {
+        _viewModel = viewModel;
         DataContext = viewModel;
+    }
+
+    public void Dispose()
+    {
+        DataContext = null;
+        _viewModel?.Dispose();
+        _viewModel = null;
     }
 
     private async void OnChooseShellExecutableClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

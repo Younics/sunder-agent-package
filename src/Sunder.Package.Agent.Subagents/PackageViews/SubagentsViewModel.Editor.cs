@@ -100,6 +100,7 @@ public sealed partial class SubagentsViewModel
             return;
         }
 
+        _listDetail.PromoteSelectionToExplicit();
         _editRevision++;
         UpdateCurrentDraft();
     }
@@ -132,27 +133,6 @@ public sealed partial class SubagentsViewModel
 
     private void OnSubagentsChanged() => RunOnUiThread(() =>
     {
-        if (!_suppressSubagentChangeNotifications)
-        {
-            _tasks.Run(_ => ReloadSafelyAsync(SelectedSubagent?.SubagentId));
-        }
+        _tasks.Run(_runtimeRefresh.MarkDirty());
     });
-
-    private async Task ReloadSafelyAsync(string? selectedSubagentId)
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        try
-        {
-            await ReloadAsync(selectedSubagentId);
-        }
-        catch (Exception ex)
-        {
-            ClearEditor();
-            SetStatus(ex.Message, SubagentStatusKind.Error);
-        }
-    }
 }

@@ -15,6 +15,7 @@ public sealed partial class AgentWorkspacesViewModel
             return;
         }
 
+        WorkspaceSaveSnapshot? snapshot = null;
         var operation = BeginOperation(AgentWorkspaceOperation.Save);
         try
         {
@@ -24,7 +25,9 @@ public sealed partial class AgentWorkspacesViewModel
                 return;
             }
 
-            var snapshot = new WorkspaceSaveSnapshot(
+            CaptureCurrentWorkspaceDraft();
+            var editorContext = BuildEditorContext();
+            snapshot = new WorkspaceSaveSnapshot(
                 selectedWorkspace,
                 DisplayName,
                 Description,
@@ -35,50 +38,82 @@ public sealed partial class AgentWorkspacesViewModel
                 SelectedExecutionTarget is { IsUnconfigured: false } target
                     ? target.TargetId
                     : null,
-                EditorSections.ToArray());
-            var editorSaveResult = await SaveEditorSectionsAsync(snapshot.EditorSections);
+                EditorSections.ToArray(),
+                editorContext is null ? null : CaptureEditorIntent(editorContext),
+                IntentRevision,
+                LayoutRevision,
+                GetWorkspaceDraftRevision(selectedWorkspace.WorkspaceId));
+            var editorSaveResult = await SaveEditorSectionsAsync(
+                snapshot.EditorSections,
+                snapshot.EditorIntent,
+                _lifetimeCancellation.Token);
             if (!editorSaveResult.Success)
             {
-                SetStatus(editorSaveResult.Message, AgentWorkspaceStatusKind.Error);
+                if (IsCurrentSaveIntent(snapshot))
+                {
+                    SetStatus(editorSaveResult.Message, AgentWorkspaceStatusKind.Error);
+                }
                 return;
             }
 
             AgentExecutionTargetWarmupResult? warmupResult = null;
-            _suppressWorkspaceChangeNotifications = true;
-            try
+            _workspaceService.SaveWorkspaceAggregate(
+                snapshot.Workspace.WorkspaceId,
+                snapshot.DisplayName,
+                snapshot.Description,
+                snapshot.Paths,
+                snapshot.Documents,
+                snapshot.ExecutionTargetId);
+            if (snapshot.ExecutionTargetId is not null)
             {
-                _workspaceService.SaveWorkspaceAggregate(
-                    snapshot.Workspace.WorkspaceId,
-                    snapshot.DisplayName,
-                    snapshot.Description,
-                    snapshot.Paths,
-                    snapshot.Documents,
-                    snapshot.ExecutionTargetId);
-                if (snapshot.ExecutionTargetId is not null)
+                var warmupWorkspace = _workspaceService.GetWorkspace(snapshot.Workspace.WorkspaceId)
+                    ?? snapshot.Workspace;
+                if (IsCurrentSaveIntent(snapshot))
                 {
-                    var warmupWorkspace = _workspaceService.GetWorkspace(snapshot.Workspace.WorkspaceId)
-                        ?? snapshot.Workspace;
                     SetStatus("Workspace saved. Preparing execution target...", AgentWorkspaceStatusKind.Warning);
-                    warmupResult = await _executionGateway.WarmWorkspaceAsync(
-                        warmupWorkspace,
-                        _lifetimeCancellation.Token);
                 }
-            }
-            finally
-            {
-                _suppressWorkspaceChangeNotifications = false;
+                warmupResult = await _executionGateway.WarmWorkspaceAsync(
+                    warmupWorkspace,
+                    _lifetimeCancellation.Token);
             }
 
-            var shouldClearSelection = IsCompactLayout;
-            ReloadWorkspaceList(snapshot.Workspace.WorkspaceId);
-            if (shouldClearSelection)
+            var intentIsCurrent = IsCurrentSaveIntent(snapshot);
+            if (intentIsCurrent)
             {
-                SelectedWorkspace = null;
+                DiscardPendingWorkspaceRefresh();
+            }
+            var editedDuringSave = GetWorkspaceDraftRevision(snapshot.Workspace.WorkspaceId)
+                != snapshot.DraftRevision;
+            var layoutIsCurrent = snapshot.LayoutRevision == LayoutRevision;
+            if (intentIsCurrent && !editedDuringSave)
+            {
+                MarkWorkspaceDraftClean(snapshot.Workspace.WorkspaceId);
+            }
+            if (intentIsCurrent
+                && !editedDuringSave
+                && layoutIsCurrent
+                && IsCompactLayout)
+            {
+                _listDetail.ShowList();
                 ClearStatus();
             }
-            else
+            var currentSelection = SelectedWorkspace;
+            var workspaces = _workspaceService.ListWorkspaces()
+                .Select(workspace => currentSelection is not null
+                    && (!intentIsCurrent || editedDuringSave)
+                    && string.Equals(
+                        workspace.WorkspaceId,
+                        currentSelection.WorkspaceId,
+                        StringComparison.OrdinalIgnoreCase)
+                        ? currentSelection
+                        : workspace)
+                .ToArray();
+            _listDetail.Reconcile(workspaces);
+            if (intentIsCurrent && _listDetail.IsExistingDetail)
             {
-                var statusText = warmupResult?.Status == AgentExecutionTargetWarmupStatus.Failed
+                var statusText = editedDuringSave
+                    ? "Workspace saved. New edits remain unsaved."
+                    : warmupResult?.Status == AgentExecutionTargetWarmupStatus.Failed
                     ? $"Workspace saved, but execution target is not ready: {warmupResult.Message}"
                     : warmupResult?.Status == AgentExecutionTargetWarmupStatus.Ready
                         ? "Workspace saved. Execution target is ready."
@@ -87,20 +122,34 @@ public sealed partial class AgentWorkspacesViewModel
                     ? AgentWorkspaceStatusKind.Warning
                     : AgentWorkspaceStatusKind.Success;
 
-                SetStatus(statusText, statusKind, autoClear: statusKind == AgentWorkspaceStatusKind.Success);
+                SetStatus(
+                    statusText,
+                    statusKind,
+                    autoClear: statusKind == AgentWorkspaceStatusKind.Success && !editedDuringSave);
             }
-
-            IsEditorActive = false;
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
         }
         catch (Exception ex)
         {
-            SetStatus(ex.Message, AgentWorkspaceStatusKind.Error);
+            if (snapshot is not null && IsCurrentSaveIntent(snapshot))
+            {
+                SetStatus(ex.Message, AgentWorkspaceStatusKind.Error);
+            }
         }
         finally
         {
             EndOperation(operation);
         }
     }
+
+    private bool IsCurrentSaveIntent(WorkspaceSaveSnapshot snapshot)
+        => snapshot.IntentRevision == IntentRevision
+           && string.Equals(
+               SelectedWorkspace?.WorkspaceId,
+               snapshot.Workspace.WorkspaceId,
+               StringComparison.OrdinalIgnoreCase);
 
     private sealed record WorkspaceSaveSnapshot(
         AgentWorkspaceRecord Workspace,
@@ -109,5 +158,9 @@ public sealed partial class AgentWorkspacesViewModel
         IReadOnlyList<AgentWorkspacePathRecord> Paths,
         IReadOnlyList<AgentWorkspaceDocumentRecord> Documents,
         string? ExecutionTargetId,
-        IReadOnlyList<AgentEditorSectionViewModel> EditorSections);
+        IReadOnlyList<AgentEditorSectionViewModel> EditorSections,
+        AgentWorkspaceEditorIntent? EditorIntent,
+        long IntentRevision,
+        long LayoutRevision,
+        long DraftRevision);
 }

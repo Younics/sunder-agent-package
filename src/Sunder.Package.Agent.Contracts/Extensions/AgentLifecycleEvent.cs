@@ -41,4 +41,14 @@ public sealed record AgentLifecycleEvent(
     IReadOnlyList<AgentTurnRecord> Turns,
     IReadOnlyList<AgentTurnRecord> RecentLiveBufferTurns,
     AgentTurnRecord? TriggerTurn = null,
-    AgentRunCheckpointRecord? Checkpoint = null);
+    AgentRunCheckpointRecord? Checkpoint = null)
+{
+    /// <summary>Gets the stable durable event identifier when this snapshot was delivered through the lifecycle outbox.</summary>
+    public string? EventId { get; init; }
+
+    /// <summary>Gets the SQLite-assigned outbox sequence when this snapshot was delivered through the lifecycle outbox.</summary>
+    public long? Sequence { get; init; }
+
+    /// <summary>Gets the SHA-256 hash of the immutable durable payload when available.</summary>
+    public string? PayloadHash { get; init; }
+}

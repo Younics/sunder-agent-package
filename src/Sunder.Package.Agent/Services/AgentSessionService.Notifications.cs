@@ -146,10 +146,15 @@ public sealed partial class AgentSessionService
 
     private void NotifyCompletedStreamingTurnsAndSessionChanged(
         Guid sessionId,
-        IReadOnlyList<AgentCompletedStreamingTurn> completedTurns)
+        IReadOnlyList<AgentCompletedStreamingTurn> completedTurns,
+        IReadOnlyList<AgentTurnRecord>? toolResultTurns = null)
         => QueueSessionNotification(sessionId, () =>
         {
             DispatchCompletedStreamingTurns(sessionId, completedTurns);
+            foreach (var turn in toolResultTurns ?? [])
+            {
+                DispatchTurnChanged(sessionId, turn);
+            }
             DispatchSessionChanged(sessionId);
         });
 
@@ -165,6 +170,31 @@ public sealed partial class AgentSessionService
             }
             DispatchTurnChanged(sessionId, userTurn);
             DispatchSessionChanged(sessionId);
+        });
+
+    private void NotifyRunAdmissionChanged(AgentUserTurnAdmissionResult admission)
+        => QueueSessionNotification(admission.Run.Key.SessionId, () =>
+        {
+            if (admission.Rollback is not null)
+            {
+                DispatchTranscriptReset(admission.Run.Key.SessionId);
+            }
+            else
+            {
+                DispatchCompletedStreamingTurns(
+                    admission.Run.Key.SessionId,
+                    admission.CompletedStreamingTurns);
+                foreach (var turn in admission.ToolResultTurns)
+                {
+                    DispatchTurnChanged(admission.Run.Key.SessionId, turn);
+                }
+            }
+
+            if (admission.UserTurn is { } userTurn)
+            {
+                DispatchTurnChanged(admission.Run.Key.SessionId, userTurn);
+            }
+            DispatchSessionChanged(admission.Run.Key.SessionId);
         });
 
     private void NotifyTranscriptResetAndSessionChanged(Guid sessionId)

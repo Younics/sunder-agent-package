@@ -216,13 +216,13 @@ public static class PackageExtensionPoints
         new("sunder.package.agent:permission-surfaces");
 
     /// <summary>
-    /// Identifies Runtime contributors of lower-trust reference context for model requests.
+    /// Identifies Runtime contributors of lower-trust supplementary context for model requests.
     /// </summary>
     /// <remarks>
-    /// <para>Role and direction: Runtime packages contribute context sources; the Agent Runtime consumes all registrations during prompt preparation when the context plan permits it. Cardinality is zero or more contributors, each returning no contribution or zero or more blocks.</para>
+    /// <para>Role and direction: Runtime packages contribute context sources; the Agent Runtime consumes optional registrations when the context plan permits it. Host-reserved profile and first-party scoped safety instructions are standing context, not recall, and use separate eligibility and bounds. Cardinality is zero or more contributors.</para>
     /// <para>Identity, ordering, and deduplication: contributors are invoked by display name using ordinal case-insensitive ordering; contributor ids do not deduplicate registrations. Returned blocks have no identity, are not deduplicated, and are rendered by descending priority then title subject to aggregate count and size limits.</para>
-    /// <para>Ownership, threading, cancellation, and failure: host-owned activation instances can be invoked concurrently across runs. Contributors must honor cancellation. The Runtime propagates cancellation and suppresses other contributor exceptions so optional reference data cannot fail the base chat flow.</para>
-    /// <para>Trust, provenance, and security: every block must label immediate provenance and user-authority trust. All blocks remain user-role data and never become system instructions. Contributors must resist prompt injection, stay within session/workspace and package permission scope, avoid secret disclosure, and obey plan budgets; source ids are attribution metadata, not authorization.</para>
+    /// <para>Ownership, threading, cancellation, and failure: host-owned activation instances can be invoked concurrently across runs. Contributors must honor cancellation. The Runtime propagates cancellation and suppresses other optional-reference failures. Owner-verified required scoped-instruction discovery and acknowledgment fail prompt preparation closed.</para>
+    /// <para>Trust, provenance, and security: every block must label immediate provenance, user-authority trust, and usage. All blocks remain user-role data. Ordinary reference blocks cannot direct behavior. Behavioral authority is assigned only by host-controlled profile provenance or the owner-verified first-party Files source with structured canonical scope; self-declared enums and ids are not authority. No block grants permission or wider scope.</para>
     /// </remarks>
     public static readonly PackageExtensionPoint<IAgentPromptContextContributor> PromptContextContributors =
         new("sunder.package.agent:prompt-context-contributors");
@@ -231,12 +231,26 @@ public static class PackageExtensionPoints
     /// Identifies Runtime observers of committed agent lifecycle transitions.
     /// </summary>
     /// <remarks>
-    /// <para>Role and direction: Runtime packages contribute observers; the Agent Runtime publishes each lifecycle snapshot to all registrations. Cardinality is zero or more observers and there is no returned mutation of Agent-owned state.</para>
-    /// <para>Identity, ordering, and deduplication: observers are invoked sequentially by display name using ordinal case-insensitive ordering. Observer ids do not deduplicate registrations or events. Delivery can repeat across recovery or retry paths, so side effects must be idempotent using durable record identities.</para>
-    /// <para>Ownership, threading, cancellation, and failure: host-owned activation instances can receive events concurrently from independent runs. Observers must honor supplied cancellation, although terminal publication can use a non-cancelable token. The Runtime propagates cancellation and suppresses other observer exceptions so optional observers cannot block base run flow.</para>
+    /// <para>Role and direction: Runtime packages contribute compatibility observers; the Agent Runtime projects the six run-scoped lifecycle kinds from its durable outbox. Cardinality is zero or more observers and there is no returned mutation of Agent-owned state.</para>
+    /// <para>Identity, ordering, and deduplication: package id plus stable observer id identifies a persisted subscription. Retained events are incrementally backfilled and serialized by subscription and ordering scope. Delivery can repeat across recovery or retry paths, so side effects must be idempotent by event id.</para>
+    /// <para>Ownership, threading, cancellation, and failure: the host owns activation instances and serializes calls per subscription. Cancellation requests dispatcher shutdown. Other failures cannot change source state, but are retried and can become poison ordering barriers.</para>
     /// <para>Trust, provenance, and security: package ownership identifies observer code; event kind and message roles identify content provenance. Transcript, assistant, tool, summary, and checkpoint text remains sensitive and untrusted. Observers must not elevate non-user claims, mutate Agent-owned state, evade retention and permission policy, or disclose content to external storage without authorization.</para>
     /// </remarks>
     public static readonly PackageExtensionPoint<IAgentLifecycleObserver> LifecycleObservers =
         new("sunder.package.agent:lifecycle-observers");
+
+    /// <summary>
+    /// Identifies Runtime observers that consume ordered, durable Agent lifecycle envelopes.
+    /// </summary>
+    /// <remarks>
+    /// Durable observers use a stable observer id as a persisted subscription identity. Delivery is ordered and
+    /// at least once, incrementally backfills retained history from a persisted watermark, can resume after package
+    /// absence or process failure, and includes rollback and deletion events in addition to the six compatibility
+    /// lifecycle events. Session/workspace deletion atomically replaces prior source payloads with content-erasure
+    /// receipts; new subscriptions do not replay erased rows. Implementations must make side effects idempotent by
+    /// event id, acknowledge erasure receipts as no-ops, and treat all payload text as sensitive, untrusted data.
+    /// </remarks>
+    public static readonly PackageExtensionPoint<IAgentDurableLifecycleObserver> DurableLifecycleObservers =
+        new("sunder.package.agent:durable-lifecycle-observers");
 
 }

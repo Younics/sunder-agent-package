@@ -71,6 +71,30 @@ public sealed class DockerContainerLifecycleService : IDisposable, IAsyncDisposa
         }
     }
 
+    public async Task<DockerOperationLease> AcquireOperationAsync(
+        string key,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
+        var state = _states.GetOrAdd(key, static key => new ContainerLifecycleState(key));
+        state.AcquireReference(stopAsync: null);
+        try
+        {
+            await state.OperationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return new DockerOperationLease(() =>
+            {
+                state.OperationLock.Release();
+                Release(state);
+            });
+        }
+        catch
+        {
+            Release(state);
+            throw;
+        }
+    }
+
     private void Release(ContainerLifecycleState state)
     {
         var idleSignal = state.ReleaseReference(Volatile.Read(ref _disposed) == 0);
@@ -194,12 +218,15 @@ public sealed class DockerContainerLifecycleService : IDisposable, IAsyncDisposa
 
         public SemaphoreSlim OperationLock { get; } = new(1, 1);
 
-        public void AcquireReference(Func<string, CancellationToken, Task> stopAsync)
+        public void AcquireReference(Func<string, CancellationToken, Task>? stopAsync)
         {
             lock (_syncRoot)
             {
                 _activeCount++;
-                _stopAsync = stopAsync;
+                if (stopAsync is not null)
+                {
+                    _stopAsync = stopAsync;
+                }
                 CancelIdleStopCore();
             }
         }
@@ -321,5 +348,12 @@ public sealed class DockerContainerLifecycleService : IDisposable, IAsyncDisposa
             _disposed = true;
             _release();
         }
+    }
+
+    public sealed class DockerOperationLease(Action release) : IDisposable
+    {
+        private Action? _release = release;
+
+        public void Dispose() => Interlocked.Exchange(ref _release, null)?.Invoke();
     }
 }

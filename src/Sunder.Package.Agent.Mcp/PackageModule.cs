@@ -15,7 +15,10 @@ public sealed class PackageModule : ISunderRuntimePackageModule
 {
     public void ConfigureRuntimeServices(IServiceCollection services, IPackageContext context)
     {
-        services.AddSingleton<McpServerCatalogService>();
+        services.AddSingleton(new McpPackageStorageMigration(context));
+        services.AddSingleton(provider => new McpServerCatalogService(
+            context,
+            provider.GetRequiredService<McpPackageStorageMigration>()));
         services.AddSingleton<McpOAuthService>();
         services.AddSingleton<McpOAuthCallbackHandler>();
         services.AddSingleton<IPackageCallbackHandler>(provider => provider.GetRequiredService<McpOAuthCallbackHandler>());
@@ -35,11 +38,12 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<McpServerStackContributor>();
         services.AddSingleton<McpRuntimeHandler>();
         services.AddSingleton<McpRuntimeChangeStream>();
+        services.AddSingleton<McpPackageRuntimeStartupService>();
     }
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
-        services.GetRequiredService<McpConfigurationCoordinator>().Start();
+        registry.RegisterBackgroundService<McpPackageRuntimeStartupService>();
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, services.GetRequiredService<McpToolSource>());
         registry.RegisterExtension(PackageExtensionPoints.ProfileSelectableCapabilityProviders, services.GetRequiredService<McpToolSource>());
         registry.RegisterExtension(

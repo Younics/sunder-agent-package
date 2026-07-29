@@ -68,18 +68,37 @@ public sealed partial class AgentLocalStore
     }
 
     public void DeleteWorkspace(string workspaceId)
+        => _ = DeleteWorkspaceWithSessions(workspaceId);
+
+    internal IReadOnlyList<Guid> DeleteWorkspaceWithSessions(string workspaceId)
+        => DeleteWorkspaceWithSessions(workspaceId, []);
+
+    internal IReadOnlyList<Guid> DeleteWorkspaceWithSessions(
+        string workspaceId,
+        IReadOnlyList<AgentSessionDataCleanerIdentity> activeCleaners)
     {
+        var normalizedWorkspaceId = NormalizeWorkspaceId(workspaceId)
+            ?? throw new InvalidOperationException("Workspace id cannot be empty.");
         using var connection = CreateConnection();
         connection.Open();
-        using var transaction = connection.BeginTransaction();
+        EnableSecureDelete(connection);
+        using var transaction = connection.BeginTransaction(deferred: false);
 
-        DeleteSessionTreesForWorkspace(connection, transaction, workspaceId);
+        string? workspaceCreatedAtUtc;
+        using (var existsCommand = connection.CreateCommand())
+        {
+            existsCommand.Transaction = transaction;
+            existsCommand.CommandText = "SELECT CreatedAtUtc FROM AgentWorkspaces WHERE WorkspaceId = $workspaceId LIMIT 1;";
+            existsCommand.Parameters.AddWithValue("$workspaceId", normalizedWorkspaceId);
+            workspaceCreatedAtUtc = existsCommand.ExecuteScalar() as string;
+        }
+        var deletedSessionIds = DeleteSessionTreesForWorkspace(connection, transaction, normalizedWorkspaceId);
 
         using (var deleteDocumentsCommand = connection.CreateCommand())
         {
             deleteDocumentsCommand.Transaction = transaction;
             deleteDocumentsCommand.CommandText = "DELETE FROM AgentWorkspaceDocuments WHERE WorkspaceId = $workspaceId;";
-            deleteDocumentsCommand.Parameters.AddWithValue("$workspaceId", workspaceId);
+            deleteDocumentsCommand.Parameters.AddWithValue("$workspaceId", normalizedWorkspaceId);
             deleteDocumentsCommand.ExecuteNonQuery();
         }
 
@@ -87,7 +106,7 @@ public sealed partial class AgentLocalStore
         {
             deletePathsCommand.Transaction = transaction;
             deletePathsCommand.CommandText = "DELETE FROM AgentWorkspacePaths WHERE WorkspaceId = $workspaceId;";
-            deletePathsCommand.Parameters.AddWithValue("$workspaceId", workspaceId);
+            deletePathsCommand.Parameters.AddWithValue("$workspaceId", normalizedWorkspaceId);
             deletePathsCommand.ExecuteNonQuery();
         }
 
@@ -95,7 +114,7 @@ public sealed partial class AgentLocalStore
         {
             deleteBindingsCommand.Transaction = transaction;
             deleteBindingsCommand.CommandText = "DELETE FROM AgentWorkspaceBindings WHERE WorkspaceId = $workspaceId;";
-            deleteBindingsCommand.Parameters.AddWithValue("$workspaceId", workspaceId);
+            deleteBindingsCommand.Parameters.AddWithValue("$workspaceId", normalizedWorkspaceId);
             deleteBindingsCommand.ExecuteNonQuery();
         }
 
@@ -103,11 +122,33 @@ public sealed partial class AgentLocalStore
         {
             command.Transaction = transaction;
             command.CommandText = "DELETE FROM AgentWorkspaces WHERE WorkspaceId = $workspaceId;";
-            command.Parameters.AddWithValue("$workspaceId", workspaceId);
+            command.Parameters.AddWithValue("$workspaceId", normalizedWorkspaceId);
             command.ExecuteNonQuery();
         }
 
+        if (workspaceCreatedAtUtc is not null)
+        {
+            EnqueueWorkspaceDeletedLifecycleEvent(
+                connection,
+                transaction,
+                normalizedWorkspaceId,
+                ComputeLowerHash(
+                    $"agent-workspace-incarnation-v1\n{normalizedWorkspaceId}\n{workspaceCreatedAtUtc}"),
+                deletedSessionIds);
+        }
+        EnqueueSessionCleanupJobs(
+            connection,
+            transaction,
+            deletedSessionIds,
+            activeCleaners,
+            DateTimeOffset.UtcNow);
+
         transaction.Commit();
+        if (deletedSessionIds.Count > 0)
+        {
+            SignalSessionCleanupJobsChanged();
+        }
+        return deletedSessionIds;
     }
 
     public IReadOnlyList<AgentWorkspacePathRecord> ListWorkspacePaths(string workspaceId)

@@ -41,7 +41,7 @@ internal sealed class AgentRunExecutionService(
                 plan.UserMessage,
                 started.UserTurn.TurnId,
                 executionBinding);
-            var behaviorLoop = _behaviorLoopResolver.Resolve(plan.Profile);
+            using var behaviorLoop = _behaviorLoopResolver.Resolve(plan.Profile);
             _runEventLogger.LogRunEvent(
                 PackageLogLevel.Debug,
                 plan.RunKey.SessionId,
@@ -71,19 +71,22 @@ internal sealed class AgentRunExecutionService(
         catch (OperationCanceledException)
         {
             host?.TryCompleteOpenAssistantTurn();
+            var cancellationSummary = plan.ProviderSelection.IsRetiring
+                ? $"Package '{plan.ProviderSelection.OwnerPackageId}' became unavailable during provider execution."
+                : "Agent run was canceled after provider execution started.";
             _runEventLogger.LogRunEvent(
                 PackageLogLevel.Warning,
                 plan.RunKey.SessionId,
                 plan.RunKey.RunId,
                 plan.RunKey.RunRevision,
                 "run.canceled",
-                "Agent run was canceled.",
+                cancellationSummary,
                 ElapsedMilliseconds(plan));
             return GetTerminalCheckpoint(plan)
                 ?? _sessionService.TryTransitionRun(
                     plan.RunHandle.DurableLease!,
                     AgentRunStatus.Interrupted,
-                    "Agent run was canceled after provider execution started.")?.Checkpoint
+                    cancellationSummary)?.Checkpoint
                 ?? GetTerminalCheckpoint(plan)
                 ?? started.InterruptedCheckpoint
                 ?? started.RunningCheckpoint;
@@ -110,7 +113,7 @@ internal sealed class AgentRunExecutionService(
         return new AgentBehaviorLoopContext(
             plan.Session,
             plan.Profile,
-            plan.Provider.Descriptor.ProviderId,
+            plan.ProviderSelection.Descriptor!.ProviderId,
             plan.ChatBinding.ModelId!,
             plan.RunCapabilities,
             plan.Workspace,

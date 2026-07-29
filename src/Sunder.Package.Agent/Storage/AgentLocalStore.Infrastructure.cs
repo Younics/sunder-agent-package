@@ -14,6 +14,24 @@ public sealed partial class AgentLocalStore
             Pooling = false,
         }.ToString();
 
+    private static void EnableSecureDelete(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA secure_delete = ON;";
+        command.ExecuteNonQuery();
+    }
+
+    private static void CheckpointWriteAheadLog(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+        using var reader = command.ExecuteReader();
+        if (reader.Read() && reader.GetInt64(0) != 0)
+        {
+            throw new InvalidOperationException("The Agent store WAL checkpoint could not drain active readers.");
+        }
+    }
+
     private static void EnsureSqliteNativeLibraryLoaded(string installPath)
     {
         var fileName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)

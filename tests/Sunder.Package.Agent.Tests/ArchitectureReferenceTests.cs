@@ -17,6 +17,7 @@ public sealed class ArchitectureReferenceTests
     {
         using var packageScope = RegressionTestPackageScope.Create();
         var databasePath = packageScope.Context.Storage.RoleLocalWorkspace.GetLocalPath("agent/agent.db");
+        var historyDatabasePath = packageScope.Context.Storage.RoleLocalWorkspace.GetLocalPath("agent/history-search.db");
         var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
         services.AddSingleton(packageScope.Context);
         services.AddSingleton<IPackageContext>(packageScope.Context);
@@ -32,6 +33,25 @@ public sealed class ArchitectureReferenceTests
 
         Assert.Null(provider.GetService(typeof(AgentLocalStore)));
         Assert.False(File.Exists(databasePath));
+        Assert.False(File.Exists(historyDatabasePath));
+    }
+
+    [Fact]
+    public void HistorySearch_RemainsAnInternalRuntimeProjection()
+    {
+        var contractsAssembly = typeof(Sunder.Package.Agent.Contracts.PackageExtensionPoints).Assembly;
+        Assert.DoesNotContain(
+            contractsAssembly.ExportedTypes,
+            type => type.Name.Contains("HistorySearch", StringComparison.Ordinal));
+
+        var contractsRoot = Path.Combine(
+            AgentPackageRepositoryInventory.RepositoryRoot.FullName,
+            "src",
+            "Sunder.Package.Agent.Contracts");
+        Assert.DoesNotContain(
+            Directory.EnumerateFiles(contractsRoot, "*.cs", SearchOption.AllDirectories)
+                .Where(AgentPackageRepositoryInventory.IsSourceFile),
+            sourceFile => File.ReadAllText(sourceFile).Contains("HistorySearch", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -392,11 +412,14 @@ public sealed class ArchitectureReferenceTests
     private static readonly IReadOnlySet<string> AllowedFriendAssemblies = new HashSet<string>(
         [
             "Sunder.Package.Agent -> Sunder.Package.Agent.Tests",
+            "Sunder.Package.Agent.Contracts -> Sunder.Package.Agent",
+            "Sunder.Package.Agent.Contracts -> Sunder.Package.Agent.Subagents",
             "Sunder.Package.Agent.Execution.Docker -> Sunder.Package.Agent.Execution.Local.Tests",
             "Sunder.Package.Agent.Execution.Docker -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent.Execution.Local -> Sunder.Package.Agent.Execution.Local.Tests",
             "Sunder.Package.Agent.Execution.Local -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent.Mcp -> Sunder.Package.Agent.Tests",
+            "Sunder.Package.Agent.Memory.Semantic -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent.Provider.Anthropic -> Sunder.Package.Agent.Provider.Anthropic.Tests",
             "Sunder.Package.Agent.Provider.Gemini -> Sunder.Package.Agent.Provider.Gemini.Tests",
             "Sunder.Package.Agent.Provider.LMStudio -> Sunder.Package.Agent.Provider.LMStudio.Tests",
@@ -405,6 +428,7 @@ public sealed class ArchitectureReferenceTests
             "Sunder.Package.Agent.Skills -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent.Subagents -> Sunder.Package.Agent.Execution.Local.Tests",
             "Sunder.Package.Agent.Subagents -> Sunder.Package.Agent.Tests",
+            "Sunder.Package.Agent.Tools.Files -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent.Tools.Web -> Sunder.Package.Agent.Tests",
         ],
         StringComparer.Ordinal);

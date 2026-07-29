@@ -1,6 +1,7 @@
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Storage;
 using Xunit;
 
 namespace Sunder.Package.Agent.Provider.Anthropic.Tests;
@@ -82,42 +83,86 @@ public sealed class AnthropicSettingsStateTests
     private sealed class ThrowingSecrets : IPackageSecrets
     {
         public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default)
-            => Task.FromResult<string?>(null);
+        {
+            ValidateKey(key);
+            return Task.FromResult<string?>(null);
+        }
 
         public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default)
-            => throw new InvalidOperationException("secret store unavailable");
+        {
+            ValidateKey(key);
+            ValidateValue(value);
+            throw new InvalidOperationException("secret store unavailable");
+        }
 
         public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default)
-            => throw new InvalidOperationException("secret store unavailable");
+        {
+            ValidateKey(key);
+            throw new InvalidOperationException("secret store unavailable");
+        }
     }
 
     private sealed class BlockingKeyValueStore : IPackageKeyValueStore
     {
-        private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
 
         internal TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
-            => Task.FromResult(_values.GetValueOrDefault(key));
+        {
+            ValidateKey(key);
+            return Task.FromResult(_values.GetValueOrDefault(key));
+        }
 
         public async Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
         {
+            ValidateKey(key);
+            ValidateValue(value);
             WriteStarted.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             _values[key] = value;
         }
 
         public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default)
-            => Task.FromResult(_values.ContainsKey(key));
+        {
+            ValidateKey(key);
+            return Task.FromResult(_values.ContainsKey(key));
+        }
 
         public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            ValidateKey(key);
             _values.Remove(key);
             return Task.CompletedTask;
         }
 
         public Task<IReadOnlyList<string>> ListKeysAsync(string? prefix = null, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<string>>(_values.Keys.ToArray());
+        {
+            if (prefix is not null && prefix.Length != 0 && !PackageStorageValidation.IsValidKey(prefix))
+            {
+                throw new ArgumentException("Invalid test storage prefix.", nameof(prefix));
+            }
+            return Task.FromResult<IReadOnlyList<string>>(_values.Keys
+                .Where(key => prefix is null || key.StartsWith(prefix, StringComparison.Ordinal))
+                .Order(StringComparer.Ordinal)
+                .ToArray());
+        }
+    }
+
+    private static void ValidateKey(string? key)
+    {
+        if (!PackageStorageValidation.IsValidKey(key))
+        {
+            throw new ArgumentException("Invalid test storage key.", nameof(key));
+        }
+    }
+
+    private static void ValidateValue(string? value)
+    {
+        if (!PackageStorageValidation.IsValidValue(value))
+        {
+            throw new ArgumentException("Invalid test storage value.", nameof(value));
+        }
     }
 }

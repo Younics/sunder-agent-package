@@ -13,6 +13,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
     private readonly AgentLocalStore _store;
     private readonly AgentToolService _toolService;
     private readonly IPackageExtensionCatalog _extensionCatalog;
+    private readonly IPackageExtensionInvocationCatalog _invocationCatalog;
     private readonly AgentProfileSelectableCapabilityChangeObserver _capabilityChangeObserver;
     private bool _disposed;
 
@@ -24,6 +25,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
         _store = store;
         _toolService = toolService;
         _extensionCatalog = extensionCatalog;
+        _invocationCatalog = AgentExtensionInvocation.Require(extensionCatalog);
         _capabilityChangeObserver = new AgentProfileSelectableCapabilityChangeObserver(extensionCatalog);
         _capabilityChangeObserver.Changed += OnSelectableCapabilitiesChanged;
     }
@@ -39,11 +41,16 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
     public async Task<AgentProfileRecord> CreateProfileAsync(string displayName, CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.UtcNow;
-        var chatProviders = ListChatProviders();
-        var chatProvider = chatProviders.FirstOrDefault();
+        var chatProvider = GetChatProviderReferences()
+            .OrderBy(provider => provider.Metadata.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
         var orderedChatModels = chatProvider is null
             ? []
-            : (await chatProvider.GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false))
+            : (await AgentExtensionInvocation.InvokeAsync(
+                    chatProvider,
+                    cancellationToken,
+                    static (provider, token) => provider.GetAvailableModelsAsync(token))
+                .ConfigureAwait(false))
                 .OrderNewestFirst()
                 .ToArray();
         var chatModel = orderedChatModels.FirstOrDefault(model => model.IsRecommended)
@@ -55,7 +62,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             displayName,
             null,
             null,
-            chatProvider?.Descriptor.ProviderId,
+            chatProvider?.Metadata.ProviderId,
             chatModel?.ModelId,
             null,
             null,
@@ -63,7 +70,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             now,
             BuildModelBindings(
                 profileId,
-                chatProvider?.Descriptor.ProviderId,
+                chatProvider?.Metadata.ProviderId,
                 chatModel?.ModelId,
                 chatSettingsJson: null,
                 embeddingProviderId: null,
@@ -134,7 +141,16 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             .ToArray();
 
     public IReadOnlyList<AgentBehaviorLoopDescriptor> ListBehaviorLoopDescriptors()
-        => ListBehaviorLoops().Select(static loop => loop.Descriptor).ToArray();
+        => AgentExtensionInvocation.Snapshot(
+                _invocationCatalog,
+                PackageExtensionPoints.BehaviorLoops,
+                static loop => loop.Descriptor with
+                {
+                    FeatureKinds = loop.Descriptor.FeatureKinds?.ToArray(),
+                })
+            .Select(static loop => loop.Metadata)
+            .OrderBy(loop => loop.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
     public AgentProfileModelBindingRecord? GetModelBinding(string profileId, string capabilityKind)
         => _store.GetProfileModelBinding(profileId, capabilityKind);
@@ -177,7 +193,10 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             .ToArray();
 
     public IReadOnlyList<AgentProviderDescriptor> ListChatProviderDescriptors()
-        => ListChatProviders().Select(static provider => provider.Descriptor).ToArray();
+        => GetChatProviderReferences()
+            .Select(static provider => provider.Metadata)
+            .OrderBy(provider => provider.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
     public IReadOnlyList<IAgentEmbeddingProvider> ListEmbeddingProviders()
         => _extensionCatalog.GetExtensions(PackageExtensionPoints.EmbeddingProviders)
@@ -185,13 +204,41 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             .ToArray();
 
     public IReadOnlyList<AgentEmbeddingProviderDescriptor> ListEmbeddingProviderDescriptors()
-        => ListEmbeddingProviders().Select(static provider => provider.Descriptor).ToArray();
+        => GetEmbeddingProviderReferences()
+            .Select(static provider => provider.Metadata)
+            .OrderBy(provider => provider.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
     public bool HasProfileCapabilityConsumers(string capabilityKind)
-        => !string.IsNullOrWhiteSpace(capabilityKind)
-           && _extensionCatalog.GetExtensions(PackageExtensionPoints.ProfileCapabilityConsumers)
-               .Any(consumer => consumer.ListConsumedCapabilities()
-                   .Any(capability => string.Equals(capability.CapabilityKind, capabilityKind, StringComparison.OrdinalIgnoreCase)));
+    {
+        if (string.IsNullOrWhiteSpace(capabilityKind))
+        {
+            return false;
+        }
+
+        foreach (var reference in _invocationCatalog.GetExtensionReferences(
+                     PackageExtensionPoints.ProfileCapabilityConsumers))
+        {
+            if (!reference.TryAcquire(out var lease))
+            {
+                continue;
+            }
+            using (lease)
+            {
+                var consumed = lease.Contribution.ListConsumedCapabilities().ToArray();
+                if (!lease.RetirementToken.IsCancellationRequested
+                    && consumed.Any(capability => string.Equals(
+                        capability.CapabilityKind,
+                        capabilityKind,
+                        StringComparison.OrdinalIgnoreCase)))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 
     public async Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListSelectableProfileCapabilitiesAsync(
         AgentProfileRecord? profile = null,
@@ -200,10 +247,17 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
         _capabilityChangeObserver.RefreshProviderSubscriptions();
         var request = new AgentProfileSelectableCapabilityRequest(profile);
         var capabilities = new List<AgentProfileSelectableCapabilityDescriptor>();
-        foreach (var provider in _extensionCatalog.GetExtensions(PackageExtensionPoints.ProfileSelectableCapabilityProviders)
-                     .OrderBy(provider => provider.DisplayName, StringComparer.OrdinalIgnoreCase))
+        var providers = AgentExtensionInvocation.Snapshot(
+            _invocationCatalog,
+            PackageExtensionPoints.ProfileSelectableCapabilityProviders,
+            static provider => provider.DisplayName);
+        foreach (var provider in providers
+                     .OrderBy(provider => provider.Metadata, StringComparer.OrdinalIgnoreCase))
         {
-            capabilities.AddRange(await provider.ListCapabilitiesAsync(request, cancellationToken).ConfigureAwait(false));
+            capabilities.AddRange(await AgentExtensionInvocation.InvokeAsync(
+                provider,
+                cancellationToken,
+                (instance, token) => instance.ListCapabilitiesAsync(request, token)).ConfigureAwait(false));
         }
 
         return capabilities
@@ -247,10 +301,17 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             return [];
         }
 
-        var provider = ListChatProviders().FirstOrDefault(x => string.Equals(x.Descriptor.ProviderId, providerId, StringComparison.OrdinalIgnoreCase));
+        var provider = GetChatProviderReferences().FirstOrDefault(x => string.Equals(
+            x.Metadata.ProviderId,
+            providerId,
+            StringComparison.OrdinalIgnoreCase));
         return provider is null
             ? []
-            : (await provider.GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false))
+            : (await AgentExtensionInvocation.InvokeAsync(
+                    provider,
+                    cancellationToken,
+                    static (instance, token) => instance.GetAvailableModelsAsync(token))
+                .ConfigureAwait(false))
                 .OrderNewestFirst()
                 .ToArray();
     }
@@ -262,10 +323,17 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             return [];
         }
 
-        var provider = ListEmbeddingProviders().FirstOrDefault(x => string.Equals(x.Descriptor.ProviderId, providerId, StringComparison.OrdinalIgnoreCase));
+        var provider = GetEmbeddingProviderReferences().FirstOrDefault(x => string.Equals(
+            x.Metadata.ProviderId,
+            providerId,
+            StringComparison.OrdinalIgnoreCase));
         return provider is null
             ? []
-            : (await provider.GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false))
+            : (await AgentExtensionInvocation.InvokeAsync(
+                    provider,
+                    cancellationToken,
+                    static (instance, token) => instance.GetAvailableModelsAsync(token))
+                .ConfigureAwait(false))
                 .OrderBy(model => model.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
     }
@@ -277,10 +345,16 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             return null;
         }
 
-        var provider = ListChatProviders().FirstOrDefault(x => string.Equals(x.Descriptor.ProviderId, providerId, StringComparison.OrdinalIgnoreCase));
+        var provider = GetChatProviderReferences().FirstOrDefault(x => string.Equals(
+            x.Metadata.ProviderId,
+            providerId,
+            StringComparison.OrdinalIgnoreCase));
         return provider is null
             ? null
-            : await provider.GetReadinessAsync(cancellationToken).ConfigureAwait(false);
+            : await AgentExtensionInvocation.InvokeAsync(
+                provider,
+                cancellationToken,
+                static (instance, token) => instance.GetReadinessAsync(token)).ConfigureAwait(false);
     }
 
     public async Task<AgentEmbeddingProviderReadiness?> GetEmbeddingProviderReadinessAsync(string? providerId, CancellationToken cancellationToken = default)
@@ -290,11 +364,34 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             return null;
         }
 
-        var provider = ListEmbeddingProviders().FirstOrDefault(x => string.Equals(x.Descriptor.ProviderId, providerId, StringComparison.OrdinalIgnoreCase));
+        var provider = GetEmbeddingProviderReferences().FirstOrDefault(x => string.Equals(
+            x.Metadata.ProviderId,
+            providerId,
+            StringComparison.OrdinalIgnoreCase));
         return provider is null
             ? null
-            : await provider.GetReadinessAsync(cancellationToken).ConfigureAwait(false);
+            : await AgentExtensionInvocation.InvokeAsync(
+                provider,
+                cancellationToken,
+                static (instance, token) => instance.GetReadinessAsync(token)).ConfigureAwait(false);
     }
+
+    private IReadOnlyList<AgentExtensionReference<IAgentChatProvider, AgentProviderDescriptor>>
+        GetChatProviderReferences()
+        => AgentExtensionInvocation.Snapshot(
+            _invocationCatalog,
+            PackageExtensionPoints.ChatProviders,
+            static provider => provider.Descriptor with
+            {
+                SupportedAuthModes = provider.Descriptor.SupportedAuthModes.ToArray(),
+            });
+
+    private IReadOnlyList<AgentExtensionReference<IAgentEmbeddingProvider, AgentEmbeddingProviderDescriptor>>
+        GetEmbeddingProviderReferences()
+        => AgentExtensionInvocation.Snapshot(
+            _invocationCatalog,
+            PackageExtensionPoints.EmbeddingProviders,
+            static provider => provider.Descriptor);
 
     private static IReadOnlyList<AgentProfileModelBindingRecord> BuildModelBindings(
         string? profileId,

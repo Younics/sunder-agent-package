@@ -15,6 +15,7 @@ Use only the public types in `Sunder.Package.Agent.Contracts` and the Sunder SDK
 | Add a local, container, or remote executor | [Execution targets, paths, and security](execution-targets.md) |
 | Add instructions, reference context, or event observers | [Prompts, context, lifecycle, and trust](prompts-context-lifecycle.md) |
 | Integrate durable recall | [Semantic memory](semantic-memory.md) |
+| Understand local recent-history and transcript search | [History search](history-search.md) |
 | Customize orchestration or launch child sessions | [Behavior loops, child runs, and subagents](behavior-loops-and-subagents.md) |
 | Configure MCP tools and browser authorization | [MCP and OAuth](mcp-and-oauth.md) |
 | Understand repository and runtime boundaries | [Package family architecture](package-family-architecture.md) |

@@ -153,13 +153,9 @@ public sealed class BuilderProjectApplicationService(
             throw new InvalidOperationException("Generated project path is outside the selected workspace paths.");
         }
 
-        var hostProjectFolder = pathService.ResolveContainedHostPath(hostMapping.HostPath, workspacePath.HostPath);
-        Directory.CreateDirectory(Path.GetDirectoryName(hostProjectFolder) ?? hostProjectFolder);
-        hostProjectFolder = pathService.ResolveContainedHostPath(hostProjectFolder, workspacePath.HostPath);
-        if (Directory.Exists(hostProjectFolder))
-        {
-            EnsureProjectFolderCanBeInitialized(hostProjectFolder);
-        }
+        // Host mapping is advisory only. The target-owned dotnet process below creates the project;
+        // Builder must not turn a point-in-time mapping into a host-side structured mutation.
+        var hostProjectFolder = hostMapping.HostPath;
 
         var workingDirectory = pathService.GetExecutionParentFolder(executionProjectFolder) ?? execution.DefaultExecutionRoot;
         var result = await execution.RunProcessAsync(
@@ -311,17 +307,6 @@ public sealed class BuilderProjectApplicationService(
             outputFolder,
             "--createInPlace",
         ];
-
-    private static void EnsureProjectFolderCanBeInitialized(string projectFolder)
-    {
-        var existingEntries = Directory.EnumerateFileSystemEntries(projectFolder)
-            .Where(entry => !string.Equals(Path.GetFileName(entry), ".DS_Store", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        if (existingEntries.Length > 0)
-        {
-            throw new InvalidOperationException("Choose an empty folder before initializing a package project.");
-        }
-    }
 
     private static BuilderProjectValidationResult Invalid(string error)
         => new(null, error);

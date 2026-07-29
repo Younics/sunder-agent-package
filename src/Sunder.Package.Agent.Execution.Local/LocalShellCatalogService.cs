@@ -1,20 +1,38 @@
 using System.Text.Json;
+using System.Runtime.CompilerServices;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
-public sealed class LocalShellCatalogService(IPackageContext packageContext)
+public sealed class LocalShellCatalogService
 {
     private const string CustomShellsKey = "shells.custom";
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private const int CurrentSchemaVersion = 1;
+    private const int MaximumShellCount = 32;
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = true,
+    };
+    private static readonly ConditionalWeakTable<IPackageKeyValueStore, SemaphoreSlim> MutationGates = new();
+    private readonly IPackageContext packageContext;
+    private readonly SemaphoreSlim _mutationGate;
+
+    public LocalShellCatalogService(IPackageContext packageContext)
+    {
+        this.packageContext = packageContext;
+        _mutationGate = MutationGates.GetValue(
+            packageContext.Storage.State,
+            static _ => new SemaphoreSlim(1, 1));
+    }
 
     public async Task<IReadOnlyList<LocalShellDefinition>> ListShellsAsync(CancellationToken cancellationToken = default)
     {
+        var snapshot = await GetSnapshotAsync(cancellationToken);
         var result = new List<LocalShellDefinition>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var shells = DetectShells()
-            .Concat((await ListCustomShellsAsync(cancellationToken)).OrderBy(shell => shell.DisplayName, StringComparer.OrdinalIgnoreCase));
+        var shells = snapshot.DetectedShells
+            .Concat(snapshot.CustomShells.OrderBy(shell => shell.DisplayName, StringComparer.OrdinalIgnoreCase));
 
         foreach (var shell in shells)
         {
@@ -28,29 +46,106 @@ public sealed class LocalShellCatalogService(IPackageContext packageContext)
     }
 
     public async Task<IReadOnlyList<LocalShellDefinition>> ListCustomShellsAsync(CancellationToken cancellationToken = default)
+        => (await GetSnapshotAsync(cancellationToken)).CustomShells;
+
+    internal async Task<LocalShellCatalogSnapshot> GetSnapshotAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var state = await LoadStateAsync(cancellationToken);
+        return new LocalShellCatalogSnapshot(
+            state.Revision,
+            DetectShells(),
+            state.Shells);
+    }
+
+    internal async Task<LocalShellCatalogSnapshot> SaveCustomShellsAsync(
+        IReadOnlyList<LocalShellDefinition> shells,
+        long expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(shells);
+        if (shells.Count > MaximumShellCount)
+        {
+            throw new LocalExecutionDomainException(
+                "local.shell-catalog.too-many",
+                $"At most {MaximumShellCount} custom shells may be configured.");
+        }
+
+        var normalized = NormalizeCustomShells(shells);
+        await _mutationGate.WaitAsync(cancellationToken);
+        try
+        {
+            var current = await LoadStateAsync(cancellationToken);
+            if (current.Revision != expectedRevision)
+            {
+                throw new LocalExecutionDomainException(
+                    "local.shell-catalog.conflict",
+                    "Shell settings changed in Runtime. Refresh and retry without discarding your draft.",
+                    isTransient: true);
+            }
+
+            var updated = new LocalShellCatalogState(
+                CurrentSchemaVersion,
+                checked(current.Revision + 1),
+                normalized);
+            await packageContext.Storage.State.SetValueAsync(
+                CustomShellsKey,
+                JsonSerializer.Serialize(updated, JsonOptions),
+                cancellationToken);
+            return new LocalShellCatalogSnapshot(
+                updated.Revision,
+                DetectShells(),
+                updated.Shells);
+        }
+        finally
+        {
+            _mutationGate.Release();
+        }
+    }
+
+    private async Task<LocalShellCatalogState> LoadStateAsync(CancellationToken cancellationToken)
     {
         var json = await packageContext.Storage.State.GetValueAsync(CustomShellsKey, cancellationToken);
         if (string.IsNullOrWhiteSpace(json))
         {
-            return [];
+            return new LocalShellCatalogState(CurrentSchemaVersion, 0, []);
         }
 
         try
         {
-            return JsonSerializer.Deserialize<IReadOnlyList<LocalShellDefinition>>(json, JsonOptions)
-                       ?.Where(shell => !shell.IsDetected)
-                       .ToArray()
-                   ?? [];
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                var legacy = JsonSerializer.Deserialize<IReadOnlyList<LocalShellDefinition>>(json, JsonOptions)
+                    ?? throw new JsonException("The legacy shell list is null.");
+                return new LocalShellCatalogState(CurrentSchemaVersion, 0, NormalizeCustomShells(legacy));
+            }
+
+            var state = JsonSerializer.Deserialize<LocalShellCatalogState>(json, JsonOptions)
+                ?? throw new JsonException("The shell catalog is null.");
+            if (state.SchemaVersion != CurrentSchemaVersion || state.Revision < 0 || state.Shells is null)
+            {
+                throw new LocalExecutionDomainException(
+                    "local.shell-catalog.unsupported-schema",
+                    "The stored shell catalog uses an unsupported schema and was left unchanged.");
+            }
+            return state with { Shells = NormalizeCustomShells(state.Shells) };
         }
-        catch
+        catch (LocalExecutionDomainException)
         {
-            return [];
+            throw;
+        }
+        catch (Exception exception) when (exception is JsonException or NotSupportedException)
+        {
+            throw new LocalExecutionDomainException(
+                "local.shell-catalog.malformed",
+                "The stored shell catalog is malformed and was left unchanged.",
+                innerException: exception);
         }
     }
 
-    public Task SaveCustomShellsAsync(
-        IReadOnlyList<LocalShellDefinition> shells,
-        CancellationToken cancellationToken = default)
+    private static IReadOnlyList<LocalShellDefinition> NormalizeCustomShells(
+        IEnumerable<LocalShellDefinition> shells)
     {
         var normalized = shells
             .Where(shell => !shell.IsDetected && !string.IsNullOrWhiteSpace(shell.ExecutablePath))
@@ -62,11 +157,24 @@ public sealed class LocalShellCatalogService(IPackageContext packageContext)
                 SyntaxKind = NormalizeSyntaxKind(shell.SyntaxKind),
                 IsDetected = false,
             })
+            .GroupBy(shell => shell.ShellId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.Last())
+            .OrderBy(shell => shell.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        return packageContext.Storage.State.SetValueAsync(
-            CustomShellsKey,
-            JsonSerializer.Serialize(normalized, JsonOptions),
-            cancellationToken);
+        if (normalized.Length > MaximumShellCount)
+        {
+            throw new LocalExecutionDomainException(
+                "local.shell-catalog.too-many",
+                $"At most {MaximumShellCount} custom shells may be configured.");
+        }
+        if (normalized.Any(shell => string.IsNullOrWhiteSpace(shell.ShellId)
+                                    || shell.ShellId.Length > 128))
+        {
+            throw new LocalExecutionDomainException(
+                "local.shell.invalid-id",
+                "Custom shell identifiers must be non-empty and at most 128 characters.");
+        }
+        return normalized;
     }
 
     public async Task<LocalShellDefinition> GetDefaultShellAsync(CancellationToken cancellationToken = default)
@@ -145,6 +253,34 @@ public sealed class LocalShellCatalogService(IPackageContext packageContext)
             AgentShellSyntaxKinds.PosixSh => AgentShellSyntaxKinds.PosixSh,
             _ => AgentShellSyntaxKinds.Custom,
         };
+}
+
+internal sealed record LocalShellCatalogSnapshot(
+    long Revision,
+    IReadOnlyList<LocalShellDefinition> DetectedShells,
+    IReadOnlyList<LocalShellDefinition> CustomShells);
+
+internal sealed record LocalShellCatalogState(
+    int SchemaVersion,
+    long Revision,
+    IReadOnlyList<LocalShellDefinition> Shells);
+
+internal sealed class LocalExecutionDomainException : InvalidOperationException
+{
+    internal LocalExecutionDomainException(
+        string code,
+        string message,
+        bool isTransient = false,
+        Exception? innerException = null)
+        : base(message, innerException)
+    {
+        Code = code;
+        IsTransient = isTransient;
+    }
+
+    internal string Code { get; }
+
+    internal bool IsTransient { get; }
 }
 
 public sealed record LocalShellDefinition(

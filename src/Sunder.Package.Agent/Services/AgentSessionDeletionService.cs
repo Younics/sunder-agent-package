@@ -35,11 +35,7 @@ internal sealed class AgentSessionDeletionService(
         await DeleteAsync(
             workspaceSessions,
             workspaceId,
-            () =>
-            {
-                sessions.DeleteSessionsForWorkspace(workspaceId);
-                workspaces.DeleteWorkspacePersistence(workspaceId);
-            },
+            () => workspaces.DeleteWorkspace(workspaceId),
             cancellationToken).ConfigureAwait(false);
     }
 

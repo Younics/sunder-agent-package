@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -8,15 +9,23 @@ namespace Sunder.Package.Agent.Services;
 
 public sealed class AgentMemoryCoordinator(
     AgentSessionService sessionService,
-    IPackageExtensionCatalog extensionCatalog)
+    IPackageExtensionCatalog extensionCatalog,
+    AgentLifecycleDispatcher? lifecycleDispatcher = null)
 {
     private const int MaxRecentLiveBufferTurns = 8;
     private const int MaxPromptContextTurns = 64;
 
     private readonly AgentSessionService _sessionService = sessionService;
     private readonly IPackageExtensionCatalog _extensionCatalog = extensionCatalog;
+    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
+        AgentExtensionInvocation.Require(extensionCatalog);
+    private readonly AgentLifecycleDispatcher _lifecycleDispatcher =
+        lifecycleDispatcher ?? new AgentLifecycleDispatcher(sessionService.Store, extensionCatalog);
+    private readonly ConcurrentDictionary<PromptContextAcknowledgmentKey,
+        IReadOnlyList<AgentExtensionReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>>
+        _promptContextAcknowledgments = new();
 
-    public async Task<AgentInstructionContext> BuildInstructionContextAsync(
+    public Task<AgentInstructionContext> BuildInstructionContextAsync(
         AgentSessionRecord session,
         AgentProfileRecord profile,
         Guid runId,
@@ -27,10 +36,60 @@ public sealed class AgentMemoryCoordinator(
         AgentWorkspaceBindingRecord? executionBinding = null,
         IReadOnlyList<AgentToolDescriptor>? availableTools = null,
         CancellationToken cancellationToken = default)
+        => BuildInstructionContextCoreAsync(
+            session,
+            profile,
+            runId,
+            runRevision,
+            userMessage,
+            runStartedAtUtc,
+            workspace,
+            executionBinding,
+            availableTools,
+            _sessionService.GetLatestSessionContextCheckpoint(session.SessionId),
+            cancellationToken);
+
+    internal Task<AgentInstructionContext> BuildInstructionContextForProjectionAsync(
+        AgentSessionRecord session,
+        AgentProfileRecord profile,
+        Guid runId,
+        long runRevision,
+        string userMessage,
+        DateTimeOffset runStartedAtUtc,
+        AgentWorkspaceRecord? workspace,
+        AgentWorkspaceBindingRecord? executionBinding,
+        IReadOnlyList<AgentToolDescriptor>? availableTools,
+        AgentSessionContextCheckpointRecord? selectedContextCheckpoint,
+        CancellationToken cancellationToken)
+        => BuildInstructionContextCoreAsync(
+            session,
+            profile,
+            runId,
+            runRevision,
+            userMessage,
+            runStartedAtUtc,
+            workspace,
+            executionBinding,
+            availableTools,
+            selectedContextCheckpoint,
+            cancellationToken);
+
+    private async Task<AgentInstructionContext> BuildInstructionContextCoreAsync(
+        AgentSessionRecord session,
+        AgentProfileRecord profile,
+        Guid runId,
+        long runRevision,
+        string userMessage,
+        DateTimeOffset runStartedAtUtc,
+        AgentWorkspaceRecord? workspace,
+        AgentWorkspaceBindingRecord? executionBinding,
+        IReadOnlyList<AgentToolDescriptor>? availableTools,
+        AgentSessionContextCheckpointRecord? selectedContextCheckpoint,
+        CancellationToken cancellationToken)
     {
         var turns = _sessionService.ListRecentTurns(session.SessionId, MaxPromptContextTurns);
         var recentLiveBufferTurns = BuildRecentLiveBufferTurns(turns);
-        var workingSummary = _sessionService.GetLatestSessionContextCheckpoint(session.SessionId)?.SummaryText;
+        var workingSummary = selectedContextCheckpoint?.SummaryText;
         var sessionContext = CreateSessionContext(session, profile, workingSummary);
         var runContext = new AgentRunContextRecord(runId, runRevision, AgentRunStatus.Running, IsInterrupted: false, runStartedAtUtc);
         var turnContext = new AgentTurnContextRecord(sessionContext, runContext, userMessage, workingSummary);
@@ -47,6 +106,12 @@ public sealed class AgentMemoryCoordinator(
                 SourceId: "sunder.package.agent.profile",
                 Provenance: AgentContextProvenance.User,
                 Trust: AgentContextTrust.UserProvided));
+            promptContextBlocks[^1] = promptContextBlocks[^1] with
+            {
+                Usage = AgentPromptContextUsage.StandingInstruction,
+                Authority = AgentPromptContextAuthority.StandingInstruction,
+                HostIdentity = AgentPromptContextHostPolicy.ProfileInstructionIdentity,
+            };
         }
 
         if (!string.IsNullOrWhiteSpace(workingSummary))
@@ -60,6 +125,7 @@ public sealed class AgentMemoryCoordinator(
                 Trust: AgentContextTrust.Untrusted));
         }
 
+        var transcriptEpoch = _sessionService.GetTranscriptEpoch(session.SessionId);
         var promptContextRequest = new AgentPromptContextRequest(
             sessionContext,
             runContext,
@@ -72,11 +138,33 @@ public sealed class AgentMemoryCoordinator(
             Workspace = workspace,
             ExecutionBinding = executionBinding,
             AvailableTools = availableTools ?? [],
+            MemoryConsistencyBarrier = _sessionService.GetMemoryConsistencyBarrier(runId),
+            TranscriptEpoch = transcriptEpoch,
+            ExecutionTargetReference = ResolveExecutionTargetReference(executionBinding),
         };
-        promptContextBlocks.AddRange(await CollectPromptContextBlocksAsync(
+        var collected = await CollectPromptContextBlocksAsync(
             promptContextRequest,
-            cancellationToken));
-        return new AgentInstructionContext(null, workingSummary, RecallResult: null, recallPlan, promptContextBlocks);
+            cancellationToken).ConfigureAwait(false);
+        promptContextBlocks.AddRange(collected.Blocks);
+        var acknowledgmentKey = new PromptContextAcknowledgmentKey(
+            session.SessionId,
+            runId,
+            transcriptEpoch);
+        if (collected.AcknowledgmentSinks.Count == 0)
+        {
+            _promptContextAcknowledgments.TryRemove(acknowledgmentKey, out _);
+        }
+        else
+        {
+            _promptContextAcknowledgments[acknowledgmentKey] = collected.AcknowledgmentSinks;
+        }
+        return new AgentInstructionContext(
+            null,
+            workingSummary,
+            RecallResult: null,
+            recallPlan,
+            promptContextBlocks,
+            transcriptEpoch);
     }
 
     public async Task PublishLifecycleEventAsync(
@@ -93,41 +181,126 @@ public sealed class AgentMemoryCoordinator(
         bool isInterrupted = false,
         CancellationToken cancellationToken = default)
     {
+        var isDurablyCaptured = _sessionService.Store.ContainsRunLifecycleEvent(kind, runId);
+        await _lifecycleDispatcher.FlushAsync(cancellationToken).ConfigureAwait(false);
+        if (isDurablyCaptured)
+        {
+            return;
+        }
+
         var turns = _sessionService.ListRecentTurns(session.SessionId, MaxPromptContextTurns);
         var recentLiveBufferTurns = BuildRecentLiveBufferTurns(turns);
         var workingSummary = _sessionService.GetLatestSessionContextCheckpoint(session.SessionId)?.SummaryText;
         var sessionContext = CreateSessionContext(session, profile, workingSummary);
         var runContext = new AgentRunContextRecord(runId, runRevision, status, isInterrupted, runStartedAtUtc);
         var turnContext = new AgentTurnContextRecord(sessionContext, runContext, userMessage, workingSummary);
-        var genericLifecycleEvent = new AgentLifecycleEvent(kind, sessionContext, runContext, turnContext, turns, recentLiveBufferTurns, triggerTurn, checkpoint);
+        var lifecycleEvent = new AgentLifecycleEvent(
+            kind,
+            sessionContext,
+            runContext,
+            turnContext,
+            turns,
+            recentLiveBufferTurns,
+            triggerTurn,
+            checkpoint);
 
-        foreach (var observer in GetLifecycleObservers())
+        foreach (var observerReference in GetLifecycleObserverReferences())
         {
-            try
+            if (!observerReference.Reference.TryAcquire(out var lease))
             {
-                await observer.HandleLifecycleEventAsync(genericLifecycleEvent, cancellationToken);
+                continue;
             }
-            catch (OperationCanceledException)
+            using (lease)
             {
-                throw;
+                using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    lease.RetirementToken);
+                try
+                {
+                    await lease.Contribution.HandleLifecycleEventAsync(lifecycleEvent, invocation.Token);
+                }
+                catch (OperationCanceledException) when (
+                    lease.RetirementToken.IsCancellationRequested
+                    && !cancellationToken.IsCancellationRequested)
+                {
+                    // Owner retirement makes this optional compatibility callback unavailable.
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception) when (lease.RetirementToken.IsCancellationRequested)
+                {
+                    // Do not attribute a concurrent owner retirement as an observer failure.
+                }
+                catch
+                {
+                    // Optional runtime observers must not block the base chat flow.
+                }
             }
-            catch
+        }
+    }
+
+    private IReadOnlyList<AgentExtensionReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>
+        GetPromptContextContributors()
+        => AgentExtensionInvocation.Snapshot(
+                _invocationCatalog,
+                PackageExtensionPoints.PromptContextContributors,
+                static contributor => new PromptContextContributorMetadata(
+                    contributor.ContributorId,
+                    contributor.DisplayName,
+                    contributor is IAgentPromptContextAcknowledgmentSink))
+            .OrderBy(contributor => contributor.Metadata.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(contributor => contributor.PackageId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    private IReadOnlyList<LifecycleObserverReference> GetLifecycleObserverReferences()
+    {
+        var references = new List<LifecycleObserverReference>();
+        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.LifecycleObservers))
+        {
+            if (reference.TryAcquire(out var lease))
             {
-                // Optional runtime observers must not block the base chat flow.
+                using (lease)
+                {
+                    references.Add(new LifecycleObserverReference(reference, lease.Contribution.DisplayName));
+                }
             }
         }
 
-    }
-
-    private IReadOnlyList<IAgentPromptContextContributor> GetPromptContextContributors()
-        => _extensionCatalog.GetExtensions(PackageExtensionPoints.PromptContextContributors)
-            .OrderBy(contributor => contributor.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-    private IReadOnlyList<IAgentLifecycleObserver> GetLifecycleObservers()
-        => _extensionCatalog.GetExtensions(PackageExtensionPoints.LifecycleObservers)
+        return references
             .OrderBy(observer => observer.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private IPackageExtensionReference<IAgentExecutionTarget>? ResolveExecutionTargetReference(
+        AgentWorkspaceBindingRecord? binding)
+    {
+        if (binding is null || !binding.IsEnabled)
+        {
+            return null;
+        }
+
+        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.ExecutionTargets))
+        {
+            if (!reference.TryAcquire(out var lease))
+            {
+                continue;
+            }
+            using (lease)
+            {
+                var descriptor = lease.Contribution.Descriptor;
+                if (!lease.RetirementToken.IsCancellationRequested
+                    && (string.Equals(descriptor.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return reference;
+                }
+            }
+        }
+
+        return null;
+    }
 
     private static AgentSessionContextRecord CreateSessionContext(
         AgentSessionRecord session,
@@ -141,32 +314,110 @@ public sealed class AgentMemoryCoordinator(
             session.State,
             workingSummary);
 
-    private async Task<IReadOnlyList<AgentPromptContextBlock>> CollectPromptContextBlocksAsync(
+    private async Task<CollectedPromptContext> CollectPromptContextBlocksAsync(
         AgentPromptContextRequest request,
         CancellationToken cancellationToken)
     {
         var blocks = new List<AgentPromptContextBlock>();
-        foreach (var contributor in GetPromptContextContributors())
+        var acknowledgmentSinks = new List<
+            AgentExtensionReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>();
+        foreach (var ownedContributor in GetPromptContextContributors())
         {
+            var required = AgentPromptContextHostPolicy.IsRequiredScopedInstructionContributor(ownedContributor);
+            if (required && ownedContributor.Metadata.SupportsAcknowledgment)
+            {
+                acknowledgmentSinks.Add(ownedContributor);
+            }
+            if (!request.ContextPlan.ShouldContribute && !required)
+            {
+                continue;
+            }
             try
             {
-                var contribution = await contributor.ContributeContextAsync(request, cancellationToken);
+                var contribution = await AgentExtensionInvocation.InvokeAsync(
+                    ownedContributor,
+                    cancellationToken,
+                    (contributor, token) => contributor.ContributeContextAsync(request, token));
                 if (contribution?.Blocks is { Count: > 0 })
                 {
-                    blocks.AddRange(contribution.Blocks);
+                    blocks.AddRange(contribution.Blocks.Select(block =>
+                        AgentPromptContextHostPolicy.Normalize(block, required)));
                 }
+            }
+            catch (AgentPackageUnavailableException ex)
+            {
+                if (required)
+                {
+                    throw new InvalidOperationException(
+                        $"Required scoped instruction context is unavailable: {AgentPromptContextHostPolicy.BoundMessage(ex.Message)}",
+                        ex);
+                }
+                // Retired optional contributors are omitted from this prompt.
             }
             catch (OperationCanceledException)
             {
                 throw;
             }
-            catch
+            catch (Exception ex)
             {
-                // Optional prompt context contributors must not block the base chat flow.
+                if (required)
+                {
+                    throw new InvalidOperationException(
+                        $"Required scoped instruction context could not be built: {AgentPromptContextHostPolicy.BoundMessage(ex.Message)}",
+                        ex);
+                }
+                // Optional reference-context contributors must not block the base chat flow.
             }
         }
 
-        return blocks;
+        return new CollectedPromptContext(blocks, acknowledgmentSinks);
+    }
+
+    internal async ValueTask AcknowledgePromptContextAsync(
+        AgentPromptContextReceipt receipt,
+        CancellationToken cancellationToken)
+    {
+        if (receipt.Blocks.Count == 0)
+        {
+            return;
+        }
+
+        var key = new PromptContextAcknowledgmentKey(
+            receipt.SessionId,
+            receipt.RunId,
+            receipt.TranscriptEpoch);
+        _promptContextAcknowledgments.TryRemove(key, out var sinks);
+        sinks ??= [];
+        if (sinks.Count != 1)
+        {
+            throw new InvalidOperationException("Required scoped instruction acknowledgment sink is unavailable or ambiguous.");
+        }
+
+        try
+        {
+            await AgentExtensionInvocation.InvokeAsync(
+                sinks[0],
+                cancellationToken,
+                (contributor, token) =>
+                    ((IAgentPromptContextAcknowledgmentSink)contributor)
+                    .AcknowledgePromptContextAsync(receipt, token)).ConfigureAwait(false);
+        }
+        catch (AgentPackageUnavailableException ex)
+        {
+            throw new InvalidOperationException(
+                $"Required scoped instruction acknowledgment is unavailable: {AgentPromptContextHostPolicy.BoundMessage(ex.Message)}",
+                ex);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Required scoped instruction acknowledgment failed: {AgentPromptContextHostPolicy.BoundMessage(ex.Message)}",
+                ex);
+        }
     }
 
     private static AgentPromptContextPlan ToPromptContextPlan(AgentMemoryRecallPlan recallPlan)
@@ -303,6 +554,82 @@ public sealed class AgentMemoryCoordinator(
 
     private static string NormalizeRecallText(string text)
         => Regex.Replace(text.Trim().ToLowerInvariant(), "[^a-z0-9]+", " ").Trim();
+
+    private sealed record LifecycleObserverReference(
+        IPackageExtensionReference<IAgentLifecycleObserver> Reference,
+        string DisplayName);
+
+    internal sealed record PromptContextContributorMetadata(
+        string ContributorId,
+        string DisplayName,
+        bool SupportsAcknowledgment);
+
+    private readonly record struct PromptContextAcknowledgmentKey(
+        Guid SessionId,
+        Guid RunId,
+        long TranscriptEpoch);
+
+    private sealed record CollectedPromptContext(
+        IReadOnlyList<AgentPromptContextBlock> Blocks,
+        IReadOnlyList<AgentExtensionReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>
+            AcknowledgmentSinks);
+}
+
+internal static class AgentPromptContextHostPolicy
+{
+    internal const string ScopedInstructionPackageId = "sunder.package.agent.tools.files";
+    internal const string ScopedInstructionContributorId = "workspace-files";
+    internal const string ScopedInstructionIdentity = "sunder.host.scoped-instruction.v1";
+    internal const string ProfileInstructionIdentity = "sunder.host.profile-standing-instruction.v1";
+
+    public static bool IsRequiredScopedInstructionContributor(
+        AgentExtensionReference<IAgentPromptContextContributor, AgentMemoryCoordinator.PromptContextContributorMetadata>
+            contribution)
+        => string.Equals(contribution.PackageId, ScopedInstructionPackageId, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(
+                contribution.Metadata.ContributorId,
+                ScopedInstructionContributorId,
+                StringComparison.Ordinal);
+
+    public static AgentPromptContextBlock Normalize(AgentPromptContextBlock block, bool requiredScopedContributor)
+    {
+        if (requiredScopedContributor
+            && block.Usage == AgentPromptContextUsage.ScopedInstruction
+            && IsValidScope(block.Scope))
+        {
+            return block with
+            {
+                Authority = AgentPromptContextAuthority.ScopedInstruction,
+                HostIdentity = ScopedInstructionIdentity,
+            };
+        }
+
+        return block with
+        {
+            Usage = AgentPromptContextUsage.Reference,
+            Authority = AgentPromptContextAuthority.Reference,
+            HostIdentity = null,
+            Scope = null,
+        };
+    }
+
+    public static string BoundMessage(string message)
+    {
+        var normalized = message.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return normalized.Length <= 600 ? normalized : normalized[..600] + "...";
+    }
+
+    private static bool IsValidScope(AgentPromptContextScope? scope)
+        => scope is not null
+           && !string.IsNullOrWhiteSpace(scope.ScopeRoot)
+           && !string.IsNullOrWhiteSpace(scope.AppliesToDirectory)
+           && !string.IsNullOrWhiteSpace(scope.DocumentPath)
+           && IsHash(scope.ContentHash)
+           && IsHash(scope.ContextIdentity);
+
+    private static bool IsHash(string value)
+        => value.Length == 64
+           && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
 }
 
 public sealed record AgentInstructionContext(
@@ -310,7 +637,8 @@ public sealed record AgentInstructionContext(
     string? WorkingSummary,
     AgentMemoryRecallResult? RecallResult,
     AgentMemoryRecallPlan RecallPlan,
-    IReadOnlyList<AgentPromptContextBlock>? PromptContextBlocks = null)
+    IReadOnlyList<AgentPromptContextBlock>? PromptContextBlocks = null,
+    long TranscriptEpoch = 0)
 {
     public bool HasSupplementaryContext
         => !string.IsNullOrWhiteSpace(WorkingSummary)

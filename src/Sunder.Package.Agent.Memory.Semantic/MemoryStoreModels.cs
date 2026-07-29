@@ -18,7 +18,12 @@ public sealed record StoredMemoryRecord(
     DateTimeOffset UpdatedAtUtc,
     DateTimeOffset? LastAccessedAtUtc,
     int AccessCount,
-    AgentMemoryProvenance Provenance = AgentMemoryProvenance.Unknown);
+    AgentMemoryProvenance Provenance = AgentMemoryProvenance.Unknown)
+{
+    public long MemoryRevision { get; init; } = 1;
+
+    public bool IsManual { get; init; } = true;
+}
 
 public sealed record MemoryCorrectionResult(
     StoredMemoryRecord CorrectedMemory,
@@ -43,7 +48,10 @@ public sealed record StoredMemoryEvidenceRecord(
     Guid SessionId,
     Guid? SourceTurnId,
     string? EvidenceText,
-    DateTimeOffset CreatedAtUtc);
+    DateTimeOffset CreatedAtUtc)
+{
+    public string? ContributionId { get; init; }
+}
 
 public sealed record StoredMemoryEmbeddingRecord(
     Guid MemoryId,
@@ -54,7 +62,22 @@ public sealed record StoredMemoryEmbeddingRecord(
     int Dimensions,
     IReadOnlyList<float> Values,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset UpdatedAtUtc);
+    DateTimeOffset UpdatedAtUtc)
+{
+    public long MemoryRevision { get; init; }
+}
+
+internal sealed record StoredMemoryEmbeddingGenerationRecord(
+    string GenerationId,
+    Guid SessionId,
+    string ProviderId,
+    string ModelId,
+    string? ConfigurationFingerprint,
+    string? SourceFingerprint,
+    int? MaxCanonicalTextChars,
+    int ExpectedMemoryCount,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? CompletedAtUtc);
 
 public sealed record StoredMemorySearchResult(
     StoredMemoryRecord Memory,

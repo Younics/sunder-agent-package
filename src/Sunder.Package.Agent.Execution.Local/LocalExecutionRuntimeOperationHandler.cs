@@ -16,18 +16,45 @@ internal sealed class LocalExecutionRuntimeOperationHandler(
     public async ValueTask<LocalExecutionOperationResponse> HandleAsync(
         LocalExecutionOperationRequest request,
         CancellationToken cancellationToken = default)
-        => request.Kind switch
+    {
+        try
         {
-            LocalExecutionOperationKind.GetSettings => new(
-                await packageContext.Settings.GetValueAsync(LocalExecutionConfiguration.TimeoutKey, cancellationToken)
-                    ?? LocalExecutionConfiguration.DefaultTimeoutSeconds,
-                await shellCatalog.ListShellsAsync(cancellationToken)),
-            LocalExecutionOperationKind.SaveSettings => await SaveSettingsAsync(request, cancellationToken),
-            LocalExecutionOperationKind.SaveShells => await SaveShellsAsync(request, cancellationToken),
-            LocalExecutionOperationKind.GetWorkspaceEditor => await GetWorkspaceEditorAsync(request, cancellationToken),
-            LocalExecutionOperationKind.SaveWorkspaceEditor => await SaveWorkspaceEditorAsync(request, cancellationToken),
-            _ => throw new InvalidOperationException("Unknown local execution operation."),
-        };
+            return request.Kind switch
+            {
+                LocalExecutionOperationKind.GetSettings => await GetSettingsAsync(cancellationToken),
+                LocalExecutionOperationKind.SaveSettings => await SaveSettingsAsync(request, cancellationToken),
+                LocalExecutionOperationKind.SaveShells => await SaveShellsAsync(request, cancellationToken),
+                LocalExecutionOperationKind.GetWorkspaceEditor => await GetWorkspaceEditorAsync(request, cancellationToken),
+                LocalExecutionOperationKind.SaveWorkspaceEditor => await SaveWorkspaceEditorAsync(request, cancellationToken),
+                _ => throw new LocalExecutionDomainException(
+                    "local.operation.unknown",
+                    "The requested local execution operation is not supported."),
+            };
+        }
+        catch (LocalExecutionDomainException exception)
+        {
+            return new LocalExecutionOperationResponse(
+                Success: false,
+                Error: new LocalExecutionOperationError(
+                    exception.Code,
+                    exception.Message,
+                    exception.IsTransient));
+        }
+    }
+
+    private async ValueTask<LocalExecutionOperationResponse> GetSettingsAsync(
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await shellCatalog.GetSnapshotAsync(cancellationToken);
+        return new LocalExecutionOperationResponse(
+            TimeoutSeconds: await packageContext.Settings.GetValueAsync(
+                    LocalExecutionConfiguration.TimeoutKey,
+                    cancellationToken)
+                ?? LocalExecutionConfiguration.DefaultTimeoutSeconds,
+            DetectedShells: snapshot.DetectedShells,
+            CustomShells: snapshot.CustomShells,
+            ShellCatalogRevision: snapshot.Revision);
+    }
 
     private async ValueTask<LocalExecutionOperationResponse> SaveSettingsAsync(
         LocalExecutionOperationRequest request,
@@ -39,7 +66,9 @@ internal sealed class LocalExecutionRuntimeOperationHandler(
                 maximum: BoundedProcessRunner.MaximumTimeoutSeconds,
                 out var timeoutSeconds))
         {
-            throw new InvalidOperationException($"Local shell timeout must be between 1 and {BoundedProcessRunner.MaximumTimeoutSeconds} seconds.");
+            throw new LocalExecutionDomainException(
+                "local.timeout.invalid",
+                $"Local shell timeout must be between 1 and {BoundedProcessRunner.MaximumTimeoutSeconds} seconds.");
         }
 
         await packageContext.Settings.SetValueAsync(
@@ -53,10 +82,15 @@ internal sealed class LocalExecutionRuntimeOperationHandler(
         LocalExecutionOperationRequest request,
         CancellationToken cancellationToken)
     {
-        var shells = request.Shells ?? [];
+        var shells = request.Shells
+            ?? throw new LocalExecutionDomainException(
+                "local.shell-catalog.shells-required",
+                "Custom shell values are required to save shell settings.");
         if (shells.Count > MaximumShellCount)
         {
-            throw new InvalidOperationException($"At most {MaximumShellCount} custom shells may be configured.");
+            throw new LocalExecutionDomainException(
+                "local.shell-catalog.too-many",
+                $"At most {MaximumShellCount} custom shells may be configured.");
         }
 
         foreach (var shell in shells)
@@ -64,17 +98,35 @@ internal sealed class LocalExecutionRuntimeOperationHandler(
             var path = shell.ExecutablePath?.Trim() ?? string.Empty;
             if (path.Length == 0 || path.Length > MaximumPathLength || !Path.IsPathFullyQualified(path))
             {
-                throw new InvalidOperationException("Custom shell paths must be bounded absolute paths selected from the local filesystem.");
+                throw new LocalExecutionDomainException(
+                    "local.shell.path-invalid",
+                    "Custom shell paths must be bounded absolute paths selected from the local filesystem.");
             }
 
             if (!File.Exists(path))
             {
-                throw new InvalidOperationException($"Shell executable does not exist: {path}");
+                throw new LocalExecutionDomainException(
+                    "local.shell.not-found",
+                    "A selected custom shell executable no longer exists.");
             }
         }
 
-        await shellCatalog.SaveCustomShellsAsync(shells, cancellationToken);
-        return new(Shells: await shellCatalog.ListShellsAsync(cancellationToken), Message: "Shell settings saved.");
+        if (request.ExpectedShellCatalogRevision is not { } expectedRevision || expectedRevision < 0)
+        {
+            throw new LocalExecutionDomainException(
+                "local.shell-catalog.revision-required",
+                "A shell catalog revision is required to save shell settings.");
+        }
+
+        var snapshot = await shellCatalog.SaveCustomShellsAsync(
+            shells,
+            expectedRevision,
+            cancellationToken);
+        return new(
+            DetectedShells: snapshot.DetectedShells,
+            CustomShells: snapshot.CustomShells,
+            ShellCatalogRevision: snapshot.Revision,
+            Message: "Shell settings saved.");
     }
 
     private async ValueTask<LocalExecutionOperationResponse> GetWorkspaceEditorAsync(
@@ -93,4 +145,5 @@ internal sealed class LocalExecutionRuntimeOperationHandler(
         var saveRequest = request.EditorSaveRequest ?? throw new InvalidOperationException("Workspace editor values are required.");
         return new(EditorSaveResult: await workspaceEditor.SaveSectionAsync(context, saveRequest, cancellationToken));
     }
+
 }

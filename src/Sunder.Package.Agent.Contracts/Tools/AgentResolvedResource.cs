@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
@@ -19,15 +21,15 @@ public static class AgentPermissionBoundaryIds
 }
 
 /// <summary>
-/// Captures an execution target's point-in-time canonical resource classification for permission planning.
+/// Captures an execution target's point-in-time resource classification and opaque identity for permission planning.
 /// </summary>
 /// <remarks>
-/// Resolution is advisory until execution. Targets must re-resolve and revalidate the resource after
-/// approval to defend against symlink, mount, and other time-of-check/time-of-use changes.
+/// Resolution is advisory until execution. Targets must securely reacquire and compare the resource after approval. A canonical reference is
+/// stable claim correlation data, not authority and not necessarily a usable path.
 /// </remarks>
 /// <param name="ResourceKind">The stable target-defined resource category, such as <c>file</c> or <c>directory</c>.</param>
 /// <param name="DisplayName">A user-facing resource name safe for approval UI and logs.</param>
-/// <param name="CanonicalReference">A stable, non-secret reference used to bind approval to the resolved resource.</param>
+/// <param name="CanonicalReference">A stable target-defined reference used to correlate the durable resource claim.</param>
 /// <param name="PermissionBoundaryId">The permission boundary assigned by the execution target.</param>
 /// <param name="Exists">Whether the resource existed at resolution time; this does not guarantee its state at execution.</param>
 public sealed record AgentResolvedResource(
@@ -35,4 +37,32 @@ public sealed record AgentResolvedResource(
     string DisplayName,
     string CanonicalReference,
     string PermissionBoundaryId,
-    bool Exists);
+    bool Exists)
+{
+    /// <summary>Gets the structured durable claim for this resource, when supplied by the target.</summary>
+    public AgentResourceClaim? ResourceClaim { get; init; }
+
+    /// <summary>Gets transient, process-local, single-use authority references for this resource.</summary>
+    /// <remarks>These values must not be fingerprinted or persisted.</remarks>
+    [JsonIgnore]
+    public IReadOnlyList<string> AuthorityReferences { get; init; } = [];
+
+    /// <summary>Gets the canonical identity of the directory entry removed by delete-link semantics.</summary>
+    /// <remarks>When absent, <see cref="CanonicalReference"/> applies to both access and deletion.</remarks>
+    public string? DeleteCanonicalReference { get; init; }
+
+    /// <summary>Gets the durable claim for delete-link semantics when it differs from <see cref="ResourceClaim"/>.</summary>
+    public AgentResourceClaim? DeleteResourceClaim { get; init; }
+
+    /// <summary>Gets transient authority references for delete-link semantics.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<string> DeleteAuthorityReferences { get; init; } = [];
+
+    /// <summary>Gets the boundary of the directory entry affected by delete-link semantics.</summary>
+    /// <remarks>When absent, <see cref="PermissionBoundaryId"/> applies to both access and deletion.</remarks>
+    public string? DeletePermissionBoundaryId { get; init; }
+
+    /// <summary>Gets whether the canonical physical target is an exact <c>AGENTS.md</c> instruction document.</summary>
+    /// <remarks>Targets set this from the canonical target, not from the caller-provided path or an alias name.</remarks>
+    public bool IsScopedInstructionDocument { get; init; }
+}

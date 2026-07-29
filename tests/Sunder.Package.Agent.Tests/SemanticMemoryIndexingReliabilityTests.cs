@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
 using Sunder.Package.Agent.Contracts;
@@ -40,17 +42,310 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         await using var harness = new IndexingHarness();
         harness.AddMemory("First durable memory.");
 
-        await harness.Worker.StartAsync();
+        await harness.StartWorkerAsync();
         await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1);
         await harness.Worker.StopAsync();
 
         harness.AddMemory("Second durable memory.");
-        await harness.Worker.StartAsync();
+        await harness.StartWorkerAsync();
         await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 2);
         await harness.Worker.StopAsync();
 
         Assert.False(harness.Worker.GetStatus().IsRunning);
         Assert.Equal(2, harness.ActiveEmbeddings.Count);
+    }
+
+    [Fact]
+    public async Task BackgroundService_CandidateStartIsPreparationOnlyAndDiscardIsNonDestructive()
+    {
+        await using var harness = new IndexingHarness();
+        harness.AddMemory("A discarded candidate must not run semantic indexing.");
+        Assert.True(harness.Worker.QueueSessionReindex(harness.Session.SessionId, harness.Profile.ProfileId));
+
+        await harness.Worker.StartAsync();
+        await harness.WaitForMonitorTicksAsync(3);
+
+        Assert.False(harness.Worker.GetStatus().IsRunning);
+        Assert.Equal(0, harness.Provider.TotalCallbackCount);
+        Assert.Empty(harness.ActiveEmbeddings);
+
+        await harness.Worker.StopAsync();
+        Assert.Equal(0, harness.Worker.GetStatus().PendingItemCount);
+    }
+
+    [Fact]
+    public async Task BackgroundService_CommitIsIdempotentOnlyForTheExactGeneration()
+    {
+        await using var harness = new IndexingHarness();
+        harness.AddMemory("An exact generation retry must not start duplicate workers.");
+        var generation = new PackageRuntimeGeneration(Guid.NewGuid(), 1);
+
+        await harness.Worker.StartAsync();
+        await harness.Worker.CommitGenerationAsync(generation);
+        await harness.Worker.CommitGenerationAsync(generation);
+        await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            harness.Worker.CommitGenerationAsync(new PackageRuntimeGeneration(Guid.NewGuid(), 2)));
+        Assert.Equal(1, harness.Provider.BatchCallCount);
+    }
+
+    [Fact]
+    public async Task BackgroundService_RepeatedMonitorTicks_DoNotCallProviderForCurrentSession()
+    {
+        await using var harness = new IndexingHarness();
+        harness.AddMemory("A durable memory that is already semantically current.");
+        await harness.StartWorkerAsync();
+        await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1
+                                   && harness.Worker.GetStatus().PendingItemCount == 0);
+        var callCount = harness.Provider.BatchCallCount;
+        var uploadedTextCount = harness.Provider.UploadedTextCount;
+        var totalCallbackCount = harness.Provider.TotalCallbackCount;
+        var processedCount = harness.Worker.GetStatus().ProcessedItemCount;
+
+        await harness.WaitForMonitorTicksAsync(4);
+
+        Assert.Equal(totalCallbackCount, harness.Provider.TotalCallbackCount);
+        Assert.Equal(callCount, harness.Provider.BatchCallCount);
+        Assert.Equal(uploadedTextCount, harness.Provider.UploadedTextCount);
+        Assert.Equal(processedCount, harness.Worker.GetStatus().ProcessedItemCount);
+    }
+
+    [Fact]
+    public async Task BackgroundService_RestartWithCurrentDurableState_DoesNotCallProvider()
+    {
+        await using var harness = new IndexingHarness();
+        harness.AddMemory("A durable memory whose semantic state survives restart.");
+        await harness.StartWorkerAsync();
+        await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1
+                                   && harness.Worker.GetStatus().PendingItemCount == 0);
+        await harness.Worker.StopAsync();
+        var callCount = harness.Provider.BatchCallCount;
+        var uploadedTextCount = harness.Provider.UploadedTextCount;
+
+        await harness.RestartWorkerAsync();
+        await harness.StartWorkerAsync();
+        await harness.WaitForMonitorTicksAsync(4);
+
+        Assert.Equal(callCount, harness.Provider.BatchCallCount);
+        Assert.Equal(uploadedTextCount, harness.Provider.UploadedTextCount);
+        Assert.Equal(0, harness.Worker.GetStatus().ProcessedItemCount);
+    }
+
+    [Fact]
+    public async Task BackgroundService_NeverMode_SuppressesAutomaticWorkButAllowsExplicitReindex()
+    {
+        await using var harness = new IndexingHarness();
+        await harness.SetSettingAsync("semantic.reindex.mode", "never");
+        harness.AddMemory("A missing embedding must remain missing in Never mode.");
+
+        await harness.StartWorkerAsync();
+        await harness.WaitForMonitorTicksAsync(4);
+
+        Assert.Equal(0, harness.Provider.TotalCallbackCount);
+        Assert.Equal(0, harness.Provider.BatchCallCount);
+        Assert.Equal(0, harness.Provider.UploadedTextCount);
+        Assert.Empty(harness.ActiveEmbeddings);
+
+        Assert.True(harness.Worker.QueueSessionReindex(harness.Session.SessionId, harness.Profile.ProfileId));
+        await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1);
+
+        Assert.Equal(1, harness.Provider.BatchCallCount);
+        Assert.Equal(1, harness.Provider.UploadedTextCount);
+    }
+
+    [Fact]
+    public async Task BackgroundService_LazyMode_DefersEveryProviderCallbackUntilRecall()
+    {
+        await using var harness = new IndexingHarness();
+        await harness.SetSettingAsync("semantic.reindex.mode", "lazy");
+        var memory = harness.AddMemory("Lazy mode indexes this memory only when recall needs it.");
+
+        await harness.StartWorkerAsync();
+        await harness.WaitForMonitorTicksAsync(4);
+
+        Assert.Equal(0, harness.Provider.TotalCallbackCount);
+        Assert.Empty(harness.ActiveEmbeddings);
+
+        var scores = await harness.Backend.ScoreSemanticAsync(
+            harness.Profile.ProfileId,
+            [memory],
+            "When is this memory indexed?");
+
+        Assert.True(harness.Provider.TotalCallbackCount > 0);
+        Assert.Single(harness.ActiveEmbeddings);
+        Assert.Single(scores);
+    }
+
+    [Fact]
+    public async Task BackgroundService_ModeChangeDuringProviderCallStopsFurtherCallsAndActivation()
+    {
+        await using var harness = new IndexingHarness();
+        await harness.SetSettingAsync("semantic.batchSize", "1");
+        harness.AddMemory("The first automatic batch is stopped before activation.");
+        harness.AddMemory("The second automatic batch must never reach the provider.");
+        harness.Provider.Mode = EmbeddingProviderMode.WaitForRelease;
+
+        await harness.StartWorkerAsync();
+        await harness.Provider.GenerationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await harness.SetSettingAsync("semantic.reindex.mode", "never");
+        var callbacksAtDisable = harness.Provider.TotalCallbackCount;
+        harness.Provider.ReleaseGeneration();
+        await WaitUntilAsync(() => harness.Worker.GetStatus().PendingItemCount == 0);
+
+        Assert.Equal(1, harness.Provider.BatchCallCount);
+        Assert.Equal(callbacksAtDisable, harness.Provider.TotalCallbackCount);
+        Assert.Empty(harness.ActiveEmbeddings);
+    }
+
+    [Fact]
+    public async Task BackgroundService_ReconcilesContentProjectionSettingsAndModelChangesOnlyWhenChanged()
+    {
+        await using var harness = new IndexingHarness();
+        var memory = harness.AddMemory("The project uses " + new string('c', 320));
+        await harness.StartWorkerAsync();
+        await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1
+                                   && harness.Worker.GetStatus().PendingItemCount == 0);
+
+        var beforeContentChange = harness.Provider.BatchCallCount;
+        harness.Store.UpdateMemory(memory.MemoryId, memory.Category, "The project uses " + new string('a', 320), "Changed source content.");
+        await WaitUntilAsync(() => harness.Provider.BatchCallCount > beforeContentChange
+                                   && harness.ActiveEmbeddings[memory.MemoryId].MemoryRevision
+                                   == harness.Store.GetMemory(memory.MemoryId)!.MemoryRevision);
+
+        var beforeProjectionSettingChange = harness.Provider.BatchCallCount;
+        await harness.SetSettingAsync("semantic.maxCanonicalTextChars", "128");
+        await WaitUntilAsync(() => harness.Provider.BatchCallCount > beforeProjectionSettingChange);
+
+        var beforeBindingSettingChange = harness.Provider.BatchCallCount;
+        harness.RuntimeCatalog.SetEmbeddingSettings("{\"vectorSpace\":\"alternate\"}");
+        await WaitUntilAsync(() => harness.Provider.BatchCallCount > beforeBindingSettingChange);
+
+        var beforeModelChange = harness.Provider.BatchCallCount;
+        harness.RuntimeCatalog.SetEmbeddingModel("test-embedding-model-v2");
+        await WaitUntilAsync(() => harness.Provider.BatchCallCount > beforeModelChange
+                                   && harness.ActiveEmbeddings.Count == 1);
+        await WaitUntilAsync(() => harness.Worker.GetStatus().PendingItemCount == 0);
+        var currentCallCount = harness.Provider.BatchCallCount;
+
+        await harness.WaitForMonitorTicksAsync(3);
+
+        Assert.All(harness.ActiveEmbeddings.Values, embedding =>
+            Assert.Equal("test-embedding-model-v2", embedding.ModelId));
+        Assert.Equal(currentCallCount, harness.Provider.BatchCallCount);
+    }
+
+    [Fact]
+    public async Task BackgroundService_ProviderSpaceIdentityChange_InvalidatesDurableGeneration()
+    {
+        await using var harness = new IndexingHarness();
+        harness.AddMemory("Provider endpoint identity participates in the vector-space fingerprint.");
+        await harness.StartWorkerAsync();
+        await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1
+                                   && harness.Worker.GetStatus().PendingItemCount == 0);
+        var previousCallCount = harness.Provider.BatchCallCount;
+
+        harness.Provider.SpaceIdentity = "test-space-v2";
+
+        await WaitUntilAsync(() => harness.Provider.BatchCallCount > previousCallCount
+                                   && harness.Worker.GetStatus().PendingItemCount == 0);
+        var currentCallCount = harness.Provider.BatchCallCount;
+        await harness.WaitForMonitorTicksAsync(3);
+        Assert.Equal(currentCallCount, harness.Provider.BatchCallCount);
+    }
+
+    [Fact]
+    public async Task BackgroundService_ReusesSelectedProviderGenerationInsteadOfSessionLatest()
+    {
+        await using var harness = new IndexingHarness();
+        var memory = harness.AddMemory("Each configured provider keeps its own active generation.");
+        await harness.StartWorkerAsync();
+        await WaitUntilAsync(() => harness.GetEmbeddings("test-embedding-provider").Count == 1);
+
+        var alternate = new ControlledEmbeddingProvider("alternate-embedding-provider");
+        harness.AddProvider(alternate);
+        harness.RuntimeCatalog.SetEmbeddingProvider("alternate-embedding-provider");
+        await WaitUntilAsync(() => harness.GetEmbeddings("alternate-embedding-provider").Count == 1);
+
+        var originalCallCount = harness.Provider.BatchCallCount;
+        harness.RuntimeCatalog.SetEmbeddingProvider("TEST-EMBEDDING-PROVIDER");
+        await harness.WaitForMonitorTicksAsync(4);
+
+        Assert.Equal(originalCallCount, harness.Provider.BatchCallCount);
+        Assert.Single(harness.GetEmbeddings("TEST-EMBEDDING-PROVIDER"));
+        Assert.Equal("test-embedding-provider", Assert.Single(harness.GetEmbeddings("test-embedding-provider")).Value.ProviderId);
+
+        await harness.SetSettingAsync("semantic.reindex.mode", "never");
+        var originalCallbacks = harness.Provider.TotalCallbackCount;
+        var alternateCallbacks = alternate.TotalCallbackCount;
+        SeedInactiveAndStagingEmbeddings(harness.Store.DatabasePath, memory.MemoryId, harness.Session.SessionId);
+        harness.Store.SetState(memory.MemoryId, MemoryLocalStore.ForgottenState, "Retracted across providers.");
+        await WaitUntilAsync(() => harness.GetEmbeddings("test-embedding-provider").Count == 0
+                                   && harness.GetEmbeddings("alternate-embedding-provider").Count == 0
+                                   && CountAllEmbeddings(harness.Store.DatabasePath, memory.MemoryId) == 0
+                                   && CountStagingGenerations(harness.Store.DatabasePath, harness.Session.SessionId) == 0);
+        Assert.Equal(originalCallbacks, harness.Provider.TotalCallbackCount);
+        Assert.Equal(alternateCallbacks, alternate.TotalCallbackCount);
+    }
+
+    [Fact]
+    public async Task BackgroundService_PartialFailure_RetriesOnlyRemainingWorkThenStopsCallingProvider()
+    {
+        await using var harness = new IndexingHarness();
+        await harness.SetSettingAsync("semantic.batchSize", "1");
+        harness.AddMemory("Existing current memory.");
+        await harness.StartWorkerAsync();
+        await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1
+                                   && harness.Worker.GetStatus().PendingItemCount == 0);
+
+        const string firstNewContent = "First missing memory survives a later batch failure.";
+        const string secondNewContent = "Second missing memory is retried after the partial failure.";
+        harness.AddMemory(firstNewContent);
+        harness.AddMemory(secondNewContent);
+        harness.Provider.FailOnBatchCall = harness.Provider.BatchCallCount + 2;
+
+        await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 3
+                                   && harness.Worker.GetStatus().PendingItemCount == 0);
+
+        var newMemoryRequestCounts = new[]
+        {
+            harness.Provider.CountRequestsContaining(firstNewContent),
+            harness.Provider.CountRequestsContaining(secondNewContent),
+        };
+        Assert.Equal([1, 2], newMemoryRequestCounts.Order().ToArray());
+        var completedCallCount = harness.Provider.BatchCallCount;
+        await harness.WaitForMonitorTicksAsync(4);
+        Assert.Equal(completedCallCount, harness.Provider.BatchCallCount);
+    }
+
+    [Fact]
+    public async Task BackgroundService_RetractionPrunesEmbeddingPromptlyWithoutProviderCallEvenInNeverMode()
+    {
+        await using var harness = new IndexingHarness();
+        var removed = harness.AddMemory("This memory will be retracted.");
+        var retained = harness.AddMemory("This memory remains active.");
+        await harness.StartWorkerAsync();
+        await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 2
+                                   && harness.Worker.GetStatus().PendingItemCount == 0);
+        await harness.SetSettingAsync("semantic.reindex.mode", "never");
+        var callCount = harness.Provider.BatchCallCount;
+        var uploadedTextCount = harness.Provider.UploadedTextCount;
+        var totalCallbackCount = harness.Provider.TotalCallbackCount;
+
+        harness.Store.SetState(removed.MemoryId, MemoryLocalStore.ForgottenState, "Retracted by test.");
+        await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1);
+
+        Assert.True(harness.ActiveEmbeddings.ContainsKey(retained.MemoryId));
+        Assert.False(harness.ActiveEmbeddings.ContainsKey(removed.MemoryId));
+        Assert.Equal(callCount, harness.Provider.BatchCallCount);
+        Assert.Equal(uploadedTextCount, harness.Provider.UploadedTextCount);
+        Assert.Equal(totalCallbackCount, harness.Provider.TotalCallbackCount);
+
+        harness.Store.DeleteSessionData(harness.Session.SessionId);
+        await harness.WaitForMonitorTicksAsync(2);
+        Assert.Empty(harness.ActiveEmbeddings);
+        Assert.Equal(callCount, harness.Provider.BatchCallCount);
+        Assert.Equal(totalCallbackCount, harness.Provider.TotalCallbackCount);
     }
 
     [Fact]
@@ -67,7 +362,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         Assert.True(harness.Worker.QueueSessionReindex(harness.Session.SessionId, harness.Profile.ProfileId));
         Assert.Equal(21, harness.Worker.GetStatus().PendingItemCount);
 
-        await harness.Worker.StartAsync();
+        await harness.StartWorkerAsync();
         await WaitUntilAsync(() => harness.Worker.GetStatus().PendingItemCount == 0);
 
         Assert.True(harness.Worker.GetStatus().ProcessedItemCount >= 21);
@@ -79,7 +374,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         await using var harness = new IndexingHarness();
         harness.AddMemory("A memory whose embedding blocks.");
         harness.Provider.Mode = EmbeddingProviderMode.WaitForCancellation;
-        await harness.Worker.StartAsync();
+        await harness.StartWorkerAsync();
         await harness.Provider.GenerationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         await harness.Worker.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
@@ -90,13 +385,32 @@ public sealed class SemanticMemoryIndexingReliabilityTests
     }
 
     [Fact]
+    public async Task ProviderRetirement_CancelsInFlightLeaseAndPreventsLaterCallbacks()
+    {
+        await using var harness = new IndexingHarness();
+        harness.AddMemory("Provider retirement cancels this in-flight embedding request.");
+        harness.Provider.Mode = EmbeddingProviderMode.WaitForCancellation;
+
+        var indexing = harness.ReindexAsync();
+        await harness.Provider.GenerationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        harness.RemoveProvider(harness.Provider);
+
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => indexing);
+        Assert.True(harness.Provider.CancellationObserved);
+        var callbackCount = harness.Provider.TotalCallbackCount;
+
+        Assert.Equal(0, await harness.ReindexAsync());
+        Assert.Equal(callbackCount, harness.Provider.TotalCallbackCount);
+    }
+
+    [Fact]
     public async Task BackgroundService_TransientFailuresRetryWithBoundedBackoff()
     {
         await using var harness = new IndexingHarness();
         harness.AddMemory("A memory that succeeds after transient provider failures.");
         harness.Provider.FailuresRemaining = 2;
 
-        await harness.Worker.StartAsync();
+        await harness.StartWorkerAsync();
         await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1);
 
         var status = harness.Worker.GetStatus();
@@ -105,30 +419,121 @@ public sealed class SemanticMemoryIndexingReliabilityTests
     }
 
     [Fact]
-    public async Task StoreStartup_RemovesAbandonedStagingGenerations()
+    public async Task BackgroundService_PersistentFailure_EntersCooldownWithoutMonitorHotLoop()
+    {
+        await using var harness = new IndexingHarness(monitorInterval: TimeSpan.FromMilliseconds(500));
+        harness.AddMemory("A memory whose provider remains unavailable.");
+        harness.Provider.Mode = EmbeddingProviderMode.Fail;
+
+        await harness.StartWorkerAsync();
+        await WaitUntilAsync(() => harness.Worker.GetStatus().PendingItemCount == 0
+                                   && harness.Worker.GetStatus().LastFailureMessage is not null);
+
+        Assert.Equal(4, harness.Provider.BatchCallCount);
+        await harness.WaitForMonitorTicksAsync(3);
+        Assert.Equal(4, harness.Provider.BatchCallCount);
+        Assert.Empty(harness.ActiveEmbeddings);
+    }
+
+    [Fact]
+    public async Task Reindex_RestartResumesSourceFencedStagingGeneration()
     {
         await using var harness = new IndexingHarness();
-        using (var connection = new SqliteConnection($"Data Source={harness.Store.DatabasePath}"))
-        {
-            connection.Open();
-            using var command = connection.CreateCommand();
-            command.CommandText = """
-                INSERT INTO SessionMemoryEmbeddingGenerations
-                    (GenerationId, SessionId, ProviderId, ModelId, State, ExpectedMemoryCount, CreatedAtUtc, CompletedAtUtc)
-                VALUES ('abandoned', $sessionId, 'provider', 'model', 'Staging', 1, $createdAt, NULL);
-                """;
-            command.Parameters.AddWithValue("$sessionId", harness.Session.SessionId.ToString());
-            command.Parameters.AddWithValue("$createdAt", DateTimeOffset.UtcNow.ToString("O"));
-            command.ExecuteNonQuery();
-        }
+        await harness.SetSettingAsync("semantic.batchSize", "1");
+        const string firstContent = "The first staged embedding survives process restart.";
+        const string secondContent = "Only the failed staged embedding is requested again.";
+        harness.AddMemory(firstContent);
+        harness.AddMemory(secondContent);
+        harness.Provider.FailOnBatchCall = 2;
 
-        _ = harness.ReopenStore();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => harness.ReindexAsync());
+        Assert.Empty(harness.ActiveEmbeddings);
+        Assert.Equal(1, CountStagingEmbeddings(harness.Store.DatabasePath));
 
-        using var verification = new SqliteConnection($"Data Source={harness.Store.DatabasePath}");
-        verification.Open();
-        using var count = verification.CreateCommand();
-        count.CommandText = "SELECT COUNT(*) FROM SessionMemoryEmbeddingGenerations WHERE State = 'Staging';";
-        Assert.Equal(0L, (long)count.ExecuteScalar()!);
+        await harness.RestartWorkerAsync();
+        await harness.ReindexAsync();
+
+        Assert.Equal(
+            [1, 2],
+            new[]
+            {
+                harness.Provider.CountRequestsContaining(firstContent),
+                harness.Provider.CountRequestsContaining(secondContent),
+            }.Order().ToArray());
+        Assert.Equal(2, harness.ActiveEmbeddings.Count);
+        Assert.Equal(0, CountStagingEmbeddings(harness.Store.DatabasePath));
+    }
+
+    private static int CountStagingEmbeddings(string databasePath)
+    {
+        using var connection = new SqliteConnection($"Data Source={databasePath}");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*)
+            FROM SessionMemoryEmbeddings embedding
+            INNER JOIN SessionMemoryEmbeddingGenerations generation
+                ON generation.GenerationId = embedding.GenerationId
+            WHERE generation.State = 'Staging';
+            """;
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    private static int CountStagingGenerations(string databasePath, Guid sessionId)
+    {
+        using var connection = new SqliteConnection($"Data Source={databasePath}");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM SessionMemoryEmbeddingGenerations WHERE SessionId = $sessionId AND State = 'Staging';";
+        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    private static int CountAllEmbeddings(string databasePath, Guid memoryId)
+    {
+        using var connection = new SqliteConnection($"Data Source={databasePath}");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM SessionMemoryEmbeddings WHERE MemoryId = $memoryId;";
+        command.Parameters.AddWithValue("$memoryId", memoryId.ToString());
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    private static void SeedInactiveAndStagingEmbeddings(string databasePath, Guid memoryId, Guid sessionId)
+    {
+        using var connection = new SqliteConnection($"Data Source={databasePath}");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO SessionMemoryEmbeddingGenerations
+                (GenerationId, SessionId, ProviderId, ModelId, State, ExpectedMemoryCount, CreatedAtUtc, CompletedAtUtc,
+                 ConfigurationFingerprint, SourceFingerprint, MaxCanonicalTextChars)
+            VALUES
+                ('inactive-generation', $sessionId, 'inactive-provider', 'inactive-model', 'Complete', 1, $now, $now,
+                 'inactive-config', NULL, NULL),
+                ('staging-generation', $sessionId, 'staging-provider', 'staging-model', 'Staging', 1, $now, NULL,
+                 'staging-config', 'staging-source', 1200);
+            INSERT INTO SessionMemoryEmbeddings
+                (GenerationId, MemoryId, SessionId, ProviderId, ModelId, CanonicalTextHash, Dimensions, VectorJson,
+                 CreatedAtUtc, UpdatedAtUtc, MemoryRevision)
+            SELECT 'inactive-generation', MemoryId, SessionId, 'inactive-provider', 'inactive-model', CanonicalTextHash,
+                   Dimensions, VectorJson, CreatedAtUtc, UpdatedAtUtc, MemoryRevision
+            FROM SessionMemoryEmbeddings
+            WHERE MemoryId = $memoryId
+            LIMIT 1;
+            INSERT INTO SessionMemoryEmbeddings
+                (GenerationId, MemoryId, SessionId, ProviderId, ModelId, CanonicalTextHash, Dimensions, VectorJson,
+                 CreatedAtUtc, UpdatedAtUtc, MemoryRevision)
+            SELECT 'staging-generation', MemoryId, SessionId, 'staging-provider', 'staging-model', CanonicalTextHash,
+                   Dimensions, VectorJson, CreatedAtUtc, UpdatedAtUtc, MemoryRevision
+            FROM SessionMemoryEmbeddings
+            WHERE MemoryId = $memoryId
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
+        command.Parameters.AddWithValue("$memoryId", memoryId.ToString());
+        command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+        command.ExecuteNonQuery();
     }
 
     private static IReadOnlyList<string> Snapshot(IndexingHarness harness)
@@ -152,11 +557,17 @@ public sealed class SemanticMemoryIndexingReliabilityTests
     {
         private readonly string _rootPath = Path.Combine(Path.GetTempPath(), "sunder-memory-indexing-tests", Guid.NewGuid().ToString("N"));
         private readonly TestPackageContext _context;
+        private readonly TestExtensionCatalog _catalog;
+        private readonly int _queueCapacity;
+        private readonly TimeSpan _monitorInterval;
+        private long _runtimeGeneration;
 
-        public IndexingHarness(int queueCapacity = 8)
+        public IndexingHarness(int queueCapacity = 8, TimeSpan? monitorInterval = null)
         {
+            _queueCapacity = queueCapacity;
+            _monitorInterval = monitorInterval ?? TimeSpan.FromMilliseconds(40);
             Session = new AgentSessionRecord(Guid.NewGuid(), "Test Session", AgentSessionState.Active, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
-            Profile = new AgentProfileRecord(
+            var profile = new AgentProfileRecord(
                 "profile-memory-test",
                 "Memory Test",
                 null,
@@ -169,34 +580,37 @@ public sealed class SemanticMemoryIndexingReliabilityTests
                 DateTimeOffset.UtcNow,
                 []);
             _context = new TestPackageContext(_rootPath);
-            var catalog = new TestExtensionCatalog();
-            catalog.Add(PackageExtensionPoints.RuntimeCatalogs, new TestRuntimeCatalog(Session, Profile));
+            _context.MutableSettings.SetValueAsync("semantic.reindex.mode", "eager").GetAwaiter().GetResult();
+            _catalog = new TestExtensionCatalog();
+            RuntimeCatalog = new TestRuntimeCatalog(Session, profile);
+            _catalog.Add(PackageExtensionPoints.RuntimeCatalogs, RuntimeCatalog);
             Provider = new ControlledEmbeddingProvider("test-embedding-provider");
-            catalog.Add(PackageExtensionPoints.EmbeddingProviders, Provider);
+            _catalog.Add(PackageExtensionPoints.EmbeddingProviders, Provider);
             Store = new MemoryLocalStore(_context);
-            var settings = new MemorySemanticSettingsService(_context);
-            var resolver = new SemanticModelRuntimeResolver(catalog, settings);
-            Backend = new SemanticMemoryRetrievalBackend(Store, resolver, settings);
-            Worker = new SemanticMemoryIndexingBackgroundService(
-                Store,
-                resolver,
-                settings,
-                Backend,
-                new SemanticMemoryMetricsService(),
-                queueCapacity);
+            (Backend, Worker) = CreateIndexingServices();
         }
 
         public AgentSessionRecord Session { get; }
-        public AgentProfileRecord Profile { get; }
+        public AgentProfileRecord Profile => RuntimeCatalog.Profile;
+        public TestRuntimeCatalog RuntimeCatalog { get; }
         public ControlledEmbeddingProvider Provider { get; }
-        public MemoryLocalStore Store { get; }
-        public SemanticMemoryRetrievalBackend Backend { get; }
-        public SemanticMemoryIndexingBackgroundService Worker { get; }
+        public MemoryLocalStore Store { get; private set; }
+        public SemanticMemoryRetrievalBackend Backend { get; private set; }
+        public SemanticMemoryIndexingBackgroundService Worker { get; private set; }
 
         public IReadOnlyDictionary<Guid, StoredMemoryEmbeddingRecord> ActiveEmbeddings
-            => Store.ListEmbeddings(Session.SessionId, "test-embedding-provider", "test-embedding-model");
+            => Store.ListEmbeddings(Session.SessionId, "test-embedding-provider", Profile.EmbeddingModelId!);
 
-        public void AddMemory(string content)
+        public IReadOnlyDictionary<Guid, StoredMemoryEmbeddingRecord> GetEmbeddings(string providerId)
+            => Store.ListEmbeddings(Session.SessionId, providerId, Profile.EmbeddingModelId!);
+
+        public void AddProvider(ControlledEmbeddingProvider provider)
+            => _catalog.Add(PackageExtensionPoints.EmbeddingProviders, provider);
+
+        public void RemoveProvider(ControlledEmbeddingProvider provider)
+            => _catalog.Remove(PackageExtensionPoints.EmbeddingProviders, provider);
+
+        public StoredMemoryRecord AddMemory(string content)
             => Store.UpsertMemory(new MemoryUpsertRequest(
                 Session.SessionId,
                 "remembered-fact",
@@ -210,12 +624,51 @@ public sealed class SemanticMemoryIndexingReliabilityTests
 
         public MemoryLocalStore ReopenStore() => new(_context);
 
+        public Task SetSettingAsync(string key, string value) => _context.MutableSettings.SetValueAsync(key, value);
+
+        public Task WaitForMonitorTicksAsync(int count)
+            => Task.Delay(TimeSpan.FromMilliseconds(_monitorInterval.TotalMilliseconds * count + 50));
+
+        public async Task StartWorkerAsync()
+        {
+            await Worker.StartAsync();
+            await Worker.CommitGenerationAsync(new PackageRuntimeGeneration(
+                Guid.NewGuid(),
+                Interlocked.Increment(ref _runtimeGeneration)));
+        }
+
+        public async Task RestartWorkerAsync()
+        {
+            await Worker.DisposeAsync();
+            Store = new MemoryLocalStore(_context);
+            (Backend, Worker) = CreateIndexingServices();
+        }
+
         public Task<int> ReindexAsync(CancellationToken cancellationToken = default)
             => Backend.ReindexSessionAsync(
                 Session.SessionId,
                 Profile.ProfileId,
                 Store.ListMemories(Session.SessionId),
                 cancellationToken);
+
+        private (SemanticMemoryRetrievalBackend Backend, SemanticMemoryIndexingBackgroundService Worker) CreateIndexingServices()
+        {
+            var settings = new MemorySemanticSettingsService(_context);
+            var resolver = new SemanticModelRuntimeResolver(
+                _catalog,
+                settings,
+                configurationCacheDuration: TimeSpan.FromMilliseconds(500));
+            var backend = new SemanticMemoryRetrievalBackend(Store, resolver, settings);
+            var worker = new SemanticMemoryIndexingBackgroundService(
+                Store,
+                resolver,
+                settings,
+                backend,
+                new SemanticMemoryMetricsService(),
+                _queueCapacity,
+                _monitorInterval);
+            return (backend, worker);
+        }
 
         public async ValueTask DisposeAsync()
         {
@@ -232,36 +685,100 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         Success,
         Fail,
         WaitForCancellation,
+        WaitForRelease,
     }
 
-    private sealed class ControlledEmbeddingProvider(string providerId) : IAgentEmbeddingProvider
+    private sealed class ControlledEmbeddingProvider(string providerId) :
+        IAgentEmbeddingProvider,
+        IAgentEmbeddingSpaceIdentityProvider
     {
-        public AgentEmbeddingProviderDescriptor Descriptor { get; } = new(providerId, "Controlled Embeddings", []);
+        private readonly ConcurrentQueue<string> _requests = new();
+        private readonly AgentEmbeddingProviderDescriptor _descriptor = new(providerId, "Controlled Embeddings", []);
+        private int _descriptorCallCount;
+        private int _availableModelsCallCount;
+        private int _identityCallCount;
+        private int _readinessCallCount;
+        private int _singleCallCount;
+        private int _batchCallCount;
+        private int _uploadedTextCount;
+
+        public AgentEmbeddingProviderDescriptor Descriptor
+        {
+            get
+            {
+                Interlocked.Increment(ref _descriptorCallCount);
+                return _descriptor;
+            }
+        }
         public EmbeddingProviderMode Mode { get; set; }
         public int VectorVersion { get; set; } = 1;
         public int FailuresRemaining { get; set; }
+        public int FailOnBatchCall { get; set; }
         public bool CancellationObserved { get; private set; }
         public TaskCompletionSource GenerationStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource GenerationRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int BatchCallCount => Volatile.Read(ref _batchCallCount);
+        public int UploadedTextCount => Volatile.Read(ref _uploadedTextCount);
+        public int TotalCallbackCount => Volatile.Read(ref _descriptorCallCount)
+                                         + Volatile.Read(ref _availableModelsCallCount)
+                                         + Volatile.Read(ref _identityCallCount)
+                                         + Volatile.Read(ref _readinessCallCount)
+                                         + Volatile.Read(ref _singleCallCount)
+                                         + Volatile.Read(ref _batchCallCount);
+        public string SpaceIdentity { get; set; } = "test-space-v1";
+
+        public void ReleaseGeneration() => GenerationRelease.TrySetResult();
 
         public ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
-            => ValueTask.FromResult<IReadOnlyList<AgentEmbeddingModelDescriptor>>(
-                [new AgentEmbeddingModelDescriptor("test-embedding-model", "Test Embedding Model", 2, true)]);
+        {
+            Interlocked.Increment(ref _availableModelsCallCount);
+            return ValueTask.FromResult<IReadOnlyList<AgentEmbeddingModelDescriptor>>(
+            [
+                new AgentEmbeddingModelDescriptor("test-embedding-model", "Test Embedding Model", 2, true),
+                new AgentEmbeddingModelDescriptor("test-embedding-model-v2", "Test Embedding Model V2", 2),
+            ]);
+        }
+
+        public ValueTask<string> GetEmbeddingSpaceIdentityAsync(
+            string modelId,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _identityCallCount);
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(SpaceIdentity);
+        }
 
         public ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentEmbeddingProviderReadiness(providerId, AgentProviderReadinessStatus.Ready, "Ready."));
+        {
+            Interlocked.Increment(ref _readinessCallCount);
+            return ValueTask.FromResult(new AgentEmbeddingProviderReadiness(providerId, AgentProviderReadinessStatus.Ready, "Ready."));
+        }
 
         public async ValueTask<AgentEmbeddingGenerationResult?> GenerateEmbeddingAsync(
             string modelId,
             string text,
             CancellationToken cancellationToken = default)
-            => (await GenerateEmbeddingsAsync(modelId, [text], cancellationToken))[0];
+        {
+            Interlocked.Increment(ref _singleCallCount);
+            return (await GenerateEmbeddingsAsync(modelId, [text], cancellationToken))[0];
+        }
 
         public async ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateEmbeddingsAsync(
             string modelId,
             IReadOnlyList<string> texts,
             CancellationToken cancellationToken = default)
         {
+            var callNumber = Interlocked.Increment(ref _batchCallCount);
+            foreach (var text in texts)
+            {
+                _requests.Enqueue(text);
+            }
             GenerationStarted.TrySetResult();
+            if (FailOnBatchCall == callNumber)
+            {
+                FailOnBatchCall = 0;
+                throw new InvalidOperationException("Configured partial embedding generation failure.");
+            }
             if (FailuresRemaining > 0)
             {
                 FailuresRemaining--;
@@ -285,60 +802,221 @@ public sealed class SemanticMemoryIndexingReliabilityTests
                     throw;
                 }
             }
+            if (Mode == EmbeddingProviderMode.WaitForRelease)
+            {
+                await GenerationRelease.Task.WaitAsync(cancellationToken);
+            }
 
+            Interlocked.Add(ref _uploadedTextCount, texts.Count);
             return texts.Select(text => (AgentEmbeddingGenerationResult?)new AgentEmbeddingGenerationResult(
                 modelId,
                 [VectorVersion, text.Length])).ToArray();
         }
+
+        public int CountRequestsContaining(string value)
+            => _requests.Count(request => request.Contains(value, StringComparison.Ordinal));
     }
 
-    private sealed class TestExtensionCatalog : IPackageExtensionCatalog
+    private sealed class TestExtensionCatalog :
+        IPackageExtensionCatalog,
+        IPackageExtensionInvocationCatalog,
+        IPackageExtensionCatalogMonitor
     {
-        private readonly Dictionary<string, List<object>> _extensions = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object _syncRoot = new();
+        private readonly Dictionary<string, List<OwnedExtension>> _extensions = new(StringComparer.OrdinalIgnoreCase);
+        private long _revision;
+
+        public event EventHandler<PackageExtensionCatalogChangedEventArgs>? Changed;
 
         public void Add<T>(PackageExtensionPoint<T> extensionPoint, T extension)
         {
-            if (!_extensions.TryGetValue(extensionPoint.Id, out var entries))
+            lock (_syncRoot)
             {
-                entries = [];
-                _extensions[extensionPoint.Id] = entries;
+                if (!_extensions.TryGetValue(extensionPoint.Id, out var entries))
+                {
+                    entries = [];
+                    _extensions[extensionPoint.Id] = entries;
+                }
+
+                entries.Add(new OwnedExtension(extension!));
             }
 
-            entries.Add(extension!);
+            RaiseChanged(extensionPoint.Id, PackageExtensionChangeKind.Added, extension!.GetType());
+        }
+
+        public void Remove<T>(PackageExtensionPoint<T> extensionPoint, T extension)
+        {
+            OwnedExtension? removed = null;
+            lock (_syncRoot)
+            {
+                if (_extensions.TryGetValue(extensionPoint.Id, out var entries))
+                {
+                    removed = entries.FirstOrDefault(entry => ReferenceEquals(entry.Contribution, extension));
+                    if (removed is not null)
+                    {
+                        removed.Active = false;
+                        entries.Remove(removed);
+                    }
+                }
+            }
+
+            if (removed is not null)
+            {
+                removed.Retirement.Cancel();
+                RaiseChanged(extensionPoint.Id, PackageExtensionChangeKind.Removed, extension!.GetType());
+            }
         }
 
         public IReadOnlyList<T> GetExtensions<T>(PackageExtensionPoint<T> extensionPoint)
-            => _extensions.TryGetValue(extensionPoint.Id, out var entries) ? entries.Cast<T>().ToArray() : [];
+        {
+            lock (_syncRoot)
+            {
+                return _extensions.TryGetValue(extensionPoint.Id, out var entries)
+                    ? entries.Where(static entry => entry.Active).Select(static entry => entry.Contribution).Cast<T>().ToArray()
+                    : [];
+            }
+        }
 
         public IReadOnlyList<PackageExtensionContribution<T>> GetExtensionContributions<T>(PackageExtensionPoint<T> extensionPoint)
             => GetExtensions(extensionPoint)
                 .Select(extension => new PackageExtensionContribution<T>("test.package", extension))
                 .ToArray();
+
+        public IReadOnlyList<IPackageExtensionReference<T>> GetExtensionReferences<T>(PackageExtensionPoint<T> extensionPoint)
+        {
+            lock (_syncRoot)
+            {
+                return _extensions.TryGetValue(extensionPoint.Id, out var entries)
+                    ? entries.Where(static entry => entry.Active)
+                        .Select(entry => (IPackageExtensionReference<T>)new ExtensionReference<T>(this, entry))
+                        .ToArray()
+                    : [];
+            }
+        }
+
+        private bool TryAcquire<T>(OwnedExtension entry, [NotNullWhen(true)] out IPackageExtensionLease<T>? lease)
+        {
+            lock (_syncRoot)
+            {
+                if (!entry.Active || entry.Contribution is not T contribution)
+                {
+                    lease = null;
+                    return false;
+                }
+
+                lease = new ExtensionLease<T>(entry, contribution);
+                return true;
+            }
+        }
+
+        private void RaiseChanged(string extensionPointId, PackageExtensionChangeKind kind, Type contributionType)
+            => Changed?.Invoke(this, new PackageExtensionCatalogChangedEventArgs(
+                Interlocked.Increment(ref _revision),
+                kind == PackageExtensionChangeKind.Added
+                    ? PackageExtensionCatalogChangeReason.PackageActivated
+                    : PackageExtensionCatalogChangeReason.PackageDeactivated,
+                [new PackageExtensionChange("test.package", extensionPointId, kind, contributionType)]));
+
+        private sealed class ExtensionReference<T>(TestExtensionCatalog catalog, OwnedExtension entry)
+            : IPackageExtensionReference<T>
+        {
+            public bool TryAcquire([NotNullWhen(true)] out IPackageExtensionLease<T>? lease)
+                => catalog.TryAcquire(entry, out lease);
+        }
+
+        private sealed class ExtensionLease<T>(OwnedExtension entry, T contribution) : IPackageExtensionLease<T>
+        {
+            private object? _contribution = contribution;
+
+            public string PackageId => "test.package";
+            public T Contribution => (T)(_contribution ?? throw new ObjectDisposedException(nameof(ExtensionLease<T>)));
+            public CancellationToken RetirementToken => entry.Retirement.Token;
+            public void Dispose() => Interlocked.Exchange(ref _contribution, null);
+        }
+
+        private sealed class OwnedExtension(object contribution)
+        {
+            public object Contribution { get; } = contribution;
+            public CancellationTokenSource Retirement { get; } = new();
+            public bool Active { get; set; } = true;
+        }
     }
 
-    private sealed class TestRuntimeCatalog(AgentSessionRecord session, AgentProfileRecord profile) : IAgentRuntimeCatalog
+    private sealed class TestRuntimeCatalog : IAgentRuntimeCatalog
     {
+        private readonly AgentSessionRecord _session;
+        private string? _embeddingSettings;
+
+        public TestRuntimeCatalog(AgentSessionRecord session, AgentProfileRecord profile)
+        {
+            _session = session;
+            Profile = profile;
+        }
+
+        public AgentProfileRecord Profile { get; private set; }
+
         public event Action<Guid>? SessionChanged { add { } remove { } }
         public event Action<Guid, AgentTurnRecord>? TurnChanged { add { } remove { } }
-        public event Action<string>? ProfileChanged { add { } remove { } }
+        public event Action<string>? ProfileChanged;
 
-        public IReadOnlyList<AgentSessionRecord> ListSessions() => [session];
-        public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => profileId == profile.ProfileId ? [session] : [];
+        public IReadOnlyList<AgentSessionRecord> ListSessions() => [_session];
+        public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => profileId == Profile.ProfileId ? [_session] : [];
         public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId) => [];
-        public AgentSessionRecord? GetSession(Guid sessionId) => sessionId == session.SessionId ? session : null;
+        public AgentSessionRecord? GetSession(Guid sessionId) => sessionId == _session.SessionId ? _session : null;
         public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [];
         public AgentWorkspaceRecord? GetWorkspace(string workspaceId) => null;
-        public AgentProfileRecord? GetSessionProfile(Guid sessionId) => sessionId == session.SessionId ? profile : null;
+        public AgentProfileRecord? GetSessionProfile(Guid sessionId) => sessionId == _session.SessionId ? Profile : null;
         public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
         public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;
         public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => null;
         public IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit) => [];
         public IReadOnlyList<AgentTurnRecord> ListTurnsBefore(Guid sessionId, DateTimeOffset beforeCreatedAtUtc, Guid beforeTurnId, int limit) => [];
         public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(Guid sessionId, DateTimeOffset afterCreatedAtUtc, Guid afterTurnId, int limit) => [];
-        public IReadOnlyList<AgentProfileRecord> ListProfiles() => [profile];
-        public AgentProfileRecord? GetProfile(string profileId) => profileId == profile.ProfileId ? profile : null;
-        public AgentProfileModelBindingRecord? GetSessionModelBinding(Guid sessionId, string capabilityKind) => null;
-        public AgentProfileModelBindingRecord? GetModelBinding(string profileId, string capabilityKind) => null;
+        public IReadOnlyList<AgentProfileRecord> ListProfiles() => [Profile];
+        public AgentProfileRecord? GetProfile(string profileId) => profileId == Profile.ProfileId ? Profile : null;
+        public AgentProfileModelBindingRecord? GetSessionModelBinding(Guid sessionId, string capabilityKind)
+            => sessionId == _session.SessionId ? GetModelBinding(Profile.ProfileId, capabilityKind) : null;
+
+        public AgentProfileModelBindingRecord? GetModelBinding(string profileId, string capabilityKind)
+            => profileId == Profile.ProfileId
+               && capabilityKind == AgentModelCapabilityKinds.Embedding
+               && Profile.EmbeddingProviderId is { } providerId
+               && Profile.EmbeddingModelId is { } modelId
+                ? new AgentProfileModelBindingRecord(
+                    Profile.ProfileId,
+                    capabilityKind,
+                    providerId,
+                    modelId,
+                    _embeddingSettings,
+                    Profile.UpdatedAtUtc)
+                : null;
+
+        public void SetEmbeddingSettings(string? settings)
+        {
+            _embeddingSettings = settings;
+            Profile = Profile with { UpdatedAtUtc = DateTimeOffset.UtcNow };
+            ProfileChanged?.Invoke(Profile.ProfileId);
+        }
+
+        public void SetEmbeddingModel(string modelId)
+        {
+            Profile = Profile with
+            {
+                EmbeddingModelId = modelId,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+            };
+            ProfileChanged?.Invoke(Profile.ProfileId);
+        }
+
+        public void SetEmbeddingProvider(string providerId)
+        {
+            Profile = Profile with
+            {
+                EmbeddingProviderId = providerId,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+            };
+            ProfileChanged?.Invoke(Profile.ProfileId);
+        }
     }
 
     private sealed class TestPackageContext : IPackageContext
@@ -348,13 +1026,15 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             Directory.CreateDirectory(rootPath);
             ContentRootPath = rootPath;
             Storage = new TestPackageStorageContext(rootPath);
+            MutableSettings = new TestPackageSettings();
         }
 
         public string PackageId => "test.package.agent.memory.semantic";
         public string Version => "1.0.0";
         public string ContentRootPath { get; }
         public IPackageStorageContext Storage { get; }
-        public IPackageSettings Settings { get; } = new TestPackageSettings();
+        public TestPackageSettings MutableSettings { get; }
+        public IPackageSettings Settings => MutableSettings;
         public IPackageSecrets Secrets { get; } = new TestPackageSecrets();
         public IPackageLogging Logging { get; } = NullPackageLogging.Instance;
     }
@@ -377,15 +1057,70 @@ public sealed class SemanticMemoryIndexingReliabilityTests
 
     private sealed class TestPackageKeyValueStore : IPackageKeyValueStore
     {
-        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
-        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(false);
-        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.FromResult<string?>(null);
+        }
+        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            TestPackageStorageGuards.Value(value);
+            return Task.CompletedTask;
+        }
+        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.FromResult(false);
+        }
+        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.CompletedTask;
+        }
         public Task<IReadOnlyList<string>> ListKeysAsync(string? prefix = null, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<string>>([]);
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Prefix(prefix);
+            return Task.FromResult<IReadOnlyList<string>>([]);
+        }
     }
 
-    private sealed class TestPackageSettings : EmptyPackageSettings;
+    private sealed class TestPackageSettings : IPackageSettings
+    {
+        private readonly ConcurrentDictionary<string, string> _values = new(StringComparer.Ordinal);
+
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.FromResult(_values.GetValueOrDefault(key));
+        }
+
+        public Task<string?> GetStoredValueAsync(string key, CancellationToken cancellationToken = default)
+            => GetValueAsync(key, cancellationToken);
+
+        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            TestPackageStorageGuards.Value(value);
+            _values[key] = value;
+            return Task.CompletedTask;
+        }
+
+        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            _values.TryRemove(key, out _);
+            return Task.CompletedTask;
+        }
+    }
 
     private sealed class TestPackageSecrets : InMemoryPackageSecrets;
 }

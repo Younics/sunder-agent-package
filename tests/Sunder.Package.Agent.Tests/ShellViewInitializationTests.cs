@@ -37,6 +37,47 @@ public sealed class ShellViewInitializationTests
     }
 
     [Fact]
+    public async Task SubagentsViewModel_SelectionDuringSaveSuppressesLateNavigationAndStatus()
+    {
+        var gateway = new SaveRaceSubagentGateway();
+        using var viewModel = new SubagentsViewModel(gateway);
+        await viewModel.InitializeAsync();
+        viewModel.IsCompactLayout = true;
+        viewModel.ActivateSubagent(viewModel.Subagents.Single(item => item.SubagentId == "alpha"));
+        viewModel.Description = "Saved description";
+
+        var save = viewModel.SaveSubagentCommand.ExecuteAsync(null);
+        await gateway.SaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.ActivateSubagent(viewModel.Subagents.Single(item => item.SubagentId == "beta"));
+
+        gateway.ReleaseSave.TrySetResult();
+        await save;
+
+        Assert.Equal("beta", viewModel.SelectedSubagent?.SubagentId);
+        Assert.Equal("Beta", viewModel.DisplayName);
+        Assert.Empty(viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task SubagentsViewModel_ResizeDuringSaveCannotClearEditedSelection()
+    {
+        var gateway = new SaveRaceSubagentGateway();
+        using var viewModel = new SubagentsViewModel(gateway);
+        await viewModel.InitializeAsync();
+        viewModel.Description = "Saved description";
+
+        var save = viewModel.SaveSubagentCommand.ExecuteAsync(null);
+        await gateway.SaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.IsCompactLayout = true;
+        gateway.ReleaseSave.TrySetResult();
+        await save.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal("alpha", viewModel.SelectedSubagent?.SubagentId);
+        Assert.True(viewModel.IsEditorActive);
+        Assert.True(viewModel.ShowCompactEditor);
+    }
+
+    [Fact]
     public async Task SubsessionsViewModel_WarmupAndNavigationShareOneSnapshotLoad()
     {
         var gateway = new BlockingSubsessionGateway();
@@ -58,12 +99,202 @@ public sealed class ShellViewInitializationTests
         Assert.Equal(1, gateway.SessionListCount);
         Assert.Equal(1, gateway.CheckpointListCount);
         gateway.ReleaseLists.TrySetResult();
-        await Task.WhenAll(warmup, navigation);
+        await warmup;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => navigation);
         await viewModel.OnNavigatedToAsync(context);
 
         Assert.Equal(1, gateway.SessionListCount);
         Assert.Equal(1, gateway.CheckpointListCount);
     }
+
+    [Fact]
+    public async Task SubsessionsViewModel_LatestNavigationWinsWhenOlderAnchorLoadFinishesLate()
+    {
+        var gateway = new LatestNavigationSubsessionGateway();
+        using var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway);
+        await viewModel.InitializeAsync();
+
+        var firstNavigation = viewModel.OnNavigatedToAsync(
+            CreateAnchorNavigation(
+                gateway.FirstSessionId,
+                gateway.FirstTurnId,
+                gateway.FirstItemId)).AsTask();
+        await gateway.FirstAnchorLoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await viewModel.OnNavigatedToAsync(
+            CreateAnchorNavigation(
+                gateway.SecondSessionId,
+                gateway.SecondTurnId,
+                gateway.SecondItemId));
+        gateway.ReleaseFirstAnchorLoad.TrySetResult();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => firstNavigation);
+
+        Assert.Equal(gateway.SecondSessionId, viewModel.SelectedSubsession?.SessionId);
+        Assert.Equal($"text:{gateway.SecondTurnId:N}", viewModel.NavigationAnchorKey?.ToString());
+    }
+
+    [Fact]
+    public async Task SubsessionsViewModel_UserSelectionSupersedesPendingAnchorLoad()
+    {
+        var gateway = new LatestNavigationSubsessionGateway();
+        using var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway);
+        await viewModel.InitializeAsync();
+
+        var firstNavigation = viewModel.OnNavigatedToAsync(
+            CreateAnchorNavigation(
+                gateway.FirstSessionId,
+                gateway.FirstTurnId,
+                gateway.FirstItemId)).AsTask();
+        await gateway.FirstAnchorLoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        viewModel.ActivateSubsession(Assert.Single(
+            viewModel.Subsessions,
+            session => session.SessionId == gateway.SecondSessionId));
+        gateway.ReleaseFirstAnchorLoad.TrySetResult();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => firstNavigation);
+
+        Assert.Equal(gateway.SecondSessionId, viewModel.SelectedSubsession?.SessionId);
+        Assert.Null(viewModel.NavigationAnchorKey);
+        var row = Assert.Single(viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>());
+        Assert.Equal(gateway.SecondTurnId, row.RowId);
+    }
+
+    [Fact]
+    public async Task SubsessionsViewModel_UserSelectionSupersedesPendingTranscriptLoad()
+    {
+        var gateway = new LatestNavigationSubsessionGateway { BlockSecondRecentLoad = true };
+        using var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway);
+        await viewModel.InitializeAsync();
+
+        var navigation = viewModel.OnNavigatedToAsync(new PackageViewNavigationContext(
+            "subsessions",
+            new Dictionary<string, string?>
+            {
+                ["sessionId"] = gateway.SecondSessionId.ToString("D"),
+            })).AsTask();
+        await gateway.SecondRecentLoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        viewModel.ActivateSubsession(Assert.Single(
+            viewModel.Subsessions,
+            session => session.SessionId == gateway.FirstSessionId));
+        gateway.ReleaseSecondRecentLoad.TrySetResult();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => navigation);
+
+        Assert.Equal(gateway.FirstSessionId, viewModel.SelectedSubsession?.SessionId);
+        Assert.Null(viewModel.NavigationAnchorKey);
+        var row = Assert.Single(viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>());
+        Assert.Equal(gateway.FirstTurnId, row.RowId);
+    }
+
+    [Fact]
+    public async Task SubsessionsViewModel_BackSupersedesPendingNavigationWithoutReopeningDetail()
+    {
+        var gateway = new LatestNavigationSubsessionGateway { BlockSecondRecentLoad = true };
+        using var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway);
+        await viewModel.InitializeAsync();
+        viewModel.IsCompactLayout = true;
+        var navigation = viewModel.OnNavigatedToAsync(new PackageViewNavigationContext(
+            "subsessions",
+            new Dictionary<string, string?>
+            {
+                ["sessionId"] = gateway.SecondSessionId.ToString("D"),
+            })).AsTask();
+        await gateway.SecondRecentLoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        viewModel.BackToSubsessionsListCommand.Execute(null);
+        gateway.ReleaseSecondRecentLoad.TrySetResult();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => navigation);
+
+        Assert.Null(viewModel.SelectedSubsession);
+        Assert.False(viewModel.IsDetailActive);
+        Assert.True(viewModel.ShowCompactList);
+        Assert.Empty(viewModel.Messages);
+        Assert.Null(viewModel.NavigationAnchorKey);
+    }
+
+    [Fact]
+    public async Task SubsessionsViewModel_RefreshPreservesSelectionChangedDuringRead()
+    {
+        var gateway = new RefreshRaceSubsessionGateway();
+        using var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway);
+        await viewModel.InitializeAsync();
+
+        var refresh = viewModel.ReloadSubsessionsAsync(null);
+        await Task.WhenAll(
+            gateway.StaleSessionReadStarted.Task,
+            gateway.StaleCheckpointReadStarted.Task).WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.ActivateSubsession(Assert.Single(
+            viewModel.Subsessions,
+            session => session.SessionId == gateway.SecondSessionId));
+
+        gateway.ReleaseStaleRefresh.TrySetResult();
+        await refresh;
+
+        Assert.Equal(gateway.SecondSessionId, viewModel.SelectedSubsession?.SessionId);
+        var row = Assert.Single(viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>());
+        Assert.Equal(gateway.SecondTurnId, row.RowId);
+    }
+
+    [Fact]
+    public async Task SubsessionsViewModel_StaleRefreshCannotOverwriteNewerSnapshot()
+    {
+        var gateway = new RefreshRaceSubsessionGateway();
+        using var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway);
+        await viewModel.InitializeAsync();
+
+        var staleRefresh = viewModel.ReloadSubsessionsAsync(null);
+        await Task.WhenAll(
+            gateway.StaleSessionReadStarted.Task,
+            gateway.StaleCheckpointReadStarted.Task).WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.ActivateSubsession(Assert.Single(
+            viewModel.Subsessions,
+            session => session.SessionId == gateway.SecondSessionId));
+        await viewModel.ReloadSubsessionsAsync(null);
+
+        var selected = Assert.Single(
+            viewModel.Subsessions,
+            session => session.SessionId == gateway.SecondSessionId);
+        Assert.Equal("Second fresh", selected.Title);
+        gateway.ReleaseStaleRefresh.TrySetResult();
+        await staleRefresh;
+
+        Assert.Equal(gateway.SecondSessionId, viewModel.SelectedSubsession?.SessionId);
+        Assert.Equal("Second fresh", selected.Title);
+    }
+
+    [Fact]
+    public async Task SubsessionsViewModel_FailedNavigationClearsPreviousAnchorKey()
+    {
+        var gateway = new LatestNavigationSubsessionGateway();
+        using var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway);
+        await viewModel.InitializeAsync();
+        await viewModel.OnNavigatedToAsync(
+            CreateAnchorNavigation(
+                gateway.SecondSessionId,
+                gateway.SecondTurnId,
+                gateway.SecondItemId));
+        Assert.NotNull(viewModel.NavigationAnchorKey);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => viewModel.OnNavigatedToAsync(
+            CreateAnchorNavigation(Guid.NewGuid(), Guid.NewGuid())).AsTask());
+
+        Assert.Null(viewModel.NavigationAnchorKey);
+    }
+
+    private static PackageViewNavigationContext CreateAnchorNavigation(
+        Guid sessionId,
+        Guid turnId,
+        Guid? itemId = null)
+        => new(
+            "subsessions",
+            new Dictionary<string, string?>
+            {
+                ["sessionId"] = sessionId.ToString("D"),
+                ["turnId"] = turnId.ToString("D"),
+                ["itemId"] = (itemId ?? Guid.NewGuid()).ToString("D"),
+                ["anchorKind"] = "Text",
+                ["createdAtUtc"] = DateTimeOffset.UtcNow.ToString("O"),
+            });
 
     [Fact]
     public async Task RuntimeBackedSubsessions_RetriesFaultedSharedSnapshot()
@@ -177,6 +408,96 @@ public sealed class ShellViewInitializationTests
             => Task.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
     }
 
+    private sealed class SaveRaceSubagentGateway : ISubagentManagementGateway
+    {
+        private readonly SubagentRecord[] _subagents =
+        [
+            CreateSubagent("alpha", "Alpha"),
+            CreateSubagent("beta", "Beta"),
+        ];
+
+        public TaskCompletionSource SaveStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseSave { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public event Action? SubagentsChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public event Action? CatalogChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public Task<IReadOnlyList<SubagentRecord>> ListSubagentsAsync(
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<SubagentRecord>>(_subagents);
+
+        public Task<SubagentRecord> CreateSubagentAsync(
+            string displayName,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async Task<SubagentRecord> SaveSubagentAsync(
+            SubagentSaveRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            SaveStarted.TrySetResult();
+            await ReleaseSave.Task;
+            return _subagents.Single(item => item.SubagentId == request.SubagentId) with
+            {
+                DisplayName = request.DisplayName,
+                Description = request.Description,
+                Instructions = request.Instructions,
+                ChatProviderId = request.ChatProviderId,
+                ChatModelId = request.ChatModelId,
+                SelectableCapabilityAssignments = request.Assignments,
+                ChatModelSettingsJson = request.ChatModelSettingsJson,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+            };
+        }
+
+        public Task DeleteSubagentAsync(
+            string subagentId,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public IReadOnlyList<SubagentProviderCatalogOption> ListChatProviders() => [];
+
+        public Task<SubagentProviderModelCatalogResult> LoadChatModelsAsync(
+            string providerId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SubagentProviderModelCatalogResult([], string.Empty));
+
+        public Task<IReadOnlyList<AgentToolDescriptor>> ListLocalToolsAsync(
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentToolDescriptor>>([]);
+
+        public Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListPackageCapabilitiesAsync(
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
+
+        private static SubagentRecord CreateSubagent(string id, string displayName)
+        {
+            var now = DateTimeOffset.UtcNow;
+            return new SubagentRecord(
+                id,
+                displayName,
+                "Description",
+                null,
+                null,
+                null,
+                [],
+                now,
+                now);
+        }
+    }
+
     private sealed class BlockingSubsessionGateway :
         ISubsessionSessionReader,
         ISubsessionCheckpointReader,
@@ -207,6 +528,12 @@ public sealed class ShellViewInitializationTests
             remove { }
         }
 
+        public event Action? ResnapshotRequired
+        {
+            add { }
+            remove { }
+        }
+
         public async Task<SubsessionSessionCatalog> ListSessionsAsync(
             CancellationToken cancellationToken = default)
         {
@@ -225,27 +552,371 @@ public sealed class ShellViewInitializationTests
             return [];
         }
 
-        public Task<IReadOnlyList<AgentTurnRecord>> ListRecentTurnsAsync(
+        public Task<SubsessionTranscriptPage> ListRecentTurnsAsync(
             Guid sessionId,
             int limit,
             CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
+            => Task.FromResult(new SubsessionTranscriptPage([], false));
 
-        public Task<IReadOnlyList<AgentTurnRecord>> ListTurnsBeforeAsync(
+        public Task<SubsessionTranscriptPage> ListTurnsBeforeAsync(
             Guid sessionId,
             DateTimeOffset beforeCreatedAtUtc,
             Guid beforeTurnId,
             int limit,
             CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
+            => Task.FromResult(new SubsessionTranscriptPage([], false));
 
-        public Task<IReadOnlyList<AgentTurnRecord>> ListTurnsAfterAsync(
+        public Task<SubsessionTranscriptPage> ListTurnsAfterAsync(
             Guid sessionId,
             DateTimeOffset afterCreatedAtUtc,
             Guid afterTurnId,
             int limit,
             CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
+            => Task.FromResult(new SubsessionTranscriptPage([], false));
+
+        public Task<SubsessionAroundTurnPage> LoadAroundTurnAsync(
+            Guid sessionId,
+            Guid turnId,
+            DateTimeOffset turnCreatedAtUtc,
+            Guid itemId,
+            int beforeLimit,
+            int afterLimit,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SubsessionAroundTurnPage([], false, false, turnId));
+    }
+
+    private sealed class LatestNavigationSubsessionGateway :
+        ISubsessionSessionReader,
+        ISubsessionCheckpointReader,
+        ISubsessionTranscriptPageReader,
+        ISubsessionChangeNotifications
+    {
+        private readonly Guid _rootSessionId = Guid.NewGuid();
+
+        internal Guid FirstSessionId { get; } = Guid.NewGuid();
+        internal Guid SecondSessionId { get; } = Guid.NewGuid();
+        internal Guid FirstTurnId { get; } = Guid.NewGuid();
+        internal Guid SecondTurnId { get; } = Guid.NewGuid();
+        internal Guid FirstItemId { get; } = Guid.NewGuid();
+        internal Guid SecondItemId { get; } = Guid.NewGuid();
+        internal TaskCompletionSource FirstAnchorLoadStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReleaseFirstAnchorLoad { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource SecondRecentLoadStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReleaseSecondRecentLoad { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal bool BlockSecondRecentLoad { get; init; }
+
+        public event Action<Guid>? SessionChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public event Action<Guid, AgentTurnRecord>? TurnChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public event Action? ResnapshotRequired
+        {
+            add { }
+            remove { }
+        }
+
+        public Task<SubsessionSessionCatalog> ListSessionsAsync(
+            CancellationToken cancellationToken = default)
+        {
+            var now = DateTimeOffset.UtcNow;
+            return Task.FromResult(new SubsessionSessionCatalog(
+                [
+                    new AgentSessionRecord(
+                        _rootSessionId,
+                        "Root",
+                        AgentSessionState.Active,
+                        now,
+                        now,
+                        RootSessionId: _rootSessionId),
+                    new AgentSessionRecord(
+                        FirstSessionId,
+                        "First",
+                        AgentSessionState.Active,
+                        now,
+                        now,
+                        ParentSessionId: _rootSessionId,
+                        RootSessionId: _rootSessionId),
+                    new AgentSessionRecord(
+                        SecondSessionId,
+                        "Second",
+                        AgentSessionState.Active,
+                        now.AddSeconds(-1),
+                        now.AddSeconds(-1),
+                        ParentSessionId: _rootSessionId,
+                        RootSessionId: _rootSessionId),
+                ],
+                []));
+        }
+
+        public Task<IReadOnlyList<AgentRunCheckpointRecord>> ListLatestCheckpointsAsync(
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentRunCheckpointRecord>>([]);
+
+        public async Task<SubsessionTranscriptPage> ListRecentTurnsAsync(
+            Guid sessionId,
+            int limit,
+            CancellationToken cancellationToken = default)
+        {
+            if (BlockSecondRecentLoad && sessionId == SecondSessionId)
+            {
+                SecondRecentLoadStarted.TrySetResult();
+                await ReleaseSecondRecentLoad.Task.WaitAsync(cancellationToken);
+            }
+            return new SubsessionTranscriptPage(sessionId switch
+            {
+                var id when id == FirstSessionId =>
+                    [CreateTextTurn(FirstSessionId, FirstTurnId, FirstItemId, "First")],
+                var id when id == SecondSessionId =>
+                    [CreateTextTurn(SecondSessionId, SecondTurnId, SecondItemId, "Second")],
+                _ => [],
+            }, false);
+        }
+
+        public Task<SubsessionTranscriptPage> ListTurnsBeforeAsync(
+            Guid sessionId,
+            DateTimeOffset beforeCreatedAtUtc,
+            Guid beforeTurnId,
+            int limit,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SubsessionTranscriptPage([], false));
+
+        public Task<SubsessionTranscriptPage> ListTurnsAfterAsync(
+            Guid sessionId,
+            DateTimeOffset afterCreatedAtUtc,
+            Guid afterTurnId,
+            int limit,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SubsessionTranscriptPage([], false));
+
+        public async Task<SubsessionAroundTurnPage> LoadAroundTurnAsync(
+            Guid sessionId,
+            Guid turnId,
+            DateTimeOffset turnCreatedAtUtc,
+            Guid itemId,
+            int beforeLimit,
+            int afterLimit,
+            CancellationToken cancellationToken = default)
+        {
+            if (sessionId == FirstSessionId)
+            {
+                FirstAnchorLoadStarted.TrySetResult();
+                await ReleaseFirstAnchorLoad.Task;
+            }
+            var expectedItemId = sessionId == FirstSessionId ? FirstItemId : SecondItemId;
+            return new SubsessionAroundTurnPage(
+                [CreateTextTurn(
+                    sessionId,
+                    turnId,
+                    expectedItemId,
+                    sessionId == FirstSessionId ? "First" : "Second")],
+                false,
+                false,
+                turnId);
+        }
+
+        private static AgentTurnRecord CreateTextTurn(
+            Guid sessionId,
+            Guid turnId,
+            Guid itemId,
+            string content)
+            => new(
+                turnId,
+                sessionId,
+                AgentMessageRole.Assistant,
+                AgentTurnKind.Message,
+                [new AgentTurnItemRecord(
+                    itemId,
+                    turnId,
+                    0,
+                    AgentTurnItemKind.Text,
+                    content,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    null,
+                    null)],
+                DateTimeOffset.UnixEpoch,
+                DateTimeOffset.UnixEpoch);
+    }
+
+    private sealed class RefreshRaceSubsessionGateway :
+        ISubsessionSessionReader,
+        ISubsessionCheckpointReader,
+        ISubsessionTranscriptPageReader,
+        ISubsessionChangeNotifications
+    {
+        private readonly Guid _rootSessionId = Guid.NewGuid();
+        private int _sessionReadCount;
+        private int _checkpointReadCount;
+
+        internal Guid FirstSessionId { get; } = Guid.NewGuid();
+        internal Guid SecondSessionId { get; } = Guid.NewGuid();
+        internal Guid FirstTurnId { get; } = Guid.NewGuid();
+        internal Guid SecondTurnId { get; } = Guid.NewGuid();
+        internal TaskCompletionSource StaleSessionReadStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource StaleCheckpointReadStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReleaseStaleRefresh { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public event Action<Guid>? SessionChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public event Action<Guid, AgentTurnRecord>? TurnChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public event Action? ResnapshotRequired
+        {
+            add { }
+            remove { }
+        }
+
+        public async Task<SubsessionSessionCatalog> ListSessionsAsync(
+            CancellationToken cancellationToken = default)
+        {
+            var read = Interlocked.Increment(ref _sessionReadCount);
+            if (read == 2)
+            {
+                StaleSessionReadStarted.TrySetResult();
+                await ReleaseStaleRefresh.Task.WaitAsync(cancellationToken);
+            }
+
+            var suffix = read switch
+            {
+                1 => "initial",
+                2 => "stale",
+                _ => "fresh",
+            };
+            var now = DateTimeOffset.UnixEpoch.AddMinutes(10);
+            return new SubsessionSessionCatalog(
+                [
+                    new AgentSessionRecord(
+                        _rootSessionId,
+                        "Root",
+                        AgentSessionState.Active,
+                        now,
+                        now,
+                        RootSessionId: _rootSessionId),
+                    new AgentSessionRecord(
+                        FirstSessionId,
+                        $"First {suffix}",
+                        AgentSessionState.Active,
+                        now,
+                        now,
+                        ParentSessionId: _rootSessionId,
+                        RootSessionId: _rootSessionId),
+                    new AgentSessionRecord(
+                        SecondSessionId,
+                        $"Second {suffix}",
+                        AgentSessionState.Active,
+                        now.AddMinutes(-1),
+                        now.AddMinutes(-1),
+                        ParentSessionId: _rootSessionId,
+                        RootSessionId: _rootSessionId),
+                ],
+                []);
+        }
+
+        public async Task<IReadOnlyList<AgentRunCheckpointRecord>> ListLatestCheckpointsAsync(
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _checkpointReadCount) == 2)
+            {
+                StaleCheckpointReadStarted.TrySetResult();
+                await ReleaseStaleRefresh.Task.WaitAsync(cancellationToken);
+            }
+            return [];
+        }
+
+        public Task<SubsessionTranscriptPage> ListRecentTurnsAsync(
+            Guid sessionId,
+            int limit,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SubsessionTranscriptPage(sessionId switch
+            {
+                var id when id == FirstSessionId => [CreateTextTurn(FirstSessionId, FirstTurnId)],
+                var id when id == SecondSessionId => [CreateTextTurn(SecondSessionId, SecondTurnId)],
+                _ => [],
+            }, false));
+
+        public Task<SubsessionTranscriptPage> ListTurnsBeforeAsync(
+            Guid sessionId,
+            DateTimeOffset beforeCreatedAtUtc,
+            Guid beforeTurnId,
+            int limit,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SubsessionTranscriptPage([], false));
+
+        public Task<SubsessionTranscriptPage> ListTurnsAfterAsync(
+            Guid sessionId,
+            DateTimeOffset afterCreatedAtUtc,
+            Guid afterTurnId,
+            int limit,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SubsessionTranscriptPage([], false));
+
+        public Task<SubsessionAroundTurnPage> LoadAroundTurnAsync(
+            Guid sessionId,
+            Guid turnId,
+            DateTimeOffset turnCreatedAtUtc,
+            Guid itemId,
+            int beforeLimit,
+            int afterLimit,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SubsessionAroundTurnPage(
+                [CreateTextTurn(sessionId, turnId)],
+                false,
+                false,
+                turnId));
+
+        private static AgentTurnRecord CreateTextTurn(Guid sessionId, Guid turnId)
+            => new(
+                turnId,
+                sessionId,
+                AgentMessageRole.Assistant,
+                AgentTurnKind.Message,
+                [new AgentTurnItemRecord(
+                    Guid.NewGuid(),
+                    turnId,
+                    0,
+                    AgentTurnItemKind.Text,
+                    sessionId.ToString("D"),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    null,
+                    null)],
+                DateTimeOffset.UnixEpoch,
+                DateTimeOffset.UnixEpoch);
     }
 
     private sealed class FailOnceSubsessionRuntimeClient : IPackageRuntimeClient

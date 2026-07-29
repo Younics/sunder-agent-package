@@ -81,7 +81,10 @@ public sealed class WorkspaceEditorConfigPreservationTests
 
     private sealed class ReadyDockerCliRunner(IPackageContext context) : DockerCliRunner(context)
     {
-        public override Task<DockerCliRunResult> RunAsync(
+        protected override Task<string> ResolveEndpointAsync(CancellationToken cancellationToken)
+            => Task.FromResult("unix:///var/run/docker.sock");
+
+        protected override Task<DockerCliRunResult> RunCoreAsync(
             IReadOnlyList<string> args,
             int timeoutSeconds,
             CancellationToken cancellationToken,

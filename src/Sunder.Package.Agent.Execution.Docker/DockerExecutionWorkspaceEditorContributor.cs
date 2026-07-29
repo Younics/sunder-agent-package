@@ -122,6 +122,7 @@ public sealed class DockerExecutionWorkspaceEditorContributor(
             await configService.SaveConfigAsync(context.ConfigurationId, config with
             {
                 ImageReference = image,
+                ImageReferenceNeedsAttention = false,
                 ShellPath = shellPath,
             }, cancellationToken);
             return AgentEditorSaveResult.Ok("Docker execution settings saved.");

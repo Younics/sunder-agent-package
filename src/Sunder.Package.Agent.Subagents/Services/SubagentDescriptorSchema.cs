@@ -16,7 +16,10 @@ internal sealed class SubagentDescriptorSchema(
     internal const string SourceDisplayName = "Subagents";
 
     private readonly SubagentService _subagentService = subagentService;
-    private readonly IPackageExtensionCatalog _extensionCatalog = extensionCatalog;
+    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
+        extensionCatalog as IPackageExtensionInvocationCatalog
+        ?? throw new InvalidOperationException(
+            "The host extension catalog does not support activation-scoped invocation leases.");
     private readonly SubagentPermissionStatusAdapter _permissionStatusAdapter = permissionStatusAdapter;
 
     public ValueTask<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListCapabilitiesAsync(
@@ -130,9 +133,7 @@ internal sealed class SubagentDescriptorSchema(
     {
         cancellationToken.ThrowIfCancellationRequested();
         var profile = request.Profile
-                      ?? _extensionCatalog.GetExtensions(PackageExtensionPoints.RuntimeCatalogs)
-                          .FirstOrDefault()
-                          ?.GetProfile(request.Session.ProfileId);
+                       ?? ResolveProfile(request.Session.ProfileId);
         var enabledSubagents = ListEnabledSubagents(profile, requireUsable: true);
         if (!SupportsSubagentFeature(profile) || enabledSubagents.Count == 0)
         {
@@ -189,15 +190,58 @@ internal sealed class SubagentDescriptorSchema(
         var requestedSourceId = string.IsNullOrWhiteSpace(profile.BehaviorLoopSourceId)
             ? null
             : profile.BehaviorLoopSourceId.Trim();
-        var loops = _extensionCatalog.GetExtensions(PackageExtensionPoints.BehaviorLoops);
+        var loops = SnapshotBehaviorLoops();
         var behaviorLoop = loops.FirstOrDefault(loop =>
-                               string.Equals(loop.Descriptor.LoopId, requestedLoopId, StringComparison.OrdinalIgnoreCase)
+                               string.Equals(loop.LoopId, requestedLoopId, StringComparison.OrdinalIgnoreCase)
                                && (requestedSourceId is null
-                                   || string.Equals(loop.Descriptor.SourceId, requestedSourceId, StringComparison.OrdinalIgnoreCase)))
+                                   || string.Equals(loop.SourceId, requestedSourceId, StringComparison.OrdinalIgnoreCase)))
                            ?? loops.FirstOrDefault(loop =>
-                               string.Equals(loop.Descriptor.LoopId, AgentBehaviorLoopIds.Default, StringComparison.OrdinalIgnoreCase));
-        return behaviorLoop?.Descriptor.FeatureKinds?.Any(kind =>
+                               string.Equals(loop.LoopId, AgentBehaviorLoopIds.Default, StringComparison.OrdinalIgnoreCase));
+        return behaviorLoop?.FeatureKinds?.Any(kind =>
             string.Equals(kind, SubagentConstants.FeatureKind, StringComparison.OrdinalIgnoreCase)) == true;
+    }
+
+    private AgentProfileRecord? ResolveProfile(string profileId)
+    {
+        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.RuntimeCatalogs))
+        {
+            if (!reference.TryAcquire(out var lease))
+            {
+                continue;
+            }
+            using (lease)
+            {
+                var profile = lease.Contribution.GetProfile(profileId);
+                if (!lease.RetirementToken.IsCancellationRequested)
+                {
+                    return profile;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private IReadOnlyList<AgentBehaviorLoopDescriptor> SnapshotBehaviorLoops()
+    {
+        var descriptors = new List<AgentBehaviorLoopDescriptor>();
+        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.BehaviorLoops))
+        {
+            if (!reference.TryAcquire(out var lease))
+            {
+                continue;
+            }
+            using (lease)
+            {
+                var descriptor = lease.Contribution.Descriptor;
+                if (!lease.RetirementToken.IsCancellationRequested)
+                {
+                    descriptors.Add(descriptor);
+                }
+            }
+        }
+
+        return descriptors;
     }
 
     private static string BuildTaskToolDescription(IReadOnlyList<SubagentRecord> agents)

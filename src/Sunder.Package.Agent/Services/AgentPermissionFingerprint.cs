@@ -26,7 +26,9 @@ internal static class AgentPermissionFingerprint
         AgentPermissionRequest? permissionRequest,
         AgentProfileRecord? profile = null,
         string? providerId = null,
-        string? modelId = null)
+        string? modelId = null,
+        string? toolOwnerPackageId = null,
+        string? executionTargetOwnerPackageId = null)
     {
         var values = new[]
         {
@@ -45,11 +47,15 @@ internal static class AgentPermissionFingerprint
             NormalizeIdentity(binding?.Role),
             NormalizeIdentity(target?.TargetKind),
             NormalizeIdentity(target?.TargetId),
+            NormalizeIdentity(toolOwnerPackageId),
+            NormalizeIdentity(executionTargetOwnerPackageId),
             NormalizeIdentity(permissionRequest?.ActionId),
             NormalizeIdentity(permissionRequest?.BoundaryId),
             NormalizeIdentity(permissionRequest?.WorkspaceId),
             NormalizeIdentity(permissionRequest?.BindingId),
             NormalizeResource(permissionRequest?.ResourceReference),
+            NormalizeResourceList(permissionRequest?.ResourceReferences),
+            NormalizeResourceClaims(permissionRequest?.ResourceClaims),
             NormalizeResource(permissionRequest?.Path),
             NormalizeResource(permissionRequest?.Command),
             NormalizeJson(CreateExecutionSnapshot(
@@ -64,7 +70,9 @@ internal static class AgentPermissionFingerprint
                 permissionRequest,
                 profile,
                 providerId,
-                modelId)),
+                modelId,
+                toolOwnerPackageId,
+                executionTargetOwnerPackageId)),
         };
 
         var material = new StringBuilder();
@@ -90,7 +98,9 @@ internal static class AgentPermissionFingerprint
         AgentPermissionRequest? permissionRequest,
         AgentProfileRecord? profile,
         string? providerId,
-        string? modelId)
+        string? modelId,
+        string? toolOwnerPackageId = null,
+        string? executionTargetOwnerPackageId = null)
         => JsonSerializer.Serialize(
             new PermissionExecutionSnapshot(
                 SnapshotVersion,
@@ -105,7 +115,9 @@ internal static class AgentPermissionFingerprint
                 binding,
                 target,
                 descriptor,
-                permissionRequest),
+                permissionRequest,
+                toolOwnerPackageId,
+                executionTargetOwnerPackageId),
             SnapshotJsonOptions);
 
     public static bool MatchesExecutionContext(
@@ -154,7 +166,27 @@ internal static class AgentPermissionFingerprint
     private static string NormalizeResource(string? value)
         => string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
 
-    private static string NormalizeJson(string? json)
+    private static string NormalizeResourceList(IReadOnlyList<string>? values)
+        => values is null
+            ? string.Empty
+            : string.Join('\n', values
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value.Trim())
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal));
+
+    private static string NormalizeResourceClaims(IReadOnlyList<AgentResourceClaim>? claims)
+        => claims is null || claims.Count == 0
+            ? string.Empty
+            : NormalizeJson(JsonSerializer.Serialize(
+                claims
+                    .OrderBy(static claim => claim.ResourceIndex)
+                    .ThenBy(static claim => claim.NamespaceId, StringComparer.Ordinal)
+                    .ThenBy(static claim => claim.LogicalPath, StringComparer.Ordinal)
+                    .ToArray(),
+                SnapshotJsonOptions));
+
+    internal static string NormalizeJson(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
         {
@@ -220,5 +252,7 @@ internal static class AgentPermissionFingerprint
         AgentWorkspaceBindingRecord? Binding,
         AgentExecutionTargetDescriptor? Target,
         AgentToolDescriptor Descriptor,
-        AgentPermissionRequest? PermissionRequest);
+        AgentPermissionRequest? PermissionRequest,
+        string? ToolOwnerPackageId,
+        string? ExecutionTargetOwnerPackageId);
 }

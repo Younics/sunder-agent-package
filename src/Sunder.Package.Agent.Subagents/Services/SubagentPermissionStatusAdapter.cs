@@ -1,4 +1,5 @@
 using Sunder.Package.Agent.Contracts;
+using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Sdk.Abstractions;
@@ -7,7 +8,10 @@ namespace Sunder.Package.Agent.Subagents.Services;
 
 internal sealed class SubagentPermissionStatusAdapter(IPackageExtensionCatalog extensionCatalog)
 {
-    private readonly IPackageExtensionCatalog _extensionCatalog = extensionCatalog;
+    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
+        extensionCatalog as IPackageExtensionInvocationCatalog
+        ?? throw new InvalidOperationException(
+            "The host extension catalog does not support activation-scoped invocation leases.");
 
     public async ValueTask<bool> IsReadOnlySubagentAsync(
         SubagentRecord subagent,
@@ -143,22 +147,57 @@ internal sealed class SubagentPermissionStatusAdapter(IPackageExtensionCatalog e
         AgentProfileSelectableCapabilityAssignmentRecord assignment,
         CancellationToken cancellationToken)
     {
-        foreach (var tool in _extensionCatalog.GetExtensions(PackageExtensionPoints.Tools))
+        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.Tools))
         {
-            if (IsToolAssignmentMatch(assignment, tool.Descriptor))
+            if (!reference.TryAcquire(out var lease))
             {
-                return tool.Descriptor;
+                continue;
+            }
+            using (lease)
+            {
+                var descriptor = lease.Contribution.Descriptor;
+                if (!lease.RetirementToken.IsCancellationRequested
+                    && IsToolAssignmentMatch(assignment, descriptor))
+                {
+                    return descriptor;
+                }
             }
         }
 
         var context = new AgentToolSourceContext(SessionId: null, Profile: null, Workspace: null, ExecutionBinding: null);
-        foreach (var source in _extensionCatalog.GetExtensions(PackageExtensionPoints.ToolSources))
+        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.ToolSources))
         {
-            foreach (var descriptor in await source.ListToolsAsync(context, cancellationToken))
+            if (!reference.TryAcquire(out var lease))
             {
-                if (IsToolAssignmentMatch(assignment, descriptor))
+                continue;
+            }
+            using (lease)
+            {
+                var retirementToken = lease.RetirementToken;
+                using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    retirementToken);
+                IReadOnlyList<AgentToolDescriptor> descriptors;
+                try
                 {
-                    return descriptor;
+                    descriptors = await lease.Contribution.ListToolsAsync(context, invocation.Token);
+                }
+                catch (OperationCanceledException) when (
+                    retirementToken.IsCancellationRequested
+                    && !cancellationToken.IsCancellationRequested)
+                {
+                    continue;
+                }
+                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    continue;
+                }
+                foreach (var descriptor in descriptors)
+                {
+                    if (IsToolAssignmentMatch(assignment, descriptor))
+                    {
+                        return descriptor;
+                    }
                 }
             }
         }

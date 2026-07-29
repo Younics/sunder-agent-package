@@ -7,8 +7,72 @@ namespace Sunder.Package.Agent.Execution.Docker;
 public class DockerCliRunner(IPackageContext packageContext)
 {
     private const int MaxOutputLength = 51200;
+    private const int EndpointResolutionTimeoutSeconds = 30;
+    private readonly SemaphoreSlim _endpointGate = new(1, 1);
+    private string? _pinnedEndpoint;
 
-    public virtual async Task<DockerCliRunResult> RunAsync(
+    public async Task<DockerCliRunResult> RunAsync(
+        IReadOnlyList<string> args,
+        int timeoutSeconds,
+        CancellationToken cancellationToken,
+        string? standardInput = null,
+        IProgress<string>? progress = null)
+    {
+        var endpoint = await GetPinnedEndpointAsync(cancellationToken).ConfigureAwait(false);
+        return await RunCoreAsync(
+            ["--host", endpoint, .. args],
+            timeoutSeconds,
+            cancellationToken,
+            standardInput,
+            progress).ConfigureAwait(false);
+    }
+
+    public async Task<string> GetPinnedEndpointAsync(CancellationToken cancellationToken = default)
+    {
+        if (Volatile.Read(ref _pinnedEndpoint) is { } current)
+        {
+            return current;
+        }
+
+        await _endpointGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_pinnedEndpoint is not null)
+            {
+                return _pinnedEndpoint;
+            }
+            _pinnedEndpoint = await ResolveEndpointAsync(cancellationToken).ConfigureAwait(false);
+            return _pinnedEndpoint;
+        }
+        finally
+        {
+            _endpointGate.Release();
+        }
+    }
+
+    protected virtual async Task<string> ResolveEndpointAsync(CancellationToken cancellationToken)
+    {
+        var configured = DockerLocalEndpointPolicy.GetConfiguredEndpoint();
+        if (configured is not null)
+        {
+            return configured;
+        }
+
+        var context = await RunCoreAsync(
+            ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
+            EndpointResolutionTimeoutSeconds,
+            cancellationToken).ConfigureAwait(false);
+        if (context.ExitCode != 0)
+        {
+            throw new DockerExecutionDomainException(
+                "docker.endpoint.resolution-failed",
+                "Docker context endpoint could not be resolved.",
+                isTransient: true);
+        }
+        return DockerLocalEndpointPolicy.NormalizeEndpointReportedByDocker(context.Output);
+    }
+
+    protected virtual async Task<DockerCliRunResult> RunCoreAsync(
         IReadOnlyList<string> args,
         int timeoutSeconds,
         CancellationToken cancellationToken,

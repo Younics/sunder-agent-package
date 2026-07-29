@@ -70,6 +70,22 @@ public sealed class AgentRunBudgetTrackerTests
                 SourceId: "test",
                 Provenance: AgentContextProvenance.Tool,
                 Trust: AgentContextTrust.Untrusted))
+            .Append(new AgentPromptContextBlock(
+                "required-scoped",
+                "required-marker",
+                Priority: -100,
+                SourceId: "workspace-files")
+            {
+                Usage = AgentPromptContextUsage.ScopedInstruction,
+                Authority = AgentPromptContextAuthority.ScopedInstruction,
+                HostIdentity = "sunder.host.scoped-instruction.v1",
+                Scope = new AgentPromptContextScope(
+                    "/workspace",
+                    "/workspace",
+                    "/workspace/AGENTS.md",
+                    new string('a', 64),
+                    new string('b', 64)),
+            })
             .ToArray();
 
         var rendered = AgentPromptPreparationPipeline.RenderSupplementaryContext(blocks);
@@ -81,6 +97,7 @@ public sealed class AgentRunBudgetTrackerTests
         Assert.Equal(512 + rendered.Length / 4, estimate);
         Assert.Contains("marker-31-", rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("marker-32-", rendered, StringComparison.Ordinal);
+        Assert.Contains("required-marker", rendered, StringComparison.Ordinal);
         Assert.Equal(32, rendered.Split("[truncated]", StringSplitOptions.None).Length - 1);
     }
 }

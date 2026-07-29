@@ -95,6 +95,7 @@ internal static class FileToolDescriptorRegistry
 
         Rules:
         - You must include a header with the intended action.
+        - A patch may contain at most 64 file operations targeting at most 64 distinct paths.
         - Add File content lines must be prefixed with +.
         - Use Update File for in-place changes.
         - Use Delete File only when removing an existing file.

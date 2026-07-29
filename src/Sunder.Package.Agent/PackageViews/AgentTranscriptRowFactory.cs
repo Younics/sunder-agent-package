@@ -7,6 +7,7 @@ namespace Sunder.Package.Agent.PackageViews;
 
 internal sealed class AgentTranscriptRowFactory(
     AgentToolPresentationService toolPresentationService,
+    Func<AgentTranscriptToolDetailRequest, CancellationToken, Task<AgentTranscriptToolDetailRecord?>> loadToolDetail,
     IActivityTicker activityTicker,
     Func<AgentTurnRecord, string> senderNameResolver,
     Func<AgentTurnRecord, AgentTurnItemRecord, IReadOnlyList<AgentChildSessionLinkViewModel>> childSessionLinksResolver)
@@ -45,7 +46,9 @@ internal sealed class AgentTranscriptRowFactory(
         => new AgentToolInvocationRowViewModel(
             turn,
             item,
+            projection,
             toolPresentationService,
+            loadToolDetail,
             childSessionLinksResolver);
 
     public void ApplyToolResult(
@@ -56,7 +59,19 @@ internal sealed class AgentTranscriptRowFactory(
     {
         if (row is AgentToolInvocationRowViewModel toolRow)
         {
-            toolRow.ApplyResult(turn, item);
+            toolRow.ApplyResult(turn, item, projection);
+        }
+    }
+
+    public void UpdateTool(
+        AgentTranscriptRowViewModel row,
+        AgentTurnRecord turn,
+        AgentTurnItemRecord item,
+        TranscriptToolProjection projection)
+    {
+        if (row is AgentToolInvocationRowViewModel toolRow)
+        {
+            toolRow.UpdateProjection(turn, item, projection);
         }
     }
 
@@ -84,7 +99,10 @@ internal sealed class AgentTranscriptRowFactory(
     {
         if (row is AgentToolInvocationRowViewModel toolRow)
         {
-            toolRow.IsExpanded = isExpanded;
+            if (!isExpanded)
+            {
+                toolRow.CollapseDetails();
+            }
         }
     }
 

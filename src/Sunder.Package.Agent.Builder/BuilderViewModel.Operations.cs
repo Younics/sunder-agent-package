@@ -44,6 +44,7 @@ public sealed partial class BuilderViewModel
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
+            succeeded = true;
         }
         catch (Exception ex)
         {
@@ -73,26 +74,52 @@ public sealed partial class BuilderViewModel
 
     private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
-        var workspacesTask = _applicationService.ListWorkspacesAsync(cancellationToken);
-        var projectsTask = _applicationService.LoadProjectsAsync(cancellationToken);
-        await Task.WhenAll(workspacesTask, projectsTask).ConfigureAwait(false);
-        var workspaces = await workspacesTask.ConfigureAwait(false);
-        var projects = await projectsTask.ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-        await _uiDispatcher.InvokeAsync(() =>
+        while (true)
         {
-            if (_disposed)
+            var revision = _snapshotRevision;
+            var snapshot = _requests.Begin(SnapshotChannel, cancellationToken);
+            var applied = false;
+            try
+            {
+                var workspacesTask = _applicationService.ListWorkspacesAsync(snapshot.CancellationToken);
+                var projectsTask = _applicationService.LoadProjectsAsync(snapshot.CancellationToken);
+                await Task.WhenAll(workspacesTask, projectsTask)
+                    .WaitAsync(snapshot.CancellationToken)
+                    .ConfigureAwait(false);
+                var workspaces = await workspacesTask.WaitAsync(snapshot.CancellationToken).ConfigureAwait(false);
+                var projects = await projectsTask.WaitAsync(snapshot.CancellationToken).ConfigureAwait(false);
+                snapshot.CancellationToken.ThrowIfCancellationRequested();
+                await _uiDispatcher.InvokeAsync(() =>
+                {
+                    if (_disposed || !_requests.IsCurrent(snapshot))
+                    {
+                        return;
+                    }
+                    ApplyLoadedWorkspaces(workspaces);
+                    ApplyLoadedProjects(projects);
+                    _projectsLoaded = true;
+                    if (revision == _snapshotRevision)
+                    {
+                        _snapshotRefreshPending = false;
+                    }
+                    applied = true;
+                });
+            }
+            catch (OperationCanceledException) when (
+                snapshot.CancellationToken.IsCancellationRequested
+                && !cancellationToken.IsCancellationRequested)
+            {
+            }
+            finally
+            {
+                _requests.Complete(snapshot);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (applied && !_snapshotRefreshPending)
             {
                 return;
             }
-            ApplyLoadedWorkspaces(workspaces);
-            ApplyLoadedProjects(projects);
-            _projectsLoaded = true;
-        });
-        cancellationToken.ThrowIfCancellationRequested();
-        if (_disposed)
-        {
-            return;
         }
     }
 
@@ -133,9 +160,12 @@ public sealed partial class BuilderViewModel
             string.Empty,
             now,
             now));
-        Projects.Add(project);
-        SelectedProject = project;
-        IsEditorActive = true;
+        _projectsLoaded = true;
+        _snapshotRefreshPending = true;
+        _snapshotRevision++;
+        _requests.Invalidate(SnapshotChannel);
+        _listDetail.Reconcile([.. Projects, project], selectFirstWhenUnrouted: false);
+        _listDetail.ShowNewDetail(project);
         return Task.CompletedTask;
     }
 
@@ -148,8 +178,8 @@ public sealed partial class BuilderViewModel
                 return;
             }
 
-            await _persistence.SaveNowAsync(deletion.Value.Projects, cancellationToken);
-            await _uiDispatcher.InvokeAsync(() => CompleteProjectDeletion(deletion.Value));
+            await _persistence.SaveNowAsync(deletion.Projects, cancellationToken);
+            await _uiDispatcher.InvokeAsync(() => CompleteProjectDeletion(deletion));
         });
 
     public async Task InitializeSelectedProjectAsync()

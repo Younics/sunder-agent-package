@@ -3,13 +3,12 @@ using Sunder.Package.Agent.Contracts.Models;
 namespace Sunder.Package.Agent.Contracts.Contracts;
 
 /// <summary>
-/// Maps paths from an execution target's namespace back to physical host paths within configured workspace roots.
+/// Produces advisory mappings from an execution target's namespace to host paths within configured workspace roots.
 /// </summary>
 /// <remarks>
-/// This optional, security-sensitive capability supports host-side consumers of target output. Implementations must normalize relative and
-/// absolute target paths, resolve symbolic links or equivalent indirections on the host side, and prevent traversal across configured mount
-/// boundaries. Mapping must not open the resource or transfer ownership of it, and a successful mapping is not a permission grant.
-/// Implementations may be called concurrently and must not rely on UI-thread affinity.
+/// This optional capability supports host-side display and separately authorized process consumers. Mapping does not transfer filesystem
+/// authority, retain a resource, or make later host path APIs race-safe. A successful mapping is not a permission grant and must not be used as
+/// the basis for a structured host-side mutation. Implementations may be called concurrently and must not rely on UI-thread affinity.
 /// </remarks>
 public interface IAgentExecutionPathMapper
 {

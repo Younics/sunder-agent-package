@@ -12,6 +12,9 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
         IAgentToolSource,
         IAgentPromptContextContributor
 {
+    private readonly IPackageExtensionInvocationCatalog? _invocationCatalog =
+        extensionCatalog as IPackageExtensionInvocationCatalog;
+
     private const int MaxSkillToolChars = 60000;
     private const int DefaultReadLimit = 2000;
     private const int MaxReadLimit = 5000;
@@ -166,6 +169,7 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
             request.Session.SessionId,
             request.Workspace,
             request.ExecutionBinding,
+            request.ExecutionTargetReference,
             cancellationToken);
         var pathsBySkillId = resolvedResources.ToDictionary(resource => resource.ResourceId, StringComparer.OrdinalIgnoreCase);
 
@@ -246,7 +250,13 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
         }
 
         var parsed = SkillMarkdownParser.Parse(store.ReadSkillMarkdown(skill));
-        var resources = await ResolveResourcesAsync(profile, context.SessionId, context.Workspace, context.ExecutionBinding, cancellationToken);
+        var resources = await ResolveResourcesAsync(
+            profile,
+            context.SessionId,
+            context.Workspace,
+            context.ExecutionBinding,
+            context.ExecutionTargetReference,
+            cancellationToken);
         var resource = resources.FirstOrDefault(item => string.Equals(item.ResourceId, skill.SkillId, StringComparison.OrdinalIgnoreCase));
         var content = BuildSkillContent(skill, parsed, resource);
         return new AgentToolResult(
@@ -295,7 +305,13 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
 
         if (await IsBinaryFileAsync(path, cancellationToken))
         {
-            var resources = await ResolveResourcesAsync(profile, context.SessionId, context.Workspace, context.ExecutionBinding, cancellationToken);
+            var resources = await ResolveResourcesAsync(
+                profile,
+                context.SessionId,
+                context.Workspace,
+                context.ExecutionBinding,
+                context.ExecutionTargetReference,
+                cancellationToken);
             var resource = resources.FirstOrDefault(item => string.Equals(item.ResourceId, skill.SkillId, StringComparison.OrdinalIgnoreCase));
             var content = new StringBuilder()
                 .AppendLine("Binary skill resource.")
@@ -361,6 +377,7 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
         Guid? sessionId,
         AgentWorkspaceRecord? workspace,
         AgentWorkspaceBindingRecord? executionBinding,
+        IPackageExtensionReference<IAgentExecutionTarget>? executionTargetReference,
         CancellationToken cancellationToken)
     {
         if (workspace is null || executionBinding is null)
@@ -375,23 +392,148 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
             return [];
         }
 
-        var target = ResolveExecutionTarget(executionBinding);
-        return target is IAgentExecutionResourceResolver resolver
-            ? await resolver.ResolveResourcesAsync(new AgentExecutionTargetContext(sessionId, profile.ProfileId, workspace, executionBinding), descriptors, cancellationToken)
-            : [];
+        if (!TryAcquireExecutionTarget(executionTargetReference, executionBinding, out var targetLease))
+        {
+            if (executionTargetReference is not null)
+            {
+                throw new InvalidOperationException("The selected execution-target package is unavailable.");
+            }
+            return [];
+        }
+
+        return await InvokeTargetAsync(
+            targetLease,
+            cancellationToken,
+            (target, invocationToken) => target is IAgentExecutionResourceResolver resolver
+                ? resolver.ResolveResourcesAsync(
+                    new AgentExecutionTargetContext(sessionId, profile.ProfileId, workspace, executionBinding),
+                    descriptors,
+                    invocationToken)
+                : ValueTask.FromResult<IReadOnlyList<AgentResolvedExecutionResource>>([]));
     }
 
-    private IAgentExecutionTarget? ResolveExecutionTarget(AgentWorkspaceBindingRecord binding)
-        => extensionCatalog.GetExtensions(PackageExtensionPoints.ExecutionTargets)
-            .FirstOrDefault(target => string.Equals(target.Descriptor.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
-                                      || string.Equals(target.Descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase));
+    private bool TryAcquireExecutionTarget(
+        IPackageExtensionReference<IAgentExecutionTarget>? selectedReference,
+        AgentWorkspaceBindingRecord binding,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
+        out IPackageExtensionLease<IAgentExecutionTarget>? lease)
+    {
+        var reference = selectedReference ?? ResolveCompatibilityTargetReference(binding);
+        if (reference is null || !reference.TryAcquire(out lease))
+        {
+            lease = null;
+            return false;
+        }
+        if (lease.RetirementToken.IsCancellationRequested
+            || !IsBindingMatch(lease.Contribution.Descriptor, binding))
+        {
+            lease.Dispose();
+            lease = null;
+            return false;
+        }
+
+        return true;
+    }
+
+    private IPackageExtensionReference<IAgentExecutionTarget>? ResolveCompatibilityTargetReference(
+        AgentWorkspaceBindingRecord binding)
+    {
+        if (_invocationCatalog is not null)
+        {
+            foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.ExecutionTargets))
+            {
+                if (!reference.TryAcquire(out var lease))
+                {
+                    continue;
+                }
+                using (lease)
+                {
+                    if (!lease.RetirementToken.IsCancellationRequested
+                        && IsBindingMatch(lease.Contribution.Descriptor, binding))
+                    {
+                        return reference;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        var target = extensionCatalog.GetExtensions(PackageExtensionPoints.ExecutionTargets)
+            .FirstOrDefault(candidate => IsBindingMatch(candidate.Descriptor, binding));
+        return target is null ? null : new CompatibilityTargetReference(target);
+    }
+
+    private static bool IsBindingMatch(
+        AgentExecutionTargetDescriptor descriptor,
+        AgentWorkspaceBindingRecord binding)
+        => string.Equals(descriptor.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase);
+
+    private static async ValueTask<TResult> InvokeTargetAsync<TResult>(
+        IPackageExtensionLease<IAgentExecutionTarget> lease,
+        CancellationToken cancellationToken,
+        Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback)
+    {
+        using (lease)
+        {
+            var packageId = lease.PackageId;
+            var retirementToken = lease.RetirementToken;
+            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                retirementToken);
+            try
+            {
+                var result = await callback(lease.Contribution, invocation.Token).ConfigureAwait(false);
+                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    throw new InvalidOperationException(
+                        $"Execution-target package '{packageId}' became unavailable while the callback was running.");
+                }
+                return result;
+            }
+            catch (OperationCanceledException exception) when (
+                retirementToken.IsCancellationRequested
+                && !cancellationToken.IsCancellationRequested)
+            {
+                throw new InvalidOperationException(
+                    $"Execution-target package '{packageId}' became unavailable while the callback was running.",
+                    exception);
+            }
+        }
+    }
 
     private AgentProfileRecord? ResolveProfile(string? profileId)
-        => string.IsNullOrWhiteSpace(profileId)
-            ? null
-            : extensionCatalog.GetExtensions(PackageExtensionPoints.RuntimeCatalogs)
+    {
+        if (string.IsNullOrWhiteSpace(profileId))
+        {
+            return null;
+        }
+        if (_invocationCatalog is null)
+        {
+            return extensionCatalog.GetExtensions(PackageExtensionPoints.RuntimeCatalogs)
                 .FirstOrDefault()
                 ?.GetProfile(profileId);
+        }
+
+        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.RuntimeCatalogs))
+        {
+            if (!reference.TryAcquire(out var lease))
+            {
+                continue;
+            }
+            using (lease)
+            {
+                var profile = lease.Contribution.GetProfile(profileId);
+                if (!lease.RetirementToken.IsCancellationRequested)
+                {
+                    return profile;
+                }
+            }
+        }
+
+        return null;
+    }
 
     private InstalledSkillRecord? ResolveEnabledSkill(AgentProfileRecord profile, string name)
     {
@@ -529,4 +671,46 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
     private sealed record SkillArgs(string Name);
 
     private sealed record SkillResourceArgs(string Skill, string? Path = null, int? Offset = null, int? Limit = null);
+
+    private sealed class CompatibilityTargetReference(IAgentExecutionTarget target)
+        : IPackageExtensionReference<IAgentExecutionTarget>
+    {
+        public bool TryAcquire(
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
+            out IPackageExtensionLease<IAgentExecutionTarget>? lease)
+        {
+            lease = new CompatibilityTargetLease(target);
+            return true;
+        }
+    }
+
+    private sealed class CompatibilityTargetLease(IAgentExecutionTarget target)
+        : IPackageExtensionLease<IAgentExecutionTarget>
+    {
+        private IAgentExecutionTarget? _target = target;
+
+        public string PackageId
+        {
+            get
+            {
+                ObjectDisposedException.ThrowIf(_target is null, this);
+                return "sunder.package.agent.skills.compatibility";
+            }
+        }
+
+        public IAgentExecutionTarget Contribution
+            => Volatile.Read(ref _target)
+               ?? throw new ObjectDisposedException(nameof(CompatibilityTargetLease));
+
+        public CancellationToken RetirementToken
+        {
+            get
+            {
+                ObjectDisposedException.ThrowIf(_target is null, this);
+                return CancellationToken.None;
+            }
+        }
+
+        public void Dispose() => Interlocked.Exchange(ref _target, null);
+    }
 }

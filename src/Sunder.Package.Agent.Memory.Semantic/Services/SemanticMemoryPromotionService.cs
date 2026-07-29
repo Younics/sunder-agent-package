@@ -70,6 +70,27 @@ public sealed partial class SemanticMemoryPromotionService(
         _metricsService.RecordPromotion(candidates.Length, committedCount);
     }
 
+    public Task ProcessDurableLifecycleEventAsync(
+        AgentDurableLifecycleEventEnvelope lifecycleEvent,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var candidates = lifecycleEvent.Kind == AgentLifecycleEventKind.UserTurnAdded
+                         && lifecycleEvent.Payload.TriggerTurn is { } triggerTurn
+            ? ExtractUserCandidates(triggerTurn).Take(MaxPromotionCandidatesPerEvent).ToArray()
+            : [];
+        var result = _store.ProcessDurableLifecycleEvent(lifecycleEvent, candidates, cancellationToken);
+        if (!result.IsDuplicate && lifecycleEvent.Kind == AgentLifecycleEventKind.UserTurnAdded)
+        {
+            _metricsService.RecordPromotion(result.CandidateCount, result.PromotedCount);
+        }
+        foreach (var request in result.IndexRequests)
+        {
+            _indexingBackgroundService.QueueMemoryIndex(request.MemoryId, request.ProfileId);
+        }
+        return Task.CompletedTask;
+    }
+
     private static IReadOnlyList<MemoryCandidate> ExtractPromotionCandidates(AgentLifecycleEvent lifecycleEvent)
     {
         var candidates = new List<MemoryCandidate>();
@@ -178,7 +199,7 @@ public sealed partial class SemanticMemoryPromotionService(
         candidates.Add(new MemoryCandidate(category, cleanedContent, SemanticMemoryTextHelpers.Truncate(evidenceText.Trim(), 220), sourceTurnId, isPinned, importance, confidence));
     }
 
-    private static StoredMemoryRecord? FindMergeCandidate(MemoryCandidate candidate, IReadOnlyList<StoredMemoryRecord> activeMemories)
+    internal static StoredMemoryRecord? FindMergeCandidate(MemoryCandidate candidate, IReadOnlyList<StoredMemoryRecord> activeMemories)
     {
         var candidateNormalized = SemanticMemoryTextHelpers.Normalize(candidate.Content);
         var candidateTokens = SemanticMemoryTextHelpers.Tokenize(candidate.Content);
@@ -203,7 +224,7 @@ public sealed partial class SemanticMemoryPromotionService(
             ?.Memory;
     }
 
-    private static MemoryCandidate MergeCandidate(MemoryCandidate candidate, StoredMemoryRecord existing)
+    internal static MemoryCandidate MergeCandidate(MemoryCandidate candidate, StoredMemoryRecord existing)
     {
         var mergedContent = SemanticMemoryTextHelpers.ChooseRicherText(existing.Content, candidate.Content) ?? candidate.Content;
         var mergedEvidence = SemanticMemoryTextHelpers.ChooseRicherText(existing.EvidenceText, candidate.EvidenceText);

@@ -5,7 +5,10 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Provider.LMStudio;
 
-public sealed class LMStudioEmbeddingProvider : IAgentEmbeddingProvider, IDisposable
+public sealed class LMStudioEmbeddingProvider :
+    IAgentEmbeddingProvider,
+    IAgentEmbeddingSpaceIdentityProvider,
+    IDisposable
 {
     private readonly LMStudioConnection _connection;
     private readonly LMStudioModelCatalogService _catalog;
@@ -30,6 +33,14 @@ public sealed class LMStudioEmbeddingProvider : IAgentEmbeddingProvider, IDispos
     }
 
     public AgentEmbeddingProviderDescriptor Descriptor { get; }
+
+    public async ValueTask<string> GetEmbeddingSpaceIdentityAsync(
+        string modelId,
+        CancellationToken cancellationToken = default)
+    {
+        var options = await _connection.GetRequiredOptionsAsync(cancellationToken).ConfigureAwait(false);
+        return options.NormalizedBaseUrl;
+    }
 
     public async ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> GetAvailableModelsAsync(
         CancellationToken cancellationToken = default)

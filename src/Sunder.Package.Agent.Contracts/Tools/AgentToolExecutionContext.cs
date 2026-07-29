@@ -1,3 +1,7 @@
+using System.Text.Json.Serialization;
+using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Sdk.Abstractions;
+
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
@@ -26,4 +30,25 @@ public sealed record AgentToolExecutionContext(
     Guid? RunId = null,
     long? RunRevision = null,
     Guid? UserTurnId = null,
-    string? ToolCallId = null);
+    string? ToolCallId = null)
+{
+    /// <summary>Gets the current durable transcript epoch for session-owned tool context.</summary>
+    public long TranscriptEpoch { get; init; }
+
+    /// <summary>Gets opaque canonical resource references approved for this exact invocation.</summary>
+    public IReadOnlyList<string> ApprovedResourceReferences { get; init; } = [];
+
+    /// <summary>Gets the host-verified durable resource claims approved for this exact invocation.</summary>
+    public IReadOnlyList<AgentResourceClaim> ApprovedResourceClaims { get; init; } = [];
+
+    /// <summary>Gets transient process-local capabilities for this exact invocation.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<string> ApprovedResourceCapabilities { get; init; } = [];
+
+    /// <summary>Gets the transient invocation binding used to issue or redeem resource authority.</summary>
+    [JsonIgnore]
+    public AgentResourceOperationContext? ResourceOperation { get; init; }
+
+    /// <summary>Gets an opaque reference to the exact execution-target activation selected when this tool was advertised.</summary>
+    public IPackageExtensionReference<IAgentExecutionTarget>? ExecutionTargetReference { get; init; }
+}

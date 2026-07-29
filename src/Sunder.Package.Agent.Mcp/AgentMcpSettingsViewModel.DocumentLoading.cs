@@ -1,4 +1,5 @@
 using Sunder.Package.Agent.Mcp.Services;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Mcp;
 
@@ -8,113 +9,54 @@ public sealed partial class AgentMcpSettingsViewModel
         ConfiguredMcpServerRecord server,
         CancellationToken cancellationToken)
     {
-        _serverLoadCancellation?.Cancel();
-        _serverLoadCancellation?.Dispose();
-        var loadCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _serverLoadCancellation = loadCancellation;
-        var version = ++_serverLoadVersion;
+        var ticket = _listDetail.BeginDetailLoad(cancellationToken);
         var editRevision = _editorRevision;
-        SetDocumentLoadState(isLoading: true, isReady: false);
-        return LoadSelectedServerCoreAsync(server, version, editRevision, loadCancellation);
+        return LoadSelectedServerCoreAsync(server, ticket, editRevision);
     }
 
     private async Task LoadSelectedServerCoreAsync(
         ConfiguredMcpServerRecord server,
-        int version,
-        long editRevision,
-        CancellationTokenSource loadCancellation)
+        AdaptiveDetailTicket<string> ticket,
+        long editRevision)
     {
-        var documentApplied = false;
         try
         {
-            var text = await _gateway.LoadDocumentAsync(server.ServerId, loadCancellation.Token)
+            var text = await _gateway.LoadDocumentAsync(
+                    server.ServerId,
+                    ticket.Request.CancellationToken)
+                .WaitAsync(ticket.Request.CancellationToken)
                 .ConfigureAwait(false)
                 ?? McpConfigurationDocument.CreateLocalTemplate();
             await _uiDispatcher.InvokeAsync(() =>
             {
-                if (IsCurrentDocumentLoad(server.ServerId, version, loadCancellation)
-                    && _editorRevision == editRevision)
+                if (!_listDetail.IsCurrentDetail(ticket))
                 {
-                    ApplyEditorDocument(server.Name, text);
-                    RefreshConnectionStatus(server);
-                    documentApplied = true;
+                    return;
                 }
+
+                if (_editorRevision == editRevision)
+                {
+                    ApplyEditorDocument(server.Name, text, server.ServerId);
+                }
+
+                _listDetail.TrySetDetailReady(ticket);
+                RefreshConnectionStatus(server);
             }).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (loadCancellation.IsCancellationRequested)
+        catch (OperationCanceledException) when (ticket.Request.CancellationToken.IsCancellationRequested)
         {
+            await _uiDispatcher.InvokeAsync(() =>
+                _listDetail.TryCancelDetailLoad(ticket)).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             await _uiDispatcher.InvokeAsync(() =>
             {
-                if (IsCurrentDocumentLoad(server.ServerId, version, loadCancellation))
+                if (_listDetail.TrySetDetailError(ticket, ex))
                 {
                     _operations.PresentStatus(ex.Message, McpStatusKind.Error);
                 }
             }).ConfigureAwait(false);
         }
-        finally
-        {
-            await _uiDispatcher.InvokeAsync(() =>
-            {
-                if (IsMatchingDocumentLoad(server.ServerId, version, loadCancellation))
-                {
-                    _serverLoadCancellation = null;
-                    SetDocumentLoadState(isLoading: false, isReady: documentApplied);
-                }
-            }).ConfigureAwait(false);
-            loadCancellation.Dispose();
-        }
-    }
-
-    private bool IsCurrentDocumentLoad(
-        string serverId,
-        int version,
-        CancellationTokenSource cancellation)
-        => !_disposed
-            && !cancellation.IsCancellationRequested
-            && IsMatchingDocumentLoad(serverId, version, cancellation);
-
-    private bool IsMatchingDocumentLoad(
-        string serverId,
-        int version,
-        CancellationTokenSource cancellation)
-        => !_disposed
-            && version == _serverLoadVersion
-            && ReferenceEquals(_serverLoadCancellation, cancellation)
-            && string.Equals(SelectedServer?.ServerId, serverId, StringComparison.OrdinalIgnoreCase);
-
-    private void CancelDocumentLoad(bool documentReady)
-    {
-        _serverLoadVersion++;
-        _serverLoadCancellation?.Cancel();
-        _serverLoadCancellation?.Dispose();
-        _serverLoadCancellation = null;
-        SetDocumentLoadState(isLoading: false, isReady: documentReady);
-    }
-
-    private void SetDocumentLoadState(bool isLoading, bool isReady)
-    {
-        if (_disposed || (_isDocumentLoading == isLoading && _isDocumentReady == isReady))
-        {
-            return;
-        }
-
-        _isDocumentLoading = isLoading;
-        _isDocumentReady = isReady;
-        OnPropertyChanged(nameof(IsDocumentLoading));
-        OnPropertyChanged(nameof(IsDocumentReady));
-        OnPropertyChanged(nameof(IsEditorReadOnly));
-        OnPropertyChanged(nameof(IsBusy));
-        OnPropertyChanged(nameof(CanStartOperation));
-        OnPropertyChanged(nameof(CanNavigateServers));
-        CreateServerCommand.NotifyCanExecuteChanged();
-        BackToServerListCommand.NotifyCanExecuteChanged();
-        LoadLocalTemplateCommand.NotifyCanExecuteChanged();
-        LoadRemoteTemplateCommand.NotifyCanExecuteChanged();
-        FormatCommand.NotifyCanExecuteChanged();
-        _operations.NotifyContextChanged();
-        TryReloadPendingServers();
     }
 }

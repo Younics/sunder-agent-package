@@ -9,12 +9,16 @@ using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
-public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposable
+public sealed partial class OpenAiSettingsViewModel : ObservableObject,
+    IPackageViewNavigationPreparationTarget,
+    IDisposable
 {
     private readonly IPackageContext _packageContext;
     private readonly OpenAiAuthPresentationService _authPresentation;
     private readonly PackageCallbackFlowRunner _callbackFlow;
     private readonly PresentationTaskScope _tasks = new();
+    private readonly object _initializationSyncRoot = new();
+    private Task? _initialization;
     private int _authorizationActive;
     private bool _disposed;
     private long _statusGeneration;
@@ -67,14 +71,43 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject, IDisposa
             OpenAiProviderConfiguration.UtilityModelSelection.Normalize);
     }
 
-    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _tasks.CancellationToken);
-        var configuredMode = await _packageContext.Settings.GetValueAsync(OpenAiAuthMode.ConfigurationKey, lifetime.Token);
+        Task initialization;
+        lock (_initializationSyncRoot)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            initialization = _initialization ??= InitializeCoreAsync(_tasks.CancellationToken);
+        }
+
+        return cancellationToken.CanBeCanceled
+            ? initialization.WaitAsync(cancellationToken)
+            : initialization;
+    }
+
+    public async ValueTask<bool> PrepareNavigationAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
+    {
+        await InitializeAsync(cancellationToken);
+        return true;
+    }
+
+    public ValueTask OnNavigationPresentedAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.CompletedTask;
+    }
+
+    private async Task InitializeCoreAsync(CancellationToken cancellationToken)
+    {
+        var configuredMode = await _packageContext.Settings.GetValueAsync(OpenAiAuthMode.ConfigurationKey, cancellationToken);
         SelectedAuthMode = ResolveAuthModeOption(configuredMode);
-        await ApiKeySettings.RefreshCredentialStatusAsync(lifetime.Token);
-        await UtilityModelSettings.InitializeAsync(lifetime.Token);
-        await RefreshStatusAsync(lifetime.Token);
+        await ApiKeySettings.RefreshCredentialStatusAsync(cancellationToken);
+        await UtilityModelSettings.InitializeAsync(cancellationToken);
+        await RefreshStatusAsync(cancellationToken);
     }
 
     public ObservableCollection<OpenAiAuthModeOption> AuthModes { get; } =

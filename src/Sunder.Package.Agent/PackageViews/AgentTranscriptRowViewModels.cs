@@ -8,7 +8,7 @@ using Sunder.Package.Agent.Shared.PackageViews;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-public abstract class AgentTranscriptRowViewModel(Guid rowId, DateTimeOffset createdAtUtc, object anchorKey)
+public abstract partial class AgentTranscriptRowViewModel(Guid rowId, DateTimeOffset createdAtUtc, object anchorKey)
     : ObservableObject,
         ITranscriptAnchorItem
 {
@@ -17,6 +17,47 @@ public abstract class AgentTranscriptRowViewModel(Guid rowId, DateTimeOffset cre
     public DateTimeOffset CreatedAtUtc { get; } = createdAtUtc;
 
     public object AnchorKey { get; } = anchorKey;
+
+    internal virtual TranscriptAnchorItemRole AnchorRole => TranscriptAnchorItemRole.Transient;
+
+    TranscriptAnchorItemRole ITranscriptAnchorItem.AnchorRole => AnchorRole;
+
+    public virtual bool IsLayoutVisible => true;
+
+    public virtual bool IsRowHitTestVisible => true;
+
+    public virtual double MinimumLayoutHeight => 0;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NavigationHighlightHelpText))]
+    private bool _isNavigationTargetHighlighted;
+
+    [ObservableProperty]
+    private bool _isNavigationTargetFading;
+
+    public string? NavigationHighlightHelpText => IsNavigationTargetHighlighted
+        ? "Search result target"
+        : null;
+
+    internal void PrimeNavigationHighlight()
+    {
+        IsNavigationTargetFading = false;
+        IsNavigationTargetHighlighted = true;
+    }
+
+    internal void FadeNavigationHighlight()
+    {
+        if (IsNavigationTargetHighlighted)
+        {
+            IsNavigationTargetFading = true;
+        }
+    }
+
+    internal void ClearNavigationHighlight()
+    {
+        IsNavigationTargetHighlighted = false;
+        IsNavigationTargetFading = false;
+    }
 }
 
 public sealed class AgentTextTranscriptRowViewModel : AgentTranscriptRowViewModel
@@ -199,10 +240,22 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
 
     public string RoleGlyph => "A";
 
+    internal override TranscriptAnchorItemRole AnchorRole => TranscriptAnchorItemRole.Persistent;
+
+    public override bool IsLayoutVisible => IsVisible;
+
+    public override bool IsRowHitTestVisible => IsVisible;
+
+    // StackLayout treats zero as an unmeasured item and corrupts its rolling size estimate.
+    public override double MinimumLayoutHeight => IsVisible ? 0 : 1;
+
     [ObservableProperty]
     private string _thinkingText = "Thinking...";
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsLayoutVisible))]
+    [NotifyPropertyChangedFor(nameof(IsRowHitTestVisible))]
+    [NotifyPropertyChangedFor(nameof(MinimumLayoutHeight))]
     private bool _isVisible;
 
     partial void OnIsVisibleChanged(bool value)
@@ -359,4 +412,16 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
             _isTickerSubscribed = false;
         }
     }
+}
+
+public sealed class AgentTranscriptTailSentinelRowViewModel : AgentTranscriptRowViewModel
+{
+    internal AgentTranscriptTailSentinelRowViewModel()
+        : base(Guid.Empty, DateTimeOffset.MinValue, TranscriptRowAnchorKey.TailSentinel())
+    {
+    }
+
+    internal override TranscriptAnchorItemRole AnchorRole => TranscriptAnchorItemRole.TailSentinel;
+
+    public override bool IsRowHitTestVisible => false;
 }

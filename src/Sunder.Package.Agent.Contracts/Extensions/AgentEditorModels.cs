@@ -266,9 +266,9 @@ public sealed record AgentEditorSaveRequest(
 /// </summary>
 /// <remarks>
 /// The result controls App flow and display only; it is not a durable receipt or security audit record. A failure
-/// stops the current multi-section save sequence, while exceptions can surface as editor errors. Messages can be
-/// shown to users and therefore must be concise, safe for display, and free of secrets, raw credentials, or
-/// unnecessary exception details.
+/// keeps the aggregate workspace save incomplete, while other healthy contributor sections can still be attempted and exceptions can surface
+/// as localized editor errors. Messages can be shown to users and therefore must be concise, safe for display, and free of secrets, raw
+/// credentials, or unnecessary exception details.
 /// </remarks>
 /// <param name="Success">
 /// Whether the contributor accepted and persisted the section values. Contributors should return

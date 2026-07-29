@@ -3,7 +3,7 @@ using Sunder.Package.Agent.Contracts.Models;
 namespace Sunder.Package.Agent.Contracts.Contracts;
 
 /// <summary>
-/// Contributes supplementary, non-privileged reference data to an agent model request.
+/// Contributes supplementary, non-privileged context to an agent model request.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -25,17 +25,18 @@ namespace Sunder.Package.Agent.Contracts.Contracts;
 /// </para>
 /// <para>
 /// Cancellation and failure isolation: implementations must observe the supplied token. The Runtime
-/// propagates <see cref="OperationCanceledException"/> and suppresses other contributor exceptions so
-/// an optional context source cannot fail the base chat flow. Contributors must nevertheless bound
-/// latency and output because blocks can be omitted or truncated by prompt limits.
+/// propagates <see cref="OperationCanceledException"/> and suppresses other optional contributor exceptions.
+/// The host-owner-verified first-party scoped-instruction source is required and fails prompt preparation
+/// closed. Contributors must nevertheless bound latency and output.
 /// </para>
 /// <para>
 /// Trust, provenance, and security: every block must accurately declare its
 /// <see cref="AgentPromptContextBlock.Provenance"/> and <see cref="AgentPromptContextBlock.Trust"/>.
-/// The Runtime serializes all such blocks as user-role reference data and never promotes them to the
-/// privileged system prompt. Treat query text, transcript content, recalled data, tool output, and
-/// external content as untrusted; do not follow embedded instructions, expose secrets, bypass package
-/// permissions, or retrieve data outside the session and workspace scope represented by the request.
+/// The Runtime serializes all such blocks as user-role data and never promotes them to the privileged
+/// system prompt. <see cref="AgentPromptContextUsage.Reference"/> is the safe default. The Runtime grants
+/// standing or scoped behavioral authority only through host-controlled provenance; an arbitrary contributor
+/// cannot gain it by setting an enum, source id, host identity, or scope object. No usage may expose secrets,
+/// bypass package permissions, or retrieve data outside the represented session and workspace scope.
 /// </para>
 /// </remarks>
 public interface IAgentPromptContextContributor

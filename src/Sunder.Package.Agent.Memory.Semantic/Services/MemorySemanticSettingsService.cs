@@ -33,9 +33,12 @@ public sealed class MemorySemanticSettingsService(IPackageContext packageContext
     }
 
     public async Task<SemanticReindexMode> GetReindexModeAsync(CancellationToken cancellationToken = default)
-        => string.Equals(await _packageContext.Settings.GetValueAsync("semantic.reindex.mode", cancellationToken), "never", StringComparison.OrdinalIgnoreCase)
-            ? SemanticReindexMode.Never
-            : SemanticReindexMode.Lazy;
+        => (await _packageContext.Settings.GetValueAsync("semantic.reindex.mode", cancellationToken))?.Trim().ToLowerInvariant() switch
+        {
+            "never" => SemanticReindexMode.Never,
+            "eager" => SemanticReindexMode.Eager,
+            _ => SemanticReindexMode.Lazy,
+        };
 
     private static int ParseBoundedInt(string? value, int fallback, int minimum, int maximum)
         => int.TryParse(value, out var parsed)
@@ -47,4 +50,5 @@ public enum SemanticReindexMode
 {
     Lazy = 0,
     Never = 1,
+    Eager = 2,
 }

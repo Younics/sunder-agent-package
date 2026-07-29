@@ -6,14 +6,18 @@ using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
 using Avalonia.Threading;
 using Sunder.Package.Agent.Shared.Presentation;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-public sealed partial class AgentPermissionsViewModel : ObservableObject, IDisposable
+public sealed partial class AgentPermissionsViewModel : ObservableObject,
+    IPackageViewNavigationPreparationTarget,
+    IDisposable
 {
     private readonly IAgentPermissionGateway _permissionService;
     private readonly IAgentRuntimeAvailability? _runtimeAvailability;
     private readonly PresentationTaskScope _tasks = new();
+    private readonly Task _initialization;
     private bool _disposed;
 
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } = [];
@@ -27,43 +31,29 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject, IDispo
             _runtimeAvailability.ConnectionStateChanged += OnRuntimeConnectionStateChanged;
         }
         TryReload();
-        if (_permissionService is IAgentPresentationInitialization initialization)
-        {
-            _tasks.Run(async cancellationToken =>
-            {
-                try
-                {
-                    await initialization.InitializeAsync(cancellationToken).ConfigureAwait(false);
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        if (!_disposed)
-                        {
-                            TryReload();
-                        }
-                    }, DispatcherPriority.Background);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        if (!_disposed)
-                        {
-                            StatusText = $"Agent Runtime is unavailable: {ex.Message}";
-                        }
-                    }, DispatcherPriority.Background);
-                }
-            });
-        }
+        _initialization = InitializeCoreAsync();
     }
 
     public ObservableCollection<PermissionBoundaryRowViewModel> Rows { get; } = [];
 
     [ObservableProperty]
     private string _statusText = string.Empty;
+
+    public async ValueTask<bool> PrepareNavigationAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
+    {
+        await _initialization.WaitAsync(cancellationToken);
+        return true;
+    }
+
+    public ValueTask OnNavigationPresentedAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.CompletedTask;
+    }
 
     [RelayCommand]
     private void Save()
@@ -132,6 +122,40 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject, IDispo
         {
             StatusText = $"Agent Runtime is unavailable: {ex.Message}";
             return false;
+        }
+    }
+
+    private async Task InitializeCoreAsync()
+    {
+        if (_permissionService is not IAgentPresentationInitialization initialization)
+        {
+            return;
+        }
+
+        var cancellationToken = _tasks.CancellationToken;
+        try
+        {
+            await initialization.InitializeAsync(cancellationToken).ConfigureAwait(false);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (!_disposed)
+                {
+                    TryReload();
+                }
+            }, DispatcherPriority.Background);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (!_disposed)
+                {
+                    StatusText = $"Agent Runtime is unavailable: {ex.Message}";
+                }
+            }, DispatcherPriority.Background);
         }
     }
 

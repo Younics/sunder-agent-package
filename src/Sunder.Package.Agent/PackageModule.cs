@@ -7,6 +7,7 @@ using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.Composition;
+using Sunder.Package.Agent.HistorySearch;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 using Sunder.Sdk.Stacks;
@@ -17,6 +18,7 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
 {
     public void ConfigureRuntimeServices(IServiceCollection services, IPackageContext context)
     {
+        services.AddSingleton(new AgentPackageStorageMigration(context));
         services.AddSingleton(new AgentLocalStore(context));
         services.AddSingleton<AgentExecutionTargetService>();
         services.AddSingleton<AgentWorkspaceExecutionResolver>();
@@ -34,13 +36,23 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<AgentAttachmentTransferService>();
         services.AddSingleton<AgentRunAttachmentStore>();
         services.AddSingleton<AgentRuntimeCatalog>();
-        services.AddSingleton<AgentChatSelectionStateService>();
+        services.AddSingleton(provider => new AgentChatSelectionStateService(
+            context,
+            provider.GetRequiredService<AgentPackageStorageMigration>()));
         services.AddSingleton<InstalledPackageToolSource>();
         services.AddSingleton<AgentToolPresentationService>();
         services.AddSingleton<AgentToolService>();
         services.AddSingleton<AgentPermissionService>();
+        services.AddSingleton(provider => new AgentLifecycleDispatcher(
+            provider.GetRequiredService<AgentLocalStore>(),
+            provider.GetRequiredService<IPackageExtensionCatalog>(),
+            context.Logging.Events));
+        services.AddSingleton<AgentSessionCleanupDispatcher>();
         services.AddSingleton<AgentMemoryCoordinator>();
-        services.AddSingleton<AgentSessionContextProjectionService>();
+        services.AddSingleton<AgentSessionContinuityGenerationService>();
+        services.AddSingleton(provider => new AgentSessionContextProjectionService(
+            provider.GetRequiredService<AgentSessionService>(),
+            provider.GetRequiredService<AgentSessionContinuityGenerationService>()));
         services.AddSingleton<AgentSystemPromptComposer>();
         services.AddSingleton<WorkspaceDocumentationContextService>();
         services.AddSingleton<AgentLoopTerminalHandler>();
@@ -71,6 +83,8 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<AgentRunPreparationService>();
         services.AddSingleton<AgentRunStartService>();
         services.AddSingleton<AgentRunExecutionService>();
+        services.AddSingleton<AgentUserTurnAdmissionService>();
+        services.AddSingleton<AgentRunDispatcher>();
         services.AddSingleton<AgentRunStopCoordinator>();
         services.AddSingleton<AgentChildRunSessionService>();
         services.AddSingleton<AgentParentRunContinuationService>();
@@ -82,11 +96,30 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
             provider.GetRequiredService<AgentRunExecutionService>(),
             provider.GetRequiredService<AgentActiveRunRegistry>(),
             provider.GetRequiredService<AgentSessionTransitionGate>(),
-            provider.GetRequiredService<AgentSessionDeletionFence>()
+            provider.GetRequiredService<AgentSessionDeletionFence>(),
+            provider.GetRequiredService<AgentUserTurnAdmissionService>(),
+            provider.GetRequiredService<AgentRunDispatcher>()
         ));
         services.AddSingleton<AgentRunCoordinator>();
-        services.AddSingletonAlias<IAgentChildRunExecutor, AgentRunCoordinator>();
         services.AddSingleton<AgentRuntimeChangeHub>();
+        services.AddSingleton(provider => new HistorySearchStore(context));
+        services.AddSingleton(provider => new HistorySearchRuntimeState(
+            provider.GetRequiredService<HistorySearchStore>(),
+            provider.GetRequiredService<AgentRuntimeChangeHub>()));
+        services.AddSingleton<HistoryEmbeddingProviderCatalog>();
+        services.AddSingleton<HistorySemanticOperationFence>();
+        services.AddSingleton(provider => new HistorySearchIndexingService(
+            provider.GetRequiredService<HistorySearchStore>(),
+            provider.GetRequiredService<AgentLocalStore>(),
+            provider.GetRequiredService<AgentSessionService>(),
+            provider.GetRequiredService<AgentWorkspaceService>(),
+            provider.GetRequiredService<HistoryEmbeddingProviderCatalog>(),
+            provider.GetRequiredService<HistorySemanticOperationFence>(),
+            provider.GetRequiredService<HistorySearchRuntimeState>()));
+        services.AddSingleton<HistorySearchService>();
+        services.AddSingleton<AgentRuntimeGenerationOptions>();
+        services.AddSingleton<AgentRuntimeStartupService>();
+        services.AddSingletonAlias<IAgentChildRunExecutor, AgentRunCoordinator>();
         services.AddSingleton<AgentChatSnapshotHandler>();
         services.AddSingleton<AgentDashboardHandler>();
         services.AddSingleton<AgentTranscriptPageHandler>();
@@ -97,6 +130,13 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<AgentRunCommandHandler>();
         services.AddSingleton<AgentPermissionCommandHandler>();
         services.AddSingleton<AgentAttachmentTransferHandler>();
+        services.AddSingleton<AgentHistorySearchHandler>();
+        services.AddSingleton<AgentHistoryStateHandler>();
+        services.AddSingleton<AgentHistoryCommandHandler>();
+        services.AddSingleton<AgentTranscriptAroundTurnHandler>();
+        services.AddSingleton<AgentTranscriptToolDetailHandler>();
+        services.AddSingleton(provider => new AgentHistoryStatusStream(
+            provider.GetRequiredService<HistorySearchRuntimeState>()));
     }
 
     public void RegisterRuntimeContributions(
@@ -104,8 +144,8 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         IServiceProvider services
     )
     {
-        services.GetRequiredService<AgentParentRunContinuationService>().StartRecovery();
-        registry.RegisterBackgroundService<AgentBackgroundWorkService>();
+        registry.RegisterBackgroundService<AgentPackageStorageMigration>();
+        registry.RegisterBackgroundService<AgentRuntimeStartupService>();
         registry.RegisterExtension(
             PackageExtensionPoints.RuntimeCatalogs,
             services.GetRequiredService<AgentRuntimeCatalog>()
@@ -121,6 +161,10 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         registry.RegisterExtension(
             PackageExtensionPoints.SessionDataCleaners,
             services.GetRequiredService<AgentAttachmentService>()
+        );
+        registry.RegisterExtension(
+            PackageExtensionPoints.SessionDataCleaners,
+            services.GetRequiredService<HistorySearchIndexingService>()
         );
         registry.RegisterExtension(
             PackageExtensionPoints.BehaviorLoops,
@@ -143,7 +187,13 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.RunStatus, services.GetRequiredService<AgentRunCommandHandler>());
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.Permissions, services.GetRequiredService<AgentPermissionCommandHandler>());
         registry.RegisterRuntimeOperation(AgentRuntimeOperations.AttachmentTransfers, services.GetRequiredService<AgentAttachmentTransferHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.HistorySearch, services.GetRequiredService<AgentHistorySearchHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.HistoryState, services.GetRequiredService<AgentHistoryStateHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.HistoryCommands, services.GetRequiredService<AgentHistoryCommandHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.TranscriptAround, services.GetRequiredService<AgentTranscriptAroundTurnHandler>());
+        registry.RegisterRuntimeOperation(AgentRuntimeOperations.TranscriptToolDetail, services.GetRequiredService<AgentTranscriptToolDetailHandler>());
         registry.RegisterRuntimeStream(AgentRuntimeOperations.Changes, services.GetRequiredService<AgentRuntimeChangeHub>());
+        registry.RegisterRuntimeStream(AgentRuntimeOperations.HistoryStatus, services.GetRequiredService<AgentHistoryStatusStream>());
     }
 
     private static void RegisterStackContributor<TContributor>(
@@ -170,6 +220,8 @@ public sealed class AppPackageModule : ISunderAppPackageModule
         services.AddSingletonAlias<IAgentRunGateway, AgentAppRuntimeGateway>();
         services.AddSingletonAlias<IAgentAttachmentGateway, AgentAppRuntimeGateway>();
         services.AddSingletonAlias<IAgentExecutionGateway, AgentAppRuntimeGateway>();
+        services.AddSingletonAlias<IAgentHistorySearchGateway, AgentAppRuntimeGateway>();
+        services.AddSingletonAlias<IAgentTranscriptAnchorGateway, AgentAppRuntimeGateway>();
         services.AddSingleton<AgentChatSelectionStateService>();
         services.AddSingleton<AgentToolPresentationService>();
         services.AddTransient<AgentWorkspacesViewContext>();
@@ -185,6 +237,9 @@ public sealed class AppPackageModule : ISunderAppPackageModule
             defaultPlacement: PackageViewPlacement.RightTop));
         registry.RegisterPackageView<AgentProfilesView>(new PackageViewRegistration(
             "sunder.package.agent.profiles", "Agents", "Assets/profile-icon.png",
+            defaultPlacement: PackageViewPlacement.RightTop));
+        registry.RegisterPackageView<AgentHistorySearchView>(new PackageViewRegistration(
+            "sunder.package.agent.history", "History", "Assets/session-icon.png",
             defaultPlacement: PackageViewPlacement.RightTop));
         registry.RegisterSettingsView<AgentPermissionsView>();
     }

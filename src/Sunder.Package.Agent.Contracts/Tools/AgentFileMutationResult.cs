@@ -11,4 +11,10 @@ public sealed record AgentFileMutationResult(
     string Path,
     string Summary,
     bool IsError = false,
-    string? ErrorCode = null);
+    string? ErrorCode = null)
+{
+    /// <summary>Gets a transient receipt for the exact state created by the mutation, when requested by the caller.</summary>
+    /// <remarks>The receipt can carry process-local authority and must not be persisted.</remarks>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public AgentResolvedResource? PostMutationResource { get; init; }
+}

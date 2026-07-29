@@ -9,7 +9,7 @@ namespace Sunder.Package.Agent.Provider.OpenAI;
 
 public sealed class OpenAiEmbeddingProvider(
     ApiKeyAuthStrategy apiKeyAuthStrategy,
-    IPackageContext packageContext) : IAgentEmbeddingProvider
+    IPackageContext packageContext) : IAgentEmbeddingProvider, IAgentEmbeddingSpaceIdentityProvider
 {
     private static readonly IReadOnlyList<AgentEmbeddingModelDescriptor> Models =
     [
@@ -29,6 +29,14 @@ public sealed class OpenAiEmbeddingProvider(
     {
         cancellationToken.ThrowIfCancellationRequested();
         return ValueTask.FromResult(Models);
+    }
+
+    public ValueTask<string> GetEmbeddingSpaceIdentityAsync(
+        string modelId,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult("https://api.openai.com/v1");
     }
 
     public async ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)

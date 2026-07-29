@@ -192,6 +192,101 @@ internal sealed class AgentAttachmentTransferService : IDisposable
         }
     }
 
+    internal AgentAttachmentTransferAdoption BeginAdoption(
+        IReadOnlyList<AgentAttachmentUploadHandle> handles)
+    {
+        if (handles.Count == 0)
+        {
+            return new AgentAttachmentTransferAdoption([], []);
+        }
+        if (handles.Count > AgentAttachmentService.MaxAttachmentsPerMessage)
+        {
+            throw new InvalidOperationException(
+                $"A message can include at most {AgentAttachmentService.MaxAttachmentsPerMessage} attachments.");
+        }
+
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            RemoveExpiredUploads();
+            if (handles.Select(handle => handle.TransferId).Distinct(StringComparer.Ordinal).Count() != handles.Count)
+            {
+                throw new InvalidOperationException("An attachment upload handle was repeated.");
+            }
+
+            var uploads = new List<AgentCompletedAttachmentUpload>(handles.Count);
+            var leased = new List<PendingUpload>(handles.Count);
+            try
+            {
+                foreach (var handle in handles)
+                {
+                    var upload = GetUpload(handle.TransferId);
+                    if (!upload.IsComplete)
+                    {
+                        throw new InvalidOperationException("Attachment upload is not complete.");
+                    }
+                    if (upload.IsAdopting)
+                    {
+                        throw new InvalidOperationException("Attachment upload is already being adopted.");
+                    }
+
+                    upload.IsAdopting = true;
+                    leased.Add(upload);
+                    uploads.Add(new AgentCompletedAttachmentUpload(
+                        handle.TransferId,
+                        upload.Descriptor,
+                        upload.Path));
+                }
+            }
+            catch
+            {
+                foreach (var upload in leased)
+                {
+                    upload.IsAdopting = false;
+                }
+                throw;
+            }
+
+            return new AgentAttachmentTransferAdoption(handles.ToArray(), uploads);
+        }
+    }
+
+    internal void CompleteAdoption(AgentAttachmentTransferAdoption adoption)
+    {
+        var paths = new List<string>(adoption.Handles.Count);
+        lock (_syncRoot)
+        {
+            foreach (var handle in adoption.Handles)
+            {
+                if (_uploads.TryGetValue(handle.TransferId, out var upload)
+                    && upload.IsAdopting)
+                {
+                    _uploads.Remove(handle.TransferId);
+                    paths.Add(upload.Path);
+                }
+            }
+        }
+
+        foreach (var path in paths)
+        {
+            TryDelete(path);
+        }
+    }
+
+    internal void ReleaseAdoption(AgentAttachmentTransferAdoption adoption)
+    {
+        lock (_syncRoot)
+        {
+            foreach (var handle in adoption.Handles)
+            {
+                if (_uploads.TryGetValue(handle.TransferId, out var upload))
+                {
+                    upload.IsAdopting = false;
+                }
+            }
+        }
+    }
+
     public void Dispose()
     {
         PendingUpload[] uploads;
@@ -293,5 +388,15 @@ internal sealed class AgentAttachmentTransferService : IDisposable
         public DateTimeOffset UpdatedAtUtc { get; set; } = updatedAtUtc;
         public int ReceivedBytes { get; set; }
         public bool IsComplete { get; set; }
+        public bool IsAdopting { get; set; }
     }
 }
+
+internal sealed record AgentCompletedAttachmentUpload(
+    string TransferId,
+    AgentAttachmentUploadDescriptor Descriptor,
+    string SourcePath);
+
+internal sealed record AgentAttachmentTransferAdoption(
+    IReadOnlyList<AgentAttachmentUploadHandle> Handles,
+    IReadOnlyList<AgentCompletedAttachmentUpload> Uploads);

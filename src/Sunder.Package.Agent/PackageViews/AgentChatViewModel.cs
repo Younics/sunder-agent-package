@@ -7,6 +7,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
+using Sunder.Package.Agent.HistorySearch;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
@@ -34,13 +35,16 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private readonly AgentToolPresentationService _toolPresentationService;
     private readonly IPackageShellViewService? _shellViewService;
     private readonly TranscriptTimelineState<AgentTranscriptRowViewModel> _timeline;
+    private readonly TranscriptItemsProjection<AgentTranscriptRowViewModel> _transcriptItemsProjection;
     private readonly ActivityTicker _activityTicker = new();
     private readonly AgentRunActivityState _runActivity;
     private readonly AgentComposerState _composer = new();
     private readonly AgentPermissionPanelState _permissionPanel;
     private readonly IAgentRuntimeAvailability? _runtimeAvailability;
+    private readonly IAgentRuntimeFailureClassifier? _runtimeFailureClassifier;
     private readonly IAgentChatSnapshotGateway? _chatSnapshotGateway;
     private readonly IAgentTranscriptPageGateway? _transcriptPageGateway;
+    private IAgentTranscriptAnchorGateway? _transcriptAnchorGateway;
     private readonly IAgentChatSessionCommandGateway? _chatSessionCommandGateway;
     private readonly IAgentChatPermissionCommandGateway? _chatPermissionCommandGateway;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
@@ -57,12 +61,18 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private AgentSessionListItemViewModel? _observedSelectedSession;
     private readonly object _chatSnapshotRequestLock = new();
     private CancellationTokenSource? _chatSnapshotRequestCancellation;
+    private CancellationTokenSource? _navigationHighlightCancellation;
+    private long _navigationHighlightGeneration;
     private string _globalStatusText = string.Empty;
     private bool _isReconcilingSessionSelection;
     private bool _isRestoringReconciledSessionSelection;
     private bool _suppressWorkspaceSelection;
     private int _chatSnapshotRequestGeneration;
     private int _permissionRequestGeneration;
+    private int _startupRecoveryPending;
+    private int _startupRecoveryScheduled;
+    private int _startupRecoveryConnectionGeneration;
+    private int _startupRecoveryAttemptedConnectionGeneration;
     private long _appliedPermissionRevision;
     private string? _appliedRuntimeInstanceId;
     private bool _isApplyingChatSnapshot;
@@ -103,6 +113,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _shellViewService = shellViewService;
         _permissionPanel = new AgentPermissionPanelState(permissionService, runCoordinator);
         _runtimeAvailability = profileService as IAgentRuntimeAvailability;
+        _runtimeFailureClassifier = profileService as IAgentRuntimeFailureClassifier;
         _chatSnapshotGateway = profileService as IAgentChatSnapshotGateway;
         _transcriptPageGateway = sessionService as IAgentTranscriptPageGateway;
         _chatSessionCommandGateway = sessionService as IAgentChatSessionCommandGateway;
@@ -117,6 +128,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         }
         var rowFactory = new AgentTranscriptRowFactory(
             _toolPresentationService,
+            LoadToolDetailAsync,
             _activityTicker,
             ResolveTurnSenderDisplayName,
             ResolveChildSessionLinksFromStore);
@@ -130,6 +142,12 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             OlderTranscriptTurnPageSize,
             TranscriptVisibleRowLimit);
         RunActivityRow = new AgentActivityTranscriptRowViewModel(_activityTicker);
+        TailSentinelRow = new AgentTranscriptTailSentinelRowViewModel();
+        _transcriptItemsProjection = new TranscriptItemsProjection<AgentTranscriptRowViewModel>(
+            Messages,
+            RunActivityRow,
+            TailSentinelRow);
+        TranscriptItems = _transcriptItemsProjection.Items;
         _runActivity = new AgentRunActivityState(
             () => IsDisplayedSessionRunActive,
             () => _timeline.IsFollowingLatest,
@@ -155,6 +173,16 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _sessionService.RunActivityChanged += OnRunActivityChanged;
     }
 
+    internal void SetTranscriptAnchorGateway(IAgentTranscriptAnchorGateway gateway)
+        => _transcriptAnchorGateway = gateway;
+
+    private Task<AgentTranscriptToolDetailRecord?> LoadToolDetailAsync(
+        AgentTranscriptToolDetailRequest request,
+        CancellationToken cancellationToken)
+        => _sessionService is IAgentTranscriptToolDetailGateway detailGateway
+            ? detailGateway.LoadToolDetailAsync(request, cancellationToken)
+            : Task.FromResult<AgentTranscriptToolDetailRecord?>(null);
+
     public ObservableCollection<AgentWorkspaceRecord> Workspaces { get; } = [];
 
     public ObservableCollection<AgentProfileRecord> Profiles { get; } = [];
@@ -165,9 +193,14 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<AgentWorkspacePathChipViewModel> NarrowWorkspacePathChips { get; } = [];
 
-    public ObservableCollection<AgentTranscriptRowViewModel> Messages { get; } = [];
+    public ObservableCollection<AgentTranscriptRowViewModel> Messages { get; }
+        = new TranscriptObservableCollection<AgentTranscriptRowViewModel>();
 
     public AgentActivityTranscriptRowViewModel RunActivityRow { get; }
+
+    internal AgentTranscriptTailSentinelRowViewModel TailSentinelRow { get; }
+
+    public ReadOnlyObservableCollection<AgentTranscriptRowViewModel> TranscriptItems { get; }
 
     public IReadOnlyList<string> WorkspacePathChipLabels => _workspacePathChipLabels;
 
@@ -617,7 +650,12 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         }
 
         _disposed = true;
+        Interlocked.Exchange(ref _startupRecoveryPending, 0);
         _lifetimeCancellation.Cancel();
+        Interlocked.Increment(ref _navigationHighlightGeneration);
+        _navigationHighlightCancellation?.Cancel();
+        _navigationHighlightCancellation?.Dispose();
+        _navigationHighlightCancellation = null;
         lock (_turnMutationQueueLock)
         {
             _openTurnMutationBatch = null;
@@ -661,6 +699,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _workspaceWarmupCts?.Dispose();
         _runActivity.Changed -= OnRunActivityStateChanged;
         _runActivity.Dispose();
+        _transcriptItemsProjection.Dispose();
         RunActivityRow.Dispose();
         _timeline.PropertyChanged -= OnTimelinePropertyChanged;
         _timeline.TurnProjected -= OnTimelineTurnProjected;
@@ -673,7 +712,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     }
 
     private void OnRuntimeConnectionStateChanged(AgentRuntimeConnectionState state)
-        => RunOnUiThread(() =>
+    {
+        RunOnUiThread(() =>
         {
             if (state is AgentRuntimeConnectionState.Unavailable or AgentRuntimeConnectionState.Reconnecting)
             {
@@ -689,6 +729,12 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             }
         });
 
+        if (state == AgentRuntimeConnectionState.Connected)
+        {
+            RequestStartupRecovery();
+        }
+    }
+
     internal void ReportPresentationFailure(Exception exception)
         => RunOnUiThread(() =>
         {
@@ -696,19 +742,6 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             {
                 SetGlobalStatus(exception.Message);
             }
-        });
-
-    internal void ReportStartupFailure()
-        => RunOnUiThread(() =>
-        {
-            if (_disposed)
-            {
-                return;
-            }
-
-            _hasStartupError = true;
-            SetGlobalStatus("Unable to load Agent Chat. Navigate away and return to retry.");
-            RefreshSetupState();
         });
 
     private void RunOnUiThread(Action action)

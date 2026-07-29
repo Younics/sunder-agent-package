@@ -1,5 +1,6 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Data.Sqlite;
+using System.Text.Json;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -189,6 +190,9 @@ public sealed class AgentPermissionHardeningTests
         Assert.Equal(
             AgentPendingPermissionStatus.Expired,
             runtime.Store.GetPermissionRequest(runtime.Session.SessionId, pending.RequestId)?.Status);
+        Assert.Equal(
+            AgentToolExecutionStatus.Failed,
+            runtime.Store.GetToolExecution(pending.ToolExecutionId!.Value)?.Status);
         Assert.Empty(runtime.Store.ListSessionPermissionApprovals(runtime.Session.SessionId));
     }
 
@@ -336,6 +340,205 @@ public sealed class AgentPermissionHardeningTests
 
         Assert.Equal(AgentRunStatus.Interrupted, checkpoint?.Status);
         Assert.Equal(AgentDurableRunStatus.Interrupted, runtime.Store.GetRun(pending.RunId)?.Status);
+        var execution = Assert.IsType<AgentToolExecutionRecord>(
+            runtime.Store.GetToolExecution(pending.ToolExecutionId!.Value));
+        Assert.Equal(AgentToolExecutionStatus.Ambiguous, execution.Status);
+        Assert.Contains("may have occurred", execution.OutcomeSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ConfiguredResourceClaim_RebindsExactOwnersAfterProcessLocalStateIsLost()
+    {
+        var source = new PermissionAwareMutationToolSource(
+            "mutate",
+            AgentPermissionBoundaryIds.ConfiguredScope,
+            includeResourceClaim: true);
+        await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
+        var pending = await runtime.CreatePendingRequestAsync();
+        Assert.Single(pending.ResourceClaims);
+        runtime.ForgetPreparedInvocation(pending);
+
+        var checkpoint = await runtime.ResumeCoordinator.ApproveAsync(
+            runtime.Session.SessionId,
+            pending.RequestId);
+
+        Assert.Equal(1, source.ExecutionCount);
+        Assert.Equal(AgentRunStatus.Completed, checkpoint?.Status);
+        Assert.Equal(
+            AgentToolExecutionStatus.Completed,
+            runtime.Store.GetToolExecution(pending.ToolExecutionId!.Value)?.Status);
+    }
+
+    [Fact]
+    public async Task OutsideResourceClaim_RequiresReapprovalAfterProcessLocalCapabilityIsLost()
+    {
+        var source = new PermissionAwareMutationToolSource(
+            "mutate",
+            AgentPermissionBoundaryIds.OutsideConfiguredScope,
+            includeResourceClaim: true);
+        await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
+        var pending = await runtime.CreatePendingRequestAsync();
+        Assert.Single(pending.ResourceClaims);
+        runtime.ForgetPreparedInvocation(pending);
+
+        await runtime.ResumeCoordinator.ApproveAsync(
+            runtime.Session.SessionId,
+            pending.RequestId);
+
+        Assert.Equal(0, source.ExecutionCount);
+        var execution = Assert.IsType<AgentToolExecutionRecord>(
+            runtime.Store.GetToolExecution(pending.ToolExecutionId!.Value));
+        var result = Assert.IsType<AgentToolResult>(
+            runtime.Store.GetToolExecutionResult(execution.ExecutionId));
+        Assert.Equal(AgentToolExecutionStatus.Failed, execution.Status);
+        Assert.Equal(AgentToolResultErrorCodes.PermissionReapprovalRequired, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task DuplicateApprovedDispatch_ReturnsLedgerResultWithoutBeginningOrReexecuting()
+    {
+        var source = new PermissionAwareMutationToolSource(
+            "mutate",
+            AgentPermissionBoundaryIds.ConfiguredScope,
+            includeResourceClaim: true);
+        await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
+        var pending = await runtime.CreatePendingRequestAsync();
+        await runtime.ResumeCoordinator.ApproveAsync(
+            runtime.Session.SessionId,
+            pending.RequestId);
+        var beginCount = 0;
+
+        var duplicate = await runtime.Host.HandleApprovedToolCallAsync(
+            pending,
+            CancellationToken.None,
+            _ =>
+            {
+                Interlocked.Increment(ref beginCount);
+                return ValueTask.FromResult(true);
+            });
+
+        Assert.Equal(AgentToolCallOutcomeKind.Executed, duplicate.Kind);
+        Assert.Equal("ok", duplicate.Result?.Content);
+        Assert.Equal(0, beginCount);
+        Assert.Equal(1, source.ExecutionCount);
+    }
+
+    [Fact]
+    public void PermissionFingerprint_PersistsClaimsButExcludesTransientCapabilities()
+    {
+        var runId = Guid.NewGuid();
+        var descriptor = new AgentToolDescriptor(
+            "read",
+            "Read",
+            "Read a file.",
+            SourceKind: "workspace",
+            SourceId: "files");
+        var claim = new AgentResourceClaim(
+            1,
+            "local-host-resource-claim-v1",
+            "/workspace/file.txt",
+            "/workspace",
+            new string('a', 64),
+            true,
+            "RegularFile",
+            "identity-one",
+            false,
+            true,
+            "files.read",
+            "workspace",
+            "workspace-generation",
+            "binding",
+            "binding-generation",
+            "call-1",
+            0,
+            "sunder.package.agent.tools.files",
+            "sunder.package.agent.execution.local");
+        var first = new AgentPermissionRequest(
+            "files.read",
+            AgentPermissionBoundaryIds.ConfiguredScope,
+            "Read file")
+        {
+            ResourceClaims = [claim],
+            ResourceCapabilities = ["transient-capability-one"],
+        };
+        var second = first with
+        {
+            ResourceCapabilities = ["transient-capability-two"],
+        };
+
+        var firstFingerprint = AgentPermissionFingerprint.Create(
+            runId,
+            1,
+            descriptor,
+            "call-1",
+            "{}",
+            null,
+            null,
+            null,
+            first);
+        var secondFingerprint = AgentPermissionFingerprint.Create(
+            runId,
+            1,
+            descriptor,
+            "call-1",
+            "{}",
+            null,
+            null,
+            null,
+            second);
+        var changedClaimFingerprint = AgentPermissionFingerprint.Create(
+            runId,
+            1,
+            descriptor,
+            "call-1",
+            "{}",
+            null,
+            null,
+            null,
+            first with { ResourceClaims = [claim with { TargetIdentity = "identity-two" }] });
+        var snapshot = AgentPermissionFingerprint.CreateExecutionSnapshot(
+            runId,
+            1,
+            descriptor,
+            "call-1",
+            "{}",
+            null,
+            null,
+            null,
+            first,
+            null,
+            null,
+            null);
+        var operationJson = JsonSerializer.Serialize(new AgentResourceOperationContext(
+            runId,
+            1,
+            "call-1",
+            "files.read",
+            0,
+            "workspace-generation",
+            "binding-generation",
+            "sunder.package.agent.tools.files",
+            "sunder.package.agent.execution.local",
+            "authority-activation-secret"));
+        var resolvedJson = JsonSerializer.Serialize(new AgentResolvedResource(
+            "file",
+            "/workspace/file.txt",
+            "stable-reference",
+            AgentPermissionBoundaryIds.ConfiguredScope,
+            true)
+        {
+            ResourceClaim = claim,
+            AuthorityReferences = ["resolved-authority-secret"],
+            DeleteAuthorityReferences = ["delete-authority-secret"],
+        });
+
+        Assert.Equal(firstFingerprint, secondFingerprint);
+        Assert.NotEqual(firstFingerprint, changedClaimFingerprint);
+        Assert.Contains("local-host-resource-claim-v1", snapshot, StringComparison.Ordinal);
+        Assert.DoesNotContain("transient-capability-one", snapshot, StringComparison.Ordinal);
+        Assert.DoesNotContain("authority-activation-secret", operationJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("resolved-authority-secret", resolvedJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("delete-authority-secret", resolvedJson, StringComparison.Ordinal);
     }
 }
 
@@ -349,6 +552,7 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
         AgentSessionService sessionService,
         AgentWorkspaceService workspaceService,
         AgentPermissionService permissionService,
+        AgentToolService toolService,
         AgentPermissionResumeCoordinator resumeCoordinator,
         AgentRunStopCoordinator stopCoordinator,
         AgentActiveRunRegistry activeRunRegistry,
@@ -361,6 +565,7 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
         SessionService = sessionService;
         WorkspaceService = workspaceService;
         PermissionService = permissionService;
+        ToolService = toolService;
         ResumeCoordinator = resumeCoordinator;
         StopCoordinator = stopCoordinator;
         ActiveRunRegistry = activeRunRegistry;
@@ -376,6 +581,8 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
     public AgentWorkspaceService WorkspaceService { get; }
 
     public AgentPermissionService PermissionService { get; }
+
+    public AgentToolService ToolService { get; }
 
     public AgentPermissionResumeCoordinator ResumeCoordinator { get; }
 
@@ -531,6 +738,7 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
                 sessionService,
                 workspaceService,
                 permissionService,
+                toolService,
                 resumeCoordinator,
                 stopCoordinator,
                 activeRunRegistry,
@@ -553,6 +761,11 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
         Assert.Equal(AgentToolCallOutcomeKind.WaitingForApproval, outcome.Kind);
         return Assert.Single(PermissionService.ListPendingRequests(Session.SessionId));
     }
+
+    public void ForgetPreparedInvocation(AgentPendingPermissionRequestRecord pending)
+        => ToolService.ReleasePreparedInvocation(
+            pending.ToolExecutionId
+            ?? throw new InvalidOperationException("The pending request has no tool execution."));
 
     public ValueTask DisposeAsync()
     {
@@ -634,7 +847,10 @@ internal class MutationToolSource(string toolId) : IAgentToolSource
     }
 }
 
-internal sealed class PermissionAwareMutationToolSource(string toolId)
+internal sealed class PermissionAwareMutationToolSource(
+    string toolId,
+    string boundaryId = "test-boundary",
+    bool includeResourceClaim = false)
     : MutationToolSource(toolId), IAgentPermissionAwareToolSource, IAgentPermissionSurface
 {
     private int _permissionResolutionCount;
@@ -676,9 +892,9 @@ internal sealed class PermissionAwareMutationToolSource(string toolId)
             await _permissionResolutionRelease.Task.WaitAsync(cancellationToken);
         }
 
-        return new AgentPermissionRequest(
+        var permission = new AgentPermissionRequest(
             "test.mutate",
-            "test-boundary",
+            boundaryId,
             "Allow the deterministic mutation?",
             ToolId: request.ToolId,
             WorkspaceId: context.Workspace?.WorkspaceId,
@@ -686,6 +902,46 @@ internal sealed class PermissionAwareMutationToolSource(string toolId)
             ResourceDisplayName: "test state",
             ResourceReference: "test://state",
             IsMutation: true);
+        if (!includeResourceClaim)
+        {
+            return permission;
+        }
+
+        var operation = context.ResourceOperation
+            ?? throw new InvalidOperationException("Resource claim planning requires an invocation binding.");
+        var claim = new AgentResourceClaim(
+            1,
+            "permission-hardening-resource-v1",
+            "/test/resource",
+            string.Equals(boundaryId, AgentPermissionBoundaryIds.ConfiguredScope, StringComparison.Ordinal)
+                ? "/test"
+                : null,
+            new string('c', 64),
+            true,
+            "RegularFile",
+            "stable-test-target",
+            false,
+            true,
+            "test.mutate",
+            context.Workspace?.WorkspaceId ?? string.Empty,
+            operation.WorkspaceGeneration,
+            context.ExecutionBinding?.BindingId ?? string.Empty,
+            operation.BindingGeneration,
+            operation.ToolCallId,
+            0,
+            operation.ToolOwnerPackageId,
+            operation.ExecutionTargetOwnerPackageId);
+        return permission with
+        {
+            ResourceClaims = [claim],
+            ResourceCapabilities = string.Equals(
+                                      boundaryId,
+                                      AgentPermissionBoundaryIds.OutsideConfiguredScope,
+                                      StringComparison.Ordinal)
+                                  && operation.CanIssueOutsideAuthority
+                ? [$"test-resource-authority-v1:{operation.AuthorityActivationId}"]
+                : [],
+        };
     }
 
     public IReadOnlyList<AgentPermissionActionDescriptor> ListActions()
@@ -697,7 +953,7 @@ internal sealed class PermissionAwareMutationToolSource(string toolId)
                 "Mutates deterministic test state.",
                 [
                     new AgentPermissionBoundaryDescriptor(
-                        "test-boundary",
+                        boundaryId,
                         "Test boundary",
                         "Requires approval.",
                         AgentPermissionDecision.Ask),

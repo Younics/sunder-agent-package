@@ -9,6 +9,12 @@ public static class FileOperation
     public const string FileExistsErrorCode = "file-exists";
     public const string ContentChangedErrorCode = "file-content-changed";
     public const string PathNotFoundErrorCode = "path-not-found";
+    public const string StrictPlatformMutationUnavailableErrorCode = "strict-platform-mutation-unavailable";
+    public const string StrictPlatformMutationUnavailableMessage =
+        "Strict structured filesystem writes and deletes are unavailable on this platform.";
+    public const string StrictMutationRecoveryRequiredErrorCode = "strict-mutation-recovery-required";
+    public const string StrictMutationRecoveryRequiredMessage =
+        "Strict filesystem mutation recovery could not be completed; recoverable state was retained under hidden reserved names.";
 
     public const int DefaultReadLimit = 2000;
     public const int MaximumReadLimit = 2000;

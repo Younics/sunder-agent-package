@@ -20,4 +20,10 @@ public sealed record AgentMemoryRecallRequest(
     AgentTurnContextRecord Turn,
     IReadOnlyList<AgentTurnRecord> Turns,
     IReadOnlyList<AgentTurnRecord> RecentLiveBufferTurns,
-    AgentMemoryRecallPlan RecallPlan);
+    AgentMemoryRecallPlan RecallPlan)
+{
+    /// <summary>
+    /// Gets the exact durable rollback receipt that must exist before rollback-sensitive memory can be recalled.
+    /// </summary>
+    public AgentMemoryConsistencyBarrier? MemoryConsistencyBarrier { get; init; }
+}

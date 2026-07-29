@@ -18,6 +18,10 @@ internal sealed class SubagentStackContributor(
     private const string DetailProvider = "provider";
     private const string DetailModel = "model";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
+        extensionCatalog as IPackageExtensionInvocationCatalog
+        ?? throw new InvalidOperationException(
+            "The host extension catalog does not support activation-scoped invocation leases.");
 
     public string ContributorId => "sunder.package.agent.subagents.subagents";
 
@@ -179,9 +183,11 @@ internal sealed class SubagentStackContributor(
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (providerIds.Count > 0)
         {
-            foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ChatProviders))
+            foreach (var contribution in SnapshotOwnedIdentities(
+                         PackageExtensionPoints.ChatProviders,
+                         static provider => provider.Descriptor.ProviderId))
             {
-                if (providerIds.Contains(contribution.Contribution.Descriptor.ProviderId))
+                if (providerIds.Contains(contribution.Identity))
                 {
                     AddPackageId(packageIds, contribution.PackageId);
                 }
@@ -196,9 +202,11 @@ internal sealed class SubagentStackContributor(
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (sourceIds.Count > 0)
         {
-            foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ProfileSelectableCapabilityProviders))
+            foreach (var contribution in SnapshotOwnedIdentities(
+                         PackageExtensionPoints.ProfileSelectableCapabilityProviders,
+                         static provider => provider.ProviderId))
             {
-                if (sourceIds.Contains(contribution.Contribution.ProviderId))
+                if (sourceIds.Contains(contribution.Identity))
                 {
                     AddPackageId(packageIds, contribution.PackageId);
                 }
@@ -216,6 +224,30 @@ internal sealed class SubagentStackContributor(
             .ToArray();
     }
 
+    private IReadOnlyList<OwnedIdentity> SnapshotOwnedIdentities<TContract>(
+        PackageExtensionPoint<TContract> extensionPoint,
+        Func<TContract, string> selectIdentity)
+    {
+        var identities = new List<OwnedIdentity>();
+        foreach (var reference in _invocationCatalog.GetExtensionReferences(extensionPoint))
+        {
+            if (!reference.TryAcquire(out var lease))
+            {
+                continue;
+            }
+            using (lease)
+            {
+                var identity = selectIdentity(lease.Contribution);
+                if (!lease.RetirementToken.IsCancellationRequested)
+                {
+                    identities.Add(new OwnedIdentity(lease.PackageId, identity));
+                }
+            }
+        }
+
+        return identities;
+    }
+
     private static void AddPackageId(ISet<string> packageIds, string? packageId)
     {
         if (!string.IsNullOrWhiteSpace(packageId))
@@ -227,6 +259,8 @@ internal sealed class SubagentStackContributor(
     private static bool IsCoordinatedFamilyPackage(string packageId)
         => string.Equals(packageId, "sunder.package.agent", StringComparison.OrdinalIgnoreCase)
            || packageId.StartsWith("sunder.package.agent.", StringComparison.OrdinalIgnoreCase);
+
+    private sealed record OwnedIdentity(string PackageId, string Identity);
 
     private static IReadOnlyList<StackExportItemDetail> BuildExportDetails(SubagentRecord subagent)
     {

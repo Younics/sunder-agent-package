@@ -12,7 +12,8 @@ public sealed partial class AgentLocalStore
         string userMessage,
         IReadOnlyList<AgentStoredAttachment> attachments,
         Guid? rollbackAnchorTurnId,
-        string runningSummary)
+        string runningSummary,
+        IReadOnlyList<AgentSessionDataCleanerIdentity>? activeCleaners = null)
         => TryStartRun(
             runKey,
             expectedEpoch,
@@ -20,7 +21,8 @@ public sealed partial class AgentLocalStore
             userMessage,
             attachments,
             rollbackAnchorTurnId,
-            runningSummary);
+            runningSummary,
+            activeCleaners);
 
     internal AgentRunStartPersistenceResult? TryStartRun(
         AgentDurableRunKey runKey,
@@ -29,13 +31,19 @@ public sealed partial class AgentLocalStore
         string userMessage,
         IReadOnlyList<AgentStoredAttachment> attachments,
         Guid? rollbackAnchorTurnId,
-        string runningSummary)
+        string runningSummary,
+        IReadOnlyList<AgentSessionDataCleanerIdentity>? activeCleaners = null)
     {
         BeforeFencedTranscriptTransaction?.Invoke(AgentTranscriptMutationKind.UserRunStart);
 
         using var connection = CreateConnection();
         connection.Open();
+        if (rollbackAnchorTurnId is not null)
+        {
+            EnableSecureDelete(connection);
+        }
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         if (!CanStartRun(connection, transaction, runKey, expectedEpoch))
         {
             transaction.Rollback();
@@ -49,7 +57,8 @@ public sealed partial class AgentLocalStore
                 connection,
                 transaction,
                 runKey.SessionId,
-                anchorTurnId);
+                anchorTurnId,
+                activeCleaners);
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -85,7 +94,42 @@ public sealed partial class AgentLocalStore
             return null;
         }
 
+        if (rollback?.MemoryConsistencyBarrier is { } barrier)
+        {
+            using var barrierCommand = connection.CreateCommand();
+            barrierCommand.Transaction = transaction;
+            barrierCommand.CommandText = """
+                UPDATE AgentRuns
+                SET MemoryConsistencyBarrierEventId = $eventId,
+                    MemoryConsistencyBarrierPayloadHash = $payloadHash
+                WHERE RunId = $runId AND SessionId = $sessionId AND RunRevision = $runRevision;
+                """;
+            barrierCommand.Parameters.AddWithValue("$eventId", barrier.EventId);
+            barrierCommand.Parameters.AddWithValue("$payloadHash", barrier.PayloadHash);
+            barrierCommand.Parameters.AddWithValue("$runId", runKey.RunId.ToString());
+            barrierCommand.Parameters.AddWithValue("$sessionId", runKey.SessionId.ToString());
+            barrierCommand.Parameters.AddWithValue("$runRevision", runKey.RunRevision);
+            barrierCommand.ExecuteNonQuery();
+        }
+
+        EnqueueRunLifecycleEvent(
+            connection,
+            transaction,
+            AgentLifecycleEventKind.UserTurnAdded,
+            $"user-turn:{userTurn.TurnId:N}",
+            runKey,
+            triggerTurn: userTurn,
+            checkpoint: transition.Checkpoint);
+
         transaction.Commit();
+        if (rollback?.DeletedTurnIds.Count > 0)
+        {
+            CheckpointWriteAheadLog(connection);
+        }
+        if (rollback?.DeletedSessionIds.Count > 0)
+        {
+            SignalSessionCleanupJobsChanged();
+        }
         return new AgentRunStartPersistenceResult(transition, userTurn, rollback);
     }
 
@@ -105,6 +149,7 @@ public sealed partial class AgentLocalStore
               AND RunRevision = $runRevision
               AND Epoch = $expectedEpoch
               AND Status IN ('Preparing', 'Idle')
+              AND UserTurnId IS NULL
               AND FinishedAtUtc IS NULL
               AND NOT EXISTS (
                   SELECT 1

@@ -23,7 +23,10 @@ public sealed partial class AgentLocalStore
 
         using var connection = CreateConnection();
         connection.Open();
+        using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             UPDATE AgentPendingPermissionRequests
             SET Status = $status,
@@ -41,7 +44,9 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
         command.Parameters.AddWithValue("$requestId", requestId);
         command.Parameters.AddWithValue("$claimToken", claimToken);
-        return command.ExecuteNonQuery() == 1;
+        var updated = command.ExecuteNonQuery() == 1;
+        transaction.Commit();
+        return updated;
     }
 
     internal AgentPermissionExpirationResult ExpireActivePermissionRequest(
@@ -52,6 +57,7 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         var request = GetPermissionRequest(connection, sessionId, requestId, transaction);
         if (request?.Status is not (AgentPendingPermissionStatus.Pending
                 or AgentPendingPermissionStatus.Claimed))
@@ -61,13 +67,26 @@ public sealed partial class AgentLocalStore
         }
 
         var now = DateTimeOffset.UtcNow;
-        var ambiguous = request.ExecutionStartedAtUtc is not null;
-        var terminalStatus = ambiguous
-            ? AgentPendingPermissionStatus.Failed
-            : AgentPendingPermissionStatus.Expired;
+        var ledgerExecution = request.ToolExecutionId is { } toolExecutionId
+            ? GetToolExecution(connection, transaction, toolExecutionId)
+            : null;
+        var ledgerStatus = ledgerExecution?.Status;
+        var ambiguous = request.ToolExecutionId is not null
+            ? ledgerStatus is AgentToolExecutionStatus.Started or AgentToolExecutionStatus.Ambiguous
+            : request.ExecutionStartedAtUtc is not null;
+        var terminalStatus = request.ToolExecutionId is not null
+            ? ledgerStatus switch
+            {
+                AgentToolExecutionStatus.Completed => AgentPendingPermissionStatus.Executed,
+                AgentToolExecutionStatus.Prepared => AgentPendingPermissionStatus.Expired,
+                _ => AgentPendingPermissionStatus.Failed,
+            }
+            : ambiguous
+                ? AgentPendingPermissionStatus.Failed
+                : AgentPendingPermissionStatus.Expired;
         var terminalSummary = ambiguous
             ? "Run stopped after approved tool execution started; the external mutation outcome is ambiguous and will not be retried."
-            : summary;
+            : ledgerExecution?.OutcomeSummary ?? summary;
         AgentRunCheckpointRecord? checkpoint = null;
         IReadOnlyList<AgentCompletedStreamingTurn> completedStreamingTurns = [];
         if (!string.IsNullOrWhiteSpace(request.ContinuationToken)
@@ -114,10 +133,24 @@ public sealed partial class AgentLocalStore
             }
         }
 
+        IReadOnlyList<AgentTurnRecord> toolResultTurns = [];
         if (checkpoint is not null)
         {
+            toolResultTurns = TerminalizeOpenToolExecutions(
+                connection,
+                transaction,
+                new AgentDurableRunKey(request.RunId, request.SessionId, request.RunRevision),
+                AgentRunStatus.Interrupted,
+                now);
             InsertCheckpoint(connection, transaction, checkpoint);
             TouchSessionForCheckpoint(connection, transaction, checkpoint);
+            EnqueueRunLifecycleEvent(
+                connection,
+                transaction,
+                AgentLifecycleEventKind.RunInterrupted,
+                $"run:{request.RunId:N}:{request.RunRevision}:terminal:Interrupted",
+                new AgentDurableRunKey(request.RunId, request.SessionId, request.RunRevision),
+                checkpoint: checkpoint);
         }
 
         transaction.Commit();
@@ -127,7 +160,10 @@ public sealed partial class AgentLocalStore
                 ? null
                 : new AgentCheckpointPersistenceResult(
                     checkpoint,
-                    completedStreamingTurns));
+                    completedStreamingTurns)
+                {
+                    ToolResultTurns = toolResultTurns,
+                });
     }
 
     internal AgentRunStopPersistenceResult? TryStopRunAndActivePermissions(
@@ -138,6 +174,7 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         var now = DateTimeOffset.UtcNow;
         var completedStreamingTurns = CompleteStreamingTextTurns(
             connection,
@@ -185,11 +222,31 @@ public sealed partial class AgentLocalStore
             command.Transaction = transaction;
             command.CommandText = """
                 UPDATE AgentPendingPermissionRequests
-                SET Status = CASE WHEN ExecutionStartedAtUtc IS NULL THEN 'Expired' ELSE 'Failed' END,
+                SET Status = CASE
+                        WHEN ToolExecutionId IS NOT NULL AND EXISTS (
+                            SELECT 1 FROM AgentToolExecutions execution
+                            WHERE execution.ExecutionId = AgentPendingPermissionRequests.ToolExecutionId
+                              AND execution.Status = 'Completed') THEN 'Executed'
+                        WHEN ToolExecutionId IS NOT NULL AND EXISTS (
+                            SELECT 1 FROM AgentToolExecutions execution
+                            WHERE execution.ExecutionId = AgentPendingPermissionRequests.ToolExecutionId
+                              AND execution.Status IN ('Started', 'Failed', 'Ambiguous')) THEN 'Failed'
+                        WHEN ToolExecutionId IS NOT NULL AND NOT EXISTS (
+                            SELECT 1 FROM AgentToolExecutions execution
+                            WHERE execution.ExecutionId = AgentPendingPermissionRequests.ToolExecutionId) THEN 'Failed'
+                        WHEN ToolExecutionId IS NULL AND ExecutionStartedAtUtc IS NOT NULL THEN 'Failed'
+                        ELSE 'Expired'
+                    END,
                     DecidedAtUtc = $decidedAtUtc,
                     DecisionSummary = CASE
-                        WHEN ExecutionStartedAtUtc IS NULL THEN $summary
-                        ELSE 'Run stopped after approved tool execution started; the external mutation outcome is ambiguous and will not be retried.'
+                        WHEN ToolExecutionId IS NOT NULL AND EXISTS (
+                            SELECT 1 FROM AgentToolExecutions execution
+                            WHERE execution.ExecutionId = AgentPendingPermissionRequests.ToolExecutionId
+                              AND execution.Status IN ('Started', 'Ambiguous'))
+                            THEN 'Run stopped after approved tool execution started; effects may have occurred and no retry happened.'
+                        WHEN ToolExecutionId IS NULL AND ExecutionStartedAtUtc IS NOT NULL
+                            THEN 'Run stopped after approved tool execution started; effects may have occurred and no retry happened.'
+                        ELSE $summary
                     END,
                     ClaimLeaseExpiresAtUtc = NULL
                 WHERE RunId = $runId
@@ -205,6 +262,13 @@ public sealed partial class AgentLocalStore
             command.ExecuteNonQuery();
         }
 
+        var toolResultTurns = TerminalizeOpenToolExecutions(
+            connection,
+            transaction,
+            key,
+            AgentRunStatus.Stopped,
+            now);
+
         var checkpoint = new AgentRunCheckpointRecord(
             Guid.NewGuid(),
             key.SessionId,
@@ -215,13 +279,23 @@ public sealed partial class AgentLocalStore
         InsertCheckpoint(connection, transaction, checkpoint);
         TouchSessionForCheckpoint(connection, transaction, checkpoint);
         var run = GetRun(connection, transaction, key.RunId)!;
+        EnqueueRunLifecycleEvent(
+            connection,
+            transaction,
+            AgentLifecycleEventKind.RunStopped,
+            $"run:{key.RunId:N}:{key.RunRevision}:terminal:Stopped",
+            key,
+            checkpoint: checkpoint);
         transaction.Commit();
         return new AgentRunStopPersistenceResult(
-            new AgentRunTransitionResult(run, checkpoint),
+            new AgentRunTransitionResult(run, checkpoint)
+            {
+                ToolResultTurns = toolResultTurns,
+            },
             completedStreamingTurns);
     }
 
-    private void RecoverInterruptedPermissionClaims()
+    internal void RecoverInterruptedPermissionClaims()
     {
         using var connection = CreateConnection();
         connection.Open();
@@ -238,33 +312,74 @@ public sealed partial class AgentLocalStore
 
         foreach (var request in requests)
         {
+            var ledgerExecution = request.ToolExecutionId is { } toolExecutionId
+                ? GetToolExecution(toolExecutionId)
+                : null;
             var lacksDurableIdentity = request.RunId == Guid.Empty
                 || request.RunRevision <= 0
                 || string.IsNullOrWhiteSpace(request.ExecutionFingerprint)
                 || string.IsNullOrWhiteSpace(request.ExecutionSnapshotJson)
-                || string.IsNullOrWhiteSpace(request.ContinuationToken);
-            if (request.Status == AgentPendingPermissionStatus.Pending && !lacksDurableIdentity)
+                || string.IsNullOrWhiteSpace(request.ContinuationToken)
+                || request.ToolExecutionId is not null && ledgerExecution is null
+                || request.ResourceClaimSetVersion < 0
+                || string.Equals(
+                       request.BoundaryId,
+                       AgentPermissionBoundaryIds.OutsideConfiguredScope,
+                       StringComparison.OrdinalIgnoreCase)
+                   && (request.ResourceClaimSetVersion != 1 || request.ResourceClaims.Count == 0);
+            var hasRecoverablePreparedExecution = request.ToolExecutionId is null
+                || ledgerExecution?.Status == AgentToolExecutionStatus.Prepared;
+            if (request.Status == AgentPendingPermissionStatus.Pending
+                && !lacksDurableIdentity
+                && hasRecoverablePreparedExecution)
             {
                 continue;
             }
 
-            var ambiguous = request.Status == AgentPendingPermissionStatus.Claimed
-                && (request.ContinuationConsumedAtUtc is not null
-                    || request.ExecutionStartedAtUtc is not null);
-            if (request.Status == AgentPendingPermissionStatus.Claimed && !ambiguous)
+            var ambiguous = request.ToolExecutionId is not null
+                ? ledgerExecution?.Status is AgentToolExecutionStatus.Started
+                    or AgentToolExecutionStatus.Ambiguous
+                : request.Status == AgentPendingPermissionStatus.Claimed
+                  && (request.ContinuationConsumedAtUtc is not null
+                      || request.ExecutionStartedAtUtc is not null);
+            if (request.Status == AgentPendingPermissionStatus.Claimed
+                && !ambiguous
+                && (request.ToolExecutionId is null
+                    || !lacksDurableIdentity
+                       && hasRecoverablePreparedExecution
+                       && request.ContinuationConsumedAtUtc is null))
             {
                 // An unconsumed claim remains recoverable after its persisted lease expires.
                 continue;
             }
-            var permissionStatus = ambiguous
-                ? AgentPendingPermissionStatus.Failed
-                : AgentPendingPermissionStatus.Expired;
-            var runStatus = ambiguous ? AgentRunStatus.Failed : AgentRunStatus.Interrupted;
+            var permissionStatus = request.ToolExecutionId is not null
+                ? ledgerExecution?.Status == AgentToolExecutionStatus.Completed
+                    ? AgentPendingPermissionStatus.Executed
+                    : AgentPendingPermissionStatus.Failed
+                : ambiguous
+                    ? AgentPendingPermissionStatus.Failed
+                    : AgentPendingPermissionStatus.Expired;
+            var runStatus = ambiguous && request.ToolExecutionId is null
+                ? AgentRunStatus.Failed
+                : AgentRunStatus.Interrupted;
             var recoverySummary = ambiguous
-                ? "The prior process ended after consuming an approved permission continuation; the external mutation outcome is ambiguous and will not be retried."
-                : lacksDurableIdentity
-                    ? "Legacy permission request expired because it lacks durable run identity, fingerprint, or continuation state."
-                    : "Permission claim expired because its continuation was never consumed before the prior process ended.";
+                ? request.ToolExecutionId is null
+                    ? "The prior process ended after consuming an approved permission continuation; the external mutation outcome is ambiguous and will not be retried."
+                    : "The prior process ended after approved tool dispatch; the outcome is ambiguous, effects may have occurred, and no retry happened."
+                : ledgerExecution?.Status switch
+                {
+                    AgentToolExecutionStatus.Completed => ledgerExecution.OutcomeSummary
+                        ?? "The approved tool completed before startup recovery interrupted provider continuation.",
+                    AgentToolExecutionStatus.Failed => ledgerExecution.OutcomeSummary
+                        ?? "The approved tool failed before startup recovery interrupted provider continuation.",
+                    _ when request.ResourceClaimSetVersion < 0 =>
+                        "Legacy v3 transient resource authority cannot be restored; explicit reapproval is required.",
+                    _ when lacksDurableIdentity =>
+                        "Legacy permission request expired because it lacks durable run identity, fingerprint, or continuation state.",
+                    _ when request.ToolExecutionId is not null =>
+                        "The approved tool call did not dispatch before the prior process ended and was not retried.",
+                    _ => "Permission claim expired because its continuation was never consumed before the prior process ended.",
+                };
             RecoverPermissionRequest(
                 connection,
                 request,
@@ -274,7 +389,7 @@ public sealed partial class AgentLocalStore
         }
     }
 
-    private static void RecoverPermissionRequest(
+    private void RecoverPermissionRequest(
         SqliteConnection connection,
         AgentPendingPermissionRequestRecord request,
         AgentPendingPermissionStatus permissionStatus,
@@ -315,10 +430,20 @@ public sealed partial class AgentLocalStore
             runChanged = runCommand.ExecuteNonQuery() == 1;
             if (runChanged)
             {
+                var key = new AgentDurableRunKey(
+                    request.RunId,
+                    request.SessionId,
+                    request.RunRevision);
                 CompleteStreamingTextTurns(
                     connection,
                     transaction,
-                    new AgentDurableRunKey(request.RunId, request.SessionId, request.RunRevision),
+                    key,
+                    now);
+                TerminalizeOpenToolExecutions(
+                    connection,
+                    transaction,
+                    key,
+                    runStatus,
                     now);
             }
         }
@@ -362,6 +487,21 @@ public sealed partial class AgentLocalStore
                 now);
             InsertCheckpoint(connection, transaction, checkpoint);
             TouchSessionForCheckpoint(connection, transaction, checkpoint);
+            if (request.RunId != Guid.Empty && request.RunRevision > 0)
+            {
+                var key = new AgentDurableRunKey(request.RunId, request.SessionId, request.RunRevision);
+                if (GetRun(connection, transaction, request.RunId) is not null
+                    && TryMapTerminalLifecycleKind(runStatus, out var lifecycleKind))
+                {
+                    EnqueueRunLifecycleEvent(
+                        connection,
+                        transaction,
+                        lifecycleKind,
+                        $"run:{request.RunId:N}:{request.RunRevision}:terminal:{runStatus}",
+                        key,
+                        checkpoint: checkpoint);
+                }
+            }
         }
 
         transaction.Commit();

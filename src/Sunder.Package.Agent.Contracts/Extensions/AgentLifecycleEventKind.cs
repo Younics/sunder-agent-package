@@ -47,4 +47,19 @@ public enum AgentLifecycleEventKind
     /// </summary>
     /// <remarks>Failure summaries and trigger content can expose exception or provider data and require safe handling.</remarks>
     RunFailed = 5,
+
+    /// <summary>
+    /// An inclusive transcript rollback removed the exact turns and child sessions listed in the durable payload.
+    /// </summary>
+    TranscriptRolledBack = 6,
+
+    /// <summary>
+    /// A session tree was deleted from Agent-owned persistence.
+    /// </summary>
+    SessionDeleted = 7,
+
+    /// <summary>
+    /// A workspace and all of its Agent-owned session data were deleted.
+    /// </summary>
+    WorkspaceDeleted = 8,
 }

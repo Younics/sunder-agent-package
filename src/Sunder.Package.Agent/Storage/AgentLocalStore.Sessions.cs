@@ -95,10 +95,16 @@ public sealed partial class AgentLocalStore
     }
 
     public IReadOnlyList<Guid> DeleteSessionTree(Guid sessionId)
+        => DeleteSessionTree(sessionId, []);
+
+    internal IReadOnlyList<Guid> DeleteSessionTree(
+        Guid sessionId,
+        IReadOnlyList<AgentSessionDataCleanerIdentity> activeCleaners)
     {
         using var connection = CreateConnection();
         connection.Open();
-        using var transaction = connection.BeginTransaction();
+        EnableSecureDelete(connection);
+        using var transaction = connection.BeginTransaction(deferred: false);
 
         var sessions = ResolveSessionTree(connection, transaction, sessionId);
         foreach (var session in sessions.Reverse())
@@ -106,19 +112,75 @@ public sealed partial class AgentLocalStore
             DeleteSession(connection, transaction, session.SessionId.ToString());
         }
 
+        if (sessions.Count > 0)
+        {
+            EnqueueSessionDeletedLifecycleEvent(
+                connection,
+                transaction,
+                sessions[0],
+                sessions.Select(session => session.SessionId).ToArray());
+            EnqueueSessionCleanupJobs(
+                connection,
+                transaction,
+                sessions.Select(session => session.SessionId).ToArray(),
+                activeCleaners,
+                DateTimeOffset.UtcNow);
+        }
+
         transaction.Commit();
+        if (sessions.Count > 0)
+        {
+            SignalSessionCleanupJobsChanged();
+        }
         return sessions.Select(session => session.SessionId).ToArray();
     }
 
     public IReadOnlyList<Guid> DeleteSessionTreesForWorkspace(string workspaceId)
+        => DeleteSessionTreesForWorkspace(workspaceId, []);
+
+    internal IReadOnlyList<Guid> DeleteSessionTreesForWorkspace(
+        string workspaceId,
+        IReadOnlyList<AgentSessionDataCleanerIdentity> activeCleaners)
     {
         using var connection = CreateConnection();
         connection.Open();
-        using var transaction = connection.BeginTransaction();
+        EnableSecureDelete(connection);
+        using var transaction = connection.BeginTransaction(deferred: false);
+
+        var workspaceSessions = ListSessions(connection, transaction)
+            .Where(session => string.Equals(session.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var workspaceSessionIds = workspaceSessions.Select(session => session.SessionId).ToHashSet();
+        var sessionTrees = workspaceSessions
+            .Where(session => session.ParentSessionId is null || !workspaceSessionIds.Contains(session.ParentSessionId.Value))
+            .Select(session => ResolveSessionTree(connection, transaction, session.SessionId)
+                .Where(item => workspaceSessionIds.Contains(item.SessionId))
+                .ToArray())
+            .Where(tree => tree.Length > 0)
+            .ToArray();
 
         var deletedSessionIds = DeleteSessionTreesForWorkspace(connection, transaction, workspaceId);
 
+        foreach (var tree in sessionTrees)
+        {
+            EnqueueSessionDeletedLifecycleEvent(
+                connection,
+                transaction,
+                tree[0],
+                tree.Select(session => session.SessionId).ToArray());
+        }
+        EnqueueSessionCleanupJobs(
+            connection,
+            transaction,
+            deletedSessionIds,
+            activeCleaners,
+            DateTimeOffset.UtcNow);
+
         transaction.Commit();
+        if (deletedSessionIds.Count > 0)
+        {
+            SignalSessionCleanupJobsChanged();
+        }
         return deletedSessionIds;
     }
 
@@ -167,6 +229,14 @@ public sealed partial class AgentLocalStore
         using var transaction = connection.BeginTransaction(deferred: false);
         InsertCheckpoint(connection, transaction, checkpoint);
         var runKey = GetDurableRunKey(connection, transaction, sessionId, runRevision);
+        if (runKey is { } completionKey
+            && status == AgentRunStatus.Completed
+            && HasOpenToolExecutions(connection, transaction, completionKey))
+        {
+            transaction.Rollback();
+            throw new InvalidOperationException(
+                $"Run '{sessionId}:{runRevision}' cannot complete with open tool executions.");
+        }
         if (runKey is not null && !ProjectCheckpointToRun(connection, transaction, checkpoint))
         {
             transaction.Rollback();
@@ -177,10 +247,34 @@ public sealed partial class AgentLocalStore
         var completedStreamingTurns = runKey is { } key && IsFinishedRunStatus(status)
             ? CompleteStreamingTextTurns(connection, transaction, key, checkpoint.CreatedAtUtc)
             : [];
+        var toolResultTurns = runKey is { } terminalKey
+                              && IsFinishedRunStatus(status)
+                              && status != AgentRunStatus.Completed
+            ? TerminalizeOpenToolExecutions(
+                connection,
+                transaction,
+                terminalKey,
+                status,
+                checkpoint.CreatedAtUtc)
+            : [];
 
         TouchSessionForCheckpoint(connection, transaction, checkpoint);
+        if (runKey is { } lifecycleKey
+            && TryMapTerminalLifecycleKind(status, out var lifecycleKind))
+        {
+            EnqueueRunLifecycleEvent(
+                connection,
+                transaction,
+                lifecycleKind,
+                $"run:{lifecycleKey.RunId:N}:{lifecycleKey.RunRevision}:terminal:{status}",
+                lifecycleKey,
+                checkpoint: checkpoint);
+        }
         transaction.Commit();
-        return new AgentCheckpointPersistenceResult(checkpoint, completedStreamingTurns);
+        return new AgentCheckpointPersistenceResult(checkpoint, completedStreamingTurns)
+        {
+            ToolResultTurns = toolResultTurns,
+        };
     }
 
     public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId)
@@ -239,19 +333,7 @@ public sealed partial class AgentLocalStore
     }
 
     public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId)
-    {
-        using var connection = CreateConnection();
-        connection.Open();
-
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT ContextCheckpointId, SessionId, FirstOmittedTurnId, LastOmittedTurnId, OmittedTurnCount, SummaryText, DetailsJson, CreatedAtUtc FROM AgentSessionContextCheckpoints WHERE SessionId = $sessionId ORDER BY CreatedAtUtc DESC LIMIT 1;";
-        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
-
-        using var reader = command.ExecuteReader();
-        return reader.Read()
-            ? ReadSessionContextCheckpoint(reader)
-            : null;
-    }
+        => GetActiveAnchoredSessionContextCheckpoint(sessionId)?.Record;
 
     public AgentSessionContextCheckpointRecord SaveSessionContextCheckpoint(
         Guid sessionId,
@@ -441,6 +523,12 @@ public sealed partial class AgentLocalStore
 
     private static void DeleteSession(SqliteConnection connection, SqliteTransaction transaction, string sessionId)
     {
+        using var deleteToolExecutions = connection.CreateCommand();
+        deleteToolExecutions.Transaction = transaction;
+        deleteToolExecutions.CommandText = "DELETE FROM AgentToolExecutions WHERE SessionId = $sessionId;";
+        deleteToolExecutions.Parameters.AddWithValue("$sessionId", sessionId);
+        deleteToolExecutions.ExecuteNonQuery();
+
         using var deleteTurnItems = connection.CreateCommand();
         deleteTurnItems.Transaction = transaction;
         deleteTurnItems.CommandText = "DELETE FROM AgentTurnItems WHERE TurnId IN (SELECT TurnId FROM AgentTurns WHERE SessionId = $sessionId);";

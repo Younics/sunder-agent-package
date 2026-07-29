@@ -32,6 +32,16 @@
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.OpenAI\Sunder.Package.Agent.Provider.OpenAI.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Sunder.Package.Agent.Skills.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj" />
+    <ProjectReference Include="$(SunderAppProject)"
+                      Condition="'$(SunderUseSourceSdk)' == 'true'" />
+    <ProjectReference Include="$(SunderRuntimeClientProject)"
+                      Condition="'$(SunderUseSourceSdk)' == 'true'" />
+    <ProjectReference Include="$(SunderRuntimeLocalStateProject)"
+                      Condition="'$(SunderUseSourceSdk)' == 'true'" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(SunderUseSourceSdk)' != 'true'">
+    <Compile Remove="CrossRepositoryCandidatePreparationTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

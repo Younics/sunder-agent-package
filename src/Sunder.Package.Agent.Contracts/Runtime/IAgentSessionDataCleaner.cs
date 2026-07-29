@@ -5,8 +5,9 @@ namespace Sunder.Package.Agent.Contracts.Contracts;
 /// </summary>
 /// <remarks>
 /// Cleaners should be idempotent and scope all deletion to the supplied session. The callback is synchronous and has
-/// no cancellation token, so implementations should keep work bounded. The base host invokes cleaners after its core
-/// persistence transaction; it aggregates cleaner exceptions for the caller without restoring already-deleted data.
+/// no cancellation token, so implementations should keep work bounded. The base host records an ids-only cleanup job
+/// in the same transaction as core deletion, then invokes the exact package-owned contribution under an activation
+/// lease. Failed or unavailable jobs remain durable and retry after delay, Runtime restart, or package reactivation.
 /// </remarks>
 public interface IAgentSessionDataCleaner
 {
@@ -15,6 +16,6 @@ public interface IAgentSessionDataCleaner
 
     /// <summary>Deletes all extension-owned state associated with a session, tolerating already-absent data.</summary>
     /// <param name="sessionId">The stable identifier of the session whose core data has been removed.</param>
-    /// <exception cref="Exception">An implementation failure is collected by the host and may be surfaced in an <see cref="AggregateException"/> after deletion commits.</exception>
+    /// <exception cref="Exception">An implementation failure leaves the durable cleanup job pending for retry.</exception>
     void DeleteSessionData(Guid sessionId);
 }

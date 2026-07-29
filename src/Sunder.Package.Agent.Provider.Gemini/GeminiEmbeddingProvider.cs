@@ -7,7 +7,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Provider.Gemini;
 
-public sealed class GeminiEmbeddingProvider : IAgentEmbeddingProvider
+public sealed class GeminiEmbeddingProvider : IAgentEmbeddingProvider, IAgentEmbeddingSpaceIdentityProvider
 {
     private readonly ProviderCredentialAccessor _credentials;
 
@@ -42,6 +42,14 @@ public sealed class GeminiEmbeddingProvider : IAgentEmbeddingProvider
     {
         cancellationToken.ThrowIfCancellationRequested();
         return ValueTask.FromResult(Models);
+    }
+
+    public ValueTask<string> GetEmbeddingSpaceIdentityAsync(
+        string modelId,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult("https://generativelanguage.googleapis.com");
     }
 
     public async ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)

@@ -36,11 +36,12 @@ public static class MemorySemanticPackageConfiguration
                         "semantic.reindex.mode",
                         "Stale reindex mode",
                         PackageSettingsFieldKind.Select,
-                        description: "Choose whether stale or missing embeddings should be regenerated lazily during recall.",
+                        description: "Choose whether stale or missing embeddings are regenerated during recall, continuously in the background, or only by explicit reindexing.",
                         defaultValue: "lazy",
                         options:
                         [
                             new PackageSettingsOption("lazy", "Lazy on recall"),
+                            new PackageSettingsOption("eager", "Eager background indexing"),
                             new PackageSettingsOption("never", "Never regenerate automatically")
                         ])
                 ])

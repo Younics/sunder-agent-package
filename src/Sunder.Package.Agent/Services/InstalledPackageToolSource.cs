@@ -11,7 +11,8 @@ public sealed class InstalledPackageToolSource(IPackageExtensionCatalog extensio
     private const string LocalSourceId = "installed-packages";
     private const string LocalSourceDisplayName = "Installed Tools";
 
-    private readonly IPackageExtensionCatalog _extensionCatalog = extensionCatalog;
+    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
+        AgentExtensionInvocation.Require(extensionCatalog);
 
     public string SourceId => LocalSourceId;
 
@@ -26,7 +27,7 @@ public sealed class InstalledPackageToolSource(IPackageExtensionCatalog extensio
         cancellationToken.ThrowIfCancellationRequested();
 
         var descriptors = ListTools()
-            .Select(tool => WithSource(tool.Descriptor))
+            .Select(tool => tool.Descriptor)
             .ToArray();
 
         return ValueTask.FromResult<IReadOnlyList<AgentToolDescriptor>>(descriptors);
@@ -40,7 +41,10 @@ public sealed class InstalledPackageToolSource(IPackageExtensionCatalog extensio
         var tool = GetTool(toolId);
         return tool is null
             ? null
-            : await tool.GetReadinessAsync(cancellationToken);
+            : await InvokeAsync(
+                tool,
+                cancellationToken,
+                static (instance, token) => instance.GetReadinessAsync(token));
     }
 
     public async ValueTask<AgentToolResult> ExecuteAsync(
@@ -59,7 +63,18 @@ public sealed class InstalledPackageToolSource(IPackageExtensionCatalog extensio
                 ErrorCode: "tool-not-found");
         }
 
-        var readiness = await tool.GetReadinessAsync(cancellationToken);
+        AgentToolReadiness readiness;
+        try
+        {
+            readiness = await InvokeAsync(
+                tool,
+                cancellationToken,
+                static (instance, token) => instance.GetReadinessAsync(token));
+        }
+        catch (AgentPackageUnavailableException ex)
+        {
+            return PackageUnavailable(request.ToolId, ex.Message);
+        }
         if (readiness.Status != AgentToolReadinessStatus.Ready)
         {
             return new AgentToolResult(
@@ -70,7 +85,17 @@ public sealed class InstalledPackageToolSource(IPackageExtensionCatalog extensio
                 ErrorCode: "tool-not-ready");
         }
 
-        return await tool.ExecuteAsync(context, request, cancellationToken);
+        try
+        {
+            return await InvokeAsync(
+                tool,
+                cancellationToken,
+                (instance, token) => instance.ExecuteAsync(context, request, token));
+        }
+        catch (AgentPackageUnavailableException ex)
+        {
+            return PackageUnavailable(request.ToolId, ex.Message);
+        }
     }
 
     public async ValueTask<AgentPermissionRequest?> BuildPermissionRequestAsync(
@@ -79,30 +104,93 @@ public sealed class InstalledPackageToolSource(IPackageExtensionCatalog extensio
         CancellationToken cancellationToken = default)
     {
         var tool = GetTool(request.ToolId);
-        return tool is IAgentPermissionAwareTool permissionAwareTool
-            ? await permissionAwareTool.BuildPermissionRequestAsync(context, request, cancellationToken)
+        return tool?.SupportsPermission == true
+            ? await InvokeAsync(
+                tool,
+                cancellationToken,
+                (instance, token) => ((IAgentPermissionAwareTool)instance)
+                    .BuildPermissionRequestAsync(context, request, token))
             : null;
     }
 
     public AgentToolPresentation? ResolveToolPresentation(AgentToolPresentationRequest request)
-        => GetTool(request.ToolId) is IAgentToolPresentationResolver resolver
-            ? resolver.ResolveToolPresentation(request)
-            : null;
+    {
+        var tool = GetTool(request.ToolId);
+        if (tool?.SupportsPresentation != true || !tool.Reference.TryAcquire(out var lease))
+        {
+            return null;
+        }
 
-    private IReadOnlyList<IAgentTool> ListTools()
-        => _extensionCatalog.GetExtensions(PackageExtensionPoints.Tools)
+        using (lease)
+        {
+            return lease.RetirementToken.IsCancellationRequested
+                ? null
+                : ((IAgentToolPresentationResolver)lease.Contribution)
+                    .ResolveToolPresentation(request);
+        }
+    }
+
+    private IReadOnlyList<InstalledToolReference> ListTools()
+        => _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.Tools)
+            .Select(CreateReference)
+            .OfType<InstalledToolReference>()
             .OrderBy(tool => tool.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-    private IAgentTool? GetTool(string? toolId)
+    private InstalledToolReference? GetTool(string? toolId)
     {
         if (string.IsNullOrWhiteSpace(toolId))
         {
             return null;
         }
 
-        return ListTools().FirstOrDefault(tool => string.Equals(tool.Descriptor.ToolId, toolId, StringComparison.OrdinalIgnoreCase));
+        return ListTools().FirstOrDefault(tool => string.Equals(
+            tool.Descriptor.ToolId,
+            toolId,
+            StringComparison.OrdinalIgnoreCase));
     }
+
+    private static InstalledToolReference? CreateReference(
+        IPackageExtensionReference<IAgentTool> reference)
+    {
+        if (!reference.TryAcquire(out var lease))
+        {
+            return null;
+        }
+
+        using (lease)
+        {
+            var descriptor = WithSource(lease.Contribution.Descriptor);
+            return lease.RetirementToken.IsCancellationRequested
+                ? null
+                : new InstalledToolReference(
+                    reference,
+                    lease.PackageId,
+                    descriptor,
+                    lease.Contribution is IAgentPermissionAwareTool,
+                    lease.Contribution is IAgentToolPresentationResolver);
+        }
+    }
+
+    private static ValueTask<TResult> InvokeAsync<TResult>(
+        InstalledToolReference tool,
+        CancellationToken cancellationToken,
+        Func<IAgentTool, CancellationToken, ValueTask<TResult>> callback)
+        => AgentExtensionInvocation.InvokeAsync(
+            new AgentExtensionReference<IAgentTool, AgentToolDescriptor>(
+                tool.Reference,
+                tool.PackageId,
+                tool.Descriptor),
+            cancellationToken,
+            callback);
+
+    private static AgentToolResult PackageUnavailable(string toolId, string message)
+        => new(
+            toolId,
+            message,
+            Content: $"### Tool package unavailable\n\n{message}",
+            IsError: true,
+            ErrorCode: AgentToolResultErrorCodes.PackageUnavailable);
 
     private static AgentToolDescriptor WithSource(AgentToolDescriptor descriptor)
         => descriptor with
@@ -110,5 +198,13 @@ public sealed class InstalledPackageToolSource(IPackageExtensionCatalog extensio
             SourceKind = string.IsNullOrWhiteSpace(descriptor.SourceKind) ? LocalSourceKind : descriptor.SourceKind,
             SourceId = string.IsNullOrWhiteSpace(descriptor.SourceId) ? LocalSourceId : descriptor.SourceId,
             SourceDisplayName = string.IsNullOrWhiteSpace(descriptor.SourceDisplayName) ? LocalSourceDisplayName : descriptor.SourceDisplayName,
+            Aliases = descriptor.Aliases?.ToArray(),
         };
+
+    private sealed record InstalledToolReference(
+        IPackageExtensionReference<IAgentTool> Reference,
+        string PackageId,
+        AgentToolDescriptor Descriptor,
+        bool SupportsPermission,
+        bool SupportsPresentation);
 }

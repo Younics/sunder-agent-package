@@ -13,7 +13,10 @@ internal sealed class DockerExecutionAppRuntimeClient(IPackageRuntimeClient clie
         if (!client.IsAvailable)
         {
             return ValueTask.FromException<DockerExecutionOperationResponse>(
-                new InvalidOperationException("Docker execution Runtime is unavailable."));
+                new PackageRuntimeInvocationException(
+                    "runtime.v1.unavailable",
+                    isTransient: true,
+                    statusCode: 503));
         }
 
         return client.InvokeAsync(DockerExecutionRuntimeOperations.Execute, request, cancellationToken);

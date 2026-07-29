@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
+using Sunder.Sdk.Storage;
 
 namespace Sunder.Package.Agent.Provider.TestSupport;
 
@@ -66,35 +67,79 @@ public sealed class ProviderTestKeyValueStore : IPackageKeyValueStore
     public ProviderTestKeyValueStore(IReadOnlyDictionary<string, string>? values = null)
     {
         _values = values is null
-            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase);
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
+            : new Dictionary<string, string>(values, StringComparer.Ordinal);
+        ValidateValues(_values);
     }
 
     public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ValidateKey(key);
         return Task.FromResult(_values.GetValueOrDefault(key));
     }
 
     public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ValidateKey(key);
+        ValidateValue(value);
         _values[key] = value;
         return Task.CompletedTask;
     }
 
     public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default)
-        => Task.FromResult(_values.ContainsKey(key));
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateKey(key);
+        return Task.FromResult(_values.ContainsKey(key));
+    }
 
     public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ValidateKey(key);
         return Task.FromResult(_values.Remove(key));
     }
 
     public Task<IReadOnlyList<string>> ListKeysAsync(string? prefix = null, CancellationToken cancellationToken = default)
-        => Task.FromResult<IReadOnlyList<string>>(
-            _values.Keys.Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray());
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (prefix is not null && prefix.Length != 0 && !PackageStorageValidation.IsValidKey(prefix))
+        {
+            throw new ArgumentException("Invalid test package storage prefix.", nameof(prefix));
+        }
+        return Task.FromResult<IReadOnlyList<string>>(
+            _values.Keys
+                .Where(key => prefix is null || key.StartsWith(prefix, StringComparison.Ordinal))
+                .Order(StringComparer.Ordinal)
+                .ToArray());
+    }
+
+    private static void ValidateValues(IReadOnlyDictionary<string, string> values)
+    {
+        foreach (var pair in values)
+        {
+            ValidateKey(pair.Key);
+            ValidateValue(pair.Value);
+        }
+    }
+
+    private static void ValidateKey(string? key)
+    {
+        if (!PackageStorageValidation.IsValidKey(key))
+        {
+            throw new ArgumentException("Invalid test package storage key.", nameof(key));
+        }
+    }
+
+    private static void ValidateValue(string? value)
+    {
+        if (!PackageStorageValidation.IsValidValue(value))
+        {
+            throw new ArgumentException("Invalid test package storage value.", nameof(value));
+        }
+    }
 }
 
 public sealed class ProviderTestSettings(IPackageKeyValueStore settings) : IPackageSettings
@@ -119,19 +164,27 @@ public sealed class ProviderTestSecrets : IPackageSecrets
     public ProviderTestSecrets(IReadOnlyDictionary<string, string>? values = null)
     {
         _values = values is null
-            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase);
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
+            : new Dictionary<string, string>(values, StringComparer.Ordinal);
+        foreach (var pair in _values)
+        {
+            ValidateKey(pair.Key);
+            ValidateValue(pair.Value);
+        }
     }
 
     public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ValidateKey(key);
         return Task.FromResult(_values.GetValueOrDefault(key));
     }
 
     public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ValidateKey(key);
+        ValidateValue(value);
         _values[key] = value;
         return Task.CompletedTask;
     }
@@ -139,8 +192,25 @@ public sealed class ProviderTestSecrets : IPackageSecrets
     public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ValidateKey(key);
         _values.Remove(key);
         return Task.CompletedTask;
+    }
+
+    private static void ValidateKey(string? key)
+    {
+        if (!PackageStorageValidation.IsValidKey(key))
+        {
+            throw new ArgumentException("Invalid test package secret key.", nameof(key));
+        }
+    }
+
+    private static void ValidateValue(string? value)
+    {
+        if (!PackageStorageValidation.IsValidValue(value))
+        {
+            throw new ArgumentException("Invalid test package secret value.", nameof(value));
+        }
     }
 }
 

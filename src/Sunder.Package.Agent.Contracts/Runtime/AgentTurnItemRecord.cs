@@ -40,4 +40,35 @@ public sealed record AgentTurnItemRecord(
     bool IsError,
     string? ErrorCode,
     string? BackendId,
-    string? PresentationPayloadJson = null);
+    string? PresentationPayloadJson = null)
+{
+    /// <summary>Gets the host-issued durable tool execution identifier, when this item represents a tool call or result.</summary>
+    public Guid? ToolExecutionId { get; init; }
+
+    /// <summary>Gets the durable execution state projected when this transcript snapshot was loaded.</summary>
+    public AgentToolExecutionStatus? ToolExecutionStatus { get; init; }
+
+    /// <summary>Gets the package that owned the exact tool contribution when execution was prepared.</summary>
+    public string? ToolOwnerPackageId { get; init; }
+
+    /// <summary>Gets the optional stable schema identity captured when execution was prepared.</summary>
+    public string? ToolSchemaId { get; init; }
+
+    /// <summary>Gets the optional schema version captured when execution was prepared.</summary>
+    public string? ToolSchemaVersion { get; init; }
+
+    /// <summary>Gets a bounded, transport-projected hint that is safe to show without parsing tool detail payloads.</summary>
+    public string? ToolHeaderHint { get; init; }
+
+    /// <summary>Gets a bounded error summary that remains available while tool details are collapsed.</summary>
+    public string? ToolErrorSummary { get; init; }
+
+    /// <summary>Gets the authoritative detail revision represented by this lightweight transcript item.</summary>
+    public long ToolDetailRevision { get; init; }
+
+    /// <summary>Gets whether an exact detail lookup can return presentable fields for this tool invocation.</summary>
+    public bool? ToolHasDetails { get; init; }
+
+    /// <summary>Gets whether payload-heavy tool fields were intentionally omitted from this transcript projection.</summary>
+    public bool IsToolHeaderProjection { get; init; }
+}

@@ -36,7 +36,17 @@ public sealed record AgentPendingPermissionRequestRecord(
     DateTimeOffset? ClaimLeaseExpiresAtUtc = null,
     DateTimeOffset? ContinuationConsumedAtUtc = null,
     DateTimeOffset? ExecutionStartedAtUtc = null,
-    string ExecutionSnapshotJson = "");
+    string ExecutionSnapshotJson = "")
+{
+    /// <summary>Gets the durable tool execution awaiting this permission decision, when available.</summary>
+    public Guid? ToolExecutionId { get; init; }
+
+    /// <summary>Gets the schema version of the persisted durable resource-claim set.</summary>
+    public int ResourceClaimSetVersion { get; init; }
+
+    /// <summary>Gets every durable resource claim covered by this permission request.</summary>
+    public IReadOnlyList<AgentResourceClaim> ResourceClaims { get; init; } = [];
+}
 
 public enum AgentPendingPermissionStatus
 {

@@ -5,26 +5,33 @@ using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Mcp.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Mcp;
 
-public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDisposable
+public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
+    IPackageViewNavigationPreparationTarget,
+    IDisposable
 {
+    private const string ListRefreshChannel = "mcp-servers";
+    private const string ConnectionStatusChannel = "mcp-status";
     private readonly IMcpManagementGateway _gateway;
     private readonly McpSettingsOperationsViewModel _operations;
     private readonly IPresentationDispatcher _uiDispatcher;
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private readonly LatestRequestCoordinator _requests = new();
+    private readonly KeyedAdaptiveListDetailState<string, ConfiguredMcpServerRecord> _listDetail;
+    private readonly SerializedRefreshLoop _runtimeRefresh;
     private readonly Task _initialization;
-    private bool _suppressSelectionHandlers;
-    private bool _suppressServerChangeNotifications;
     private bool _suppressEditorTracking;
-    private bool _isDocumentLoading;
-    private bool _isDocumentReady = true;
-    private bool _reloadServersPending;
     private bool _disposed;
-    private int _serverLoadVersion;
     private long _editorRevision;
-    private CancellationTokenSource? _serverLoadCancellation;
+    private long _loadedEditorRevision;
+    private string? _loadedDocumentServerId;
+    private bool _runtimeRefreshPending;
+    private bool _suppressDocumentLoad;
     private Task _currentDocumentLoad = Task.CompletedTask;
+    private Task _currentConnectionStatusLoad = Task.CompletedTask;
 
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } = [];
 
@@ -43,6 +50,14 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
     {
         _gateway = gateway;
         _uiDispatcher = uiDispatcher;
+        _listDetail = new KeyedAdaptiveListDetailState<string, ConfiguredMcpServerRecord>(
+            Servers,
+            static server => server.ServerId,
+            keyComparer: StringComparer.OrdinalIgnoreCase);
+        _listDetail.PropertyChanged += OnListDetailPropertyChanged;
+        _runtimeRefresh = new SerializedRefreshLoop(
+            cancellationToken => ReloadServersAsync(null, cancellationToken),
+            ReportRuntimeRefreshFailure);
         _operations = new McpSettingsOperationsViewModel(
             this,
             gateway,
@@ -76,19 +91,36 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
 
     public Task InitializeAsync() => _initialization;
 
+    public async ValueTask<bool> PrepareNavigationAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
+    {
+        await _initialization.WaitAsync(cancellationToken);
+        return true;
+    }
+
+    public ValueTask OnNavigationPresentedAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.CompletedTask;
+    }
+
     public bool HasSelectedServer => SelectedServer is not null;
     public bool HasSelectedOAuthServer => SelectedServer?.OAuthEnabled == true;
     public bool IsListActive => !IsEditorActive;
-    public bool ShowWideLayout => !IsCompactLayout;
+    public bool ShowWideLayout => _listDetail.Layout == AdaptiveListDetailLayout.Wide;
     public bool ShowCompactList => IsCompactLayout && IsListActive;
     public bool ShowCompactEditor => IsCompactLayout && IsEditorActive;
     public bool ShowListPane => ShowWideLayout || ShowCompactList;
     public bool ShowEditorPane => ShowWideLayout || ShowCompactEditor;
     public bool IsBusy => _operations.IsBusy || IsDocumentLoading;
     public bool CanStartOperation => !IsBusy;
-    public bool CanNavigateServers => !IsBusy;
-    public bool IsDocumentLoading => _isDocumentLoading;
-    public bool IsDocumentReady => _isDocumentReady;
+    public bool CanNavigateServers => !_disposed;
+    public bool IsDocumentLoading => _listDetail.DetailPhase == AdaptiveDetailPhase.Loading;
+    public bool IsDocumentReady => _listDetail.IsNewDetail
+        || _listDetail.DetailPhase == AdaptiveDetailPhase.Ready;
     public bool IsEditorReadOnly => IsDocumentLoading;
     public bool IsDiscovering => _operations.IsDiscovering;
     public string StatusText => _operations.StatusText;
@@ -111,14 +143,42 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
     public IAsyncRelayCommand AuthorizeMcpServerCommand => _operations.AuthorizeMcpServerCommand;
     public IAsyncRelayCommand DisconnectMcpServerOAuthCommand => _operations.DisconnectMcpServerOAuthCommand;
 
-    [ObservableProperty]
-    private ConfiguredMcpServerRecord? _selectedServer;
+    public ConfiguredMcpServerRecord? SelectedServer
+    {
+        get => _listDetail.SelectedItem;
+        set
+        {
+            if (value is null)
+            {
+                CancelForUserNavigation();
+                _listDetail.ShowList();
+            }
+            else
+            {
+                ActivateServer(value);
+            }
+        }
+    }
 
-    [ObservableProperty]
-    private bool _isCompactLayout;
+    public bool IsCompactLayout
+    {
+        get => _listDetail.Layout == AdaptiveListDetailLayout.Compact;
+        set => _listDetail.SetLayout(value
+            ? AdaptiveListDetailLayout.Compact
+            : AdaptiveListDetailLayout.Wide);
+    }
 
-    [ObservableProperty]
-    private bool _isEditorActive;
+    public bool IsEditorActive => IsCompactLayout && !_listDetail.IsList;
+
+    internal AdaptiveListDetailRoute Route => _listDetail.Route;
+
+    internal AdaptiveListDetailLayout Layout => _listDetail.Layout;
+
+    internal AdaptiveDetailPhase DetailPhase => _listDetail.DetailPhase;
+
+    internal long IntentRevision => _listDetail.IntentRevision;
+
+    internal long LayoutRevision => _listDetail.LayoutRevision;
 
     [ObservableProperty]
     private string _name = string.Empty;
@@ -142,35 +202,6 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
     [ObservableProperty]
     private string _connectionDiagnosticsText = string.Empty;
 
-    partial void OnSelectedServerChanged(ConfiguredMcpServerRecord? value)
-    {
-        OnPropertyChanged(nameof(HasSelectedServer));
-        OnPropertyChanged(nameof(HasSelectedOAuthServer));
-        if (_suppressSelectionHandlers)
-        {
-            _operations.NotifyContextChanged();
-            return;
-        }
-
-        CancelDocumentLoad(documentReady: value is null);
-        if (value is null)
-        {
-            ClearEditor();
-            RefreshConnectionStatus(null);
-            _operations.NotifyContextChanged();
-            return;
-        }
-
-        RefreshConnectionStatus(value);
-        _currentDocumentLoad = LoadSelectedServerAsync(value, CancellationToken.None);
-        if (IsCompactLayout)
-        {
-            IsEditorActive = true;
-        }
-
-        _operations.NotifyContextChanged();
-    }
-
     partial void OnNameChanged(string value) => TrackEditorChange();
 
     partial void OnEditorTextChanged(string value) => TrackEditorChange();
@@ -178,10 +209,10 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
     [RelayCommand(CanExecute = nameof(CanEdit))]
     private void CreateServer()
     {
-        SelectedServer = null;
+        CancelForUserNavigation();
+        _listDetail.ShowNewDetail();
         Name = "mcp_server";
         EditorText = McpConfigurationDocument.CreateLocalTemplate();
-        IsEditorActive = true;
         RefreshConnectionStatus(null);
         _operations.PresentStatus("Editing a new MCP server draft. Paste a bare MCP server object or start from a template.", McpStatusKind.Warning);
     }
@@ -189,13 +220,12 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
     [RelayCommand(CanExecute = nameof(CanNavigateServers))]
     private void BackToServerList()
     {
+        CancelForUserNavigation();
+        _listDetail.ShowList();
         if (IsCompactLayout)
         {
-            SelectedServer = null;
             _operations.ClearStatus();
         }
-
-        IsEditorActive = false;
     }
 
     [RelayCommand]
@@ -214,15 +244,13 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
             return;
         }
 
-        if (!string.Equals(SelectedServer?.ServerId, server.ServerId, StringComparison.OrdinalIgnoreCase))
+        if (_listDetail.IsExistingDetail && ReferenceEquals(SelectedServer, server))
         {
-            SelectedServer = server;
+            return;
         }
 
-        if (IsCompactLayout)
-        {
-            IsEditorActive = true;
-        }
+        CancelForUserNavigation();
+        _listDetail.ShowExistingDetail(server);
     }
 
     [RelayCommand(CanExecute = nameof(CanEdit))]
@@ -246,22 +274,6 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         }
     }
 
-    partial void OnIsCompactLayoutChanged(bool value)
-    {
-        if (value && !IsEditorActive)
-        {
-            SelectedServer = null;
-        }
-        else if (!value && SelectedServer is null)
-        {
-            SelectedServer = Servers.FirstOrDefault();
-        }
-
-        NotifyLayout();
-    }
-
-    partial void OnIsEditorActiveChanged(bool value) => NotifyLayout();
-
     public Task ImportConfigurationFileAsync(string filePath) => _operations.ImportFileAsync(filePath);
 
     public void Dispose()
@@ -272,113 +284,148 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         }
 
         _disposed = true;
-        _serverLoadVersion++;
-        _serverLoadCancellation?.Cancel();
-        _serverLoadCancellation?.Dispose();
-        _serverLoadCancellation = null;
+        _lifetimeCancellation.Cancel();
         _gateway.ServersChanged -= OnServersChanged;
         _gateway.StatusChanged -= OnConnectionStatusChanged;
         _operations.PropertyChanged -= OnOperationsPropertyChanged;
+        _listDetail.PropertyChanged -= OnListDetailPropertyChanged;
+        _runtimeRefresh.Dispose();
+        _listDetail.Dispose();
+        _requests.Dispose();
         _operations.Dispose();
+        _lifetimeCancellation.Dispose();
     }
 
     internal async Task ReloadServersAsync(
         string? selectServerId,
         CancellationToken cancellationToken,
-        bool loadSelectedDocument = true)
+        bool loadSelectedDocument = true,
+        long? expectedIntentRevision = null)
     {
-        var servers = await _gateway.ListAsync(cancellationToken);
-        Task documentLoad = Task.CompletedTask;
-        await _uiDispatcher.InvokeAsync(() =>
-        {
-            if (_disposed || cancellationToken.IsCancellationRequested)
-            {
-                return;
-            }
-
-            var currentServerId = SelectedServer?.ServerId;
-            _suppressSelectionHandlers = true;
-            try
-            {
-                Servers.Clear();
-                foreach (var server in servers)
-                {
-                    Servers.Add(server);
-                }
-
-                SelectedServer = Servers.FirstOrDefault(server => server.ServerId == selectServerId)
-                    ?? ((!IsCompactLayout || selectServerId is not null)
-                        ? Servers.FirstOrDefault(server => server.ServerId == currentServerId) ?? Servers.FirstOrDefault()
-                        : null);
-            }
-            finally
-            {
-                _suppressSelectionHandlers = false;
-            }
-
-            if (SelectedServer is null)
-            {
-                CancelDocumentLoad(documentReady: true);
-                ClearEditor();
-                RefreshConnectionStatus(null);
-            }
-            else if (loadSelectedDocument)
-            {
-                documentLoad = LoadSelectedServerAsync(SelectedServer, cancellationToken);
-                _currentDocumentLoad = documentLoad;
-            }
-            else
-            {
-                RefreshConnectionStatus(SelectedServer);
-            }
-
-            _operations.NotifyContextChanged();
-        }).ConfigureAwait(false);
-        await documentLoad.ConfigureAwait(false);
-    }
-
-    internal async Task WithSuppressedCatalogEventsAsync(Func<Task> action)
-    {
-        _suppressServerChangeNotifications = true;
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetimeCancellation.Token);
+        var request = _requests.Begin(ListRefreshChannel, linkedCancellation.Token);
         try
         {
-            await action();
+            var servers = await _gateway.ListAsync(request.CancellationToken)
+                .WaitAsync(request.CancellationToken);
+            Task documentLoad = Task.CompletedTask;
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (_disposed || !_requests.IsCurrent(request))
+                {
+                    return;
+                }
+
+                var previousSuppression = _suppressDocumentLoad;
+                _suppressDocumentLoad = !loadSelectedDocument;
+                try
+                {
+                    _listDetail.Reconcile(servers);
+                    if (selectServerId is not null
+                        && expectedIntentRevision is { } intentRevision
+                        && _listDetail.IsNewDetail)
+                    {
+                        _listDetail.TryShowCreatedDetail(selectServerId, intentRevision);
+                    }
+                }
+                finally
+                {
+                    _suppressDocumentLoad = previousSuppression;
+                }
+                documentLoad = _currentDocumentLoad;
+                _operations.NotifyContextChanged();
+            }).ConfigureAwait(false);
+            await documentLoad.WaitAsync(request.CancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            _suppressServerChangeNotifications = false;
+            _requests.Complete(request);
         }
     }
 
+    internal async Task WithSuppressedCatalogEventsAsync(Func<Task> action)
+        => await action();
+
     internal void RefreshConnectionStatus(ConfiguredMcpServerRecord? server)
     {
-        if (server is null)
+        if (server is null
+            || !_listDetail.IsExistingDetail
+            || !string.Equals(
+                SelectedServer?.ServerId,
+                server.ServerId,
+                StringComparison.OrdinalIgnoreCase))
         {
+            _requests.Invalidate(ConnectionStatusChannel);
             ConnectionStatusKind = McpConnectionStatusKind.Idle;
             ConnectionStatusText = "No saved MCP server selected.";
             ConnectionStatusDetail = string.Empty;
             ConnectionDiagnosticsText = string.Empty;
+            _currentConnectionStatusLoad = Task.CompletedTask;
             return;
         }
 
-        _ = RefreshConnectionStatusAsync(server);
+        _currentConnectionStatusLoad = RefreshConnectionStatusAsync(server);
     }
 
     private async Task RefreshConnectionStatusAsync(ConfiguredMcpServerRecord server)
     {
-        var presentation = await _gateway.GetPresentationAsync(server);
-        ConnectionStatusKind = presentation.Status.Kind;
-        ConnectionStatusText = presentation.Status.Message;
-        ConnectionStatusDetail = presentation.Detail;
-        ConnectionDiagnosticsText = presentation.Diagnostics;
+        var request = _requests.Begin(ConnectionStatusChannel, _lifetimeCancellation.Token);
+        try
+        {
+            var presentation = await _gateway.GetPresentationAsync(server, request.CancellationToken)
+                .WaitAsync(request.CancellationToken);
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (_requests.IsCurrent(request)
+                    && _listDetail.IsExistingDetail
+                    && string.Equals(
+                        SelectedServer?.ServerId,
+                        server.ServerId,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    ConnectionStatusKind = presentation.Status.Kind;
+                    ConnectionStatusText = presentation.Status.Message;
+                    ConnectionStatusDetail = presentation.Detail;
+                    ConnectionDiagnosticsText = presentation.Diagnostics;
+                }
+            });
+        }
+        catch (OperationCanceledException) when (request.CancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (_requests.IsCurrent(request)
+                    && _listDetail.IsExistingDetail
+                    && string.Equals(
+                        SelectedServer?.ServerId,
+                        server.ServerId,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    ConnectionStatusKind = McpConnectionStatusKind.Error;
+                    ConnectionStatusText = ex.Message;
+                    ConnectionStatusDetail = string.Empty;
+                    ConnectionDiagnosticsText = string.Empty;
+                }
+            });
+        }
+        finally
+        {
+            _requests.Complete(request);
+        }
     }
 
     internal McpEditorSnapshot CaptureEditorSnapshot() => new(
         SelectedServer,
         Name,
         EditorText,
-        IsCompactLayout,
-        _editorRevision);
+        IntentRevision,
+        _editorRevision,
+        LayoutRevision);
 
     internal bool HasEditorChangedSince(long revision) => _editorRevision != revision;
 
@@ -394,10 +441,13 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
             McpConfigurationDocument.BuildEditorText(
                 parsed.Server,
                 parsed.Headers,
-                parsed.EnvironmentVariables));
+                parsed.EnvironmentVariables),
+            parsed.Server.ServerId);
     }
 
     internal Task CurrentDocumentLoad => _currentDocumentLoad;
+
+    internal Task CurrentConnectionStatusLoad => _currentConnectionStatusLoad;
 
     internal Task RunOnUiAsync(Action action) => _uiDispatcher.InvokeAsync(() =>
     {
@@ -411,7 +461,8 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
     {
         ApplyEditorDocument(
             Servers.Count == 0 ? "mcp_server" : string.Empty,
-            Servers.Count == 0 ? McpConfigurationDocument.CreateLocalTemplate() : string.Empty);
+            Servers.Count == 0 ? McpConfigurationDocument.CreateLocalTemplate() : string.Empty,
+            serverId: null);
     }
 
     private void LoadTemplate(string template, string status)
@@ -431,11 +482,12 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
     {
         if (!_suppressEditorTracking)
         {
+            _listDetail.PromoteSelectionToExplicit();
             _editorRevision++;
         }
     }
 
-    private void ApplyEditorDocument(string name, string text)
+    private void ApplyEditorDocument(string name, string text, string? serverId)
     {
         _suppressEditorTracking = true;
         try
@@ -447,41 +499,16 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         {
             _suppressEditorTracking = false;
         }
+
+        _loadedDocumentServerId = serverId;
+        _loadedEditorRevision = _editorRevision;
     }
 
     private void OnServersChanged() => RunOnUiThread(() =>
     {
-        if (_suppressServerChangeNotifications)
-        {
-            return;
-        }
-
-        _reloadServersPending = true;
-        TryReloadPendingServers();
+        _runtimeRefreshPending = true;
+        StartPendingRuntimeRefresh();
     });
-
-    private void TryReloadPendingServers()
-    {
-        if (_disposed || !_reloadServersPending || IsBusy)
-        {
-            return;
-        }
-
-        _reloadServersPending = false;
-        _ = ReloadServersSafelyAsync(SelectedServer?.ServerId);
-    }
-
-    private async Task ReloadServersSafelyAsync(string? serverId)
-    {
-        try
-        {
-            await ReloadServersAsync(serverId, CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            await RunOnUiAsync(() => _operations.PresentStatus(ex.Message, McpStatusKind.Error));
-        }
-    }
 
     private void OnConnectionStatusChanged() => RunOnUiThread(() => RefreshConnectionStatus(SelectedServer));
 
@@ -501,7 +528,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         LoadLocalTemplateCommand.NotifyCanExecuteChanged();
         LoadRemoteTemplateCommand.NotifyCanExecuteChanged();
         FormatCommand.NotifyCanExecuteChanged();
-        TryReloadPendingServers();
+        StartPendingRuntimeRefresh();
     });
 
     private void NotifyLayout()
@@ -514,9 +541,100 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject, IDispo
         OnPropertyChanged(nameof(ShowEditorPane));
     }
 
+    internal bool IsCurrentIntent(McpEditorSnapshot snapshot)
+        => !_disposed && snapshot.IntentRevision == IntentRevision;
+
+    internal bool IsCurrentMutationLayout(McpEditorSnapshot snapshot)
+        => IsCurrentIntent(snapshot) && snapshot.LayoutRevision == LayoutRevision;
+
+    internal void ShowListAfterMutation()
+        => _listDetail.ShowList();
+
+    internal void DiscardPendingServerRefresh()
+    {
+        _runtimeRefresh.DiscardPending();
+        _requests.Invalidate(ListRefreshChannel);
+    }
+
+    private void CancelForUserNavigation()
+    {
+        _operations.CancelForNavigation();
+    }
+
+    private void OnListDetailPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!_listDetail.IsExistingDetail)
+        {
+            _currentDocumentLoad = Task.CompletedTask;
+        }
+        if (e.PropertyName == nameof(KeyedAdaptiveListDetailState<string, ConfiguredMcpServerRecord>.SelectedItem))
+        {
+            OnPropertyChanged(nameof(SelectedServer));
+            OnPropertyChanged(nameof(HasSelectedServer));
+            OnPropertyChanged(nameof(HasSelectedOAuthServer));
+            if (_listDetail.IsExistingDetail && SelectedServer is { } selected)
+            {
+                RefreshConnectionStatus(selected);
+                var preserveCurrentDraft = string.Equals(
+                        _loadedDocumentServerId,
+                        selected.ServerId,
+                        StringComparison.OrdinalIgnoreCase)
+                    && _loadedEditorRevision != _editorRevision;
+                if (!preserveCurrentDraft)
+                {
+                    if (_suppressDocumentLoad)
+                    {
+                        var ticket = _listDetail.BeginDetailLoad(_lifetimeCancellation.Token);
+                        _listDetail.TrySetDetailReady(ticket);
+                        _currentDocumentLoad = Task.CompletedTask;
+                    }
+                    else
+                    {
+                        _currentDocumentLoad = LoadSelectedServerAsync(
+                            selected,
+                            _lifetimeCancellation.Token);
+                    }
+                }
+            }
+            else if (_listDetail.IsList)
+            {
+                ClearEditor();
+                RefreshConnectionStatus(null);
+            }
+            _operations.NotifyContextChanged();
+        }
+
+        OnPropertyChanged(nameof(IsCompactLayout));
+        OnPropertyChanged(nameof(IsEditorActive));
+        OnPropertyChanged(nameof(IsDocumentLoading));
+        OnPropertyChanged(nameof(IsDocumentReady));
+        OnPropertyChanged(nameof(IsEditorReadOnly));
+        OnPropertyChanged(nameof(IsBusy));
+        OnPropertyChanged(nameof(CanStartOperation));
+        OnPropertyChanged(nameof(CanNavigateServers));
+        NotifyLayout();
+        CreateServerCommand.NotifyCanExecuteChanged();
+        BackToServerListCommand.NotifyCanExecuteChanged();
+        _operations.NotifyContextChanged();
+    }
+
     private void RunOnUiThread(Action action)
     {
         _ = RunOnUiAsync(action);
+    }
+
+    private void ReportRuntimeRefreshFailure(Exception exception)
+        => RunOnUiThread(() => _operations.PresentStatus(exception.Message, McpStatusKind.Error));
+
+    private void StartPendingRuntimeRefresh()
+    {
+        if (_disposed || !_runtimeRefreshPending || _operations.IsBusy)
+        {
+            return;
+        }
+
+        _runtimeRefreshPending = false;
+        _ = _runtimeRefresh.MarkDirty();
     }
 
     private static LegacyDependencies CreateLegacyDependencies(
@@ -553,5 +671,6 @@ internal sealed record McpEditorSnapshot(
     ConfiguredMcpServerRecord? ExistingServer,
     string Name,
     string EditorText,
-    bool IsCompactLayout,
-    long Revision);
+    long IntentRevision,
+    long Revision,
+    long LayoutRevision);

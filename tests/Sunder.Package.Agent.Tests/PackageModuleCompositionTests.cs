@@ -13,11 +13,13 @@ public sealed class PackageModuleCompositionTests
         {
             ["Sunder.Package.Agent"] =
             [
-                BackgroundService("Sunder.Package.Agent.Services.AgentBackgroundWorkService"),
+                BackgroundService("Sunder.Package.Agent.Services.AgentPackageStorageMigration"),
+                BackgroundService("Sunder.Package.Agent.Services.AgentRuntimeStartupService"),
                 Extension("sunder.package.agent:runtime-catalogs", "Sunder.Package.Agent.Services.AgentRuntimeCatalog"),
                 Extension("sunder.package.agent:workspace-execution-resolvers", "Sunder.Package.Agent.Services.AgentWorkspaceExecutionResolver"),
                 Extension("sunder.package.agent:child-run-executors", "Sunder.Package.Agent.Services.AgentRunCoordinator"),
                 Extension("sunder.package.agent:session-data-cleaners", "Sunder.Package.Agent.Services.AgentAttachmentService"),
+                Extension("sunder.package.agent:session-data-cleaners", "Sunder.Package.Agent.HistorySearch.HistorySearchIndexingService"),
                 Extension("sunder.package.agent:behavior-loops", "Sunder.Package.Agent.Services.BehaviorLoops.DefaultAgentBehaviorLoop"),
                 Extension("sunder.package.agent:prompt-context-contributors", "Sunder.Package.Agent.Services.WorkspaceDocumentationContextService"),
                 StackExporter("Sunder.Package.Agent.Services.AgentProfileStackContributor"),
@@ -29,6 +31,7 @@ public sealed class PackageModuleCompositionTests
                 RuntimeOperation("agent.chat.snapshot.v1", "Sunder.Package.Agent.Runtime.AgentChatSnapshotHandler"),
                 RuntimeOperation("agent.dashboard.v1", "Sunder.Package.Agent.Runtime.AgentDashboardHandler"),
                 RuntimeOperation("agent.transcript.page.v1", "Sunder.Package.Agent.Runtime.AgentTranscriptPageHandler"),
+                RuntimeOperation("agent.transcript.tool-detail.v1", "Sunder.Package.Agent.Runtime.AgentTranscriptToolDetailHandler"),
                 RuntimeOperation("agent.catalog.v1", "Sunder.Package.Agent.Runtime.AgentCatalogHandler"),
                 RuntimeOperation("agent.profiles.command.v1", "Sunder.Package.Agent.Runtime.AgentProfileCommandHandler"),
                 RuntimeOperation("agent.workspaces.command.v1", "Sunder.Package.Agent.Runtime.AgentWorkspaceCommandHandler"),
@@ -37,8 +40,14 @@ public sealed class PackageModuleCompositionTests
                 RuntimeOperation("agent.runs.status.v1", "Sunder.Package.Agent.Runtime.AgentRunCommandHandler"),
                 RuntimeOperation("agent.permissions.command.v1", "Sunder.Package.Agent.Runtime.AgentPermissionCommandHandler"),
                 RuntimeOperation("agent.attachments.transfer.v1", "Sunder.Package.Agent.Runtime.AgentAttachmentTransferHandler"),
+                RuntimeOperation("agent.history.search.v1", "Sunder.Package.Agent.Runtime.AgentHistorySearchHandler"),
+                RuntimeOperation("agent.history.state.v1", "Sunder.Package.Agent.Runtime.AgentHistoryStateHandler"),
+                RuntimeOperation("agent.history.command.v1", "Sunder.Package.Agent.Runtime.AgentHistoryCommandHandler"),
+                RuntimeOperation("agent.transcript.around.v1", "Sunder.Package.Agent.Runtime.AgentTranscriptAroundTurnHandler"),
                 RuntimeStream("agent.changes.v1", "Sunder.Package.Agent.Runtime.AgentRuntimeChangeHub"),
+                RuntimeStream("agent.history.status.v1", "Sunder.Package.Agent.Runtime.AgentHistoryStatusStream"),
                 PackageView("sunder.package.agent.chat", "Sunder.Package.Agent.PackageViews.AgentChatView"),
+                PackageView("sunder.package.agent.history", "Sunder.Package.Agent.PackageViews.AgentHistorySearchView"),
                 PackageView("sunder.package.agent.workspaces", "Sunder.Package.Agent.PackageViews.AgentWorkspacesView"),
                 PackageView("sunder.package.agent.profiles", "Sunder.Package.Agent.PackageViews.AgentProfilesView"),
                 SettingsView("Sunder.Package.Agent.PackageViews.AgentPermissionsView"),
@@ -50,6 +59,7 @@ public sealed class PackageModuleCompositionTests
             ],
             ["Sunder.Package.Agent.Execution.Docker"] =
             [
+                BackgroundService("Sunder.Package.Agent.Execution.Docker.DockerPackageStorageMigration"),
                 Configuration("sunder.package.agent.execution.docker"),
                 StackExporter("Sunder.Package.Agent.Execution.Docker.DockerImageStackContributor"),
                 StackImporter("Sunder.Package.Agent.Execution.Docker.DockerImageStackContributor"),
@@ -63,6 +73,7 @@ public sealed class PackageModuleCompositionTests
             ],
             ["Sunder.Package.Agent.Execution.Local"] =
             [
+                BackgroundService("Sunder.Package.Agent.Execution.Local.LocalPackageStorageMigration"),
                 Configuration("sunder.package.agent.execution.local"),
                 SettingsView("Sunder.Package.Agent.Execution.Local.LocalExecutionSettingsView"),
                 Extension("sunder.package.agent:execution-targets", "Sunder.Package.Agent.Execution.Local.LocalExecutionTarget"),
@@ -73,6 +84,7 @@ public sealed class PackageModuleCompositionTests
             ],
             ["Sunder.Package.Agent.Mcp"] =
             [
+                BackgroundService("Sunder.Package.Agent.Mcp.Services.McpPackageRuntimeStartupService"),
                 SettingsView("Sunder.Package.Agent.Mcp.AgentMcpSettingsView"),
                 Extension("sunder.package.agent:tool-sources", "Sunder.Package.Agent.Mcp.McpToolSource"),
                 Extension("sunder.package.agent:profile-selectable-capability-providers", "Sunder.Package.Agent.Mcp.McpToolSource"),
@@ -89,7 +101,7 @@ public sealed class PackageModuleCompositionTests
                 Configuration("sunder.package.agent.memory.semantic"),
                 BackgroundService("Sunder.Package.Agent.Memory.Semantic.Services.SemanticMemoryIndexingBackgroundService"),
                 Extension("sunder.package.agent:prompt-context-contributors", "Sunder.Package.Agent.Memory.Semantic.MemorySemanticFeature"),
-                Extension("sunder.package.agent:lifecycle-observers", "Sunder.Package.Agent.Memory.Semantic.MemorySemanticFeature"),
+                Extension("sunder.package.agent:durable-lifecycle-observers", "Sunder.Package.Agent.Memory.Semantic.MemorySemanticFeature"),
                 Extension("sunder.package.agent:profile-capability-consumers", "Sunder.Package.Agent.Memory.Semantic.MemorySemanticFeature"),
                 Extension("sunder.package.agent:session-data-cleaners", "Sunder.Package.Agent.Memory.Semantic.MemorySemanticFeature"),
                 PackageView("sunder.package.agent.memory.semantic.inspector", "Sunder.Package.Agent.Memory.Semantic.PackageViews.MemoryInspectorView"),
@@ -159,6 +171,7 @@ public sealed class PackageModuleCompositionTests
                 Extension("sunder.package.agent:tool-sources", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
                 Extension("sunder.package.agent:permission-surfaces", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
                 Extension("sunder.package.agent:prompt-context-contributors", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
+                Extension("sunder.package.agent:session-data-cleaners", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
             ],
             ["Sunder.Package.Agent.Tools.Shell"] =
             [
@@ -239,6 +252,12 @@ public sealed class PackageModuleCompositionTests
             Assert.NotNull(serviceProvider.GetRequiredService<Services.AgentRunStartService>());
             Assert.NotNull(serviceProvider.GetRequiredService<Services.AgentRunExecutionService>());
             Assert.NotNull(serviceProvider.GetRequiredService<Services.AgentUserMessageRunCoordinator>());
+        }
+        if (string.Equals(packageName, "Sunder.Package.Agent.Tools.Files", StringComparison.Ordinal))
+        {
+            Assert.True(serviceProvider
+                .GetRequiredService<Sunder.Package.Agent.Tools.Files.FilesToolSource>()
+                .IsScopedInstructionEnforcementEnabled);
         }
     }
 

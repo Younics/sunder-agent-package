@@ -1,7 +1,11 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -15,12 +19,27 @@ public enum AgentWorkspaceStatusKind
 
 public sealed class AgentEditorSectionViewModel : ObservableObject
 {
+    private readonly IPackageExtensionReference<IAgentWorkspaceEditorContributor> _contributorReference;
+    private readonly AgentEditorRetryState? _retryState;
+    private readonly RelayCommand? _retryCommand;
+    private bool _isRetrying;
+
+    internal event Action? Changed;
+
     public AgentEditorSectionViewModel(
         IAgentWorkspaceEditorContributor contributor,
         AgentWorkspaceEditorContext context,
         AgentEditorSection section)
+        : this(new CompatibilityContributorReference(contributor), context, section)
     {
-        Contributor = contributor;
+    }
+
+    internal AgentEditorSectionViewModel(
+        IPackageExtensionReference<IAgentWorkspaceEditorContributor> contributorReference,
+        AgentWorkspaceEditorContext context,
+        AgentEditorSection section)
+    {
+        _contributorReference = contributorReference;
         Context = context;
         SectionId = section.SectionId;
         Title = section.Title;
@@ -28,9 +47,43 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
         Fields = new ObservableCollection<AgentEditorFieldViewModel>(section.Fields.Select(CreateField));
     }
 
-    internal IAgentWorkspaceEditorContributor Contributor { get; }
+    private AgentEditorSectionViewModel(
+        IPackageExtensionReference<IAgentWorkspaceEditorContributor> contributorReference,
+        AgentWorkspaceEditorContext context,
+        AgentEditorInvocationFailure failure,
+        AgentEditorRetryState retryState,
+        Action<AgentEditorSectionViewModel> retry)
+    {
+        _contributorReference = contributorReference;
+        _retryState = retryState;
+        Context = context;
+        SectionId = retryState.SectionId ?? "host-editor-error";
+        Title = retryState.OriginalSection?.Title ?? "Execution settings unavailable";
+        Description = string.Empty;
+        Fields = [];
+        IsError = true;
+        ErrorMessage = failure.Message;
+        DiagnosticText = failure.DiagnosticText;
+        _retryCommand = new RelayCommand(
+            () => retry(this),
+            () => !IsRetrying);
+    }
+
+    internal static AgentEditorSectionViewModel CreateError(
+        IPackageExtensionReference<IAgentWorkspaceEditorContributor> contributorReference,
+        AgentWorkspaceEditorContext context,
+        AgentEditorInvocationFailure failure,
+        AgentEditorRetryState retryState,
+        Action<AgentEditorSectionViewModel> retry)
+        => new(contributorReference, context, failure, retryState, retry);
 
     internal AgentWorkspaceEditorContext Context { get; }
+
+    internal IPackageExtensionReference<IAgentWorkspaceEditorContributor> ContributorReference
+        => _contributorReference;
+
+    internal AgentEditorRetryState RetryState
+        => _retryState ?? throw new InvalidOperationException("Only host-owned editor error sections can be retried.");
 
     public string SectionId { get; }
 
@@ -42,20 +95,162 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
 
     public ObservableCollection<AgentEditorFieldViewModel> Fields { get; }
 
-    public ValueTask<AgentEditorSaveResult> SaveAsync()
-        => Contributor.SaveSectionAsync(
-            Context,
-            new AgentEditorSaveRequest(
-                SectionId,
-                Fields.ToDictionary(field => field.FieldId, field => field.ToValue(), StringComparer.OrdinalIgnoreCase)));
+    public bool IsError { get; }
+
+    public bool IsContent => !IsError;
+
+    public string ErrorMessage { get; } = string.Empty;
+
+    public string DiagnosticText { get; } = string.Empty;
+
+    public IRelayCommand? RetryCommand => _retryCommand;
+
+    public bool IsRetrying
+    {
+        get => _isRetrying;
+        private set
+        {
+            if (SetProperty(ref _isRetrying, value))
+            {
+                OnPropertyChanged(nameof(RetryLabel));
+                _retryCommand?.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    public string RetryLabel => IsRetrying ? "Retrying..." : "Retry";
+
+    internal void SetRetrying(bool value) => IsRetrying = value;
+
+    internal ValueTask<AgentEditorInvocationResult<AgentEditorSaveResult>> TrySaveAsync(
+        IPackageExtensionInvocationCatalog invocationCatalog,
+        CancellationToken cancellationToken = default)
+        => AgentWorkspaceEditorInvocation.InvokeAsync(
+            _contributorReference,
+            invocationCatalog,
+            AgentEditorInvocationOperation.Save,
+            cancellationToken,
+            (contributor, token) => contributor.SaveSectionAsync(
+                Context,
+                new AgentEditorSaveRequest(
+                    SectionId,
+                    Fields.ToDictionary(field => field.FieldId, field => field.ToValue(), StringComparer.OrdinalIgnoreCase)),
+                token));
+
+    internal ValueTask<AgentEditorInvocationResult<IReadOnlyList<AgentEditorSection>>> TryGetApplicableSectionsAsync(
+        AgentWorkspaceEditorContext context,
+        IPackageExtensionInvocationCatalog invocationCatalog,
+        AgentEditorInvocationOperation operation,
+        CancellationToken cancellationToken = default)
+        => TryGetApplicableSectionsAsync(
+            _contributorReference,
+            context,
+            invocationCatalog,
+            operation,
+            cancellationToken);
+
+    internal static ValueTask<AgentEditorInvocationResult<IReadOnlyList<AgentEditorSection>>> TryGetApplicableSectionsAsync(
+        IPackageExtensionReference<IAgentWorkspaceEditorContributor> contributorReference,
+        AgentWorkspaceEditorContext context,
+        IPackageExtensionInvocationCatalog invocationCatalog,
+        AgentEditorInvocationOperation operation,
+        CancellationToken cancellationToken = default)
+        => AgentWorkspaceEditorInvocation.InvokeAsync(
+            contributorReference,
+            invocationCatalog,
+            operation,
+            cancellationToken,
+            (contributor, token) => AgentWorkspaceEditorInvocation.GetSectionsSnapshotAsync(
+                contributor,
+                context,
+                token));
 
     private AgentEditorFieldViewModel CreateField(AgentEditorField field)
-        => field.Kind switch
+    {
+        AgentEditorFieldViewModel viewModel = field.Kind switch
         {
             AgentEditorFieldKind.Select => new AgentEditorSelectFieldViewModel(this, field),
             AgentEditorFieldKind.PathList => new AgentEditorPathListFieldViewModel(this, field),
             _ => new AgentEditorTextFieldViewModel(this, field),
         };
+        viewModel.PropertyChanged += OnFieldPropertyChanged;
+        if (viewModel is AgentEditorPathListFieldViewModel pathList)
+        {
+            pathList.Items.CollectionChanged += OnPathListChanged;
+            foreach (var item in pathList.Items)
+            {
+                item.PropertyChanged += OnPathListItemPropertyChanged;
+            }
+        }
+        return viewModel;
+    }
+
+    private void OnFieldPropertyChanged(object? sender, PropertyChangedEventArgs e)
+        => Changed?.Invoke();
+
+    private void OnPathListChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.OldItems is not null)
+        {
+            foreach (AgentEditorPathListItemViewModel item in e.OldItems)
+            {
+                item.PropertyChanged -= OnPathListItemPropertyChanged;
+            }
+        }
+        if (e.NewItems is not null)
+        {
+            foreach (AgentEditorPathListItemViewModel item in e.NewItems)
+            {
+                item.PropertyChanged += OnPathListItemPropertyChanged;
+            }
+        }
+        Changed?.Invoke();
+    }
+
+    private void OnPathListItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
+        => Changed?.Invoke();
+
+    private sealed class CompatibilityContributorReference(IAgentWorkspaceEditorContributor contributor)
+        : IPackageExtensionReference<IAgentWorkspaceEditorContributor>
+    {
+        public bool TryAcquire(
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
+            out IPackageExtensionLease<IAgentWorkspaceEditorContributor>? lease)
+        {
+            lease = new CompatibilityContributorLease(contributor);
+            return true;
+        }
+    }
+
+    private sealed class CompatibilityContributorLease(IAgentWorkspaceEditorContributor contributor)
+        : IPackageExtensionLease<IAgentWorkspaceEditorContributor>
+    {
+        private IAgentWorkspaceEditorContributor? _contributor = contributor;
+
+        public string PackageId
+        {
+            get
+            {
+                ObjectDisposedException.ThrowIf(_contributor is null, this);
+                return "sunder.package.agent.workspace-editor.compatibility";
+            }
+        }
+
+        public IAgentWorkspaceEditorContributor Contribution
+            => Volatile.Read(ref _contributor)
+               ?? throw new ObjectDisposedException(nameof(CompatibilityContributorLease));
+
+        public CancellationToken RetirementToken
+        {
+            get
+            {
+                ObjectDisposedException.ThrowIf(_contributor is null, this);
+                return CancellationToken.None;
+            }
+        }
+
+        public void Dispose() => Interlocked.Exchange(ref _contributor, null);
+    }
 }
 
 public abstract partial class AgentEditorFieldViewModel : ObservableObject

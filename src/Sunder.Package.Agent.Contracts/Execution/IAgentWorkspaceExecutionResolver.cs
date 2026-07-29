@@ -6,8 +6,8 @@ namespace Sunder.Package.Agent.Contracts.Contracts;
 /// Provides Runtime-owned access to persisted workspaces and resolves a workspace's primary execution binding to an installed, ready target.
 /// </summary>
 /// <remarks>
-/// Implementations bridge consumers such as Builder to the authoritative Agent Runtime. Returned records are snapshots, and a resolved
-/// <see cref="IAgentExecutionTarget"/> remains owned by its extension catalog; callers do not acquire disposal or lifetime responsibility.
+/// Implementations bridge consumers such as Builder to the authoritative Agent Runtime. Returned records are snapshots and retain only an
+/// opaque exact-activation reference. Consumers acquire and dispose a lease for each target callback.
 /// Calls may arrive from non-UI threads and may overlap, so implementations must coordinate access to mutable workspace state.
 /// </remarks>
 public interface IAgentWorkspaceExecutionResolver
@@ -23,7 +23,7 @@ public interface IAgentWorkspaceExecutionResolver
     /// </summary>
     /// <param name="workspaceId">The opaque, persisted identity of the workspace to resolve.</param>
     /// <param name="cancellationToken">Signals that target readiness checks or scope discovery should be canceled.</param>
-    /// <returns>The workspace, selected binding, target metadata, target-visible scope, and live target contribution.</returns>
+    /// <returns>The workspace, selected binding, target metadata, target-visible scope, and exact target-activation reference.</returns>
     /// <exception cref="InvalidOperationException">
     /// The workspace, enabled primary binding, target contribution, or target-visible workspace scope is unavailable, or the target is not ready.
     /// </exception>

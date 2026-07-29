@@ -18,8 +18,12 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
     private readonly PresentationTaskScope _tasks = new();
     private readonly TimedStatusController _statusVisibility = new();
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly LatestRequestCoordinator _requests = new();
+    private readonly KeyedAdaptiveListDetailState<string, BuilderProjectViewModel> _listDetail;
     private readonly object _initializationSync = new();
-    private BuilderProjectViewModel? _selectedProject;
+    private readonly HashSet<string> _locallyDeletedProjectIds = new(StringComparer.OrdinalIgnoreCase);
+    private const string SnapshotChannel = "builder-snapshot";
+    private BuilderProjectViewModel? _observedSelectedProject;
     private Task? _initializationTask;
     private Task? _statusVisibilityTask;
     private string _statusText = string.Empty;
@@ -27,12 +31,12 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
     private bool _isBusy;
     private bool _isSetupComplete;
     private bool _projectsLoaded;
-    private bool _isCompactLayout;
-    private bool _isEditorActive;
     private bool _isSelectedProjectInitialized;
     private bool _isSelectedProjectInitializing;
     private bool _showStatusMessage;
     private bool _suppressSelectedProjectChanges;
+    private bool _snapshotRefreshPending;
+    private long _snapshotRevision;
     private bool _disposed;
 
     public BuilderViewModel(
@@ -47,6 +51,12 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         _persistence = persistence;
         _pathService = pathService;
         _uiDispatcher = uiDispatcher;
+        _listDetail = new KeyedAdaptiveListDetailState<string, BuilderProjectViewModel>(
+            Projects,
+            static project => project.Id,
+            static (current, incoming) => current.Apply(incoming.ToRecord()),
+            StringComparer.OrdinalIgnoreCase);
+        _listDetail.PropertyChanged += OnListDetailPropertyChanged;
         _persistence.SaveFailed += OnPersistenceSaveFailed;
     }
 
@@ -143,38 +153,13 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
 
     public bool IsCompactLayout
     {
-        get => _isCompactLayout;
-        set
-        {
-            if (!SetField(ref _isCompactLayout, value))
-            {
-                return;
-            }
-
-            if (value && SelectedProject is not null)
-            {
-                IsEditorActive = true;
-            }
-            else if (!value && SelectedProject is null)
-            {
-                SelectedProject = Projects.FirstOrDefault();
-            }
-
-            NotifyLayoutPropertiesChanged();
-        }
+        get => _listDetail.Layout == AdaptiveListDetailLayout.Compact;
+        set => _listDetail.SetLayout(value
+            ? AdaptiveListDetailLayout.Compact
+            : AdaptiveListDetailLayout.Wide);
     }
 
-    public bool IsEditorActive
-    {
-        get => _isEditorActive;
-        private set
-        {
-            if (SetField(ref _isEditorActive, value))
-            {
-                NotifyLayoutPropertiesChanged();
-            }
-        }
-    }
+    public bool IsEditorActive => IsCompactLayout && !_listDetail.IsList;
 
     public bool IsListActive => !IsEditorActive;
 
@@ -190,45 +175,29 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
 
     public BuilderProjectViewModel? SelectedProject
     {
-        get => _selectedProject;
+        get => _listDetail.SelectedItem;
         set
         {
-            var previous = _selectedProject;
-            if (!SetField(ref _selectedProject, value))
+            if (value is null)
             {
+                _listDetail.ShowList();
                 return;
             }
 
-            if (previous is not null)
-            {
-                previous.PropertyChanged -= OnSelectedProjectPropertyChanged;
-            }
-
-            if (value is null)
-            {
-                WorkspacePathOptions.Clear();
-            }
-            else
-            {
-                if (string.IsNullOrWhiteSpace(value.WorkspaceId))
-                {
-                    value.WorkspaceId = Workspaces.FirstOrDefault()?.WorkspaceId ?? string.Empty;
-                }
-
-                ApplyProjectRecord(value, value.ToRecord());
-                RefreshWorkspacePathOptions(preserveSelection: true);
-                value.PropertyChanged += OnSelectedProjectPropertyChanged;
-                if (IsCompactLayout)
-                {
-                    IsEditorActive = true;
-                }
-            }
-
-            UpdateSelectedProjectInitialized();
-            RuntimeLogText = string.Empty;
-            NotifyProjectStatePropertiesChanged();
+            _listDetail.ShowExistingDetail(value);
+            MarkCurrentDetailReady();
         }
     }
+
+    internal AdaptiveListDetailRoute Route => _listDetail.Route;
+
+    internal AdaptiveListDetailLayout Layout => _listDetail.Layout;
+
+    internal AdaptiveDetailPhase DetailPhase => _listDetail.DetailPhase;
+
+    internal long IntentRevision => _listDetail.IntentRevision;
+
+    internal long LayoutRevision => _listDetail.LayoutRevision;
 
     public string StatusText
     {
@@ -287,18 +256,13 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
             return;
         }
 
-        SelectedProject = project;
-        IsEditorActive = true;
+        _listDetail.ShowExistingDetail(project);
+        MarkCurrentDetailReady();
     }
 
     public void BackToProjectList()
     {
-        if (IsCompactLayout)
-        {
-            SelectedProject = null;
-        }
-
-        IsEditorActive = false;
+        _listDetail.ShowList();
     }
 
     public void ApplySelectedFolder(string folder)
@@ -308,6 +272,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
             return;
         }
 
+        _listDetail.PromoteSelectionToExplicit();
         ApplyProjectRecord(SelectedProject, SelectedProject.ToRecord() with
         {
             ProjectFolder = folder,
@@ -329,6 +294,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         }
 
         _persistence.SaveFailed -= OnPersistenceSaveFailed;
+        _listDetail.PropertyChanged -= OnListDetailPropertyChanged;
         _statusVisibility.Dispose();
         _tasks.Dispose();
         _lifetime.Cancel();
@@ -344,9 +310,9 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         }
         var projects = await _uiDispatcher.InvokeAsync(() =>
         {
-            if (SelectedProject is not null)
+            if (_observedSelectedProject is not null)
             {
-                SelectedProject.PropertyChanged -= OnSelectedProjectPropertyChanged;
+                _observedSelectedProject.PropertyChanged -= OnSelectedProjectPropertyChanged;
             }
 
             return _projectsLoaded ? CaptureProjects() : null;
@@ -356,20 +322,38 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
             await _persistence.SaveNowAsync(projects, CancellationToken.None).ConfigureAwait(false);
         }
         await _persistence.DisposeAsync().ConfigureAwait(false);
+        _listDetail.Dispose();
+        _requests.Dispose();
         _lifetime.Dispose();
     }
 
     private void ApplyLoadedProjects(IReadOnlyList<BuilderProjectRecord> projects)
     {
-        var selectedProjectId = SelectedProject?.Id;
-        Projects.Clear();
-        foreach (var project in projects)
+        var rows = projects
+            .Where(project => !_locallyDeletedProjectIds.Contains(project.Id))
+            .Select(static project => new BuilderProjectViewModel(project))
+            .ToList();
+        foreach (var localProject in Projects)
         {
-            Projects.Add(new BuilderProjectViewModel(project));
+            if (rows.All(project => !string.Equals(
+                    project.Id,
+                    localProject.Id,
+                    StringComparison.OrdinalIgnoreCase)))
+            {
+                rows.Add(localProject);
+            }
         }
 
-        SelectedProject = Projects.FirstOrDefault(project => project.Id == selectedProjectId)
-            ?? (IsCompactLayout ? null : Projects.FirstOrDefault());
+        var wasSuppressingChanges = _suppressSelectedProjectChanges;
+        _suppressSelectedProjectChanges = true;
+        try
+        {
+            _listDetail.Reconcile(rows);
+        }
+        finally
+        {
+            _suppressSelectedProjectChanges = wasSuppressingChanges;
+        }
     }
 
     private void ApplyLoadedWorkspaces(IReadOnlyList<AgentWorkspaceRecord> workspaces)
@@ -381,16 +365,25 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
             Workspaces.Add(workspace);
         }
 
-        if (SelectedProject is not null && string.IsNullOrWhiteSpace(SelectedProject.WorkspaceId))
+        var wasSuppressingChanges = _suppressSelectedProjectChanges;
+        _suppressSelectedProjectChanges = true;
+        try
         {
-            SelectedProject.WorkspaceId = Workspaces.FirstOrDefault()?.WorkspaceId ?? string.Empty;
-        }
+            if (SelectedProject is not null && string.IsNullOrWhiteSpace(SelectedProject.WorkspaceId))
+            {
+                SelectedProject.WorkspaceId = Workspaces.FirstOrDefault()?.WorkspaceId ?? string.Empty;
+            }
 
-        if (SelectedProject is not null
-            && !string.IsNullOrWhiteSpace(selectedWorkspaceId)
-            && Workspaces.Any(workspace => string.Equals(workspace.WorkspaceId, selectedWorkspaceId, StringComparison.OrdinalIgnoreCase)))
+            if (SelectedProject is not null
+                && !string.IsNullOrWhiteSpace(selectedWorkspaceId)
+                && Workspaces.Any(workspace => string.Equals(workspace.WorkspaceId, selectedWorkspaceId, StringComparison.OrdinalIgnoreCase)))
+            {
+                SelectedProject.WorkspaceId = selectedWorkspaceId;
+            }
+        }
+        finally
         {
-            SelectedProject.WorkspaceId = selectedWorkspaceId;
+            _suppressSelectedProjectChanges = wasSuppressingChanges;
         }
 
         RefreshWorkspacePathOptions(preserveSelection: true);
@@ -414,6 +407,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
             WorkspacePathOptions.Add(new BuilderWorkspacePathOptionViewModel(path, _pathService));
         }
 
+        var wasSuppressingChanges = _suppressSelectedProjectChanges;
         _suppressSelectedProjectChanges = true;
         try
         {
@@ -431,7 +425,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         }
         finally
         {
-            _suppressSelectedProjectChanges = false;
+            _suppressSelectedProjectChanges = wasSuppressingChanges;
         }
 
         NotifyProjectStatePropertiesChanged();
@@ -479,6 +473,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
             return;
         }
 
+        _listDetail.PromoteSelectionToExplicit();
         var project = SelectedProject;
         if (e.PropertyName == nameof(BuilderProjectViewModel.WorkspaceId))
         {
@@ -496,6 +491,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
 
     private void ApplyProjectRecord(BuilderProjectViewModel project, BuilderProjectRecord record)
     {
+        var wasSuppressingChanges = _suppressSelectedProjectChanges;
         _suppressSelectedProjectChanges = true;
         try
         {
@@ -503,7 +499,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         }
         finally
         {
-            _suppressSelectedProjectChanges = false;
+            _suppressSelectedProjectChanges = wasSuppressingChanges;
         }
     }
 
@@ -523,7 +519,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         NotifyProjectStatePropertiesChanged();
     }
 
-    private (IReadOnlyList<BuilderProjectRecord> Projects, string Name, bool ClearSelection)? RemoveSelectedProject()
+    private BuilderProjectDeletion? RemoveSelectedProject()
     {
         if (SelectedProject is null)
         {
@@ -532,23 +528,41 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
 
         var project = SelectedProject;
         var clearSelection = IsCompactLayout;
-        Projects.Remove(project);
-        SelectedProject = clearSelection ? null : Projects.FirstOrDefault();
-        return (CaptureProjects(), project.DisplayName, clearSelection);
+        _projectsLoaded = true;
+        _snapshotRefreshPending = true;
+        _snapshotRevision++;
+        _locallyDeletedProjectIds.Add(project.Id);
+        _requests.Invalidate(SnapshotChannel);
+        if (clearSelection)
+        {
+            _listDetail.ShowList();
+        }
+        _listDetail.Reconcile(Projects.Where(candidate => !ReferenceEquals(candidate, project)).ToArray());
+        if (!clearSelection && SelectedProject is null && Projects.FirstOrDefault() is { } first)
+        {
+            _listDetail.ShowExistingDetail(first);
+            MarkCurrentDetailReady();
+        }
+        return new BuilderProjectDeletion(
+            CaptureProjects(),
+            project.Id,
+            project.DisplayName,
+            IntentRevision,
+            LayoutRevision);
     }
 
-    private void CompleteProjectDeletion((IReadOnlyList<BuilderProjectRecord> Projects, string Name, bool ClearSelection) deletion)
+    private void CompleteProjectDeletion(BuilderProjectDeletion deletion)
     {
-        if (deletion.ClearSelection)
+        _locallyDeletedProjectIds.Remove(deletion.ProjectId);
+        if (deletion.IntentRevision != IntentRevision
+            || deletion.LayoutRevision != LayoutRevision)
         {
-            StatusText = string.Empty;
-        }
-        else
-        {
-            StatusText = $"Deleted package project '{deletion.Name}'.";
+            return;
         }
 
-        IsEditorActive = false;
+        StatusText = IsCompactLayout
+            ? string.Empty
+            : $"Deleted package project '{deletion.Name}'.";
     }
 
     private IReadOnlyList<BuilderProjectRecord> CaptureProjects()
@@ -615,6 +629,52 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         OnPropertyChanged(nameof(ShowEditorPane));
     }
 
+    private void OnListDetailPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(KeyedAdaptiveListDetailState<string, BuilderProjectViewModel>.SelectedItem))
+        {
+            if (_observedSelectedProject is not null)
+            {
+                _observedSelectedProject.PropertyChanged -= OnSelectedProjectPropertyChanged;
+            }
+
+            _observedSelectedProject = _listDetail.SelectedItem;
+            if (_observedSelectedProject is null)
+            {
+                WorkspacePathOptions.Clear();
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(_observedSelectedProject.WorkspaceId))
+                {
+                    _observedSelectedProject.WorkspaceId = Workspaces.FirstOrDefault()?.WorkspaceId ?? string.Empty;
+                }
+
+                RefreshWorkspacePathOptions(preserveSelection: true);
+                _observedSelectedProject.PropertyChanged += OnSelectedProjectPropertyChanged;
+            }
+
+            UpdateSelectedProjectInitialized();
+            RuntimeLogText = string.Empty;
+            OnPropertyChanged(nameof(SelectedProject));
+            NotifyProjectStatePropertiesChanged();
+            MarkCurrentDetailReady();
+        }
+
+        OnPropertyChanged(nameof(IsCompactLayout));
+        OnPropertyChanged(nameof(IsEditorActive));
+        NotifyLayoutPropertiesChanged();
+    }
+
+    private void MarkCurrentDetailReady()
+    {
+        if (_listDetail.IsExistingDetail && _listDetail.DetailPhase == AdaptiveDetailPhase.None)
+        {
+            var ticket = _listDetail.BeginDetailLoad(_lifetime.Token);
+            _listDetail.TrySetDetailReady(ticket);
+        }
+    }
+
     private static string BuildMissingPrerequisitesMessage(IReadOnlyList<BuilderPrerequisiteStatus> statuses)
     {
         var missing = statuses.Where(status => !status.IsInstalled).Select(status => $"{status.Name}: {status.Detail}").ToArray();
@@ -637,4 +697,11 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+
+    private sealed record BuilderProjectDeletion(
+        IReadOnlyList<BuilderProjectRecord> Projects,
+        string ProjectId,
+        string Name,
+        long IntentRevision,
+        long LayoutRevision);
 }

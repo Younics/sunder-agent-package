@@ -29,6 +29,12 @@ internal sealed class ApiKeyUtilitySettingsState : IDisposable
 
     public UtilityModelSettingsState UtilityModel { get; }
 
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        await ApiKey.RefreshCredentialStatusAsync(cancellationToken);
+        await UtilityModel.InitializeAsync(cancellationToken);
+    }
+
     public async Task SaveAsync()
     {
         await ApiKey.SaveCredentialAsync();

@@ -32,7 +32,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterSettingsSchema(MemorySemanticPackageConfiguration.Schema);
         registry.RegisterBackgroundService<SemanticMemoryIndexingBackgroundService>();
         registry.RegisterExtension(PackageExtensionPoints.PromptContextContributors, services.GetRequiredService<MemorySemanticFeature>());
-        registry.RegisterExtension(PackageExtensionPoints.LifecycleObservers, services.GetRequiredService<MemorySemanticFeature>());
+        registry.RegisterExtension(PackageExtensionPoints.DurableLifecycleObservers, services.GetRequiredService<MemorySemanticFeature>());
         registry.RegisterExtension(PackageExtensionPoints.ProfileCapabilityConsumers, services.GetRequiredService<MemorySemanticFeature>());
         registry.RegisterExtension(PackageExtensionPoints.SessionDataCleaners, services.GetRequiredService<MemorySemanticFeature>());
         registry.RegisterRuntimeOperation(MemoryRuntimeOperations.Query, services.GetRequiredService<MemoryRuntimeHandler>());

@@ -8,7 +8,9 @@ public sealed class PackageModule : ISunderRuntimePackageModule
 {
     public void ConfigureRuntimeServices(IServiceCollection services, IPackageContext context)
     {
-        services.AddSingleton<FilesToolSource>();
+        services.AddSingleton(provider => new FilesToolSource(
+            provider.GetRequiredService<IPackageExtensionCatalog>(),
+            context));
     }
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
@@ -17,5 +19,6 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterExtension(PackageExtensionPoints.ToolSources, source);
         registry.RegisterExtension(PackageExtensionPoints.PermissionSurfaces, source);
         registry.RegisterExtension(PackageExtensionPoints.PromptContextContributors, source);
+        registry.RegisterExtension(PackageExtensionPoints.SessionDataCleaners, source);
     }
 }

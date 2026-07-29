@@ -68,6 +68,8 @@ internal sealed class StableMarkdownRenderer : MarkdownRenderer
 
     internal bool HasTerminalRenderFailure { get; private set; }
 
+    internal event EventHandler? RenderStateChanged;
+
     public ObservableStringBuilder? SourceBuilder
     {
         get => _sourceBuilder;
@@ -152,6 +154,7 @@ internal sealed class StableMarkdownRenderer : MarkdownRenderer
                 MarkdownDocument document;
                 try
                 {
+                    TranscriptToolDiagnostics.MarkdownParsed();
                     document = _parseMarkdown(request.Source);
                 }
                 catch (Exception exception)
@@ -248,12 +251,14 @@ internal sealed class StableMarkdownRenderer : MarkdownRenderer
             document,
             request.Change,
             CancellationToken.None);
+        TranscriptToolDiagnostics.MarkdownApplied();
         _pendingChange = null;
         _deferredRender = null;
         RenderedSource = request.Source;
         HasTerminalRenderFailure = false;
         _renderLoopRunning = false;
         InvalidateMeasure();
+        RenderStateChanged?.Invoke(this, EventArgs.Empty);
         return true;
     }
 
@@ -303,6 +308,7 @@ internal sealed class StableMarkdownRenderer : MarkdownRenderer
         {
             _deferredRender = null;
             HasTerminalRenderFailure = true;
+            RenderStateChanged?.Invoke(this, EventArgs.Empty);
             return;
         }
 

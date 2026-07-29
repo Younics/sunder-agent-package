@@ -6,6 +6,33 @@ namespace Sunder.Package.Agent.Storage;
 
 public sealed partial class AgentLocalStore
 {
+    private static void UpdateToolCallTurnDetailRevision(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid executionId,
+        DateTimeOffset updatedAtUtc)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE AgentTurns
+            SET UpdatedAtUtc = $updatedAtUtc
+            WHERE TurnId = (
+                SELECT TurnId
+                FROM AgentTurnItems
+                WHERE ToolExecutionId = $executionId
+                  AND Kind = 'ToolCall'
+                LIMIT 1);
+            """;
+        command.Parameters.AddWithValue("$updatedAtUtc", updatedAtUtc.ToString("O"));
+        command.Parameters.AddWithValue("$executionId", executionId.ToString());
+        if (command.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                $"Tool execution '{executionId}' has no durable tool-call transcript item.");
+        }
+    }
+
     private static IReadOnlyList<AgentCompletedStreamingTurn> CompleteStreamingTextTurns(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -29,7 +56,7 @@ public sealed partial class AgentLocalStore
                   AND t.IsStreaming = 1
                   AND t.RunId = $runId
                   AND t.RunRevision = $runRevision
-                ORDER BY t.CreatedAtUtc, t.TurnId;
+                ORDER BY t.CreatedAtUtc COLLATE BINARY, t.TurnId COLLATE BINARY;
                 """;
             readCommand.Parameters.AddWithValue("$sessionId", runKey.SessionId.ToString());
             readCommand.Parameters.AddWithValue("$runId", runKey.RunId.ToString());
@@ -80,16 +107,16 @@ public sealed partial class AgentLocalStore
     {
         using var connection = CreateConnection();
         connection.Open();
-
-        var existingTurn = GetTurn(connection, messageId) ?? throw new InvalidOperationException($"Message '{messageId}' was not found.");
+        using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
+        var existingTurn = GetTurn(connection, messageId, transaction)
+            ?? throw new InvalidOperationException($"Message '{messageId}' was not found.");
         if (!CanUpdateProjectedMessage(existingTurn))
         {
             throw new InvalidOperationException($"Turn '{messageId}' does not support in-place text updates.");
         }
 
         var updatedAtUtc = DateTimeOffset.UtcNow;
-        using var transaction = connection.BeginTransaction();
-
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = "UPDATE AgentTurns SET UpdatedAtUtc = $updatedAtUtc, ContentRevision = ContentRevision + 1, IsStreaming = 0 WHERE TurnId = $id;";
@@ -104,6 +131,7 @@ public sealed partial class AgentLocalStore
         updateItem.Parameters.AddWithValue("$turnId", messageId.ToString());
         updateItem.ExecuteNonQuery();
 
+        InvalidateSessionContext(connection, transaction, existingTurn.SessionId);
         TouchSession(connection, existingTurn.SessionId, null, null, transaction);
         var turn = GetTurn(connection, messageId, transaction)
                    ?? throw new InvalidOperationException($"Turn '{messageId}' was not found after update.");
@@ -121,6 +149,7 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         if (!CanMutateTranscript(connection, transaction, runKey, expectedEpoch))
         {
             transaction.Rollback();
@@ -219,6 +248,7 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         if (!CanMutateTranscript(connection, transaction, runKey, expectedEpoch))
         {
             transaction.Rollback();

@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Runtime;
 
 namespace Sunder.Package.Agent.Services;
@@ -110,7 +111,6 @@ public sealed class AgentRunCoordinator(
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await StopAsync(sessionId).ConfigureAwait(false);
         return await _userMessageRunCoordinator.QueueAsync(
             sessionId,
             profileId,
@@ -132,7 +132,6 @@ public sealed class AgentRunCoordinator(
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await StopAsync(sessionId).ConfigureAwait(false);
         return await _userMessageRunCoordinator.QueueAsync(
             sessionId,
             profileId,
@@ -187,4 +186,30 @@ public sealed class AgentRunCoordinator(
             requestId,
             cancellationToken);
     }
+
+    internal Task<AgentUserTurnAdmissionResult> AdmitTransferredUserTurnAsync(
+        Guid sessionId,
+        string profileId,
+        string userMessage,
+        string workspaceId,
+        IReadOnlyList<AgentAttachmentUploadHandle> handles,
+        AgentAttachmentTransferService transferService,
+        Guid userTurnId,
+        Guid? rollbackAnchorTurnId,
+        CancellationToken cancellationToken)
+        => _userMessageRunCoordinator.AdmitTransferredAsync(
+            sessionId,
+            profileId,
+            userMessage,
+            workspaceId,
+            handles,
+            transferService,
+            userTurnId,
+            rollbackAnchorTurnId,
+            cancellationToken);
+
+    internal AgentRunCommandStatus GetCommandStatus(Guid sessionId, Guid userTurnId)
+        => _userMessageRunCoordinator.GetCommandStatus(sessionId, userTurnId);
+
+    internal void SignalDispatcher() => _userMessageRunCoordinator.SignalDispatcher();
 }

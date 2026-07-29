@@ -1,325 +1,596 @@
-using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-internal sealed class DockerFileSystemExecutor(IDockerCommandExecutor commandRunner)
+internal sealed class DockerFileSystemExecutor
 {
-    public async ValueTask<AgentResolvedResource> ResolveFileResourceAsync(
+    internal const string ClaimNamespacePrefix = "docker-host-resource-claim-v1:";
+
+    public ValueTask<AgentFileReadResult> ReadFileAsync(
         DockerExecutionRuntimeConfig config,
-        string containerName,
+        AgentFileReadRequest request,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks = null)
+        => ReadFileAsync(config, request, approvalLease: null, cancellationToken, hooks);
+
+    public ValueTask<AgentFileMutationResult> WriteFileAsync(
+        DockerExecutionRuntimeConfig config,
+        AgentFileWriteRequest request,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks = null)
+        => WriteFileAsync(config, request, approvalLease: null, cancellationToken, hooks);
+
+    public ValueTask<AgentFileMutationResult> DeleteFileAsync(
+        DockerExecutionRuntimeConfig config,
+        AgentFileDeleteRequest request,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks = null)
+        => DeleteFileAsync(config, request, approvalLease: null, cancellationToken, hooks);
+
+    public ValueTask<AgentFileSearchResult> SearchAsync(
+        DockerExecutionRuntimeConfig config,
+        AgentFileSearchRequest request,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks = null)
+        => SearchAsync(config, request, approvalLease: null, cancellationToken, hooks);
+
+    public AgentResolvedResource ResolveFileResource(
+        DockerExecutionRuntimeConfig config,
         string requestedPath,
-        bool allowOutsideConfiguredScope,
-        CancellationToken cancellationToken)
+        string namespaceFingerprint,
+        CancellationToken cancellationToken,
+        LocalSecureApprovalLease? retainedResourceAuthority = null,
+        IReadOnlyList<DockerMountRootIdentityChain>? mountIdentityChains = null,
+        AgentExecutionTargetContext? context = null)
     {
-        var path = DockerPathResolver.ResolvePath(config, requestedPath, allowOutsideConfiguredScope);
-        var result = await commandRunner.RunAsync(
-            BuildArguments(config, containerName, "exists", path, ranged: false, 1, 1, option: false, redirectStandardInput: false, expectedContentHash: null),
-            await commandRunner.ResolveDefaultTimeoutSecondsAsync(cancellationToken),
-            cancellationToken);
-        if (!TryParseProtocol(result.Output, out var fields, out _) || result.ExitCode != 0)
+        cancellationToken.ThrowIfCancellationRequested();
+        var resourceAuthority = retainedResourceAuthority;
+        try
         {
-            throw new InvalidOperationException(BuildCommandFailureMessage("Docker path existence query failed", result));
+            var path = DockerPathResolver.ResolveHostBinding(config, requestedPath);
+            if (resourceAuthority is null)
+            {
+                var mountRoot = HostSecurePathEngine.OpenRoot(path.Mount.HostPath, cancellationToken: cancellationToken);
+                try
+                {
+                    resourceAuthority = HostSecurePathEngine.CaptureFromRoot(
+                        mountRoot,
+                        path.HostPath,
+                        cancellationToken: cancellationToken,
+                        allowMissingSuffix: true);
+                }
+                catch
+                {
+                    mountRoot.Dispose();
+                    throw;
+                }
+            }
+            if (!HostSecurePathEngine.BindingPathEquals(resourceAuthority.Binding, path.HostPath))
+            {
+                throw new LocalSecureApprovalChangedException(path.ContainerPath);
+            }
+            var resourceBinding = resourceAuthority.Binding;
+            var claim = HostResourceClaim.Create(
+                ClaimNamespacePrefix + namespaceFingerprint,
+                path.ContainerPath,
+                path.Mount.ContainerPath,
+                resourceAuthority,
+                context?.ResourceOperation);
+            if (context is not null)
+            {
+                claim = HostResourceClaim.BindScope(claim, context);
+            }
+            var reference = HostResourceClaim.CreateReference(claim);
+            return new AgentResolvedResource(
+                resourceBinding.TargetKind == LocalSecureNodeKind.Directory ? "directory" : "file",
+                path.ContainerPath,
+                reference,
+                AgentPermissionBoundaryIds.ConfiguredScope,
+                resourceBinding.Exists)
+            {
+                ResourceClaim = claim,
+                DeleteCanonicalReference = reference,
+                DeleteResourceClaim = claim,
+                DeletePermissionBoundaryId = AgentPermissionBoundaryIds.ConfiguredScope,
+                IsScopedInstructionDocument = string.Equals(
+                    GetPosixName(path.ContainerPath),
+                    "AGENTS.md",
+                    StringComparison.Ordinal),
+            };
         }
-
-        var exists = fields[1] == "exists";
-        if (!exists && fields[1] != "missing")
+        finally
         {
-            throw new InvalidOperationException("Docker path existence query returned an invalid response.");
+            resourceAuthority?.Dispose();
         }
+    }
 
-        return DockerPathResolver.ResolveFileResource(config, requestedPath, allowOutsideConfiguredScope, exists);
+    public ValueTask<AgentFileReadResult> ReadFileAsync(
+        DockerExecutionRuntimeConfig config,
+        AgentFileReadRequest request,
+        LocalSecureApprovalLease operationAuthority,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks = null)
+        => ReadFileWithAuthorityAsync(config, request, operationAuthority, cancellationToken, hooks);
+
+    public ValueTask<AgentFileMutationResult> WriteFileAsync(
+        DockerExecutionRuntimeConfig config,
+        AgentFileWriteRequest request,
+        LocalSecureApprovalLease operationAuthority,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks = null,
+        Action<LocalSecureApprovalLease>? postMutationAuthoritySink = null)
+        => WriteFileWithAuthorityAsync(
+            config,
+            request,
+            operationAuthority,
+            cancellationToken,
+            hooks,
+            postMutationAuthoritySink);
+
+    public ValueTask<AgentFileMutationResult> DeleteFileAsync(
+        DockerExecutionRuntimeConfig config,
+        AgentFileDeleteRequest request,
+        LocalSecureApprovalLease operationAuthority,
+        IReadOnlyList<DockerMountRootIdentityChain> mountIdentityChains,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks = null,
+        Action<LocalSecureApprovalLease>? postMutationAuthoritySink = null)
+        => DeleteFileWithAuthorityAsync(
+            config,
+            request,
+            operationAuthority,
+            mountIdentityChains,
+            cancellationToken,
+            hooks,
+            postMutationAuthoritySink);
+
+    public ValueTask<AgentFileSearchResult> SearchAsync(
+        DockerExecutionRuntimeConfig config,
+        AgentFileSearchRequest request,
+        LocalSecureApprovalLease operationAuthority,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks = null)
+        => SearchWithAuthorityAsync(config, request, operationAuthority, cancellationToken, hooks);
+
+    private async ValueTask<AgentFileReadResult> ReadFileWithAuthorityAsync(
+        DockerExecutionRuntimeConfig config,
+        AgentFileReadRequest request,
+        LocalSecureApprovalLease operationAuthority,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks)
+    {
+        try
+        {
+            var path = DockerPathResolver.ResolveHostBinding(config, request.Path);
+            return await HostFileSystemExecutor.ReadFileAsync(
+                CreateContext(path, operationAuthority),
+                request,
+                cancellationToken,
+                hooks).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            operationAuthority.Dispose();
+            return AgentFileReadResult.Failure(
+                request.Path,
+                AgentFileReadErrorCodes.PathCanonicalizationFailed,
+                ex.Message);
+        }
+    }
+
+    private async ValueTask<AgentFileMutationResult> WriteFileWithAuthorityAsync(
+        DockerExecutionRuntimeConfig config,
+        AgentFileWriteRequest request,
+        LocalSecureApprovalLease operationAuthority,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks,
+        Action<LocalSecureApprovalLease>? postMutationAuthoritySink)
+    {
+        try
+        {
+            var path = DockerPathResolver.ResolveHostBinding(config, request.Path);
+            return await HostFileSystemExecutor.WriteFileAsync(
+                CreateContext(path, operationAuthority, postMutationAuthoritySink),
+                request,
+                cancellationToken,
+                hooks: hooks).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            operationAuthority.Dispose();
+            return FileOperation.Failure(
+                request.Path,
+                ex.Message,
+                AgentFileReadErrorCodes.PathCanonicalizationFailed);
+        }
+    }
+
+    private async ValueTask<AgentFileMutationResult> DeleteFileWithAuthorityAsync(
+        DockerExecutionRuntimeConfig config,
+        AgentFileDeleteRequest request,
+        LocalSecureApprovalLease operationAuthority,
+        IReadOnlyList<DockerMountRootIdentityChain> mountIdentityChains,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks,
+        Action<LocalSecureApprovalLease>? postMutationAuthoritySink)
+    {
+        try
+        {
+            var path = DockerPathResolver.ResolveHostBinding(config, request.Path);
+            var targetIdentity = operationAuthority.Binding.TargetIdentity;
+            if (DockerPathResolver.IsConfiguredMountRootOrAncestor(config, path.ContainerPath)
+                || targetIdentity is not null
+                   && mountIdentityChains.Any(chain => chain.Identities.Contains(targetIdentity.Value)))
+            {
+                operationAuthority.Dispose();
+                return FileOperation.Failure(
+                    request.Path,
+                    DockerPathResolver.StructuredRootDeleteMessage,
+                    DockerPathResolver.StructuredRootDeleteErrorCode);
+            }
+            return await HostFileSystemExecutor.DeleteFileAsync(
+                CreateContext(path, operationAuthority, postMutationAuthoritySink),
+                request,
+                cancellationToken,
+                hooks).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            operationAuthority.Dispose();
+            return FileOperation.Failure(
+                request.Path,
+                ex.Message,
+                AgentFileReadErrorCodes.PathCanonicalizationFailed);
+        }
+    }
+
+    private async ValueTask<AgentFileSearchResult> SearchWithAuthorityAsync(
+        DockerExecutionRuntimeConfig config,
+        AgentFileSearchRequest request,
+        LocalSecureApprovalLease operationAuthority,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks)
+    {
+        try
+        {
+            var path = DockerPathResolver.ResolveHostBinding(config, request.Path);
+            return await HostSecureFileSearch.ExecuteAsync(
+                CreateContext(path, operationAuthority),
+                request,
+                cancellationToken,
+                hooks).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            operationAuthority.Dispose();
+            return AgentFileSearchResult.Failure(AgentFileSearchErrorCodes.PathUnresolvable, ex.Message);
+        }
     }
 
     public async ValueTask<AgentFileReadResult> ReadFileAsync(
         DockerExecutionRuntimeConfig config,
-        string containerName,
         AgentFileReadRequest request,
-        bool allowOutsideConfiguredScope,
-        CancellationToken cancellationToken)
+        DockerApprovedResourceLease? approvalLease,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks = null)
     {
-        if (!FileOperation.TryValidateRange(request.Offset, request.Limit, out var rangeError))
+        try
         {
-            return AgentFileReadResult.Failure(request.Path, AgentFileReadErrorCodes.InvalidRange, rangeError!);
+            var path = DockerPathResolver.ResolveHostBinding(config, request.Path);
+            return await HostFileSystemExecutor.ReadFileAsync(
+                CreateContext(path, approvalLease, cancellationToken),
+                request,
+                cancellationToken,
+                hooks).ConfigureAwait(false);
         }
-
-        if (!TryResolvePath(config, request.Path, allowOutsideConfiguredScope, out var path, out var pathError))
+        catch (DockerStructuredBindRequiredException ex)
         {
-            return pathError!;
+            return AgentFileReadResult.Failure(
+                request.Path,
+                ex.ErrorCode,
+                ex.Message);
         }
-
-        var ranged = request.Offset is not null || request.Limit is not null;
-        var result = await commandRunner.RunAsync(
-            BuildArguments(
-                config,
-                containerName,
-                "read",
-                path!,
-                ranged,
-                request.Offset ?? 1,
-                request.Limit ?? FileOperation.DefaultReadLimit,
-                option: false,
-                redirectStandardInput: false,
-                expectedContentHash: null),
-            await commandRunner.ResolveDefaultTimeoutSecondsAsync(cancellationToken),
-            cancellationToken);
-
-        if (result.TimedOut)
+        catch (DockerResourceApprovalException ex)
         {
-            return Failure(path!, AgentFileReadErrorCodes.TimedOut, "Docker file read timed out.", result.WasTruncated);
+            return AgentFileReadResult.Failure(
+                request.Path,
+                DockerResourceReference.ApprovalRequiredErrorCode,
+                ex.Message);
         }
-
-        if (!TryParseProtocol(result.Output, out var fields, out var payload))
+        catch (InvalidOperationException)
         {
-            return Failure(
-                path!,
-                AgentFileReadErrorCodes.ReadFailed,
-                BuildCommandFailureMessage("Docker file read failed", result),
-                result.WasTruncated);
+            return BindRequiredReadFailure(request.Path);
         }
-
-        if (fields[1] == "error")
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
-            var errorCode = fields.Length > 2 ? fields[2] : AgentFileReadErrorCodes.ReadFailed;
-            var failure = Failure(path!, errorCode, BuildReadErrorMessage(errorCode, path!), result.WasTruncated);
-            return errorCode == AgentFileReadErrorCodes.RangeOutsideFile
-                   && fields.Length > 3
-                   && TryParseNonNegativeInt(fields[3], out var errorTotalLines)
-                ? failure with { TotalLines = errorTotalLines }
-                : failure;
+            return AgentFileReadResult.Failure(
+                request.Path,
+                AgentFileReadErrorCodes.PathCanonicalizationFailed,
+                ex.Message);
         }
-
-        if (result.ExitCode != 0)
-        {
-            return Failure(
-                path!,
-                AgentFileReadErrorCodes.ReadFailed,
-                BuildCommandFailureMessage("Docker file read failed", result),
-                result.WasTruncated);
-        }
-
-        if (fields[1] == "directory")
-        {
-            return new AgentFileReadResult(path!, RemoveSingleLineTerminator(payload), IsDirectory: true, result.WasTruncated);
-        }
-
-        if (fields[1] != "file"
-            || fields.Length < 7
-            || !TryParseNonNegativeInt(fields[2], out var startLine)
-            || !TryParseNonNegativeInt(fields[3], out var endLine)
-            || !TryParseNonNegativeInt(fields[4], out var totalLines)
-            || fields[5] is not ("0" or "1")
-            || fields[6] is not ("0" or "1"))
-        {
-            return Failure(path!, AgentFileReadErrorCodes.ReadFailed, "Docker file read returned an invalid response.", result.WasTruncated);
-        }
-
-        var rangeWasTruncated = fields[5] == "1";
-        var content = fields[6] == "1" ? RemoveSingleLineTerminator(payload) : payload;
-        return new AgentFileReadResult(path!, content, WasTruncated: result.WasTruncated || rangeWasTruncated)
-        {
-            StartLine = startLine,
-            EndLine = endLine,
-            TotalLines = totalLines,
-        };
     }
 
     public async ValueTask<AgentFileMutationResult> WriteFileAsync(
         DockerExecutionRuntimeConfig config,
-        string containerName,
         AgentFileWriteRequest request,
-        bool allowOutsideConfiguredScope,
-        CancellationToken cancellationToken)
+        DockerApprovedResourceLease? approvalLease,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks = null)
     {
-        string path;
         try
         {
-            path = DockerPathResolver.ResolvePath(config, request.Path, allowOutsideConfiguredScope);
+            var path = DockerPathResolver.ResolveHostBinding(config, request.Path);
+            return await HostFileSystemExecutor.WriteFileAsync(
+                CreateContext(path, approvalLease, cancellationToken),
+                request,
+                cancellationToken,
+                hooks: hooks).ConfigureAwait(false);
         }
-        catch (InvalidOperationException ex)
+        catch (DockerStructuredBindRequiredException ex)
         {
-            return FileOperation.Failure(request.Path, ex.Message, AgentFileReadErrorCodes.OutsideConfiguredScope);
+            return FileOperation.Failure(request.Path, ex.Message, ex.ErrorCode);
         }
-
-        var result = await commandRunner.RunAsync(
-            BuildArguments(config, containerName, "write", path, ranged: false, 1, FileOperation.DefaultReadLimit, request.Overwrite, redirectStandardInput: true, request.ExpectedContentHash),
-            await commandRunner.ResolveDefaultTimeoutSecondsAsync(cancellationToken),
-            cancellationToken,
-            request.Content);
-        if (TryParseProtocol(result.Output, out var fields, out _))
+        catch (DockerResourceApprovalException ex)
         {
-            if (fields[1] == "ok" && fields.ElementAtOrDefault(2) == "file-written" && result.ExitCode == 0)
-            {
-                return FileOperation.Written(path, request.Content.Length);
-            }
-
-            if (fields[1] == "error")
-            {
-                var errorCode = fields.ElementAtOrDefault(2) ?? "docker-write-failed";
-                var message = errorCode switch
-                {
-                    FileOperation.FileExistsErrorCode => "File already exists.",
-                    AgentFileReadErrorCodes.OutsideConfiguredScope => $"Path resolves outside the configured Docker workspace paths: {path}",
-                    AgentFileReadErrorCodes.PathCanonicalizationFailed => $"Unable to securely resolve path inside the Docker container: {path}",
-                    AgentFileReadErrorCodes.NotAFile => "The write target is not a regular file.",
-                    FileOperation.ContentChangedErrorCode => "The file changed after patch preflight; no mutation was applied.",
-                    "file-hash-unavailable" => "The container cannot verify the expected file content hash.",
-                    _ => BuildCommandFailureMessage("Docker file write failed", result),
-                };
-                return FileOperation.Failure(path, message, errorCode);
-            }
+            return FileOperation.Failure(
+                request.Path,
+                ex.Message,
+                DockerResourceReference.ApprovalRequiredErrorCode);
         }
-
-        return FileOperation.Failure(path, BuildCommandFailureMessage("Docker file write failed", result), "docker-write-failed");
+        catch (InvalidOperationException)
+        {
+            return BindRequiredMutationFailure(request.Path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return FileOperation.Failure(
+                request.Path,
+                ex.Message,
+                AgentFileReadErrorCodes.PathCanonicalizationFailed);
+        }
     }
 
     public async ValueTask<AgentFileMutationResult> DeleteFileAsync(
         DockerExecutionRuntimeConfig config,
-        string containerName,
         AgentFileDeleteRequest request,
-        bool allowOutsideConfiguredScope,
+        DockerApprovedResourceLease? approvalLease,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks = null)
+    {
+        try
+        {
+            var path = DockerPathResolver.ResolveHostBinding(config, request.Path);
+            if (DockerPathResolver.IsConfiguredMountRootOrAncestor(config, path.ContainerPath)
+                || (approvalLease?.IsConfiguredRootOrAncestor()
+                    ?? IsConfiguredRootOrAncestor(config, path, cancellationToken)))
+            {
+                return FileOperation.Failure(
+                    request.Path,
+                    DockerPathResolver.StructuredRootDeleteMessage,
+                    DockerPathResolver.StructuredRootDeleteErrorCode);
+            }
+            return await HostFileSystemExecutor.DeleteFileAsync(
+                CreateContext(path, approvalLease, cancellationToken),
+                request,
+                cancellationToken,
+                hooks).ConfigureAwait(false);
+        }
+        catch (DockerStructuredBindRequiredException ex)
+        {
+            return FileOperation.Failure(request.Path, ex.Message, ex.ErrorCode);
+        }
+        catch (DockerResourceApprovalException ex)
+        {
+            return FileOperation.Failure(
+                request.Path,
+                ex.Message,
+                DockerResourceReference.ApprovalRequiredErrorCode);
+        }
+        catch (InvalidOperationException)
+        {
+            return BindRequiredMutationFailure(request.Path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return FileOperation.Failure(
+                request.Path,
+                ex.Message,
+                AgentFileReadErrorCodes.PathCanonicalizationFailed);
+        }
+    }
+
+    public async ValueTask<AgentFileSearchResult> SearchAsync(
+        DockerExecutionRuntimeConfig config,
+        AgentFileSearchRequest request,
+        DockerApprovedResourceLease? approvalLease,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks = null)
+    {
+        try
+        {
+            var path = DockerPathResolver.ResolveHostBinding(config, request.Path);
+            return await HostSecureFileSearch.ExecuteAsync(
+                CreateContext(path, approvalLease, cancellationToken),
+                request,
+                cancellationToken,
+                hooks).ConfigureAwait(false);
+        }
+        catch (DockerStructuredBindRequiredException ex)
+        {
+            return AgentFileSearchResult.Failure(ex.ErrorCode, ex.Message);
+        }
+        catch (DockerResourceApprovalException ex)
+        {
+            return AgentFileSearchResult.Failure(
+                DockerResourceReference.ApprovalRequiredErrorCode,
+                ex.Message);
+        }
+        catch (InvalidOperationException)
+        {
+            return AgentFileSearchResult.Failure(
+                DockerPathResolver.StructuredBindRequiredErrorCode,
+                DockerPathResolver.StructuredBindRequiredMessage);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return AgentFileSearchResult.Failure(AgentFileSearchErrorCodes.PathUnresolvable, ex.Message);
+        }
+    }
+
+    public async ValueTask<AgentScopedInstructionDiscoveryResult> DiscoverScopedInstructionsAsync(
+        DockerExecutionRuntimeConfig config,
+        AgentScopedInstructionDiscoveryRequest request,
+        string namespaceFingerprint,
+        CancellationToken cancellationToken,
+        ILocalSecureFileSystemHooks? hooks = null)
+    {
+        ValidateDiscoveryRequest(request);
+        DockerHostPathBinding[] paths;
+        try
+        {
+            paths = request.Probes
+                .Select(probe => DockerPathResolver.ResolveHostBinding(config, probe.Path))
+                .ToArray();
+        }
+        catch (DockerStructuredBindRequiredException)
+        {
+            throw;
+        }
+        catch (InvalidOperationException)
+        {
+            throw new DockerStructuredBindRequiredException();
+        }
+
+        var mounts = config.Mounts
+            .Select(mount => new HostScopedInstructionMount(
+                Path.GetFullPath(mount.HostPath),
+                mount.ContainerPath,
+                HostReportedPathStyle.Posix))
+            .ToArray();
+        var probes = request.Probes
+            .Select((probe, index) => new HostScopedInstructionProbe(
+                probe.Path,
+                paths[index].HostPath,
+                paths[index].ContainerPath,
+                probe.IsDirectory,
+                paths[index].Mount.HostPath))
+            .ToArray();
+        var result = await HostScopedInstructionDiscovery.DiscoverAsync(
+            mounts,
+            probes,
+            cancellationToken,
+            hooks).ConfigureAwait(false);
+        return result with
+        {
+            TargetFingerprint = ComputeHashSegments(
+                ["docker-host-structured-v3", namespaceFingerprint, result.TargetFingerprint]),
+            ScopeFingerprint = ComputeHashSegments(
+                [namespaceFingerprint, result.ScopeFingerprint]),
+        };
+    }
+
+    private static HostFileSystemPathContext CreateContext(
+        DockerHostPathBinding path,
+        DockerApprovedResourceLease? approvalLease,
         CancellationToken cancellationToken)
     {
-        string path;
-        try
-        {
-            path = DockerPathResolver.ResolvePath(config, request.Path, allowOutsideConfiguredScope);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return FileOperation.Failure(request.Path, ex.Message, AgentFileReadErrorCodes.OutsideConfiguredScope);
-        }
-
-        var result = await commandRunner.RunAsync(
-            BuildArguments(config, containerName, "delete", path, ranged: false, 1, FileOperation.DefaultReadLimit, request.Recursive, redirectStandardInput: false, request.ExpectedContentHash),
-            await commandRunner.ResolveDefaultTimeoutSecondsAsync(cancellationToken),
-            cancellationToken);
-        if (TryParseProtocol(result.Output, out var fields, out _))
-        {
-            if (fields[1] == "ok" && result.ExitCode == 0)
-            {
-                return fields.ElementAtOrDefault(2) == "directory-deleted"
-                    ? FileOperation.DirectoryDeleted(path)
-                    : FileOperation.FileDeleted(path);
-            }
-
-            if (fields[1] == "error")
-            {
-                var errorCode = fields.ElementAtOrDefault(2) ?? "docker-delete-failed";
-                var message = errorCode switch
-                {
-                    FileOperation.PathNotFoundErrorCode => "Path does not exist.",
-                    AgentFileReadErrorCodes.OutsideConfiguredScope => $"Path resolves outside the configured Docker workspace paths: {path}",
-                    AgentFileReadErrorCodes.PathCanonicalizationFailed => $"Unable to securely resolve path inside the Docker container: {path}",
-                    AgentFileReadErrorCodes.NotAFile => "The delete target is not a regular file or directory.",
-                    FileOperation.ContentChangedErrorCode => "The file changed after patch preflight; no mutation was applied.",
-                    "file-hash-unavailable" => "The container cannot verify the expected file content hash.",
-                    _ => BuildCommandFailureMessage("Docker path deletion failed", result),
-                };
-                return FileOperation.Failure(path, message, errorCode);
-            }
-        }
-
-        return FileOperation.Failure(path, BuildCommandFailureMessage("Docker path deletion failed", result), "docker-delete-failed");
+        return new(
+            [path.Mount.HostPath],
+            path.HostPath,
+            path.ContainerPath,
+            ApprovedAuthority: approvalLease?.TakeResourceAuthority(),
+            HostReportedPathStyle.Posix);
     }
 
-    internal static IReadOnlyList<string> BuildArguments(
-        DockerExecutionRuntimeConfig config,
-        string containerName,
-        string operation,
-        string path,
-        bool ranged,
-        int offset,
-        int limit,
-        bool option,
-        bool redirectStandardInput,
-        string? expectedContentHash)
-    {
-        var arguments = new List<string>
-        {
-            "exec",
-        };
-        if (redirectStandardInput)
-        {
-            arguments.Add("-i");
-        }
+    private static HostFileSystemPathContext CreateContext(
+        DockerHostPathBinding path,
+        LocalSecureApprovalLease operationAuthority,
+        Action<LocalSecureApprovalLease>? postMutationAuthoritySink = null)
+        => new(
+            [path.Mount.HostPath],
+            path.HostPath,
+            path.ContainerPath,
+            ApprovedAuthority: operationAuthority,
+            HostReportedPathStyle.Posix,
+            PostMutationAuthoritySink: postMutationAuthoritySink);
 
-        arguments.AddRange(
-        [
-            containerName,
-            DockerCommandRunner.ResolveShellPath(config),
-            "-c",
-            DockerFileOperationScript.Content,
-            "sunder-file-operation",
-            operation,
+    private static bool IsConfiguredRootOrAncestor(
+        DockerExecutionRuntimeConfig config,
+        DockerHostPathBinding path,
+        CancellationToken cancellationToken)
+    {
+        using var authority = HostSecurePathEngine.Capture(
+            [path.Mount.HostPath],
+            path.HostPath,
+            cancellationToken: cancellationToken);
+        var targetIdentity = authority.Binding.TargetIdentity;
+        return targetIdentity is not null
+               && CaptureConfiguredMountRootIdentityChains(config)
+                    .Any(chain => chain.Identities.Contains(targetIdentity.Value));
+    }
+
+    private static IReadOnlyList<DockerMountRootIdentityChain> CaptureConfiguredMountRootIdentityChains(
+        DockerExecutionRuntimeConfig config)
+    {
+        var roots = new List<DockerVerifiedMount>(config.Mounts.Count);
+        try
+        {
+            foreach (var mount in config.Mounts)
+            {
+                roots.Add(new DockerVerifiedMount(mount, HostSecurePathEngine.OpenRoot(mount.HostPath)));
+            }
+            return DockerMountRootIdentityChains.Capture(roots);
+        }
+        finally
+        {
+            foreach (var root in roots)
+            {
+                root.Root.Dispose();
+            }
+        }
+    }
+
+    private static AgentFileReadResult BindRequiredReadFailure(string path)
+        => AgentFileReadResult.Failure(
             path,
-            ranged ? "1" : "0",
-            offset.ToString(CultureInfo.InvariantCulture),
-            limit.ToString(CultureInfo.InvariantCulture),
-            option ? "1" : "0",
-            expectedContentHash ?? "-",
-        ]);
-        arguments.AddRange(config.Mounts.Select(mount => mount.ContainerPath));
-        return arguments;
-    }
+            DockerPathResolver.StructuredBindRequiredErrorCode,
+            DockerPathResolver.StructuredBindRequiredMessage);
 
-    private static bool TryResolvePath(
-        DockerExecutionRuntimeConfig config,
-        string requestedPath,
-        bool allowOutsideConfiguredScope,
-        out string? path,
-        out AgentFileReadResult? error)
+    private static AgentFileMutationResult BindRequiredMutationFailure(string path)
+        => FileOperation.Failure(
+            path,
+            DockerPathResolver.StructuredBindRequiredMessage,
+            DockerPathResolver.StructuredBindRequiredErrorCode);
+
+    private static void ValidateDiscoveryRequest(AgentScopedInstructionDiscoveryRequest request)
     {
-        try
+        if (request.Probes is null
+            || request.Probes.Count == 0
+            || request.Probes.Count > 64
+            || request.Probes.Any(probe => probe is null || string.IsNullOrWhiteSpace(probe.Path))
+            || request.Probes
+                .Select(probe => (probe.Path, probe.IsDirectory, probe.FollowFinalSymbolicLink))
+                .Distinct()
+                .Count() != request.Probes.Count)
         {
-            path = DockerPathResolver.ResolvePath(config, requestedPath, allowOutsideConfiguredScope);
-            error = null;
-            return true;
-        }
-        catch (InvalidOperationException ex)
-        {
-            path = null;
-            error = AgentFileReadResult.Failure(requestedPath, AgentFileReadErrorCodes.OutsideConfiguredScope, ex.Message);
-            return false;
+            throw new InvalidOperationException(
+                "Docker scoped-instruction discovery requires 1 to 64 unique, non-empty probes.");
         }
     }
 
-    private static bool TryParseProtocol(string output, out string[] fields, out string payload)
+    private static string GetPosixName(string path)
+        => path[(path.LastIndexOf('/') + 1)..];
+
+    private static string ComputeHashSegments(IEnumerable<string> values)
     {
-        var lineEnd = output.IndexOf('\n');
-        var header = (lineEnd < 0 ? output : output[..lineEnd]).TrimEnd('\r');
-        fields = header.Split('|');
-        payload = lineEnd < 0 ? string.Empty : output[(lineEnd + 1)..];
-        return fields.Length >= 2 && fields[0] == DockerFileOperationScript.Protocol;
-    }
-
-    private static bool TryParseNonNegativeInt(string value, out int parsed)
-        => int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out parsed) && parsed >= 0;
-
-    private static AgentFileReadResult Failure(string path, string errorCode, string message, bool wasTruncated)
-        => AgentFileReadResult.Failure(path, errorCode, message) with { WasTruncated = wasTruncated };
-
-    private static string BuildReadErrorMessage(string errorCode, string path)
-        => errorCode switch
+        var material = new StringBuilder();
+        foreach (var value in values)
         {
-            AgentFileReadErrorCodes.FileNotFound => $"File not found: {path}",
-            AgentFileReadErrorCodes.NotAFile => $"Path is not a regular file or directory: {path}",
-            AgentFileReadErrorCodes.BinaryFile => $"Binary file reads are not supported: {path}",
-            AgentFileReadErrorCodes.OutsideConfiguredScope => $"Path resolves outside the configured Docker workspace paths: {path}",
-            AgentFileReadErrorCodes.InvalidRange => "The requested file range is invalid.",
-            AgentFileReadErrorCodes.RangeOutsideFile => "The requested line offset is outside the file.",
-            AgentFileReadErrorCodes.PathCanonicalizationFailed => $"Unable to securely resolve path inside the Docker container: {path}",
-            _ => $"Unable to read file: {path}",
-        };
-
-    private static string BuildCommandFailureMessage(string prefix, DockerCliRunResult result)
-        => string.IsNullOrWhiteSpace(result.Output) ? $"{prefix} (exit code {result.ExitCode})." : $"{prefix}: {result.Output.Trim()}";
-
-    private static string RemoveSingleLineTerminator(string value)
-        => value.EndsWith("\r\n", StringComparison.Ordinal)
-            ? value[..^2]
-            : value.EndsWith('\n')
-                ? value[..^1]
-                : value;
+            material.Append(value.Length).Append(':').Append(value);
+        }
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material.ToString()))).ToLowerInvariant();
+    }
 }

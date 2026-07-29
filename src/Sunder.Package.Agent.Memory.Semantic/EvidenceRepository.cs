@@ -13,7 +13,7 @@ internal sealed class EvidenceRepository(string databasePath)
         using var connection = MemoryDatabase.OpenConnection(_databasePath);
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT EvidenceId, MemoryId, SessionId, SourceTurnId, EvidenceText, CreatedAtUtc
+            SELECT EvidenceId, MemoryId, SessionId, SourceTurnId, EvidenceText, CreatedAtUtc, ContributionId
             FROM SessionMemoryEvidence
             WHERE MemoryId = $memoryId
             ORDER BY CreatedAtUtc DESC
@@ -31,7 +31,10 @@ internal sealed class EvidenceRepository(string databasePath)
                 Guid.Parse(reader.GetString(2)),
                 reader.IsDBNull(3) ? null : Guid.Parse(reader.GetString(3)),
                 reader.IsDBNull(4) ? null : reader.GetString(4),
-                DateTimeOffset.Parse(reader.GetString(5))));
+                DateTimeOffset.Parse(reader.GetString(5)))
+            {
+                ContributionId = reader.IsDBNull(6) ? null : reader.GetString(6),
+            });
         }
 
         return items;
@@ -66,7 +69,11 @@ internal sealed class EvidenceRepository(string databasePath)
             : evidenceText.Trim()[..Math.Min(evidenceText.Trim().Length, MaxEvidenceChars)];
         command.Parameters.AddWithValue("$evidenceText", (object?)boundedEvidence ?? DBNull.Value);
         command.Parameters.AddWithValue("$createdAtUtc", createdAtUtc.ToString("O"));
-        command.ExecuteNonQuery();
+        if (command.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                $"Evidence for memory '{memoryId}' could not be persisted.");
+        }
 
         using var trim = connection.CreateCommand();
         trim.Transaction = transaction;

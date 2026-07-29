@@ -36,6 +36,7 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         var work = GetParentContinuationWork(connection, transaction, workId);
         var run = GetRun(connection, transaction, key.RunId);
         if (work?.Join is not { OutstandingTasks.Count: 0 } join
@@ -149,7 +150,10 @@ public sealed partial class AgentLocalStore
     {
         using var connection = CreateConnection();
         connection.Open();
+        using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             UPDATE AgentParentContinuationWork
             SET ExecutionStartedAtUtc = $startedAtUtc,
@@ -160,14 +164,19 @@ public sealed partial class AgentLocalStore
             """;
         command.Parameters.AddWithValue("$startedAtUtc", DateTimeOffset.UtcNow.ToString("O"));
         command.Parameters.AddWithValue("$workId", workId);
-        return command.ExecuteNonQuery() == 1;
+        var updated = command.ExecuteNonQuery() == 1;
+        transaction.Commit();
+        return updated;
     }
 
     internal bool CompleteParentContinuationWork(string workId, bool failed, string? error)
     {
         using var connection = CreateConnection();
         connection.Open();
+        using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             UPDATE AgentParentContinuationWork
             SET Status = $status,
@@ -184,14 +193,19 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$updatedAtUtc", DateTimeOffset.UtcNow.ToString("O"));
         command.Parameters.AddWithValue("$lastError", (object?)error ?? DBNull.Value);
         command.Parameters.AddWithValue("$workId", workId);
-        return command.ExecuteNonQuery() == 1;
+        var updated = command.ExecuteNonQuery() == 1;
+        transaction.Commit();
+        return updated;
     }
 
     internal bool RecordParentContinuationRetryPending(string workId, string error)
     {
         using var connection = CreateConnection();
         connection.Open();
+        using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             UPDATE AgentParentContinuationWork
             SET UpdatedAtUtc = $updatedAtUtc,
@@ -203,15 +217,17 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$updatedAtUtc", DateTimeOffset.UtcNow.ToString("O"));
         command.Parameters.AddWithValue("$lastError", error);
         command.Parameters.AddWithValue("$workId", workId);
-        return command.ExecuteNonQuery() == 1;
+        var updated = command.ExecuteNonQuery() == 1;
+        transaction.Commit();
+        return updated;
     }
 
-    private void RecoverAmbiguousParentContinuationWork()
+    internal void RecoverAmbiguousParentContinuationWork()
     {
         using var connection = CreateConnection();
         connection.Open();
         using var select = connection.CreateCommand();
-        select.CommandText = $"SELECT {ParentContinuationWorkColumns} FROM AgentParentContinuationWork WHERE Status = 'Dispatching' AND ExecutionStartedAtUtc IS NOT NULL ORDER BY CreatedAtUtc;";
+        select.CommandText = $"SELECT {ParentContinuationWorkColumns} FROM AgentParentContinuationWork WHERE Status = 'Dispatching' ORDER BY CreatedAtUtc;";
         var workItems = new List<AgentParentContinuationWorkRecord>();
         using (var reader = select.ExecuteReader())
         {
@@ -223,10 +239,18 @@ public sealed partial class AgentLocalStore
 
         foreach (var work in workItems)
         {
+            if (work.ExecutionStartedAtUtc is null)
+            {
+                // The durable claim is idempotently dispatchable until provider execution crosses this marker.
+                continue;
+            }
+
             using var transaction = connection.BeginTransaction(deferred: false);
+            EnsureRuntimeGenerationCurrent(connection, transaction);
             var now = DateTimeOffset.UtcNow;
             const string summary =
                 "The prior process ended after parent continuation execution started; the provider outcome is ambiguous and the continuation will not be retried.";
+            const AgentRunStatus runStatus = AgentRunStatus.Failed;
             using (var command = connection.CreateCommand())
             {
                 command.Transaction = transaction;
@@ -246,7 +270,7 @@ public sealed partial class AgentLocalStore
             runCommand.CommandText = """
                 UPDATE AgentRuns
                 SET Epoch = Epoch + 1,
-                    Status = 'Failed',
+                    Status = $status,
                     UpdatedAtUtc = $updatedAtUtc,
                     FinishedAtUtc = $updatedAtUtc,
                     SuspensionKind = NULL,
@@ -259,6 +283,7 @@ public sealed partial class AgentLocalStore
                   AND FinishedAtUtc IS NULL;
                 """;
             runCommand.Parameters.AddWithValue("$updatedAtUtc", now.ToString("O"));
+            runCommand.Parameters.AddWithValue("$status", runStatus.ToString());
             runCommand.Parameters.AddWithValue("$runId", work.ParentRunKey.RunId.ToString());
             runCommand.Parameters.AddWithValue("$sessionId", work.ParentRunKey.SessionId.ToString());
             runCommand.Parameters.AddWithValue("$runRevision", work.ParentRunKey.RunRevision);
@@ -273,11 +298,18 @@ public sealed partial class AgentLocalStore
                     Guid.NewGuid(),
                     work.ParentRunKey.SessionId,
                     work.ParentRunKey.RunRevision,
-                    AgentRunStatus.Failed,
+                    runStatus,
                     summary,
                     now);
                 InsertCheckpoint(connection, transaction, checkpoint);
                 TouchSessionForCheckpoint(connection, transaction, checkpoint);
+                EnqueueRunLifecycleEvent(
+                    connection,
+                    transaction,
+                    AgentLifecycleEventKind.RunFailed,
+                    $"run:{work.ParentRunKey.RunId:N}:{work.ParentRunKey.RunRevision}:terminal:{runStatus}",
+                    work.ParentRunKey,
+                    checkpoint: checkpoint);
             }
 
             transaction.Commit();

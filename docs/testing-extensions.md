@@ -60,21 +60,23 @@ public IReadOnlyList<PackageExtensionContribution<T>> GetExtensionContributions<
 
 Use canonical lowercase test package ids because owner validation is part of the contract.
 
+Tests that exercise an Agent consumer across an asynchronous callback must also provide `IPackageExtensionInvocationCatalog`. Model references as exact activation epochs rather than wrappers that re-query by package or semantic id. A retirement test should remove the old epoch from discovery, reject new leases from its retained references, cancel every active lease token, wait for those leases to drain, and permit a same-id replacement independently. Lease properties must throw after disposal.
+
 ## Capability Test Matrix
 
 | Capability | Required scenarios |
 | --- | --- |
-| Chat provider | Model/readiness states, auth modes, text and tool streams, malformed upstream payload, timeout/transient failure, cancellation, option/attachment translation |
+| Chat provider | Model/readiness states, auth modes, text and tool streams, malformed upstream payload, timeout/transient failure, cancellation/retirement, same-id replacement isolation, option/attachment translation |
 | Embedding provider | Empty/mixed batches, index preservation, dimensions, model identity, malformed counts/indexes, readiness, cancellation |
 | Static tool | Profile assignment, readiness, strict arguments, expected failure results, permission policy, concurrency claim |
-| Dynamic source | Context-dependent discovery, invalidation, identity stability, stale advertisement denial, native declaration parity |
+| Dynamic source | Context-dependent discovery, invalidation, identity stability, stale advertisement denial, retirement during execution, same-id replacement isolation, native declaration parity |
 | Permission surface | Every action/boundary/default, unknown boundary behavior, canonical resource summary, session approval and stale-run safety |
-| Execution target | Path/symlink containment, read ranges, output bounds, compare-and-swap writes/deletes, process arguments, timeout/tree cleanup, optional interface conformance |
+| Execution target | Strict Local no-follow root/child/reparse/device rejection, durable claim comparison, retained-handle capability transfer/disposal, distinct invocation-bound outside capabilities, configured restart rebind, outside restart reapproval, bounded patch planning and failure/cancellation cleanup, exact post-mutation add/update/delete compensation, final-only absence, reserved-name hiding with raw-entry charging, physically coordinated quarantine capacity, exact rollback/conflict preservation, read ranges, output bounds, compare-and-swap writes/deletes, aggregate glob budgets, POSIX literal-backslash paths, structured search cancellation/binary/newline behavior, process arguments, timeout/tree cleanup, and optional interface conformance; Docker additionally tests no transient configured authority, exact post-state compensation claims, explicit endpoint pinning on every command, daemon/container namespace claims, fresh mount-generation checkout, logical and physical nested-root deletion protection, host UID/GID policy, and the bidirectional mount challenge after create/start/reuse; scoped discovery additionally tests exact casing, longest root, fail-closed probe/ancestor/content bounds, linked roots/targets/documents, newline-safe paths, target namespace, and outside-root omission |
 | Prompt contributor | Dedup identity, ordering/limits, no user/dynamic text in system blocks, cancellation and isolated failure |
-| Context contributor | Plan suppression, entry/character bounds, accurate provenance/trust, malicious embedded instructions remain data |
-| Lifecycle observer | All relevant events, idempotency, partial failure, queue saturation, cancellation, direct-user-only promotion |
+| Context contributor | Plan suppression for optional recall, reserved safety-context exemption/bounds, host authority normalization, retirement during collection, exact-activation final-retention acknowledgment, malicious self-declared authority remains reference data, and scoped instructions never widen permissions |
+| Lifecycle observer | All relevant events, event-id idempotency, historical-before-future ordering, bounded replay/recovery, poison retry, versioned content-erasure receipts, monotonic membership/reactivation, retirement/compaction barriers, durable cleaner retry, exception/payload log redaction, cancellation, direct-user-only promotion |
 | Behavior loop | Run revision ownership, checkpoint/completion consistency, provider/tool cycles, approval suspension, no-progress/budget limits, cancellation |
-| Child runs | Parent correlation, task retries, workspace/profile snapshot, permission inheritance, wait/resume/restart, superseding run |
+| Child runs | Parent correlation, task retries, workspace/profile snapshot, permission inheritance, wait/resume/restart, superseding run, executor retirement, same-id replacement isolation |
 | MCP integration | Local/remote parsing, secret separation, transport policy, discovery/result bounds, OAuth callback/session validation, cleanup |
 
 ## Artifact Validation

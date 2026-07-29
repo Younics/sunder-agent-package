@@ -3,6 +3,15 @@ using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
+internal enum TranscriptLiveTurnResult
+{
+    Ignored,
+    Buffered,
+    Applied,
+    ReloadRequired,
+    OutsideWindow,
+}
+
 internal readonly record struct TranscriptViewportAnchorData(
     object? AnchorKey,
     double OffsetY,

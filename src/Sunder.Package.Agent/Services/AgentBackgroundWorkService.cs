@@ -8,18 +8,23 @@ public sealed class AgentBackgroundWorkService : IPackageBackgroundService, IAsy
     private const int QueueCapacity = 128;
 
     private readonly object _syncRoot = new();
-    private readonly CancellationTokenSource _lifetime = new();
-    private readonly Channel<Func<CancellationToken, Task>> _queue =
-        Channel.CreateBounded<Func<CancellationToken, Task>>(new BoundedChannelOptions(QueueCapacity)
-        {
-            SingleReader = true,
-            SingleWriter = false,
-            FullMode = BoundedChannelFullMode.Wait,
-        });
     private readonly HashSet<Task> _activeTasks = [];
+    private CancellationTokenSource _lifetime = new();
+    private Channel<Func<CancellationToken, Task>> _queue = CreateQueue();
     private Task? _worker;
     private bool _stopping;
     private bool _disposed;
+
+    internal bool IsRunning
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return !_stopping && _worker is { IsCompleted: false };
+            }
+        }
+    }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
@@ -29,7 +34,10 @@ public sealed class AgentBackgroundWorkService : IPackageBackgroundService, IAsy
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_stopping)
             {
-                throw new InvalidOperationException("Agent background work is stopping.");
+                _lifetime.Dispose();
+                _lifetime = new CancellationTokenSource();
+                _queue = CreateQueue();
+                _stopping = false;
             }
             _worker ??= ProcessQueueAsync(_lifetime.Token);
         }
@@ -39,9 +47,11 @@ public sealed class AgentBackgroundWorkService : IPackageBackgroundService, IAsy
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         Task[] tasks;
+        CancellationTokenSource lifetime;
         var cancelLifetime = false;
         lock (_syncRoot)
         {
+            lifetime = _lifetime;
             if (_stopping)
             {
                 var pending = _activeTasks.ToList();
@@ -67,7 +77,7 @@ public sealed class AgentBackgroundWorkService : IPackageBackgroundService, IAsy
 
         if (cancelLifetime)
         {
-            await _lifetime.CancelAsync().ConfigureAwait(false);
+            await lifetime.CancelAsync().ConfigureAwait(false);
         }
 
         if (tasks.Length == 0)
@@ -79,11 +89,24 @@ public sealed class AgentBackgroundWorkService : IPackageBackgroundService, IAsy
         {
             await Task.WhenAll(tasks).WaitAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested
                                                   && !cancellationToken.IsCancellationRequested)
         {
         }
+        finally
+        {
+            lock (_syncRoot)
+            {
+                if (ReferenceEquals(lifetime, _lifetime))
+                {
+                    _worker = null;
+                }
+            }
+        }
     }
+
+    internal Task SignalStopAsync()
+        => AgentRuntimeWorkerCancellation.SignalAsync(Volatile.Read(ref _lifetime));
 
     internal bool TryQueue(Func<CancellationToken, Task> work)
     {
@@ -142,6 +165,14 @@ public sealed class AgentBackgroundWorkService : IPackageBackgroundService, IAsy
         }
         _lifetime.Dispose();
     }
+
+    private static Channel<Func<CancellationToken, Task>> CreateQueue()
+        => Channel.CreateBounded<Func<CancellationToken, Task>>(new BoundedChannelOptions(QueueCapacity)
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.Wait,
+        });
 
     private async Task RunOwnedCoreAsync<T>(
         Func<CancellationToken, Task<T>> work,

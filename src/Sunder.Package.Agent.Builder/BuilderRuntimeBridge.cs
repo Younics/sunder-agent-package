@@ -90,20 +90,57 @@ internal sealed class BuilderLocalRuntimeGateway(IAgentWorkspaceExecutionResolve
         => BuilderRuntimeExecutor.ExecuteAsync(resolver, request, cancellationToken);
 }
 
-internal sealed class BuilderRuntimeHandler(IPackageExtensionCatalog extensionCatalog)
-    : IPackageRuntimeOperationHandler<BuilderRuntimeRequest, BuilderRuntimeResponse>
+internal sealed class BuilderRuntimeHandler : IPackageRuntimeOperationHandler<BuilderRuntimeRequest, BuilderRuntimeResponse>
 {
+    private readonly IPackageExtensionInvocationCatalog _invocations;
+
+    public BuilderRuntimeHandler(IPackageExtensionCatalog extensionCatalog)
+    {
+        _invocations = extensionCatalog as IPackageExtensionInvocationCatalog
+            ?? throw new InvalidOperationException(
+                "The host extension catalog does not support activation-scoped invocation leases.");
+    }
+
     public async ValueTask<BuilderRuntimeResponse> HandleAsync(
         BuilderRuntimeRequest request,
         CancellationToken cancellationToken = default)
     {
-        var resolver = extensionCatalog
-            .GetExtensions(PackageExtensionPoints.WorkspaceExecutionResolvers)
+        var reference = _invocations
+            .GetExtensionReferences(PackageExtensionPoints.WorkspaceExecutionResolvers)
             .FirstOrDefault()
             ?? throw new InvalidOperationException("Agent workspace execution service is unavailable.");
-        var response = await BuilderRuntimeExecutor
-            .ExecuteAsync(resolver, request, cancellationToken)
-            .ConfigureAwait(false);
+        if (!reference.TryAcquire(out var lease))
+        {
+            throw new InvalidOperationException("Agent workspace execution service is unavailable.");
+        }
+
+        BuilderRuntimeResponse response;
+        using (lease)
+        using (var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+                   cancellationToken,
+                   lease.RetirementToken))
+        {
+            try
+            {
+                response = await BuilderRuntimeExecutor
+                    .ExecuteAsync(lease.Contribution, request, invocation.Token)
+                    .ConfigureAwait(false);
+                if (lease.RetirementToken.IsCancellationRequested
+                    && !cancellationToken.IsCancellationRequested)
+                {
+                    throw new InvalidOperationException(
+                        $"Package '{lease.PackageId}' became unavailable during workspace execution.");
+                }
+            }
+            catch (OperationCanceledException exception) when (
+                lease.RetirementToken.IsCancellationRequested
+                && !cancellationToken.IsCancellationRequested)
+            {
+                throw new InvalidOperationException(
+                    $"Package '{lease.PackageId}' became unavailable during workspace execution.",
+                    exception);
+            }
+        }
         if (BuilderRuntimePayloadLimits.GetSerializedSize(response)
             >= BuilderRuntimePayloadLimits.MaximumResponseBytes - BuilderRuntimePayloadLimits.ResponseSafetyBytes)
         {
@@ -139,71 +176,112 @@ internal static class BuilderRuntimeExecutor
             null,
             resolution.Workspace,
             resolution.Binding);
-        switch (request.Kind)
+        var targetReference = resolution.ExecutionTargetReference
+            ?? new CompatibilityTargetReference(resolution.ExecutionTarget);
+        if (!targetReference.TryAcquire(out var targetLease))
         {
-            case BuilderRuntimeOperationKind.ResolveWorkspace:
-                var shell = await resolution.ExecutionTarget
-                    .GetShellAsync(context, cancellationToken)
-                    .ConfigureAwait(false);
-                return new BuilderRuntimeResponse(Execution: new BuilderWorkspaceExecutionProjection(
-                    ProjectWorkspace(resolution.Workspace),
-                    resolution.Binding,
-                    resolution.Target,
-                    resolution.Scope,
-                    shell,
-                    resolution.ExecutionTarget is IAgentExecutionPathMapper,
-                    resolution.ExecutionTarget is IAgentExecutionPathEnvironment));
-            case BuilderRuntimeOperationKind.ExecuteProcess:
-                var processResult = resolution.ExecutionTarget is IAgentProcessExecutionTarget processTarget
-                    ? await processTarget.ExecuteProcessAsync(
-                        context,
-                        new AgentProcessCommandRequest(
-                            Require(request.FileName, "Process file name"),
-                            request.Arguments ?? [],
-                            request.WorkingDirectory,
-                            request.TimeoutSeconds),
-                        cancellationToken).ConfigureAwait(false)
-                    : await resolution.ExecutionTarget.ExecuteShellAsync(
-                        context,
-                        new AgentShellCommandRequest(
-                            BuildShellCommand(
-                                Require(request.FileName, "Process file name"),
-                                request.Arguments ?? [],
-                                await resolution.ExecutionTarget.GetShellAsync(context, cancellationToken)
-                                    .ConfigureAwait(false)),
-                            request.WorkingDirectory,
-                            request.TimeoutSeconds),
-                        cancellationToken).ConfigureAwait(false);
-                return new BuilderRuntimeResponse(Process: ProjectProcessResult(processResult));
-            case BuilderRuntimeOperationKind.ExecuteShell:
-                var shellResult = await resolution.ExecutionTarget.ExecuteShellAsync(
-                    context,
-                    new AgentShellCommandRequest(
-                        Require(request.Command, "Shell command"),
-                        request.WorkingDirectory,
-                        request.TimeoutSeconds),
-                    cancellationToken).ConfigureAwait(false);
-                return new BuilderRuntimeResponse(Process: ProjectProcessResult(shellResult));
-            case BuilderRuntimeOperationKind.MapToHostPath:
-                if (resolution.ExecutionTarget is not IAgentExecutionPathMapper mapper)
+            throw new InvalidOperationException("The selected execution-target package is unavailable.");
+        }
+
+        using (targetLease)
+        {
+            using var targetInvocation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                targetLease.RetirementToken);
+            var target = targetLease.Contribution;
+            var invocationToken = targetInvocation.Token;
+            BuilderRuntimeResponse response;
+            try
+            {
+                switch (request.Kind)
                 {
-                    throw new NotSupportedException("The selected execution target does not map execution paths to host paths.");
+                    case BuilderRuntimeOperationKind.ResolveWorkspace:
+                        var shell = await target
+                            .GetShellAsync(context, invocationToken)
+                            .ConfigureAwait(false);
+                        response = new BuilderRuntimeResponse(Execution: new BuilderWorkspaceExecutionProjection(
+                            ProjectWorkspace(resolution.Workspace),
+                            resolution.Binding,
+                            resolution.Target,
+                            resolution.Scope,
+                            shell,
+                            target is IAgentExecutionPathMapper,
+                            target is IAgentExecutionPathEnvironment));
+                        break;
+                    case BuilderRuntimeOperationKind.ExecuteProcess:
+                        var processResult = target is IAgentProcessExecutionTarget processTarget
+                            ? await processTarget.ExecuteProcessAsync(
+                                context,
+                                new AgentProcessCommandRequest(
+                                    Require(request.FileName, "Process file name"),
+                                    request.Arguments ?? [],
+                                    request.WorkingDirectory,
+                                    request.TimeoutSeconds),
+                                invocationToken).ConfigureAwait(false)
+                            : await target.ExecuteShellAsync(
+                                context,
+                                new AgentShellCommandRequest(
+                                    BuildShellCommand(
+                                        Require(request.FileName, "Process file name"),
+                                        request.Arguments ?? [],
+                                        await target.GetShellAsync(context, invocationToken)
+                                            .ConfigureAwait(false)),
+                                    request.WorkingDirectory,
+                                    request.TimeoutSeconds),
+                                invocationToken).ConfigureAwait(false);
+                        response = new BuilderRuntimeResponse(Process: ProjectProcessResult(processResult));
+                        break;
+                    case BuilderRuntimeOperationKind.ExecuteShell:
+                        var shellResult = await target.ExecuteShellAsync(
+                            context,
+                            new AgentShellCommandRequest(
+                                Require(request.Command, "Shell command"),
+                                request.WorkingDirectory,
+                                request.TimeoutSeconds),
+                            invocationToken).ConfigureAwait(false);
+                        response = new BuilderRuntimeResponse(Process: ProjectProcessResult(shellResult));
+                        break;
+                    case BuilderRuntimeOperationKind.MapToHostPath:
+                        if (target is not IAgentExecutionPathMapper mapper)
+                        {
+                            throw new NotSupportedException("The selected execution target does not map execution paths to host paths.");
+                        }
+                        response = new BuilderRuntimeResponse(PathMapping: await mapper.MapToHostPathAsync(
+                            context,
+                            Require(request.ExecutionPath, "Execution path"),
+                            invocationToken).ConfigureAwait(false));
+                        break;
+                    case BuilderRuntimeOperationKind.AddPathEntry:
+                        if (target is IAgentExecutionPathEnvironment pathEnvironment)
+                        {
+                            await pathEnvironment.AddPathEntryAsync(
+                                context,
+                                Require(request.ExecutionPath, "Execution path"),
+                                invocationToken).ConfigureAwait(false);
+                        }
+                        response = new BuilderRuntimeResponse();
+                        break;
+                    default:
+                        throw new InvalidOperationException("Unknown Package Builder Runtime operation.");
                 }
-                return new BuilderRuntimeResponse(PathMapping: await mapper.MapToHostPathAsync(
-                    context,
-                    Require(request.ExecutionPath, "Execution path"),
-                    cancellationToken).ConfigureAwait(false));
-            case BuilderRuntimeOperationKind.AddPathEntry:
-                if (resolution.ExecutionTarget is IAgentExecutionPathEnvironment pathEnvironment)
-                {
-                    await pathEnvironment.AddPathEntryAsync(
-                        context,
-                        Require(request.ExecutionPath, "Execution path"),
-                        cancellationToken).ConfigureAwait(false);
-                }
-                return new BuilderRuntimeResponse();
-            default:
-                throw new InvalidOperationException("Unknown Package Builder Runtime operation.");
+            }
+            catch (OperationCanceledException exception) when (
+                targetLease.RetirementToken.IsCancellationRequested
+                && !cancellationToken.IsCancellationRequested)
+            {
+                throw new InvalidOperationException(
+                    $"Package '{targetLease.PackageId}' became unavailable during execution-target invocation.",
+                    exception);
+            }
+
+            if (targetLease.RetirementToken.IsCancellationRequested
+                && !cancellationToken.IsCancellationRequested)
+            {
+                throw new InvalidOperationException(
+                    $"Package '{targetLease.PackageId}' became unavailable during execution-target invocation.");
+            }
+
+            return response;
         }
     }
 
@@ -272,6 +350,48 @@ internal static class BuilderRuntimeExecutor
 
     private static string? TruncateNullable(string? value, int maximumCharacters)
         => value is null ? null : Truncate(value, maximumCharacters);
+
+    private sealed class CompatibilityTargetReference(IAgentExecutionTarget target)
+        : IPackageExtensionReference<IAgentExecutionTarget>
+    {
+        public bool TryAcquire(
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
+            out IPackageExtensionLease<IAgentExecutionTarget>? lease)
+        {
+            lease = new CompatibilityTargetLease(target);
+            return true;
+        }
+    }
+
+    private sealed class CompatibilityTargetLease(IAgentExecutionTarget target)
+        : IPackageExtensionLease<IAgentExecutionTarget>
+    {
+        private IAgentExecutionTarget? _target = target;
+
+        public string PackageId
+        {
+            get
+            {
+                ObjectDisposedException.ThrowIf(_target is null, this);
+                return "sunder.package.agent.builder.compatibility";
+            }
+        }
+
+        public IAgentExecutionTarget Contribution
+            => Volatile.Read(ref _target)
+               ?? throw new ObjectDisposedException(nameof(CompatibilityTargetLease));
+
+        public CancellationToken RetirementToken
+        {
+            get
+            {
+                ObjectDisposedException.ThrowIf(_target is null, this);
+                return CancellationToken.None;
+            }
+        }
+
+        public void Dispose() => Interlocked.Exchange(ref _target, null);
+    }
 }
 
 internal sealed class BuilderRuntimeExecutionTargetProxy(

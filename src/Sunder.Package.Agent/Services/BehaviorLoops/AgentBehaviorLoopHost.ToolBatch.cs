@@ -35,6 +35,7 @@ internal sealed class AgentToolBatchCoordinator(AgentBehaviorLoopHost host)
         }
 
         var availableToolsById = await _host.GetAvailableToolsByIdAsync(cancellationToken);
+        await _host.PrepareToolExecutionsAsync(toolCalls, availableToolsById, cancellationToken);
         var outcomes = new AgentToolCallOutcome?[toolCalls.Count];
         var nextToolCallIndex = 0;
         foreach (var batch in AgentBehaviorLoopHost.BuildToolExecutionBatches(toolCalls, availableToolsById))

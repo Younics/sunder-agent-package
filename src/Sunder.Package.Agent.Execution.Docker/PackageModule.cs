@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
@@ -10,10 +11,17 @@ public sealed class PackageModule : ISunderRuntimePackageModule
 {
     public void ConfigureRuntimeServices(IServiceCollection services, IPackageContext context)
     {
+        services.AddSingleton(new DockerPackageStorageMigration(context));
         services.AddSingleton<DockerCliRunner>();
-        services.AddSingleton<DockerImageCatalogService>();
+        services.AddSingleton(provider => new DockerImageCatalogService(
+            context,
+            provider.GetRequiredService<DockerCliRunner>(),
+            provider.GetRequiredService<DockerPackageStorageMigration>()));
         services.AddSingleton<DockerImageStackContributor>();
-        services.AddSingleton<DockerExecutionWorkspaceConfigService>();
+        services.AddSingleton(provider => new DockerExecutionWorkspaceConfigService(
+            context,
+            provider.GetRequiredService<DockerImageCatalogService>(),
+            provider.GetRequiredService<DockerPackageStorageMigration>()));
         services.AddSingleton<DockerContainerLifecycleService>();
         services.AddSingleton<DockerExecutionTarget>();
         services.AddSingleton<DockerExecutionWorkspaceEditorContributor>();
@@ -22,6 +30,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
 
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
+        registry.RegisterBackgroundService<DockerPackageStorageMigration>();
         registry.RegisterSettingsSchema(DockerExecutionConfiguration.Schema);
         var stackContributor = services.GetRequiredService<DockerImageStackContributor>();
         registry.RegisterExtension(SunderStackExtensionPoints.StackExporters, stackContributor);
@@ -44,7 +53,8 @@ public sealed class AppPackageModule : ISunderAppPackageModule
         services.AddSingleton<DockerExecutionWorkspaceEditorPresentationContributor>();
         services.AddTransient(provider => new DockerExecutionSettingsViewModel(
             provider.GetRequiredService<DockerExecutionAppRuntimeClient>(),
-            provider.GetRequiredService<IBackgroundProcessQueue>()));
+            provider.GetRequiredService<IBackgroundProcessQueue>(),
+            context.Logging.LoggerFactory.CreateLogger<DockerExecutionSettingsViewModel>()));
     }
 
     public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)

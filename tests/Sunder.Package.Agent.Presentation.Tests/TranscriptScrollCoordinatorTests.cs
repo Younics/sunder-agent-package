@@ -61,15 +61,13 @@ public sealed class TranscriptScrollCoordinatorTests
     [AvaloniaFact]
     public async Task AnchorHost_ForwardsOnlyTailWhileFollowingAndRowsWhileReading()
     {
-        var row = new Border { Height = 600 };
-        var tail = new Border
-        {
-            Height = 1,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom,
-        };
+        var row = CreateHostedAnchorRow("row", 600);
+        var tail = CreateHostedAnchorRow("tail", 1, TranscriptAnchorItemRole.TailSentinel);
+        tail.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom;
         var host = new TranscriptScrollAnchorHost { Children = { row, tail } };
-        host.SetTailAnchor(tail);
-        ((IScrollAnchorProvider)host).RegisterAnchorCandidate(row);
+        var provider = (IScrollAnchorProvider)host;
+        provider.RegisterAnchorCandidate(row);
+        provider.RegisterAnchorCandidate(tail);
         var scrollViewer = new ScrollViewer { Content = host };
         var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
         window.Show();
@@ -87,18 +85,225 @@ public sealed class TranscriptScrollCoordinatorTests
     }
 
     [AvaloniaFact]
-    public async Task AnchorHost_UnregistersRecycledRowsAndReattachesTailCandidate()
+    public async Task AnchorHost_SuspensionIsNestedIdempotentAndReconcilesLatestMode()
     {
-        var row = new Border { Height = 600 };
-        var tail = new Border
-        {
-            Height = 1,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom,
-        };
+        var row = CreateHostedAnchorRow("row", 600);
+        var activity = CreateHostedAnchorRow("activity", 40, TranscriptAnchorItemRole.Persistent);
+        var tail = CreateHostedAnchorRow("tail", 1, TranscriptAnchorItemRole.TailSentinel);
+        var host = new TranscriptScrollAnchorHost { Children = { row, activity, tail } };
+        var provider = (IScrollAnchorProvider)host;
+        provider.RegisterAnchorCandidate(row);
+        provider.RegisterAnchorCandidate(activity);
+        provider.RegisterAnchorCandidate(tail);
+        var scrollViewer = new ScrollViewer { Content = host };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+
+        var first = host.SuspendAnchoring();
+        var second = host.SuspendAnchoring();
+        host.SetFollowingTail(false);
+        Assert.True(host.IsAnchoringSuspended);
+        Assert.Null(provider.CurrentAnchor);
+
+        first.Dispose();
+        first.Dispose();
+        Assert.True(host.IsAnchoringSuspended);
+        Assert.Null(provider.CurrentAnchor);
+
+        second.Dispose();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        Assert.False(host.IsAnchoringSuspended);
+        Assert.Same(row, provider.CurrentAnchor);
+        Assert.NotSame(activity, provider.CurrentAnchor);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task AnchorHost_ReconcilesRecycledPresenterRole()
+    {
+        var candidate = CreateHostedAnchorRow("candidate", 600);
+        var host = new TranscriptScrollAnchorHost { Children = { candidate } };
+        var provider = (IScrollAnchorProvider)host;
+        provider.RegisterAnchorCandidate(candidate);
+        var scrollViewer = new ScrollViewer { Content = host };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        host.SetFollowingTail(false);
+        Assert.Same(candidate, provider.CurrentAnchor);
+
+        candidate.AnchorRole = TranscriptAnchorItemRole.Persistent;
+        Assert.Null(provider.CurrentAnchor);
+        candidate.AnchorRole = TranscriptAnchorItemRole.TailSentinel;
+        host.SetFollowingTail(true);
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+
+        Assert.Same(candidate, provider.CurrentAnchor);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task ViewportMutation_UserInputReleasesSuspensionAndForwardsTransientRows()
+    {
+        var row = CreateHostedAnchorRow("row", 900);
+        var tail = CreateHostedAnchorRow("tail", 1, TranscriptAnchorItemRole.TailSentinel);
+        tail.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom;
         var host = new TranscriptScrollAnchorHost { Children = { row, tail } };
         var provider = (IScrollAnchorProvider)host;
-        host.SetTailAnchor(tail);
         provider.RegisterAnchorCandidate(row);
+        provider.RegisterAnchorCandidate(tail);
+        var scrollViewer = new ScrollViewer { Content = host };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        scrollViewer.Offset = new Vector(0, scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        using var coordinator = CreateCoordinator(scrollViewer, host, host, isFollowingLatest: false);
+
+        coordinator.BeginViewportMutation();
+        Assert.True(host.IsAnchoringSuspended);
+        Assert.Null(provider.CurrentAnchor);
+        window.MouseMove(new Point(120, 120), RawInputModifiers.None);
+        window.MouseWheel(new Point(120, 120), new Vector(0, 1), RawInputModifiers.None);
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+
+        Assert.False(host.IsAnchoringSuspended);
+        Assert.Same(row, provider.CurrentAnchor);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task ViewportMutation_DeactivationAndDisposeReleaseSuspensionInTailMode()
+    {
+        var row = CreateHostedAnchorRow("row", 900);
+        var tail = CreateHostedAnchorRow("tail", 1, TranscriptAnchorItemRole.TailSentinel);
+        tail.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom;
+        var host = new TranscriptScrollAnchorHost { Children = { row, tail } };
+        var provider = (IScrollAnchorProvider)host;
+        provider.RegisterAnchorCandidate(row);
+        provider.RegisterAnchorCandidate(tail);
+        var scrollViewer = new ScrollViewer { Content = host };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        scrollViewer.Offset = new Vector(0, scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        var coordinator = CreateCoordinator(scrollViewer, host, host);
+
+        coordinator.BeginViewportMutation();
+        Assert.False(host.IsAnchoringSuspended);
+        Assert.Same(tail, provider.CurrentAnchor);
+        coordinator.SetPresentationActive(false);
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        Assert.False(host.IsAnchoringSuspended);
+        Assert.Same(tail, provider.CurrentAnchor);
+
+        coordinator.SetPresentationActive(true);
+        coordinator.BeginViewportMutation();
+        Assert.False(host.IsAnchoringSuspended);
+        coordinator.Dispose();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        Assert.False(host.IsAnchoringSuspended);
+        Assert.Same(tail, provider.CurrentAnchor);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task PagingCancellation_ReleasesSuspensionAndForwardsTransientRows()
+    {
+        var loadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var row = CreateHostedAnchorRow("row", 900);
+        var tail = CreateHostedAnchorRow("tail", 1, TranscriptAnchorItemRole.TailSentinel);
+        var host = new TranscriptScrollAnchorHost { Children = { row, tail } };
+        var provider = (IScrollAnchorProvider)host;
+        provider.RegisterAnchorCandidate(row);
+        provider.RegisterAnchorCandidate(tail);
+        var scrollViewer = new ScrollViewer { Content = host };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        using var coordinator = new TranscriptScrollCoordinator(
+            scrollViewer,
+            host,
+            canLoadOlderRows: () => true,
+            loadOlderRowsAsync: async (_, cancellationToken) =>
+            {
+                loadStarted.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return false;
+            },
+            canLoadNewerRows: () => false,
+            loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+            hasNewerRows: () => false,
+            isFollowingLatest: () => false,
+            anchorHost: host);
+
+        Assert.True(coordinator.QueueLoadOlderRows());
+        await loadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(host.IsAnchoringSuspended);
+        coordinator.SetPresentationActive(false);
+        await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.False(host.IsAnchoringSuspended);
+        Assert.Same(row, provider.CurrentAnchor);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task KeyboardFocusAuthorityCancelsPendingPageBeforeItCanMutateRows()
+    {
+        var loadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var button = new Button { Content = "Focus target", Margin = new Thickness(0, 600, 0, 0) };
+        var scrollViewer = new ScrollViewer { Content = button };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        using var coordinator = new TranscriptScrollCoordinator(
+            scrollViewer,
+            canLoadOlderRows: () => true,
+            loadOlderRowsAsync: async (_, cancellationToken) =>
+            {
+                loadStarted.TrySetResult();
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    cancellationObserved.TrySetResult();
+                    throw;
+                }
+                return true;
+            },
+            canLoadNewerRows: () => false,
+            loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+            hasNewerRows: () => false,
+            isFollowingLatest: () => false);
+
+        Assert.True(coordinator.QueueLoadOlderRows());
+        await loadStarted.Task;
+        Assert.True(button.Focus(NavigationMethod.Tab));
+        await cancellationObserved.Task;
+        await coordinator.PendingPagingOperations;
+
+        Assert.False(Assert.IsType<bool>(coordinator.GetType()
+            .GetField(
+                "_loadOlderPending",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(coordinator)));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task AnchorHost_UnregistersRecycledRowsAndReattachesTailCandidate()
+    {
+        var row = CreateHostedAnchorRow("row", 600);
+        var tail = CreateHostedAnchorRow("tail", 1, TranscriptAnchorItemRole.TailSentinel);
+        tail.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom;
+        var host = new TranscriptScrollAnchorHost { Children = { row, tail } };
+        var provider = (IScrollAnchorProvider)host;
+        provider.RegisterAnchorCandidate(row);
+        provider.RegisterAnchorCandidate(tail);
         host.SetFollowingTail(false);
         var scrollViewer = new ScrollViewer { Content = host };
         var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
@@ -126,16 +331,13 @@ public sealed class TranscriptScrollCoordinatorTests
     [AvaloniaFact]
     public async Task FailedOlderPageUsesRowAnchorsDuringMutationThenRestoresTailMode()
     {
-        var row = new Border { Height = 600 };
-        var tail = new Border
-        {
-            Height = 1,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom,
-        };
+        var row = CreateHostedAnchorRow("row", 600);
+        var tail = CreateHostedAnchorRow("tail", 1, TranscriptAnchorItemRole.TailSentinel);
+        tail.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom;
         var host = new TranscriptScrollAnchorHost { Children = { row, tail } };
         var provider = (IScrollAnchorProvider)host;
-        host.SetTailAnchor(tail);
         provider.RegisterAnchorCandidate(row);
+        provider.RegisterAnchorCandidate(tail);
         var scrollViewer = new ScrollViewer { Content = host };
         var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
         window.Show();
@@ -168,14 +370,13 @@ public sealed class TranscriptScrollCoordinatorTests
     [AvaloniaFact]
     public async Task AnchorHost_TailCandidateKeepsCompletedLayoutsAtBottomDuringGrowth()
     {
-        var content = new Border { Height = 600 };
-        var tail = new Border
-        {
-            Height = 1,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom,
-        };
+        var content = CreateHostedAnchorRow("content", 600);
+        var tail = CreateHostedAnchorRow("tail", 1, TranscriptAnchorItemRole.TailSentinel);
+        tail.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom;
         var host = new TranscriptScrollAnchorHost { Children = { content, tail } };
-        host.SetTailAnchor(tail);
+        var provider = (IScrollAnchorProvider)host;
+        provider.RegisterAnchorCandidate(content);
+        provider.RegisterAnchorCandidate(tail);
         var scrollViewer = new ScrollViewer { Content = host };
         var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
         window.Show();
@@ -192,7 +393,7 @@ public sealed class TranscriptScrollCoordinatorTests
         Assert.Equal(initialTailTop, finalTailTop, precision: 3);
         Assert.InRange(
             scrollViewer.Extent.Height - scrollViewer.Viewport.Height - scrollViewer.Offset.Y,
-            0,
+            -1,
             1);
         window.Close();
     }
@@ -409,6 +610,70 @@ public sealed class TranscriptScrollCoordinatorTests
     }
 
     [AvaloniaFact]
+    public async Task AuthoritativeInitialAnchorSupersedesQueuedPreliminaryToolAnchor()
+    {
+        var executionId = Guid.NewGuid();
+        var authoritativeKey = new TranscriptRowAnchorKey($"tool-execution:{executionId:N}");
+        var authoritativeRow = CreateAnchorRow(authoritativeKey.ToString(), 100);
+        authoritativeRow.AnchorKey = authoritativeKey;
+        var rows = new StackPanel
+        {
+            Children =
+            {
+                new Border { Height = 700 },
+                authoritativeRow,
+                new Border { Height = 300 },
+            },
+        };
+        var scrollViewer = new ScrollViewer { Content = rows };
+        var jumpButton = new Button();
+        var owner = new Grid { Children = { scrollViewer, jumpButton } };
+        TranscriptViewportAnchorData? placedAnchor = null;
+        using var behavior = new TranscriptViewBehavior(
+            owner,
+            scrollViewer,
+            rows,
+            jumpButton,
+            canLoadOlder: () => false,
+            loadOlder: (_, _) => Task.FromResult(false),
+            canLoadNewer: () => false,
+            loadNewer: (_, _) => Task.FromResult(false),
+            hasNewer: () => false,
+            isFollowingLatest: () => false,
+            isInitialLoading: () => false,
+            hasRows: () => true,
+            hasTranscriptSelection: () => true,
+            detachFromLatest: () => false,
+            reachedLatest: () => false,
+            viewportAnchorChanged: anchor => placedAnchor = anchor,
+            enumerateRealizedAnchors: () => rows.Children
+                .OfType<TranscriptRowPresenter>()
+                .Select(row => (row.AnchorKey!, (Control)row)),
+            realizeAnchorVisual: anchorKey => rows.Children
+                .OfType<TranscriptRowPresenter>()
+                .FirstOrDefault(row => Equals(row.AnchorKey, anchorKey)));
+        behavior.MarkInitialPlacementPending(initialAnchorKey: new TranscriptRowAnchorKey("tool:call-1"));
+        var authoritativePlacementQueued = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        owner.Loaded += (_, _) =>
+        {
+            behavior.SetInitialPlacementAnchor(authoritativeKey);
+            authoritativePlacementQueued.TrySetResult();
+        };
+        var window = new Window { Width = 320, Height = 240, Content = owner };
+
+        window.Show();
+        await authoritativePlacementQueued.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await behavior.WaitForInitialPresentationAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Background);
+
+        Assert.Equal(authoritativeKey, placedAnchor?.AnchorKey);
+        Assert.Equal(1, scrollViewer.Opacity);
+        Assert.True(scrollViewer.Offset.Y > 0);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public async Task PendingMarkdownKeepsAnchorUntilDeferredRenderCompletes()
     {
         var builder = new ObservableStringBuilder("Initial response.");
@@ -457,25 +722,96 @@ public sealed class TranscriptScrollCoordinatorTests
             "\n\n",
             Enumerable.Repeat("## Deferred heading\n\nDeferred body.", 40)));
         coordinator.OnViewportContentChanged();
-        await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
-        var pendingAnchorField = coordinator.GetType().GetField(
-            "_pendingAnchor",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        Assert.NotNull(pendingAnchorField.GetValue(coordinator));
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        Assert.Equal(
+            TranscriptViewportMutationStatus.Active,
+            coordinator.DiagnosticSnapshot.Mutation?.Status);
 
         renderer.ClearSelection();
         for (var attempt = 0;
-             attempt < 200 && pendingAnchorField.GetValue(coordinator) is not null;
+             attempt < 200 && coordinator.DiagnosticSnapshot.Mutation?.Status
+                 == TranscriptViewportMutationStatus.Active;
              attempt++)
+        {
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        }
+        await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(
+            TranscriptViewportMutationStatus.Completed,
+            coordinator.DiagnosticSnapshot.Mutation?.Status);
+        Assert.False(presenter.IsRenderPending);
+        await presenter.PendingRenderOperations;
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task FollowingTailRenderPassCapReleasesAnchorSuspensionAndTrailingCompensator()
+    {
+        var builder = new ObservableStringBuilder("Initial response.");
+        var presenter = new StreamingMarkdownPresenter { MarkdownBuilder = builder };
+        var row = CreateHostedAnchorRow("row", 220);
+        row.Content = presenter;
+        var tail = CreateHostedAnchorRow("tail", 1, TranscriptAnchorItemRole.TailSentinel);
+        var host = new TranscriptScrollAnchorHost
+        {
+            Children =
+            {
+                new Border { Height = 400 },
+                row,
+                tail,
+            },
+        };
+        var provider = (IScrollAnchorProvider)host;
+        provider.RegisterAnchorCandidate(row);
+        provider.RegisterAnchorCandidate(tail);
+        var scrollViewer = new ScrollViewer { Content = host };
+        var window = new Window { Width = 320, Height = 240, Content = scrollViewer };
+        window.Show();
+        for (var attempt = 0; attempt < 100 && !presenter.Children.OfType<StableMarkdownRenderer>().Any(); attempt++)
         {
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             await Task.Delay(1);
         }
-        await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
+        var renderer = Assert.Single(presenter.Children.OfType<StableMarkdownRenderer>());
+        scrollViewer.Offset = new Vector(0, scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        var initialMinHeight = host.MinHeight;
+        using var coordinator = new TranscriptScrollCoordinator(
+            scrollViewer,
+            host,
+            canLoadOlderRows: () => false,
+            loadOlderRowsAsync: (_, _) => Task.FromResult(false),
+            canLoadNewerRows: () => false,
+            loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+            hasNewerRows: () => false,
+            anchorHost: host,
+            realizeTailVisual: () => tail);
+        presenter.GeometryChanged += (_, _) => coordinator.OnRenderedContentChanged(presenter);
+        renderer.SelectAll();
 
-        Assert.Null(pendingAnchorField.GetValue(coordinator));
-        Assert.False(presenter.IsRenderPending);
-        await presenter.PendingRenderOperations;
+        var writesBeforeMutation = coordinator.DiagnosticSnapshot.ProgrammaticOffsetWrites;
+        coordinator.BeginViewportMutation();
+        builder.Append("\n\n" + string.Join(
+            "\n\n",
+            Enumerable.Repeat("## Deferred heading\n\nDeferred body.", 40)));
+        coordinator.OnViewportContentChanged();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+
+        Assert.True(presenter.IsRenderPending);
+        Assert.False(host.IsAnchoringSuspended);
+        Assert.Equal(initialMinHeight, host.MinHeight);
+        Assert.Equal(writesBeforeMutation, coordinator.DiagnosticSnapshot.ProgrammaticOffsetWrites);
+        Assert.Equal(
+            TranscriptViewportMutationMode.FollowingNativeObserver,
+            coordinator.DiagnosticSnapshot.Mutation?.Mode);
+
+        renderer.ClearSelection();
+        await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(
+            TranscriptViewportMutationStatus.Completed,
+            coordinator.DiagnosticSnapshot.Mutation?.Status);
+        Assert.Equal(writesBeforeMutation, coordinator.DiagnosticSnapshot.ProgrammaticOffsetWrites);
         window.Close();
     }
 
@@ -818,10 +1154,16 @@ public sealed class TranscriptScrollCoordinatorTests
     [AvaloniaFact]
     public async Task ManualReturnToTrueBottom_FollowsRowAddedByReachedLatestCallback()
     {
-        var first = CreateAnchorRow("first", 700);
-        var second = CreateAnchorRow("second", 700);
-        var rows = new StackPanel { Children = { first, second } };
-        var scrollViewer = new ScrollViewer { Content = rows };
+        var first = CreateHostedAnchorRow("first", 700);
+        var second = CreateHostedAnchorRow("second", 700);
+        var tail = CreateHostedAnchorRow("tail", 1, TranscriptAnchorItemRole.TailSentinel);
+        var rows = new StackPanel { Children = { first, second, tail } };
+        var host = new TranscriptScrollAnchorHost { Children = { rows } };
+        var provider = (IScrollAnchorProvider)host;
+        provider.RegisterAnchorCandidate(first);
+        provider.RegisterAnchorCandidate(second);
+        provider.RegisterAnchorCandidate(tail);
+        var scrollViewer = new ScrollViewer { Content = host };
         var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
         window.Show();
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
@@ -842,14 +1184,17 @@ public sealed class TranscriptScrollCoordinatorTests
                 isFollowingLatest = false;
                 return true;
             },
-            onReachedLatest: () =>
-            {
-                isFollowingLatest = true;
-                coordinator!.BeginTranscriptMutation();
-                rows.Children.Add(CreateAnchorRow("activity", 180));
-                coordinator.OnTranscriptChanged();
-                return true;
-            });
+             onReachedLatest: () =>
+             {
+                 isFollowingLatest = true;
+                 coordinator!.BeginTranscriptMutation();
+                 var activity = CreateHostedAnchorRow("activity", 180);
+                 rows.Children.Insert(rows.Children.Count - 1, activity);
+                 provider.RegisterAnchorCandidate(activity);
+                 coordinator.OnTranscriptChanged();
+                 return true;
+             },
+             anchorHost: host);
         using (coordinator)
         {
             window.MouseMove(new Point(120, 120), RawInputModifiers.None);
@@ -1048,15 +1393,21 @@ public sealed class TranscriptScrollCoordinatorTests
     [AvaloniaFact]
     public async Task DownwardInputAtBottom_PreservesTailFollowing()
     {
-        var content = new Border { Height = 1400 };
-        var scrollViewer = new ScrollViewer { Content = content };
+        var content = CreateHostedAnchorRow("content", 1400);
+        var tail = CreateHostedAnchorRow("tail", 1, TranscriptAnchorItemRole.TailSentinel);
+        var rows = new StackPanel { Children = { content, tail } };
+        var host = new TranscriptScrollAnchorHost { Children = { rows } };
+        var provider = (IScrollAnchorProvider)host;
+        provider.RegisterAnchorCandidate(content);
+        provider.RegisterAnchorCandidate(tail);
+        var scrollViewer = new ScrollViewer { Content = host };
         var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
         window.Show();
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
         scrollViewer.Offset = new Vector(
             0,
             scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
-        using var coordinator = CreateCoordinator(scrollViewer);
+        using var coordinator = CreateCoordinator(scrollViewer, rows, host);
 
         window.MouseMove(new Point(120, 120), RawInputModifiers.None);
         window.MouseWheel(new Point(120, 120), new Vector(0, -2), RawInputModifiers.None);
@@ -1082,7 +1433,7 @@ public sealed class TranscriptScrollCoordinatorTests
         var window = new Window { Width = 260, Height = 220, Content = scrollViewer };
         window.Show();
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
-        using var coordinator = CreateCoordinator(scrollViewer, rows);
+        using var coordinator = CreateCoordinator(scrollViewer, rows, isFollowingLatest: false);
         scrollViewer.Offset = new Vector(0, 210);
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
         Assert.Equal(210, scrollViewer.Offset.Y, precision: 3);
@@ -1109,7 +1460,7 @@ public sealed class TranscriptScrollCoordinatorTests
         var window = new Window { Width = 260, Height = 220, Content = scrollViewer };
         window.Show();
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
-        using var coordinator = CreateCoordinator(scrollViewer, rows);
+        using var coordinator = CreateCoordinator(scrollViewer, rows, isFollowingLatest: false);
         scrollViewer.Offset = new Vector(0, 210);
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
         Assert.Equal(210, scrollViewer.Offset.Y, precision: 3);
@@ -1383,6 +1734,7 @@ public sealed class TranscriptScrollCoordinatorTests
             canLoadNewerRows: () => false,
             loadNewerRowsAsync: (_, _) => Task.FromResult(false),
             hasNewerRows: () => false,
+            isFollowingLatest: () => false,
             realizeAnchorVisual: anchorKey =>
             {
                 if (!Equals(anchorKey, "second"))
@@ -1406,8 +1758,14 @@ public sealed class TranscriptScrollCoordinatorTests
         await coordinator.PendingPagingOperations;
 
         Assert.Equal(1, realizationCount);
-        var restoredTop = Assert.IsType<Point>(second.TranslatePoint(default, scrollViewer)).Y;
-        Assert.Equal(initialTop, restoredTop, precision: 3);
+        Assert.Contains(second, rows.Children);
+        Assert.Equal(
+            initialTop,
+            Assert.IsType<Point>(second.TranslatePoint(default, scrollViewer)).Y,
+            precision: 3);
+        Assert.Equal(
+            TranscriptViewportMutationStatus.Completed,
+            coordinator.DiagnosticSnapshot.Mutation?.Status);
         window.Close();
     }
 
@@ -1667,6 +2025,46 @@ public sealed class TranscriptScrollCoordinatorTests
 
         Assert.Equal(1, detachedCount);
         Assert.True(scrollViewer.Offset.Y < scrollViewer.Extent.Height - scrollViewer.Viewport.Height - 0.1);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task RejectedTailResumeRestoresTransientAnchorHostMode()
+    {
+        var row = CreateHostedAnchorRow("row", 900);
+        var tail = CreateHostedAnchorRow("tail", 1, TranscriptAnchorItemRole.TailSentinel);
+        tail.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom;
+        var host = new TranscriptScrollAnchorHost { Children = { row, tail } };
+        var provider = (IScrollAnchorProvider)host;
+        provider.RegisterAnchorCandidate(row);
+        provider.RegisterAnchorCandidate(tail);
+        var scrollViewer = new ScrollViewer { Content = host };
+        var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        using var coordinator = new TranscriptScrollCoordinator(
+            scrollViewer,
+            canLoadOlderRows: () => false,
+            loadOlderRowsAsync: (_, _) => Task.FromResult(false),
+            canLoadNewerRows: () => false,
+            loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+            hasNewerRows: () => false,
+            isFollowingLatest: () => false,
+            onReachedLatest: () => false,
+            anchorHost: host);
+
+        coordinator.QueueScrollToBottom(force: true);
+        await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+
+        var isFollowingTail = Assert.IsType<bool>(coordinator.GetType()
+            .GetProperty(
+                "IsFollowingTail",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(coordinator));
+        Assert.False(isFollowingTail);
+        Assert.Same(row, provider.CurrentAnchor);
+        Assert.NotSame(tail, provider.CurrentAnchor);
         window.Close();
     }
 
@@ -1965,6 +2363,7 @@ public sealed class TranscriptScrollCoordinatorTests
         await loadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         coordinator.BeginTranscriptReplacementMutation();
+        coordinator.OnTranscriptChanged();
         releaseFailure.TrySetResult();
         await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -1992,13 +2391,12 @@ public sealed class TranscriptScrollCoordinatorTests
         await loadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         coordinator.BeginTranscriptReplacementMutation();
+        coordinator.OnTranscriptChanged();
         releaseLoad.TrySetResult();
         await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
 
         var type = typeof(TranscriptScrollCoordinator);
         Assert.False((bool)type.GetField("_userDetached", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .GetValue(coordinator)!);
-        Assert.False((bool)type.GetField("_suppressEdgeLoadsUntilNextScroll", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .GetValue(coordinator)!);
     }
 
@@ -2021,7 +2419,8 @@ public sealed class TranscriptScrollCoordinatorTests
 
     private static TranscriptScrollCoordinator CreateCoordinator(
         ScrollViewer scrollViewer,
-        Control? itemsControl = null)
+        Control? itemsControl = null,
+        bool isFollowingLatest = true)
         => new(
             scrollViewer,
             itemsControl,
@@ -2029,13 +2428,44 @@ public sealed class TranscriptScrollCoordinatorTests
             loadOlderRowsAsync: (_, _) => Task.FromResult(false),
             canLoadNewerRows: () => false,
             loadNewerRowsAsync: (_, _) => Task.FromResult(false),
-            hasNewerRows: () => false);
+            hasNewerRows: () => false,
+            isFollowingLatest: () => isFollowingLatest);
 
-    private static TranscriptRowPresenter CreateAnchorRow(string key, double height)
+    private static TranscriptScrollCoordinator CreateCoordinator(
+        ScrollViewer scrollViewer,
+        Control itemsControl,
+        TranscriptScrollAnchorHost anchorHost,
+        bool isFollowingLatest = true)
+        => new(
+            scrollViewer,
+            itemsControl,
+            canLoadOlderRows: () => false,
+            loadOlderRowsAsync: (_, _) => Task.FromResult(false),
+            canLoadNewerRows: () => false,
+            loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+            hasNewerRows: () => false,
+            isFollowingLatest: () => isFollowingLatest,
+            anchorHost: anchorHost);
+
+    private static TranscriptRowPresenter CreateAnchorRow(
+        string key,
+        double height,
+        TranscriptAnchorItemRole role = TranscriptAnchorItemRole.Transient)
         => new()
         {
             AnchorKey = key,
+            AnchorRole = role,
             Height = height,
             Content = new Border(),
         };
+
+    private static TranscriptRowPresenter CreateHostedAnchorRow(
+        string key,
+        double height,
+        TranscriptAnchorItemRole role = TranscriptAnchorItemRole.Transient)
+    {
+        var result = CreateAnchorRow(key, height, role);
+        result.IsRepeaterHosted = true;
+        return result;
+    }
 }

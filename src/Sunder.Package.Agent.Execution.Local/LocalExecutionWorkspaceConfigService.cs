@@ -3,12 +3,28 @@ using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Storage;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
-public sealed class LocalExecutionWorkspaceConfigService(IPackageContext packageContext) : IAgentWorkspacePathMigrationContributor
+public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMigrationContributor
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private readonly IPackageContext _packageContext;
+    private readonly LocalPackageStorageMigration _storageMigration;
+
+    public LocalExecutionWorkspaceConfigService(IPackageContext packageContext)
+        : this(packageContext, new LocalPackageStorageMigration(packageContext))
+    {
+    }
+
+    internal LocalExecutionWorkspaceConfigService(
+        IPackageContext packageContext,
+        LocalPackageStorageMigration storageMigration)
+    {
+        _packageContext = packageContext;
+        _storageMigration = storageMigration;
+    }
 
     public string ContributorId => "sunder.package.agent.execution.local.workspace-path-migration";
 
@@ -16,7 +32,8 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
         string bindingId,
         CancellationToken cancellationToken = default)
     {
-        var json = await packageContext.Storage.State.GetValueAsync(BuildKey(bindingId), cancellationToken);
+        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
+        var json = await _packageContext.Storage.State.GetValueAsync(BuildKey(bindingId), cancellationToken);
         if (string.IsNullOrWhiteSpace(json))
         {
             return new LocalExecutionWorkspaceConfig(null, []);
@@ -33,16 +50,17 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
         }
     }
 
-    public Task SaveConfigAsync(
+    public async Task SaveConfigAsync(
         string bindingId,
         LocalExecutionWorkspaceConfig config,
         CancellationToken cancellationToken = default)
     {
+        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var normalized = Normalize(config);
-        return packageContext.Storage.State.SetValueAsync(
+        await _packageContext.Storage.State.SetValueAsync(
             BuildKey(bindingId),
             JsonSerializer.Serialize(normalized, JsonOptions),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static LocalExecutionWorkspaceConfig Normalize(LocalExecutionWorkspaceConfig config)
@@ -65,7 +83,8 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
         AgentWorkspacePathMigrationContext context,
         CancellationToken cancellationToken = default)
     {
-        var json = await packageContext.Storage.State.GetValueAsync(BuildKey(context.Binding.BindingId), cancellationToken);
+        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
+        var json = await _packageContext.Storage.State.GetValueAsync(BuildKey(context.Binding.BindingId), cancellationToken);
         if (string.IsNullOrWhiteSpace(json))
         {
             return [];
@@ -145,7 +164,8 @@ public sealed class LocalExecutionWorkspaceConfigService(IPackageContext package
             ? StringComparer.OrdinalIgnoreCase
             : StringComparer.Ordinal;
 
-    private static string BuildKey(string bindingId) => $"workspace-bindings:{bindingId}:config";
+    internal static string BuildKey(string bindingId)
+        => PackageStorageKeyFactory.Create("workspace-bindings.config", 2, bindingId);
 
     private static string? TryGetString(JsonElement element, string propertyName)
         => element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String

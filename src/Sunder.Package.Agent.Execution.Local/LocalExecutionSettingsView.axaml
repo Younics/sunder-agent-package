@@ -14,13 +14,57 @@
                    TextWrapping="Wrap" />
       </StackPanel>
 
-      <Border Padding="14">
+      <Border Padding="14"
+              IsVisible="{Binding IsLoading}">
+        <TextBlock Text="Loading local execution settings..."
+                   TextWrapping="Wrap" />
+      </Border>
+
+      <Border Padding="14"
+              IsVisible="{Binding IsError}">
         <StackPanel Spacing="8">
-          <TextBlock Text="Shells"
+          <TextBlock Text="Local execution settings could not be loaded."
                      FontWeight="SemiBold" />
-          <Button Content="Add Shell"
+          <TextBlock Text="{Binding StatusText}"
+                     TextWrapping="Wrap" />
+          <Button Content="Retry"
                   HorizontalAlignment="Left"
-                  Command="{Binding AddShellCommand}" />
+                  Command="{Binding RetryInitializationCommand}" />
+        </StackPanel>
+      </Border>
+
+      <Border Padding="14"
+              IsVisible="{Binding IsReady}"
+              IsEnabled="{Binding CanMutate}">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Detected Shells"
+                     FontWeight="SemiBold" />
+          <TextBlock Text="Detected shells are read-only and refreshed from this host."
+                     TextWrapping="Wrap" />
+          <ListBox ItemsSource="{Binding DetectedShells}"
+                   SelectedItem="{Binding SelectedShell, Mode=TwoWay}"
+                   MinHeight="80">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:LocalShellRowViewModel">
+                <Grid ColumnDefinitions="2*,3*,Auto"
+                      ColumnSpacing="10"
+                      Margin="0,4">
+                  <TextBlock Text="{Binding DisplayName}" />
+                  <TextBlock Grid.Column="1"
+                             Text="{Binding ExecutablePath}"
+                             TextWrapping="Wrap" />
+                  <TextBlock Grid.Column="2"
+                             Text="{Binding SelectedSyntax.DisplayName}" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TextBlock Text="Custom Shells"
+                     FontWeight="SemiBold"
+                     Margin="0,8,0,0" />
+          <Button Content="Add Shell"
+                   HorizontalAlignment="Left"
+                   Command="{Binding AddShellCommand}" />
           <Grid ColumnDefinitions="2*,3*,Auto,Auto"
                 ColumnSpacing="10"
                 Margin="0,4,0,0">
@@ -36,7 +80,7 @@
                        Text="Path"
                        FontWeight="SemiBold" />
           </Grid>
-          <ListBox ItemsSource="{Binding Shells}"
+          <ListBox ItemsSource="{Binding CustomShells}"
                    SelectedItem="{Binding SelectedShell, Mode=TwoWay}"
                    MinHeight="160">
             <ListBox.ItemTemplate>
@@ -81,7 +125,9 @@
         </StackPanel>
       </Border>
 
-      <Border Padding="14">
+      <Border Padding="14"
+              IsVisible="{Binding IsReady}"
+              IsEnabled="{Binding CanMutate}">
         <StackPanel Spacing="8">
           <TextBlock Text="Execution"
                      FontWeight="SemiBold" />

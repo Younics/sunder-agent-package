@@ -20,7 +20,13 @@ internal sealed record AgentDurableRunRecord(
     string? ContinuationToken = null,
     long ProviderCycleCount = 0,
     long ToolCallCount = 0,
-    long SubmittedContextTokenCount = 0)
+    long SubmittedContextTokenCount = 0,
+    Guid? UserTurnId = null,
+    string? WorkspaceId = null,
+    AgentRunAdmissionKind? AdmissionKind = null,
+    Guid? RollbackAnchorTurnId = null,
+    string? RequestFingerprint = null,
+    DateTimeOffset? ExecutionStartedAtUtc = null)
 {
     public AgentRunBudgetState BudgetState
         => new(ProviderCycleCount, ToolCallCount, SubmittedContextTokenCount);
@@ -66,6 +72,8 @@ internal sealed record AgentRunTransitionResult(
     AgentRunCheckpointRecord Checkpoint)
 {
     public IReadOnlyList<AgentCompletedStreamingTurn> CompletedStreamingTurns { get; init; } = [];
+
+    public IReadOnlyList<AgentTurnRecord> ToolResultTurns { get; init; } = [];
 }
 
 internal sealed record AgentRunStopPersistenceResult(
@@ -78,17 +86,48 @@ internal readonly record struct AgentCompletedStreamingTurn(
 
 internal sealed record AgentCheckpointPersistenceResult(
     AgentRunCheckpointRecord Checkpoint,
-    IReadOnlyList<AgentCompletedStreamingTurn> CompletedStreamingTurns);
+    IReadOnlyList<AgentCompletedStreamingTurn> CompletedStreamingTurns)
+{
+    public IReadOnlyList<AgentTurnRecord> ToolResultTurns { get; init; } = [];
+}
 
 internal sealed record AgentRunStartPersistenceResult(
     AgentRunTransitionResult Transition,
     AgentTurnRecord UserTurn,
     AgentTranscriptRollbackResult? Rollback);
 
-internal sealed class AgentRunStartCleanupException(IReadOnlyList<Exception> failures)
-    : AggregateException(
-        "Run started, but one or more external rollback cleanup steps failed.",
-        failures);
+internal enum AgentRunAdmissionKind
+{
+    Normal = 0,
+    Rollback = 1,
+}
+
+internal sealed record AgentUserTurnAdmissionRequest(
+    Guid UserTurnId,
+    Guid SessionId,
+    string ProfileId,
+    string WorkspaceId,
+    string UserMessage,
+    AgentRunAdmissionKind AdmissionKind,
+    Guid? RollbackAnchorTurnId,
+    string RequestFingerprint,
+    IReadOnlyList<AgentStoredAttachment> Attachments);
+
+internal sealed record AgentUserTurnAdmissionResult(
+    AgentDurableRunRecord Run,
+    AgentTurnRecord? UserTurn,
+    AgentRunCheckpointRecord Checkpoint,
+    AgentTranscriptRollbackResult? Rollback,
+    bool IsExisting)
+{
+    public IReadOnlyList<AgentCompletedStreamingTurn> CompletedStreamingTurns { get; init; } = [];
+
+    public IReadOnlyList<AgentTurnRecord> ToolResultTurns { get; init; } = [];
+}
+
+internal sealed class AgentUserTurnConflictException(Guid userTurnId)
+    : InvalidOperationException(
+        $"User turn '{userTurnId}' was already admitted with a different request fingerprint.");
 
 internal sealed class AgentRunTranscriptWriteRejectedException()
     : InvalidOperationException("The durable run changed before its transcript mutation could be committed.");

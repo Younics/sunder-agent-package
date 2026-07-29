@@ -4,6 +4,32 @@ namespace Sunder.Package.Agent.Shared.PackageViews;
 
 internal sealed partial class TranscriptScrollCoordinator
 {
+    public void BeginInitialPlacement(bool followTail = true)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        InvalidatePendingScrollOperations();
+        _anchorHost?.ReleaseTrailingCompensator();
+        if (followTail)
+        {
+            PrepareToFollowTail();
+        }
+        else
+        {
+            _userDetached = true;
+            _anchorHost?.SetFollowingTail(false);
+        }
+        _lastUserScrollDirection = UserScrollDirection.None;
+        _pendingUserScrollDirection = UserScrollDirection.None;
+        _userScrollPending = false;
+        _isOlderEdgeArmed = true;
+        _isNewerEdgeArmed = true;
+        UpdateJumpToLatestVisibility();
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -11,6 +37,10 @@ internal sealed partial class TranscriptScrollCoordinator
             return;
         }
 
+        if (_activeViewportMutation is { } activeMutation)
+        {
+            TerminalizeViewportMutation(activeMutation, TranscriptViewportMutationStatus.Disposed);
+        }
         _disposed = true;
         _lifetimeCancellation.Cancel();
         _presentationPagingCancellation.Cancel();
@@ -24,7 +54,11 @@ internal sealed partial class TranscriptScrollCoordinator
         _scrollViewer.RemoveHandler(InputElement.GotFocusEvent, OnDescendantGotFocus);
         _scrollViewer.RemoveHandler(InputElement.ScrollGestureEvent, OnUserScrollGesture);
         _scrollViewer.RemoveHandler(InputElement.ScrollGestureEndedEvent, OnUserScrollGestureEnded);
-        _pendingAnchor = null;
+        _bottomPlacementLockActive = false;
+        ReleaseSettledExactAnchorLease();
+        _anchorHost?.ReleaseTrailingCompensator();
+        _anchorHost?.SetFollowingTail(IsFollowingTail);
+        ReleaseManualAnchoringSuspensions();
         _pendingSettledScrollCompleted = null;
         _pendingBottomPlacementReleaseCompleted = null;
         _setViewportAnchor?.Invoke(null);

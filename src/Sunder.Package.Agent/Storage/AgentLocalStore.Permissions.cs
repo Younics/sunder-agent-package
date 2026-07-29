@@ -1,12 +1,13 @@
 using Microsoft.Data.Sqlite;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
+using Sunder.Package.Agent.Services;
 
 namespace Sunder.Package.Agent.Storage;
 
 public sealed partial class AgentLocalStore
 {
-    private const string PendingPermissionColumns = "RequestId, SessionId, RunId, RunRevision, ProfileId, UserTurnId, UserMessage, CallId, ActionId, BoundaryId, Summary, ToolId, ArgumentsJson, Command, Path, WorkspaceId, BindingId, ResourceDisplayName, ResourceReference, IsMutation, CreatedAtUtc, ParentSessionId, RootSessionId, Status, ClaimToken, ClaimedAtUtc, DecidedAtUtc, DecisionSummary, ExecutionFingerprint, ContinuationToken, ClaimLeaseExpiresAtUtc, ContinuationConsumedAtUtc, ExecutionStartedAtUtc, ExecutionSnapshotJson";
+    private const string PendingPermissionColumns = "RequestId, SessionId, RunId, RunRevision, ProfileId, UserTurnId, UserMessage, CallId, ActionId, BoundaryId, Summary, ToolId, ArgumentsJson, Command, Path, WorkspaceId, BindingId, ResourceDisplayName, ResourceReference, IsMutation, CreatedAtUtc, ParentSessionId, RootSessionId, Status, ClaimToken, ClaimedAtUtc, DecidedAtUtc, DecisionSummary, ExecutionFingerprint, ContinuationToken, ClaimLeaseExpiresAtUtc, ContinuationConsumedAtUtc, ExecutionStartedAtUtc, ExecutionSnapshotJson, ToolExecutionId, ResourceClaimSetVersion, ResourceClaimsJson";
 
     private static readonly TimeSpan PermissionClaimLeaseDuration = TimeSpan.FromMinutes(5);
 
@@ -135,13 +136,22 @@ public sealed partial class AgentLocalStore
 
     public AgentPendingPermissionRequestRecord SavePendingPermissionRequest(AgentPendingPermissionRequestRecord record)
     {
+        record = NormalizeResourceClaims(record);
         using var connection = CreateConnection();
         connection.Open();
 
+        if (record.ToolExecutionId is { } toolExecutionId
+            && !MatchesPreparedToolExecution(
+                record,
+                GetToolExecution(connection, transaction: null, toolExecutionId)))
+        {
+            throw new InvalidOperationException("The permission request does not match its prepared tool execution.");
+        }
+
         using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT OR IGNORE INTO AgentPendingPermissionRequests (RequestId, SessionId, RunId, RunRevision, ProfileId, UserTurnId, UserMessage, CallId, ActionId, BoundaryId, Summary, ToolId, ArgumentsJson, Command, Path, WorkspaceId, BindingId, ResourceDisplayName, ResourceReference, IsMutation, CreatedAtUtc, ParentSessionId, RootSessionId, Status, ClaimToken, ClaimedAtUtc, DecidedAtUtc, DecisionSummary, ExecutionFingerprint, ContinuationToken, ClaimLeaseExpiresAtUtc, ContinuationConsumedAtUtc, ExecutionStartedAtUtc, ExecutionSnapshotJson)
-            VALUES ($requestId, $sessionId, $runId, $runRevision, $profileId, $userTurnId, $userMessage, $callId, $actionId, $boundaryId, $summary, $toolId, $argumentsJson, $command, $path, $workspaceId, $bindingId, $resourceDisplayName, $resourceReference, $isMutation, $createdAtUtc, $parentSessionId, $rootSessionId, $status, $claimToken, $claimedAtUtc, $decidedAtUtc, $decisionSummary, $executionFingerprint, $continuationToken, $claimLeaseExpiresAtUtc, $continuationConsumedAtUtc, $executionStartedAtUtc, $executionSnapshotJson);
+            INSERT OR IGNORE INTO AgentPendingPermissionRequests (RequestId, SessionId, RunId, RunRevision, ProfileId, UserTurnId, UserMessage, CallId, ActionId, BoundaryId, Summary, ToolId, ArgumentsJson, Command, Path, WorkspaceId, BindingId, ResourceDisplayName, ResourceReference, IsMutation, CreatedAtUtc, ParentSessionId, RootSessionId, Status, ClaimToken, ClaimedAtUtc, DecidedAtUtc, DecisionSummary, ExecutionFingerprint, ContinuationToken, ClaimLeaseExpiresAtUtc, ContinuationConsumedAtUtc, ExecutionStartedAtUtc, ExecutionSnapshotJson, ToolExecutionId, ResourceClaimSetVersion, ResourceClaimsJson)
+            VALUES ($requestId, $sessionId, $runId, $runRevision, $profileId, $userTurnId, $userMessage, $callId, $actionId, $boundaryId, $summary, $toolId, $argumentsJson, $command, $path, $workspaceId, $bindingId, $resourceDisplayName, $resourceReference, $isMutation, $createdAtUtc, $parentSessionId, $rootSessionId, $status, $claimToken, $claimedAtUtc, $decidedAtUtc, $decisionSummary, $executionFingerprint, $continuationToken, $claimLeaseExpiresAtUtc, $continuationConsumedAtUtc, $executionStartedAtUtc, $executionSnapshotJson, $toolExecutionId, $resourceClaimSetVersion, $resourceClaimsJson);
             """;
         command.Parameters.AddWithValue("$requestId", record.RequestId);
         command.Parameters.AddWithValue("$sessionId", record.SessionId.ToString());
@@ -177,6 +187,9 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$continuationConsumedAtUtc", record.ContinuationConsumedAtUtc?.ToString("O") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$executionStartedAtUtc", record.ExecutionStartedAtUtc?.ToString("O") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$executionSnapshotJson", record.ExecutionSnapshotJson);
+        command.Parameters.AddWithValue("$toolExecutionId", record.ToolExecutionId?.ToString() ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$resourceClaimSetVersion", record.ResourceClaimSetVersion);
+        command.Parameters.AddWithValue("$resourceClaimsJson", SerializeResourceClaims(record.ResourceClaims));
         if (command.ExecuteNonQuery() != 0)
         {
             return record;
@@ -198,9 +211,21 @@ public sealed partial class AgentLocalStore
         AgentPendingPermissionRequestRecord record,
         long expectedEpoch)
     {
+        record = NormalizeResourceClaims(record);
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
+
+        if (record.ToolExecutionId is { } toolExecutionId)
+        {
+            var execution = GetToolExecution(connection, transaction, toolExecutionId);
+            if (!MatchesPreparedToolExecution(record, execution))
+            {
+                transaction.Rollback();
+                throw new InvalidOperationException("The permission request does not match its prepared tool execution.");
+            }
+        }
 
         var continuationToken = Guid.NewGuid().ToString("N");
         var suspension = new AgentPermissionRunSuspension(
@@ -232,7 +257,7 @@ public sealed partial class AgentLocalStore
                 CreatedAtUtc, ParentSessionId, RootSessionId, Status, ClaimToken, ClaimedAtUtc,
                 DecidedAtUtc, DecisionSummary, ExecutionFingerprint, ContinuationToken,
                 ClaimLeaseExpiresAtUtc, ContinuationConsumedAtUtc, ExecutionStartedAtUtc,
-                ExecutionSnapshotJson)
+                ExecutionSnapshotJson, ToolExecutionId, ResourceClaimSetVersion, ResourceClaimsJson)
             VALUES (
                 $requestId, $sessionId, $runId, $runRevision, $profileId, $userTurnId,
                 $userMessage, $callId, $actionId, $boundaryId, $summary, $toolId,
@@ -240,7 +265,7 @@ public sealed partial class AgentLocalStore
                 $resourceDisplayName, $resourceReference, $isMutation, $createdAtUtc,
                 $parentSessionId, $rootSessionId, $status, NULL, NULL, NULL, NULL,
                 $executionFingerprint, $continuationToken, NULL, NULL, NULL,
-                $executionSnapshotJson);
+                $executionSnapshotJson, $toolExecutionId, $resourceClaimSetVersion, $resourceClaimsJson);
             """;
         AddPendingPermissionParameters(command, persisted);
         if (command.ExecuteNonQuery() != 1)
@@ -329,11 +354,14 @@ public sealed partial class AgentLocalStore
     {
         using var connection = CreateConnection();
         connection.Open();
+        using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
 
         var claimToken = Guid.NewGuid().ToString("N");
         var claimedAtUtc = DateTimeOffset.UtcNow;
         var leaseExpiresAtUtc = claimedAtUtc.Add(PermissionClaimLeaseDuration);
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = $"""
             UPDATE AgentPendingPermissionRequests
             SET Status = 'Claimed',
@@ -374,15 +402,17 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$requestId", requestId);
         if (command.ExecuteNonQuery() == 1)
         {
-            var claimed = GetPermissionRequest(connection, sessionId, requestId)
+            var claimed = GetPermissionRequest(connection, sessionId, requestId, transaction)
                 ?? throw new InvalidOperationException("The claimed permission request could not be reloaded.");
-            return new AgentPendingPermissionClaimResult(
+            var result = new AgentPendingPermissionClaimResult(
                 AgentPendingPermissionClaimOutcome.Claimed,
                 claimed);
+            transaction.Commit();
+            return result;
         }
 
-        var existing = GetPermissionRequest(connection, sessionId, requestId);
-        return existing?.Status switch
+        var existing = GetPermissionRequest(connection, sessionId, requestId, transaction);
+        var outcome = existing?.Status switch
         {
             AgentPendingPermissionStatus.Claimed => new AgentPendingPermissionClaimResult(
                 AgentPendingPermissionClaimOutcome.AlreadyClaimed,
@@ -395,6 +425,8 @@ public sealed partial class AgentLocalStore
                 AgentPendingPermissionClaimOutcome.AlreadyDecided,
                 existing),
         };
+        transaction.Commit();
+        return outcome;
     }
 
     internal AgentRunCheckpointRecord? ResumeClaimedPermissionRequest(
@@ -410,6 +442,7 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         var persisted = GetPermissionRequest(connection, request.SessionId, request.RequestId, transaction);
         if (persisted?.Status != AgentPendingPermissionStatus.Claimed
             || !string.Equals(persisted.ClaimToken, request.ClaimToken, StringComparison.Ordinal)
@@ -516,19 +549,79 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         var now = DateTimeOffset.UtcNow;
+        var request = GetPermissionRequest(connection, sessionId, requestId, transaction);
+        if (request?.Status != AgentPendingPermissionStatus.Claimed
+            || !string.Equals(request.ClaimToken, claimToken, StringComparison.Ordinal)
+            || request.ContinuationConsumedAtUtc is null)
+        {
+            transaction.Rollback();
+            return false;
+        }
+
+        if (request.ToolExecutionId is { } toolExecutionId)
+        {
+            using var executionCommand = connection.CreateCommand();
+            executionCommand.Transaction = transaction;
+            executionCommand.CommandText = """
+                UPDATE AgentToolExecutions
+                SET Status = 'Started',
+                    StartedAtUtc = $startedAtUtc,
+                    UpdatedAtUtc = $startedAtUtc
+                WHERE ExecutionId = $executionId
+                  AND SessionId = $sessionId
+                  AND RunId = $runId
+                  AND RunRevision = $runRevision
+                  AND CallId = $callId
+                  AND ToolId = $toolId
+                  AND InvocationFingerprint = $invocationFingerprint
+                  AND Status = 'Prepared'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM AgentRuns run
+                      WHERE run.RunId = $runId
+                        AND run.SessionId = $sessionId
+                        AND run.RunRevision = $runRevision
+                        AND run.Status = 'Running'
+                        AND run.FinishedAtUtc IS NULL
+                        AND NOT EXISTS (
+                            SELECT 1 FROM AgentRuns newer
+                            WHERE newer.SessionId = $sessionId
+                              AND newer.RunRevision > $runRevision));
+                """;
+            executionCommand.Parameters.AddWithValue("$startedAtUtc", now.ToString("O"));
+            executionCommand.Parameters.AddWithValue("$executionId", toolExecutionId.ToString());
+            executionCommand.Parameters.AddWithValue("$sessionId", request.SessionId.ToString());
+            executionCommand.Parameters.AddWithValue("$runId", request.RunId.ToString());
+            executionCommand.Parameters.AddWithValue("$runRevision", request.RunRevision);
+            executionCommand.Parameters.AddWithValue("$callId", request.CallId);
+            executionCommand.Parameters.AddWithValue("$toolId", (object?)request.ToolId ?? DBNull.Value);
+            executionCommand.Parameters.AddWithValue(
+                "$invocationFingerprint",
+                AgentToolInvocationFingerprint.Create(request.ToolId ?? string.Empty, request.ArgumentsJson));
+            if (executionCommand.ExecuteNonQuery() != 1)
+            {
+                transaction.Rollback();
+                return false;
+            }
+        }
+
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
             UPDATE AgentPendingPermissionRequests
-            SET ExecutionStartedAtUtc = $executionStartedAtUtc,
+            SET ExecutionStartedAtUtc = CASE
+                    WHEN ToolExecutionId IS NULL THEN $executionStartedAtUtc
+                    ELSE ExecutionStartedAtUtc
+                END,
                 ClaimLeaseExpiresAtUtc = $claimLeaseExpiresAtUtc
             WHERE SessionId = $sessionId
               AND RequestId = $requestId
               AND Status = 'Claimed'
               AND ClaimToken = $claimToken
               AND ContinuationConsumedAtUtc IS NOT NULL
-              AND ExecutionStartedAtUtc IS NULL;
+              AND (ToolExecutionId IS NOT NULL OR ExecutionStartedAtUtc IS NULL);
             """;
         command.Parameters.AddWithValue("$executionStartedAtUtc", now.ToString("O"));
         command.Parameters.AddWithValue("$claimLeaseExpiresAtUtc", now.Add(PermissionClaimLeaseDuration).ToString("O"));
@@ -576,6 +669,7 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         var now = DateTimeOffset.UtcNow;
 
         var completedStreamingTurns = TryFinalizePermissionRun(
@@ -590,6 +684,13 @@ public sealed partial class AgentLocalStore
             transaction.Rollback();
             return null;
         }
+
+        var toolResultTurns = TerminalizeOpenToolExecutions(
+            connection,
+            transaction,
+            new AgentDurableRunKey(request.RunId, request.SessionId, request.RunRevision),
+            runStatus,
+            now);
 
         using (var command = connection.CreateCommand())
         {
@@ -629,142 +730,36 @@ public sealed partial class AgentLocalStore
             now);
         InsertCheckpoint(connection, transaction, checkpoint);
         TouchSessionForCheckpoint(connection, transaction, checkpoint);
-        transaction.Commit();
-        return new AgentCheckpointPersistenceResult(checkpoint, completedStreamingTurns);
-    }
-
-    internal AgentPendingPermissionDecisionResult TryDenyPendingPermissionRequest(
-        Guid sessionId,
-        string requestId,
-        string summary)
-        => TryDecidePendingPermissionRequest(
-            sessionId,
-            requestId,
-            AgentPendingPermissionStatus.Denied,
-            summary);
-
-    public void DeletePendingPermissionRequest(Guid sessionId, string requestId)
-    {
-        using var connection = CreateConnection();
-        connection.Open();
-
-        using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM AgentPendingPermissionRequests WHERE SessionId = $sessionId AND RequestId = $requestId;";
-        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
-        command.Parameters.AddWithValue("$requestId", requestId);
-        command.ExecuteNonQuery();
-    }
-
-    private AgentPendingPermissionDecisionResult TryDecidePendingPermissionRequest(
-        Guid sessionId,
-        string requestId,
-        AgentPendingPermissionStatus status,
-        string summary)
-    {
-        using var connection = CreateConnection();
-        connection.Open();
-        using var transaction = connection.BeginTransaction(deferred: false);
-        var existing = GetPermissionRequest(connection, sessionId, requestId, transaction);
-        if (existing?.Status == AgentPendingPermissionStatus.Pending
-            && !string.IsNullOrWhiteSpace(existing.ContinuationToken))
+        if (TryMapTerminalLifecycleKind(runStatus, out var lifecycleKind))
         {
-            var now = DateTimeOffset.UtcNow;
-            var completedStreamingTurns = status == AgentPendingPermissionStatus.Denied
-                ? TryFinalizePermissionRun(
-                    connection,
-                    transaction,
-                    existing,
-                    AgentRunStatus.Stopped,
-                    summary,
-                    now)
-                : null;
-            var checkpoint = completedStreamingTurns is not null
-                    ? new AgentRunCheckpointRecord(
-                        Guid.NewGuid(),
-                        sessionId,
-                        existing.RunRevision,
-                        AgentRunStatus.Stopped,
-                        summary,
-                        now)
-                    : null;
-            if (checkpoint is not null)
-            {
-                using var command = connection.CreateCommand();
-                command.Transaction = transaction;
-                command.CommandText = """
-                    UPDATE AgentPendingPermissionRequests
-                    SET Status = $status,
-                        DecidedAtUtc = $decidedAtUtc,
-                        DecisionSummary = $summary,
-                        ClaimLeaseExpiresAtUtc = NULL
-                    WHERE SessionId = $sessionId
-                      AND RequestId = $requestId
-                      AND Status = 'Pending'
-                      AND ContinuationToken = $continuationToken;
-                    """;
-                command.Parameters.AddWithValue("$status", status.ToString());
-                command.Parameters.AddWithValue("$decidedAtUtc", now.ToString("O"));
-                command.Parameters.AddWithValue("$summary", summary);
-                command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
-                command.Parameters.AddWithValue("$requestId", requestId);
-                command.Parameters.AddWithValue("$continuationToken", existing.ContinuationToken);
-                if (command.ExecuteNonQuery() == 1)
-                {
-                    var toolResultTurn = CreateToolResultTurn(
-                        Guid.NewGuid(),
-                        sessionId,
-                        existing.CallId,
-                        existing.ToolId ?? string.Empty,
-                        existing.ArgumentsJson,
-                        $"Permission denied: tool '{existing.ToolId}' was not executed.",
-                        summary,
-                        structuredPayloadJson: null,
-                        sourcesJson: null,
-                        wasTruncated: false,
-                        isError: true,
-                        errorCode: "permission-denied",
-                        backendId: null,
-                        presentationPayloadJson: null,
-                        now,
-                        now);
-                    InsertTurn(
-                        connection,
-                        transaction,
-                        toolResultTurn,
-                        runKey: new AgentDurableRunKey(
-                            existing.RunId,
-                            existing.SessionId,
-                            existing.RunRevision));
-                    InsertCheckpoint(connection, transaction, checkpoint);
-                    TouchSessionForCheckpoint(connection, transaction, checkpoint);
-                    transaction.Commit();
-                    return new AgentPendingPermissionDecisionResult(
-                        AgentPendingPermissionDecisionOutcome.Decided,
-                        existing with
-                        {
-                            Status = status,
-                            DecidedAtUtc = now,
-                            DecisionSummary = summary,
-                        },
-                        new AgentCheckpointPersistenceResult(
-                            checkpoint,
-                            completedStreamingTurns!),
-                        toolResultTurn);
-                }
-            }
+            EnqueueRunLifecycleEvent(
+                connection,
+                transaction,
+                lifecycleKind,
+                $"run:{request.RunId:N}:{request.RunRevision}:terminal:{runStatus}",
+                new AgentDurableRunKey(request.RunId, request.SessionId, request.RunRevision),
+                checkpoint: checkpoint);
         }
-
-        transaction.Rollback();
-        return existing?.Status switch
+        transaction.Commit();
+        return new AgentCheckpointPersistenceResult(checkpoint, completedStreamingTurns)
         {
-            AgentPendingPermissionStatus.Claimed => new AgentPendingPermissionDecisionResult(
-                AgentPendingPermissionDecisionOutcome.AlreadyClaimed,
-                existing),
-            null => new AgentPendingPermissionDecisionResult(AgentPendingPermissionDecisionOutcome.NotFound),
-            _ => new AgentPendingPermissionDecisionResult(
-                AgentPendingPermissionDecisionOutcome.AlreadyDecided,
-                existing),
+            ToolResultTurns = toolResultTurns,
         };
     }
+
+    private static bool MatchesPreparedToolExecution(
+        AgentPendingPermissionRequestRecord record,
+        AgentToolExecutionRecord? execution)
+        => execution is not null
+           && execution.SessionId == record.SessionId
+           && execution.RunId == record.RunId
+           && execution.RunRevision == record.RunRevision
+           && execution.Status == AgentToolExecutionStatus.Prepared
+           && string.Equals(execution.CallId, record.CallId, StringComparison.Ordinal)
+           && string.Equals(execution.ToolId, record.ToolId, StringComparison.Ordinal)
+           && string.Equals(
+               execution.InvocationFingerprint,
+               AgentToolInvocationFingerprint.Create(record.ToolId ?? string.Empty, record.ArgumentsJson),
+               StringComparison.Ordinal);
 
 }

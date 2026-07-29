@@ -1,4 +1,7 @@
+using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -87,6 +90,48 @@ public sealed class ProfileHydrationTests
         Assert.False(viewModel.IsBusy);
         Assert.True(viewModel.CanNavigateProfiles);
         Assert.Null(viewModel.SelectedProfile);
+    }
+
+    [AvaloniaFact]
+    public async Task RuntimeOutageBanner_IsSharedByCompactListAndEditorAndClearsOnRecovery()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var extensions = new RegressionTestExtensionCatalog();
+        using var profileService = CreateProfileService(scope, extensions);
+        var profile = await profileService.CreateProfileAsync("Profile");
+        using var viewModel = new AgentProfilesViewModel(profileService);
+        using var view = new AgentProfilesView { DataContext = viewModel };
+        var window = new Window { Width = 480, Height = 640, Content = view };
+        window.Show();
+        try
+        {
+            await viewModel.InitializeAsync();
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            Assert.True(viewModel.IsCompactLayout);
+            Assert.True(viewModel.ShowCompactList);
+
+            viewModel.RuntimeNoticeText = "Agent Runtime is unavailable. Reconnecting...";
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            var banner = Assert.IsType<Border>(view.FindControl<Border>("ProfileRuntimeNoticeBanner"));
+            Assert.True(banner.IsVisible);
+            Assert.Single(
+                view.GetVisualDescendants().OfType<Border>(),
+                control => control.Name == "ProfileRuntimeNoticeBanner");
+
+            viewModel.ActivateProfile(viewModel.Profiles.Single(item => item.ProfileId == profile.ProfileId));
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            Assert.True(viewModel.ShowCompactEditor);
+            Assert.True(banner.IsVisible);
+            Assert.Same(banner, view.FindControl<Border>("ProfileRuntimeNoticeBanner"));
+
+            viewModel.RuntimeNoticeText = string.Empty;
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            Assert.False(banner.IsVisible);
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 
     private static AgentProfileService CreateProfileService(

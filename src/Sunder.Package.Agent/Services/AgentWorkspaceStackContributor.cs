@@ -18,6 +18,8 @@ public sealed class AgentWorkspaceStackContributor(
     private const string DetailDocuments = "documents";
     private const string DetailPrimaryExecutionTarget = "primary-execution-target";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
+        AgentExtensionInvocation.Require(extensionCatalog);
 
     public string ContributorId => "sunder.package.agent.workspaces";
 
@@ -199,9 +201,12 @@ public sealed class AgentWorkspaceStackContributor(
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (targetIds.Count > 0)
         {
-            foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ExecutionTargets))
+            foreach (var contribution in AgentExtensionInvocation.Snapshot(
+                         _invocationCatalog,
+                         PackageExtensionPoints.ExecutionTargets,
+                         static target => target.Descriptor))
             {
-                var descriptor = contribution.Contribution.Descriptor;
+                var descriptor = contribution.Metadata;
                 if (targetIds.Contains(descriptor.TargetId) || targetIds.Contains(descriptor.TargetKind))
                 {
                     AddPackageId(packageIds, contribution.PackageId);

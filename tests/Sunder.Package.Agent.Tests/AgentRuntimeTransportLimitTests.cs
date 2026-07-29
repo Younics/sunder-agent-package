@@ -1,7 +1,9 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.HistorySearch;
 using Sunder.Package.Agent.Runtime;
+using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Sdk.Runtime;
 using Xunit;
 
@@ -17,6 +19,54 @@ public sealed class AgentRuntimeTransportLimitTests
         Assert.Equal(1024 * 1024, AgentRuntimePayloadLimits.RuntimeMaximumRequestBytes);
         Assert.Equal(4 * 1024 * 1024, AgentRuntimePayloadLimits.RuntimeMaximumResponseBytes);
         Assert.Equal(1024 * 1024, AgentRuntimePayloadLimits.RuntimeMaximumEventBytes);
+    }
+
+    [Fact]
+    public void AroundTurnPayload_RetainsRequestedActivityItemWhenAnchorRequiresProjection()
+    {
+        var turnId = Guid.NewGuid();
+        var items = Enumerable.Range(0, 40)
+            .Select(index => new AgentTurnItemRecord(
+                Guid.NewGuid(),
+                turnId,
+                index,
+                AgentTurnItemKind.ToolCall,
+                TextContent: null,
+                $"call-{index}",
+                "large_tool",
+                JsonSerializer.Serialize(new { value = new string('x', 150_000) }),
+                ResultSummary: null,
+                StructuredPayloadJson: null,
+                SourcesJson: null,
+                WasTruncated: false,
+                IsError: false,
+                ErrorCode: null,
+                BackendId: null))
+            .ToArray();
+        var requestedItemId = items[^1].ItemId;
+        var now = DateTimeOffset.UtcNow;
+        var turn = new AgentTurnRecord(
+            turnId,
+            Guid.NewGuid(),
+            AgentMessageRole.Assistant,
+            AgentTurnKind.ToolCall,
+            items,
+            now,
+            now);
+        var page = new AgentTranscriptAroundTurnPage(1, [turn], true, true, turnId);
+
+        var fitted = AgentRuntimePayloadLimits.FitAroundTurnPage(page, requestedItemId);
+
+        Assert.True(AgentRuntimePayloadLimits.GetSerializedByteCount(fitted)
+                    <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+        Assert.Contains(Assert.Single(fitted.Turns).Items, item => item.ItemId == requestedItemId);
+
+        var subsession = SubsessionAroundTurnPayload.Fit(
+            new SubsessionAroundTurnPage([turn], true, true, turnId),
+            requestedItemId);
+        Assert.True(JsonSerializer.SerializeToUtf8Bytes(subsession).Length
+                    <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+        Assert.Contains(Assert.Single(subsession.Turns).Items, item => item.ItemId == requestedItemId);
     }
 
     [Fact]
@@ -84,6 +134,11 @@ public sealed class AgentRuntimeTransportLimitTests
         Assert.True(page.HasMore);
         Assert.Single(page.Turns);
         Assert.True(Assert.Single(page.Turns[0].Items).WasTruncated);
+        Assert.Equal(turn.TurnId, page.Continuation?.TurnId);
+        Assert.Contains(
+            "Content truncated for display",
+            page.Turns[0].Items[0].TextContent,
+            StringComparison.Ordinal);
         Assert.True(
             AgentRuntimePayloadLimits.GetSerializedByteCount(page)
             <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
@@ -102,6 +157,198 @@ public sealed class AgentRuntimeTransportLimitTests
         Assert.True(
             AgentRuntimePayloadLimits.GetSerializedByteCount(projected)
             <= AgentRuntimePayloadLimits.MaximumStreamEventBytes);
+
+        var subsessionChange = SubsessionAroundTurnPayload.FitChange(new SubagentChanged(
+            9,
+            SubagentChangeKind.Turn,
+            SessionId: turn.SessionId,
+            Turn: turn,
+            RuntimeInstanceId: "subagent-runtime"));
+        Assert.Equal(SubagentChangeKind.ResnapshotRequired, subsessionChange.Kind);
+        Assert.True(
+            SubsessionAroundTurnPayload.Size(subsessionChange)
+            <= SubsessionAroundTurnPayload.MaximumEventBytes);
+    }
+
+    [Fact]
+    public void ToolDetailProjections_FitAgentAndSubsessionResponseLimits()
+    {
+        var sessionId = Guid.NewGuid();
+        var executionId = Guid.NewGuid();
+        var itemId = Guid.NewGuid();
+        var payload = new string('\\', 2 * 1024 * 1024);
+        var detail = new AgentTranscriptToolDetailRecord(
+            sessionId,
+            executionId,
+            "call",
+            itemId,
+            Guid.NewGuid(),
+            "large_tool",
+            payload,
+            payload,
+            payload,
+            payload,
+            payload,
+            payload,
+            WasTruncated: false,
+            IsError: false,
+            ErrorCode: null,
+            BackendId: "backend",
+            AgentToolExecutionStatus.Completed,
+            ToolOwnerPackageId: "package",
+            ToolSchemaId: "schema",
+            ToolSchemaVersion: "1",
+            Revision: 42);
+
+        var agent = AgentRuntimePayloadLimits.FitToolDetail(detail);
+        var subsession = SubsessionAroundTurnPayload.FitToolDetail(detail);
+
+        Assert.True(agent.WasTransportTruncated);
+        Assert.Equal(sessionId, agent.SessionId);
+        Assert.Equal(executionId, agent.ToolExecutionId);
+        Assert.Equal(42, agent.Revision);
+        Assert.True(AgentRuntimePayloadLimits.GetSerializedByteCount(
+                        new AgentTranscriptToolDetailResponse(agent))
+                    <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+        Assert.True(subsession.WasTransportTruncated);
+        Assert.Equal(sessionId, subsession.SessionId);
+        Assert.Equal(executionId, subsession.ToolExecutionId);
+        Assert.Equal(42, subsession.Revision);
+        Assert.True(SubsessionAroundTurnPayload.Size(new SubagentProjection(ToolDetail: subsession))
+                    <= SubsessionAroundTurnPayload.MaximumResponseBytes);
+    }
+
+    [Fact]
+    public void OversizedSingleTurnRemainsReachableAcrossInitialOlderAndNewerPages()
+    {
+        var turn = CreateTurn(new string('x', 6 * 1024 * 1024));
+        foreach (var direction in new[]
+                 {
+                     AgentTranscriptPageDirection.Recent,
+                     AgentTranscriptPageDirection.Before,
+                     AgentTranscriptPageDirection.After,
+                 })
+        {
+            var page = AgentRuntimePayloadLimits.FitTranscriptPage(
+                new AgentTranscriptPage(13, [turn], HasMore: false),
+                direction);
+
+            AssertProjectedTurn(page.Turns, page.HasMore, page.Continuation?.TurnId, turn.TurnId);
+            Assert.True(AgentRuntimePayloadLimits.GetSerializedByteCount(page)
+                        <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+            var roundTrip = Assert.IsType<AgentTranscriptPage>(JsonSerializer.Deserialize<AgentTranscriptPage>(
+                JsonSerializer.SerializeToUtf8Bytes(page, JsonOptions),
+                JsonOptions));
+            Assert.Equal(turn.TurnId, roundTrip.Continuation?.TurnId);
+        }
+
+        foreach (var direction in new[]
+                 {
+                     SubagentQueryKind.RecentTurns,
+                     SubagentQueryKind.TurnsBefore,
+                     SubagentQueryKind.TurnsAfter,
+                 })
+        {
+            var page = SubsessionLocalRuntimeAdapter.BuildTranscriptPage([turn], 30, direction);
+
+            AssertProjectedTurn(page.Turns, page.HasMore, page.Continuation?.TurnId, turn.TurnId);
+            Assert.True(SubsessionAroundTurnPayload.Size(page)
+                        <= SubsessionAroundTurnPayload.MaximumResponseBytes);
+            var roundTrip = Assert.IsType<SubsessionTranscriptPage>(
+                JsonSerializer.Deserialize<SubsessionTranscriptPage>(
+                    JsonSerializer.SerializeToUtf8Bytes(page, JsonOptions),
+                    JsonOptions));
+            Assert.Equal(turn.TurnId, roundTrip.Continuation?.TurnId);
+        }
+    }
+
+    [Fact]
+    public void OversizedDirectionalTranscriptPagesKeepCursorAdjacentTurnsAndContinuation()
+    {
+        var turns = Enumerable.Range(0, 31)
+            .Select(index => CreateTurn($"{index:D2}:{new string('x', 180_000)}"))
+            .ToArray();
+
+        var agentBefore = AgentRuntimePayloadLimits.FitTranscriptPage(
+            new AgentTranscriptPage(11, turns[1..], HasMore: true),
+            AgentTranscriptPageDirection.Before);
+        var agentRecent = AgentRuntimePayloadLimits.FitTranscriptPage(
+            new AgentTranscriptPage(11, turns[1..], HasMore: true),
+            AgentTranscriptPageDirection.Recent);
+        var agentAfter = AgentRuntimePayloadLimits.FitTranscriptPage(
+            new AgentTranscriptPage(11, turns[..30], HasMore: true),
+            AgentTranscriptPageDirection.After);
+        AssertDirectionalPage(agentBefore.Turns, agentBefore.HasMore, turns[^1].TurnId);
+        AssertDirectionalPage(agentRecent.Turns, agentRecent.HasMore, turns[^1].TurnId);
+        AssertDirectionalPage(agentAfter.Turns, agentAfter.HasMore, turns[0].TurnId);
+        Assert.True(AgentRuntimePayloadLimits.GetSerializedByteCount(agentBefore)
+                    <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+        Assert.True(AgentRuntimePayloadLimits.GetSerializedByteCount(agentRecent)
+                    <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+        Assert.True(AgentRuntimePayloadLimits.GetSerializedByteCount(agentAfter)
+                    <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+        Assert.Equal(agentBefore.Turns[0].TurnId, agentBefore.Continuation?.TurnId);
+        Assert.Equal(agentRecent.Turns[0].TurnId, agentRecent.Continuation?.TurnId);
+        Assert.Equal(agentAfter.Turns[^1].TurnId, agentAfter.Continuation?.TurnId);
+
+        var subsessionRecent = SubsessionLocalRuntimeAdapter.BuildTranscriptPage(
+            turns,
+            30,
+            SubagentQueryKind.RecentTurns);
+        var subsessionBefore = SubsessionLocalRuntimeAdapter.BuildTranscriptPage(
+            turns,
+            30,
+            SubagentQueryKind.TurnsBefore);
+        var subsessionAfter = SubsessionLocalRuntimeAdapter.BuildTranscriptPage(
+            turns,
+            30,
+            SubagentQueryKind.TurnsAfter);
+        AssertDirectionalPage(
+            subsessionRecent.Turns,
+            subsessionRecent.HasMore,
+            turns[^1].TurnId);
+        AssertDirectionalPage(
+            subsessionBefore.Turns,
+            subsessionBefore.HasMore,
+            turns[^1].TurnId);
+        AssertDirectionalPage(
+            subsessionAfter.Turns,
+            subsessionAfter.HasMore,
+            turns[0].TurnId);
+        Assert.True(SubsessionAroundTurnPayload.Size(subsessionBefore)
+                    <= SubsessionAroundTurnPayload.MaximumResponseBytes);
+        Assert.True(SubsessionAroundTurnPayload.Size(subsessionRecent)
+                    <= SubsessionAroundTurnPayload.MaximumResponseBytes);
+        Assert.True(SubsessionAroundTurnPayload.Size(subsessionAfter)
+                    <= SubsessionAroundTurnPayload.MaximumResponseBytes);
+        Assert.Equal(subsessionBefore.Turns[0].TurnId, subsessionBefore.Continuation?.TurnId);
+        Assert.Equal(subsessionRecent.Turns[0].TurnId, subsessionRecent.Continuation?.TurnId);
+        Assert.Equal(subsessionAfter.Turns[^1].TurnId, subsessionAfter.Continuation?.TurnId);
+    }
+
+    private static void AssertProjectedTurn(
+        IReadOnlyList<AgentTurnRecord> turns,
+        bool hasMore,
+        Guid? continuationTurnId,
+        Guid expectedTurnId)
+    {
+        Assert.True(hasMore);
+        var turn = Assert.Single(turns);
+        Assert.Equal(expectedTurnId, turn.TurnId);
+        Assert.Equal(expectedTurnId, continuationTurnId);
+        var item = Assert.Single(turn.Items);
+        Assert.True(item.WasTruncated);
+        Assert.Contains("Content truncated for display", item.TextContent, StringComparison.Ordinal);
+    }
+
+    private static void AssertDirectionalPage(
+        IReadOnlyList<AgentTurnRecord> turns,
+        bool hasMore,
+        Guid cursorAdjacentTurnId)
+    {
+        Assert.True(hasMore);
+        Assert.InRange(turns.Count, 1, 29);
+        Assert.Contains(turns, turn => turn.TurnId == cursorAdjacentTurnId);
     }
 
     private static AgentTurnRecord CreateTurn(string content)

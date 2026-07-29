@@ -23,9 +23,11 @@ public sealed class AgentToolPresentationService
             }
             if (extensionCatalog is not null)
             {
-                resolvers.AddRange(extensionCatalog
-                    .GetExtensions(PackageExtensionPoints.ToolSources)
-                    .OfType<IAgentToolPresentationResolver>());
+                var invocationCatalog = AgentExtensionInvocation.Require(extensionCatalog);
+                resolvers.AddRange(invocationCatalog
+                    .GetExtensionReferences(PackageExtensionPoints.ToolSources)
+                    .Select(static reference =>
+                        (IAgentToolPresentationResolver)new PackageToolSourcePresentationResolver(reference)));
             }
 
             return resolvers;

@@ -224,6 +224,16 @@ public sealed partial class AgentChatViewModel
                             });
                             continue;
                         }
+                        if (commandStatus == AgentRunCommandStatus.Committed)
+                        {
+                            await InvokeOnUiThreadAsync(() =>
+                            {
+                                submission.Commit();
+                                ClearSubmittedComposerState(submittedSession, submission);
+                                EndPendingSend(submission);
+                            });
+                            continue;
+                        }
 
                         hasUnresolvedSubmission = true;
                     }

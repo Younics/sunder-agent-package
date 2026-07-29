@@ -82,6 +82,22 @@ public interface IAgentTurnMutationGateway
     event Action<AgentTurnMutation>? TurnMutated;
 }
 
+internal interface IAgentTranscriptHeaderGateway
+{
+    IReadOnlyList<AgentTurnRecord> ListRecentTranscriptHeaders(Guid sessionId, int limit);
+    IReadOnlyList<AgentTurnRecord> ListTranscriptHeadersBefore(
+        Guid sessionId,
+        DateTimeOffset beforeCreatedAtUtc,
+        Guid beforeTurnId,
+        int limit);
+    IReadOnlyList<AgentTurnRecord> ListTranscriptHeadersAfter(
+        Guid sessionId,
+        DateTimeOffset afterCreatedAtUtc,
+        Guid afterTurnId,
+        int limit);
+    AgentTurnRecord? GetTranscriptHeader(Guid turnId);
+}
+
 public interface IAgentPermissionGateway
 {
     AgentSessionPermissionState GetSessionState(Guid sessionId);

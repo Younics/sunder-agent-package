@@ -1,23 +1,30 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Skills.Runtime;
 using Sunder.Package.Agent.Skills.Services;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Skills.PackageViews;
 
-public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposable
+public sealed partial class SkillSettingsViewModel : ObservableObject,
+    IPackageViewNavigationPreparationTarget,
+    IDisposable
 {
     private static readonly TimeSpan SuccessStatusDisplayDuration = TimeSpan.FromSeconds(3);
+    private const string ListRefreshChannel = "skills-list";
+    private const string MutationChannel = "skills-mutation";
 
     private readonly ISkillManagementGateway _gateway;
     private readonly TimedStatusController _successStatus = new();
     private readonly IPresentationDispatcher _uiDispatcher = PresentationDispatcher.Capture();
     private readonly PresentationTaskScope _tasks = new();
+    private readonly LatestRequestCoordinator _requests = new();
+    private readonly KeyedAdaptiveListDetailState<string, InstalledSkillItemViewModel> _listDetail;
+    private readonly SerializedRefreshLoop _runtimeRefresh;
     private readonly Task _initialization;
-    private bool _suppressSelectionHandlers;
-    private bool _suppressSkillChangeNotifications;
     private bool _disposed;
 
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } = [];
@@ -30,6 +37,15 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
     internal SkillSettingsViewModel(ISkillManagementGateway gateway)
     {
         _gateway = gateway;
+        _listDetail = new KeyedAdaptiveListDetailState<string, InstalledSkillItemViewModel>(
+            Skills,
+            static skill => skill.SkillId,
+            static (current, incoming) => current.Apply(incoming),
+            StringComparer.OrdinalIgnoreCase);
+        _listDetail.PropertyChanged += OnListDetailPropertyChanged;
+        _runtimeRefresh = new SerializedRefreshLoop(
+            RefreshListAsync,
+            exception => RunOnUiThread(() => SetStatus(exception.Message, SkillStatusKind.Error)));
         _gateway.SkillsChanged += OnSkillsChanged;
         _initialization = InitializeCoreAsync();
     }
@@ -38,9 +54,9 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
 
     public bool HasSelectedSkill => SelectedSkill is not null;
 
-    public bool IsListActive => !IsDetailActive;
+    public bool IsListActive => _listDetail.IsList;
 
-    public bool ShowWideLayout => !IsCompactLayout;
+    public bool ShowWideLayout => _listDetail.Layout == AdaptiveListDetailLayout.Wide;
 
     public bool ShowCompactList => IsCompactLayout && IsListActive;
 
@@ -50,14 +66,58 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
 
     public bool ShowDetailPane => ShowWideLayout || ShowCompactDetail;
 
-    [ObservableProperty]
-    private InstalledSkillItemViewModel? _selectedSkill;
+    public InstalledSkillItemViewModel? SelectedSkill
+    {
+        get => _listDetail.SelectedItem;
+        set
+        {
+            if (value is null)
+            {
+                ShowListFromUserIntent();
+            }
+            else
+            {
+                ShowExistingFromUserIntent(value);
+            }
+        }
+    }
 
-    [ObservableProperty]
-    private bool _isCompactLayout;
+    public bool IsCompactLayout
+    {
+        get => _listDetail.Layout == AdaptiveListDetailLayout.Compact;
+        set => _listDetail.SetLayout(value
+            ? AdaptiveListDetailLayout.Compact
+            : AdaptiveListDetailLayout.Wide);
+    }
 
-    [ObservableProperty]
-    private bool _isDetailActive;
+    public bool IsDetailActive
+    {
+        get => !_listDetail.IsList;
+        set
+        {
+            if (!value)
+            {
+                ShowListFromUserIntent();
+            }
+            else if (SelectedSkill is { } selected)
+            {
+                ShowExistingFromUserIntent(selected);
+            }
+            else
+            {
+                BeginUserIntent();
+                _listDetail.ShowNewDetail();
+            }
+        }
+    }
+
+    internal AdaptiveListDetailRoute Route => _listDetail.Route;
+
+    internal AdaptiveListDetailLayout Layout => _listDetail.Layout;
+
+    internal AdaptiveDetailPhase DetailPhase => _listDetail.DetailPhase;
+
+    internal long IntentRevision => _listDetail.IntentRevision;
 
     [ObservableProperty]
     private string _githubUrl = string.Empty;
@@ -82,50 +142,26 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
 
     public Task InitializeAsync() => _initialization;
 
-    partial void OnSelectedSkillChanged(InstalledSkillItemViewModel? value)
+    public async ValueTask<bool> PrepareNavigationAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
     {
-        DeleteSelectedSkillCommand.NotifyCanExecuteChanged();
-        OnPropertyChanged(nameof(HasSelectedSkill));
-        if (_suppressSelectionHandlers)
-        {
-            return;
-        }
-
-        if (IsCompactLayout && value is not null)
-        {
-            IsDetailActive = true;
-        }
+        await _initialization.WaitAsync(cancellationToken);
+        return true;
     }
+
+    public ValueTask OnNavigationPresentedAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.CompletedTask;
+    }
+
+    internal Task RuntimeRefreshIdle => _runtimeRefresh.WhenIdle;
 
     partial void OnIsBusyChanged(bool value)
         => DeleteSelectedSkillCommand.NotifyCanExecuteChanged();
-
-    partial void OnIsCompactLayoutChanged(bool value)
-    {
-        if (value && !IsDetailActive)
-        {
-            SelectedSkill = null;
-        }
-        else if (!value && SelectedSkill is null)
-        {
-            SelectedSkill = Skills.FirstOrDefault();
-        }
-
-        OnPropertyChanged(nameof(ShowWideLayout));
-        OnPropertyChanged(nameof(ShowCompactList));
-        OnPropertyChanged(nameof(ShowCompactDetail));
-        OnPropertyChanged(nameof(ShowListPane));
-        OnPropertyChanged(nameof(ShowDetailPane));
-    }
-
-    partial void OnIsDetailActiveChanged(bool value)
-    {
-        OnPropertyChanged(nameof(IsListActive));
-        OnPropertyChanged(nameof(ShowCompactList));
-        OnPropertyChanged(nameof(ShowCompactDetail));
-        OnPropertyChanged(nameof(ShowListPane));
-        OnPropertyChanged(nameof(ShowDetailPane));
-    }
 
     [RelayCommand]
     private async Task ImportGitHubAsync()
@@ -149,29 +185,30 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
     [RelayCommand(CanExecute = nameof(CanDeleteSelectedSkill))]
     private async Task DeleteSelectedSkillAsync()
     {
-        if (SelectedSkill is null)
+        var selected = SelectedSkill;
+        if (selected is null)
         {
             return;
         }
 
+        var intentRevision = IntentRevision;
+        var mutation = _requests.Begin(MutationChannel);
+        IsBusy = true;
         try
         {
-            var displayName = SelectedSkill.DisplayName;
-            var shouldClearSelection = IsCompactLayout;
-            _suppressSkillChangeNotifications = true;
-            try
+            var displayName = selected.DisplayName;
+            var deletedSkillId = selected.SkillId;
+            await _gateway.DeleteAsync(deletedSkillId, mutation.CancellationToken);
+            if (!_requests.IsCurrent(mutation)
+                || intentRevision != IntentRevision)
             {
-                await _gateway.DeleteAsync(SelectedSkill.SkillId);
-            }
-            finally
-            {
-                _suppressSkillChangeNotifications = false;
+                return;
             }
 
-            await ReloadAsync();
-            if (shouldClearSelection)
+            DiscardPendingSkillRefresh();
+            if (IsCompactLayout)
             {
-                SelectedSkill = null;
+                _listDetail.ShowList();
                 ClearStatus();
             }
             else
@@ -179,14 +216,29 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
                 SetStatus($"Deleted skill '{displayName}'.", SkillStatusKind.Success, autoClear: true);
             }
 
-            if (SelectedSkill is null)
-            {
-                IsDetailActive = false;
-            }
+            _listDetail.Reconcile(
+                Skills.Where(skill => !string.Equals(
+                    skill.SkillId,
+                    deletedSkillId,
+                    StringComparison.OrdinalIgnoreCase)).ToArray());
+            _tasks.Run(_runtimeRefresh.MarkDirty());
+        }
+        catch (OperationCanceledException) when (mutation.CancellationToken.IsCancellationRequested)
+        {
         }
         catch (Exception ex)
         {
-            SetStatus(ex.Message, SkillStatusKind.Error);
+            if (_requests.IsCurrent(mutation))
+            {
+                SetStatus(ex.Message, SkillStatusKind.Error);
+            }
+        }
+        finally
+        {
+            if (_requests.Complete(mutation))
+            {
+                IsBusy = false;
+            }
         }
     }
 
@@ -195,20 +247,18 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
     [RelayCommand]
     private void BackToSkillList()
     {
+        ShowListFromUserIntent();
         if (IsCompactLayout)
         {
-            SelectedSkill = null;
             ClearStatus();
         }
-
-        IsDetailActive = false;
     }
 
     [RelayCommand]
     private void NewSkill()
     {
-        SelectedSkill = null;
-        IsDetailActive = true;
+        BeginUserIntent();
+        _listDetail.ShowNewDetail();
         SetStatus("Import a skill from GitHub or select a local skill folder.", SkillStatusKind.Warning);
     }
 
@@ -221,98 +271,116 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
             return;
         }
 
-        IsDetailActive = true;
+        BeginUserIntent();
+        _listDetail.ShowNewDetail();
     }
 
     public void ActivateSkill(InstalledSkillItemViewModel skill)
     {
-        if (!string.Equals(SelectedSkill?.SkillId, skill.SkillId, StringComparison.OrdinalIgnoreCase))
-        {
-            SelectedSkill = skill;
-        }
-
-        if (IsCompactLayout)
-        {
-            IsDetailActive = true;
-        }
+        ShowExistingFromUserIntent(skill);
     }
 
     private async Task RunImportAsync(
         Func<CancellationToken, Task<IReadOnlyList<InstalledSkillRecord>>> action,
         string successMessage)
     {
+        BeginUserIntent();
+        var intentRevision = _listDetail.ShowNewDetail();
+        var mutation = _requests.Begin(MutationChannel);
         IsBusy = true;
         try
         {
-            IReadOnlyList<InstalledSkillRecord> imported;
-            _suppressSkillChangeNotifications = true;
-            try
-            {
-                imported = await action(CancellationToken.None);
-            }
-            finally
-            {
-                _suppressSkillChangeNotifications = false;
-            }
+            var imported = await action(mutation.CancellationToken);
 
             if (imported.Count == 0)
             {
-                await ReloadAsync();
-                SetStatus("No skill folders were found to import.", SkillStatusKind.Warning);
+                await RefreshListAsync(mutation.CancellationToken);
+                if (_requests.IsCurrent(mutation))
+                {
+                    SetStatus("No skill folders were found to import.", SkillStatusKind.Warning);
+                }
                 return;
             }
 
-            await ReloadAsync(imported[0].SkillId);
-            if (IsCompactLayout)
+            DiscardPendingSkillRefresh();
+            var snapshot = await _gateway.ListAsync(mutation.CancellationToken);
+            await _uiDispatcher.InvokeAsync(() =>
             {
-                SelectedSkill = null;
-                IsDetailActive = false;
-                ClearStatus();
-            }
-            else
-            {
-                IsDetailActive = true;
-                SetStatus(imported.Count == 1 ? successMessage : $"{successMessage} Imported {imported.Count} skills.", SkillStatusKind.Success, autoClear: true);
-            }
+                if (!_requests.IsCurrent(mutation))
+                {
+                    return;
+                }
+
+                _listDetail.Reconcile(snapshot.Select(static skill =>
+                    new InstalledSkillItemViewModel(skill, skill.RelativeRootPath)).ToArray());
+                if (_listDetail.TryShowCreatedDetail(imported[0].SkillId, intentRevision))
+                {
+                    if (IsCompactLayout)
+                    {
+                        _listDetail.ShowList();
+                        ClearStatus();
+                    }
+                    else
+                    {
+                        MarkCurrentDetailReady();
+                        SetStatus(
+                            imported.Count == 1
+                                ? successMessage
+                                : $"{successMessage} Imported {imported.Count} skills.",
+                            SkillStatusKind.Success,
+                            autoClear: true);
+                    }
+                }
+            });
+        }
+        catch (OperationCanceledException) when (mutation.CancellationToken.IsCancellationRequested)
+        {
         }
         catch (Exception ex)
         {
-            SetStatus(ex.Message, SkillStatusKind.Error);
+            if (_requests.IsCurrent(mutation))
+            {
+                SetStatus(ex.Message, SkillStatusKind.Error);
+            }
         }
         finally
         {
-            IsBusy = false;
+            if (_requests.Complete(mutation))
+            {
+                IsBusy = false;
+            }
         }
     }
 
-    private async Task ReloadAsync(string? selectSkillId = null)
+    private async Task RefreshListAsync(CancellationToken cancellationToken)
     {
-        var currentSkillId = SelectedSkill?.SkillId;
-        var skills = await _gateway.ListAsync();
-        SetSelectionSilently(() =>
+        var request = _requests.Begin(ListRefreshChannel, cancellationToken);
+        try
         {
-            Skills.Clear();
-            foreach (var skill in skills)
+            var skills = await _gateway.ListAsync(request.CancellationToken);
+            await _uiDispatcher.InvokeAsync(() =>
             {
-                Skills.Add(new InstalledSkillItemViewModel(skill, skill.RelativeRootPath));
-            }
-
-            var selectedSkill = Skills.FirstOrDefault(skill => string.Equals(skill.SkillId, selectSkillId, StringComparison.OrdinalIgnoreCase));
-            if (selectedSkill is null && (!IsCompactLayout || selectSkillId is not null))
-            {
-                selectedSkill = Skills.FirstOrDefault(skill => string.Equals(skill.SkillId, currentSkillId, StringComparison.OrdinalIgnoreCase))
-                                ?? Skills.FirstOrDefault();
-            }
-
-            SelectedSkill = selectedSkill;
-        });
+                if (_requests.IsCurrent(request))
+                {
+                    _listDetail.Reconcile(skills.Select(static skill =>
+                        new InstalledSkillItemViewModel(skill, skill.RelativeRootPath)).ToArray());
+                }
+            });
+        }
+        catch (OperationCanceledException) when (request.CancellationToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            _requests.Complete(request);
+        }
     }
 
     private async Task InitializeCoreAsync()
     {
         try
         {
-            await ReloadAsync();
+            await RefreshListAsync(CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -322,24 +390,12 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
     }
 
     private void OnSkillsChanged()
-        => RunOnUiThread(() =>
-        {
-            if (!_disposed && !_suppressSkillChangeNotifications)
-            {
-                _ = ReloadSafelyAsync(SelectedSkill?.SkillId);
-            }
-        });
+        => _tasks.Run(_runtimeRefresh.MarkDirty());
 
-    private async Task ReloadSafelyAsync(string? skillId)
+    private void DiscardPendingSkillRefresh()
     {
-        try
-        {
-            await ReloadAsync(skillId);
-        }
-        catch (Exception ex)
-        {
-            SetStatus(ex.Message, SkillStatusKind.Error);
-        }
+        _runtimeRefresh.DiscardPending();
+        _requests.Invalidate(ListRefreshChannel);
     }
 
     public void Dispose()
@@ -351,6 +407,10 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
 
         _disposed = true;
         _gateway.SkillsChanged -= OnSkillsChanged;
+        _listDetail.PropertyChanged -= OnListDetailPropertyChanged;
+        _runtimeRefresh.Dispose();
+        _listDetail.Dispose();
+        _requests.Dispose();
         _successStatus.Dispose();
         _tasks.Dispose();
     }
@@ -378,17 +438,52 @@ public sealed partial class SkillSettingsViewModel : ObservableObject, IDisposab
         }
     }
 
-    private void SetSelectionSilently(Action action)
+    private void BeginUserIntent()
     {
-        _suppressSelectionHandlers = true;
-        try
+        _requests.Invalidate(MutationChannel);
+        IsBusy = false;
+    }
+
+    private void ShowListFromUserIntent()
+    {
+        BeginUserIntent();
+        _listDetail.ShowList();
+    }
+
+    private void ShowExistingFromUserIntent(InstalledSkillItemViewModel skill)
+    {
+        BeginUserIntent();
+        _listDetail.ShowExistingDetail(skill);
+        MarkCurrentDetailReady();
+    }
+
+    private void MarkCurrentDetailReady()
+    {
+        if (_listDetail.IsExistingDetail && _listDetail.DetailPhase == AdaptiveDetailPhase.None)
         {
-            action();
+            var ticket = _listDetail.BeginDetailLoad();
+            _listDetail.TrySetDetailReady(ticket);
         }
-        finally
+    }
+
+    private void OnListDetailPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(KeyedAdaptiveListDetailState<string, InstalledSkillItemViewModel>.SelectedItem))
         {
-            _suppressSelectionHandlers = false;
+            OnPropertyChanged(nameof(SelectedSkill));
+            OnPropertyChanged(nameof(HasSelectedSkill));
+            DeleteSelectedSkillCommand.NotifyCanExecuteChanged();
+            MarkCurrentDetailReady();
         }
+
+        OnPropertyChanged(nameof(IsListActive));
+        OnPropertyChanged(nameof(IsDetailActive));
+        OnPropertyChanged(nameof(IsCompactLayout));
+        OnPropertyChanged(nameof(ShowWideLayout));
+        OnPropertyChanged(nameof(ShowCompactList));
+        OnPropertyChanged(nameof(ShowCompactDetail));
+        OnPropertyChanged(nameof(ShowListPane));
+        OnPropertyChanged(nameof(ShowDetailPane));
     }
 
     private void RunOnUiThread(Action action)
@@ -411,11 +506,44 @@ public enum SkillStatusKind
     Error,
 }
 
-public sealed class InstalledSkillItemViewModel
+public sealed class InstalledSkillItemViewModel : ObservableObject
 {
+    private string _displayName = string.Empty;
+    private string _description = string.Empty;
+    private string _version = string.Empty;
+    private string _author = string.Empty;
+    private string _source = string.Empty;
+    private string _resolvedCommitSha = string.Empty;
+    private string _rootPath = string.Empty;
+    private string _metadataText = string.Empty;
+    private string _warningsText = string.Empty;
+
     public InstalledSkillItemViewModel(InstalledSkillRecord skill, string rootPath)
     {
         SkillId = skill.SkillId;
+        Apply(skill, rootPath);
+    }
+
+    internal void Apply(InstalledSkillItemViewModel incoming)
+    {
+        if (!string.Equals(SkillId, incoming.SkillId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Cannot reconcile skill rows with different keys.");
+        }
+
+        DisplayName = incoming.DisplayName;
+        Description = incoming.Description;
+        Version = incoming.Version;
+        Author = incoming.Author;
+        Source = incoming.Source;
+        ResolvedCommitSha = incoming.ResolvedCommitSha;
+        RootPath = incoming.RootPath;
+        MetadataText = incoming.MetadataText;
+        WarningsText = incoming.WarningsText;
+    }
+
+    private void Apply(InstalledSkillRecord skill, string rootPath)
+    {
         DisplayName = SkillStore.ResolveDisplayName(skill);
         Description = skill.Description ?? string.Empty;
         Version = skill.Version ?? string.Empty;
@@ -435,21 +563,57 @@ public sealed class InstalledSkillItemViewModel
 
     public string SkillId { get; }
 
-    public string DisplayName { get; }
+    public string DisplayName
+    {
+        get => _displayName;
+        private set => SetProperty(ref _displayName, value);
+    }
 
-    public string Description { get; }
+    public string Description
+    {
+        get => _description;
+        private set => SetProperty(ref _description, value);
+    }
 
-    public string Version { get; }
+    public string Version
+    {
+        get => _version;
+        private set => SetProperty(ref _version, value);
+    }
 
-    public string Author { get; }
+    public string Author
+    {
+        get => _author;
+        private set => SetProperty(ref _author, value);
+    }
 
-    public string Source { get; }
+    public string Source
+    {
+        get => _source;
+        private set => SetProperty(ref _source, value);
+    }
 
-    public string ResolvedCommitSha { get; }
+    public string ResolvedCommitSha
+    {
+        get => _resolvedCommitSha;
+        private set => SetProperty(ref _resolvedCommitSha, value);
+    }
 
-    public string RootPath { get; }
+    public string RootPath
+    {
+        get => _rootPath;
+        private set => SetProperty(ref _rootPath, value);
+    }
 
-    public string MetadataText { get; }
+    public string MetadataText
+    {
+        get => _metadataText;
+        private set => SetProperty(ref _metadataText, value);
+    }
 
-    public string WarningsText { get; }
+    public string WarningsText
+    {
+        get => _warningsText;
+        private set => SetProperty(ref _warningsText, value);
+    }
 }

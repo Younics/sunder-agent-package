@@ -61,6 +61,7 @@ public sealed partial class ProviderArchitectureTests
             "LMStudio.LMStudioAgentProvider",
             "LMStudio.LMStudioEmbeddingProvider",
             "LMStudio.LMStudioProviderConfiguration",
+            "LMStudio.LMStudioSettingsLoadState",
             "LMStudio.LMStudioSettingsView",
             "LMStudio.LMStudioSettingsViewModel",
             "LMStudio.AppPackageModule",

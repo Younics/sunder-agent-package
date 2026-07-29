@@ -38,10 +38,12 @@ public sealed partial class SubagentsViewModel
     {
         if (_gateway is Runtime.ISubagentPresentationInitialization initialization)
         {
-            await initialization.InitializeAsync(cancellationToken);
+            await initialization.InitializeAsync(cancellationToken)
+                .WaitAsync(cancellationToken);
         }
 
-        await ReloadAsync(null, cancellationToken);
+        await ReloadAsync(cancellationToken);
+        await _currentDetailLoad.WaitAsync(cancellationToken);
     }
 
     public void Dispose()
@@ -52,7 +54,7 @@ public sealed partial class SubagentsViewModel
         }
 
         _disposed = true;
-        _loadVersion++;
+        _lifetimeCancellation.Cancel();
         _initialization.Dispose();
         _statusClear.Dispose();
         _tasks.Dispose();
@@ -60,6 +62,8 @@ public sealed partial class SubagentsViewModel
         ChatBinding.PropertyChanged -= OnModelBindingPropertyChanged;
         ChatBinding.Changed -= OnEditorSelectionChanged;
         Capabilities.Changed -= OnCapabilitiesChanged;
+        _listDetail.SelectionChanging -= OnSubagentSelectionChanging;
+        _listDetail.PropertyChanged -= OnListDetailPropertyChanged;
         if (_gateway is not null)
         {
             _gateway.SubagentsChanged -= OnSubagentsChanged;
@@ -67,5 +71,9 @@ public sealed partial class SubagentsViewModel
         }
 
         ChatBinding.Dispose();
+        _runtimeRefresh.Dispose();
+        _listDetail.Dispose();
+        _requests.Dispose();
+        _lifetimeCancellation.Dispose();
     }
 }

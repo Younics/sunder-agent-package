@@ -13,26 +13,34 @@ namespace Sunder.Package.Agent.PackageViews;
 public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposable
 {
     private static readonly TimeSpan SuccessStatusDisplayDuration = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan RuntimeNoticeGracePeriod = TimeSpan.FromMilliseconds(1500);
     private static readonly ProfileEditorDraftComparer DraftComparer = new();
+    private const string ListRefreshChannel = "profiles-list";
+    private const string MutationChannel = "profiles-mutation";
+    private const string CapabilitiesChannel = "profile-capabilities";
     private readonly IAgentProfileGateway _profileService;
     private readonly IAgentRuntimeAvailability? _runtimeAvailability;
     private readonly IPackageSettingsNavigationService? _settingsNavigationService;
     private readonly IPresentationDispatcher _uiDispatcher;
     private readonly TimedStatusController _statusClear;
+    private readonly TimedStatusController _runtimeNoticeDelay;
     private readonly OperationState<AgentProfileOperation> _operation = new();
     private readonly PresentationTaskScope _tasks;
     private readonly AsyncOnce _initialization = new();
+    private readonly LatestRequestCoordinator _requests = new();
+    private readonly KeyedAdaptiveListDetailState<string, AgentProfileRecord> _listDetail;
+    private readonly SerializedRefreshLoop _runtimeRefresh;
     private readonly Dictionary<string, EditableDocumentState<ProfileEditorDraft>> _drafts =
         new(StringComparer.OrdinalIgnoreCase);
-    private bool _suppressSelectionHandlers;
-    private bool _suppressProfileChangeNotifications;
     private bool _suppressDraftTracking;
-    private bool _isHydrating;
+    private bool _initializationRefreshPending;
     private bool _isInitialized;
     private bool _disposed;
     private string? _initializationFailureStatus;
-    private int _profileLoadVersion;
     private long _editRevision;
+    private long _runtimeAvailabilityCallbackVersion;
+    private bool _runtimeNoticePending;
+    private Task _currentDetailLoad = Task.CompletedTask;
 
     public AgentProfilesViewModel(
         IAgentProfileGateway profileService,
@@ -44,7 +52,8 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     internal AgentProfilesViewModel(
         IAgentProfileGateway profileService,
         IPackageSettingsNavigationService? settingsNavigationService,
-        IPresentationDispatcher uiDispatcher)
+        IPresentationDispatcher uiDispatcher,
+        TimeProvider? runtimeNoticeTimeProvider = null)
     {
         _profileService = profileService;
         _runtimeAvailability = profileService as IAgentRuntimeAvailability;
@@ -52,6 +61,16 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         _uiDispatcher = uiDispatcher;
         _tasks = new PresentationTaskScope();
         _statusClear = new TimedStatusController(dispatcher: uiDispatcher);
+        _runtimeNoticeDelay = new TimedStatusController(runtimeNoticeTimeProvider, uiDispatcher);
+        _listDetail = new KeyedAdaptiveListDetailState<string, AgentProfileRecord>(
+            Profiles,
+            static profile => profile.ProfileId,
+            keyComparer: StringComparer.OrdinalIgnoreCase);
+        _listDetail.SelectionChanging += OnProfileSelectionChanging;
+        _listDetail.PropertyChanged += OnListDetailPropertyChanged;
+        _runtimeRefresh = new SerializedRefreshLoop(
+            RefreshProfileListAsync,
+            ReportRuntimeRefreshFailure);
         ChatBinding = new ModelBindingEditorState(
             new ProviderModelLoader(AgentProfileProviderModelCatalog.CreateChat(profileService)),
             new ModelBindingEditorOptions(
@@ -97,15 +116,12 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             await _uiDispatcher.InvokeAsync(() =>
             {
                 if (_initializationFailureStatus is not null
-                    && (string.Equals(StatusText, _initializationFailureStatus, StringComparison.Ordinal)
-                        || string.Equals(
-                            StatusText,
-                            "Agent Runtime is unavailable. Reconnecting...",
-                            StringComparison.Ordinal)))
+                    && string.Equals(StatusText, _initializationFailureStatus, StringComparison.Ordinal))
                 {
                     ClearStatus();
                 }
                 _initializationFailureStatus = null;
+                ReconcileRuntimeNoticeState();
             }).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -121,6 +137,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
                     ClearEditor();
                     _initializationFailureStatus = ex.Message;
                     SetStatus(_initializationFailureStatus, AgentProfileStatusKind.Error);
+                    ReconcileRuntimeNoticeState();
                 }
             }).ConfigureAwait(false);
         }
@@ -162,7 +179,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     public bool IsListActive => !IsEditorActive;
 
-    public bool ShowWideLayout => !IsCompactLayout;
+    public bool ShowWideLayout => _listDetail.Layout == AdaptiveListDetailLayout.Wide;
 
     public bool ShowCompactList => IsCompactLayout && IsListActive;
 
@@ -176,20 +193,47 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         && _drafts.TryGetValue(SelectedProfile.ProfileId, out var draft)
         && draft.IsDirty;
 
-    public bool IsHydrating => _isHydrating;
+    public bool IsHydrating => _listDetail.DetailPhase == AdaptiveDetailPhase.Loading;
 
     public bool IsEditorEnabled => HasSelectedProfile && !IsHydrating;
 
-    public bool CanNavigateProfiles => !IsHydrating;
+    public bool CanNavigateProfiles => !_disposed && !IsHydrating;
 
-    [ObservableProperty]
-    private AgentProfileRecord? _selectedProfile;
+    public AgentProfileRecord? SelectedProfile
+    {
+        get => _listDetail.SelectedItem;
+        set
+        {
+            if (value is null)
+            {
+                ShowProfileListFromUserIntent();
+            }
+            else
+            {
+                ShowProfileFromUserIntent(value);
+            }
+        }
+    }
 
-    [ObservableProperty]
-    private bool _isCompactLayout;
+    public bool IsCompactLayout
+    {
+        get => _listDetail.Layout == AdaptiveListDetailLayout.Compact;
+        set => _listDetail.SetLayout(value
+            ? AdaptiveListDetailLayout.Compact
+            : AdaptiveListDetailLayout.Wide);
+    }
 
-    [ObservableProperty]
-    private bool _isEditorActive;
+    public bool IsEditorActive => IsCompactLayout && !_listDetail.IsList;
+
+    internal AdaptiveListDetailRoute Route => _listDetail.Route;
+
+    internal AdaptiveListDetailLayout Layout => _listDetail.Layout;
+
+    internal AdaptiveDetailPhase DetailPhase => _listDetail.DetailPhase;
+
+    internal long IntentRevision => _listDetail.IntentRevision;
+
+    internal long LayoutRevision => _listDetail.LayoutRevision;
 
     [ObservableProperty]
     private BehaviorLoopOption? _selectedBehaviorLoop;
@@ -215,6 +259,10 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     [NotifyPropertyChangedFor(nameof(IsStatusWarning))]
     [NotifyPropertyChangedFor(nameof(IsStatusError))]
     private AgentProfileStatusKind _statusKind = AgentProfileStatusKind.None;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasRuntimeNotice))]
+    private string _runtimeNoticeText = string.Empty;
 
     [ObservableProperty]
     private string _toolSelectionSummary = "No local tools are enabled for this profile.";
@@ -345,38 +393,13 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     public bool HasStatusText => !string.IsNullOrWhiteSpace(StatusText);
 
+    public bool HasRuntimeNotice => !string.IsNullOrWhiteSpace(RuntimeNoticeText);
+
     public bool IsStatusSuccess => StatusKind == AgentProfileStatusKind.Success;
 
     public bool IsStatusWarning => StatusKind == AgentProfileStatusKind.Warning;
 
     public bool IsStatusError => StatusKind == AgentProfileStatusKind.Error;
-
-    partial void OnSelectedProfileChanging(AgentProfileRecord? value)
-    {
-        if (!IsHydrating)
-        {
-            UpdateCurrentDraft();
-        }
-    }
-
-    partial void OnSelectedProfileChanged(AgentProfileRecord? value)
-    {
-        DeleteProfileCommand.NotifyCanExecuteChanged();
-        SaveProfileCommand.NotifyCanExecuteChanged();
-        OnPropertyChanged(nameof(HasSelectedProfile));
-        OnPropertyChanged(nameof(IsEditorEnabled));
-        OnPropertyChanged(nameof(IsDirty));
-        if (_suppressSelectionHandlers)
-        {
-            return;
-        }
-
-        _tasks.Run(_ => LoadSelectedProfileAsync(value, ++_profileLoadVersion));
-        if (IsCompactLayout && value is not null)
-        {
-            IsEditorActive = true;
-        }
-    }
 
     partial void OnDisplayNameChanged(string value) => OnEditorChanged();
 
@@ -394,22 +417,6 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     }
 
     partial void OnHasEmbeddingConsumersChanged(bool value) => NotifyEmbeddingStateChanged();
-
-    partial void OnIsCompactLayoutChanged(bool value)
-    {
-        if (value && !IsEditorActive)
-        {
-            SelectedProfile = null;
-        }
-        else if (!value && SelectedProfile is null)
-        {
-            SelectedProfile = Profiles.FirstOrDefault();
-        }
-
-        NotifyLayoutChanged();
-    }
-
-    partial void OnIsEditorActiveChanged(bool value) => NotifyLayoutChanged();
 
     private void OnModelBindingPropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
@@ -508,9 +515,13 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     private void OnProfileChanged(string profileId) => RunOnUiThread(() =>
     {
-        if (_isInitialized && !_suppressProfileChangeNotifications)
+        if (_isInitialized)
         {
-            _tasks.Run(_ => ReloadProfilesSafelyAsync(SelectedProfile?.ProfileId));
+            _tasks.Run(_runtimeRefresh.MarkDirty());
+        }
+        else
+        {
+            _initializationRefreshPending = true;
         }
     });
 
@@ -522,42 +533,6 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
                 _tasks.Run(_ => RefreshSelectedProfileCapabilitiesAsync());
             }
         });
-
-    private async Task ReloadProfilesSafelyAsync(string? selectProfileId)
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        try
-        {
-            await ReloadProfilesAsync(selectProfileId);
-        }
-        catch (Exception ex)
-        {
-            ClearEditor();
-            SetStatus(ex.Message, AgentProfileStatusKind.Error);
-        }
-    }
-
-    private bool IsCurrentProfileLoad(int version, string profileId)
-        => !_disposed
-            && version == _profileLoadVersion
-            && string.Equals(SelectedProfile?.ProfileId, profileId, StringComparison.OrdinalIgnoreCase);
-
-    private void SetSelectionSilently(Action action)
-    {
-        _suppressSelectionHandlers = true;
-        try
-        {
-            action();
-        }
-        finally
-        {
-            _suppressSelectionHandlers = false;
-        }
-    }
 
     private OperationGeneration BeginOperation(AgentProfileOperation operation)
     {
@@ -573,28 +548,6 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         return generation;
     }
 
-    private void BeginHydration(int version)
-    {
-        if (_disposed || version != _profileLoadVersion)
-        {
-            return;
-        }
-
-        _isHydrating = true;
-        NotifyHydrationStateChanged();
-    }
-
-    private void EndHydration(int version)
-    {
-        if (_disposed || version != _profileLoadVersion || !_isHydrating)
-        {
-            return;
-        }
-
-        _isHydrating = false;
-        NotifyHydrationStateChanged();
-    }
-
     private void NotifyHydrationStateChanged()
     {
         OnPropertyChanged(nameof(IsHydrating));
@@ -605,6 +558,100 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         DeleteProfileCommand.NotifyCanExecuteChanged();
         CreateProfileCommand.NotifyCanExecuteChanged();
         BackToProfileListCommand.NotifyCanExecuteChanged();
+    }
+
+    private void OnProfileSelectionChanging(AgentProfileRecord? previous, AgentProfileRecord? current)
+    {
+        if (!IsHydrating)
+        {
+            UpdateCurrentDraft();
+        }
+    }
+
+    private void OnListDetailPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!_listDetail.IsExistingDetail)
+        {
+            _currentDetailLoad = Task.CompletedTask;
+        }
+        if (e.PropertyName == nameof(KeyedAdaptiveListDetailState<string, AgentProfileRecord>.SelectedItem))
+        {
+            OnPropertyChanged(nameof(SelectedProfile));
+            OnPropertyChanged(nameof(HasSelectedProfile));
+            OnPropertyChanged(nameof(IsDirty));
+            if (_listDetail.IsExistingDetail && SelectedProfile is { } selected)
+            {
+                var ticket = _listDetail.BeginDetailLoad(_lifetimeCancellation.Token);
+                _currentDetailLoad = LoadSelectedProfileAsync(selected, ticket);
+                _tasks.Run(_currentDetailLoad);
+            }
+            else if (_listDetail.IsList)
+            {
+                ClearEditor();
+            }
+        }
+
+        OnPropertyChanged(nameof(IsCompactLayout));
+        OnPropertyChanged(nameof(IsEditorActive));
+        NotifyLayoutChanged();
+        NotifyHydrationStateChanged();
+    }
+
+    private void CancelPendingMutation()
+    {
+        _requests.Invalidate(MutationChannel);
+        _operation.CancelCurrent();
+    }
+
+    private void ShowProfileListFromUserIntent()
+    {
+        CancelPendingMutation();
+        _listDetail.ShowList();
+    }
+
+    private void ShowProfileFromUserIntent(AgentProfileRecord profile)
+    {
+        if (_listDetail.IsExistingDetail && ReferenceEquals(SelectedProfile, profile))
+        {
+            return;
+        }
+
+        CancelPendingMutation();
+        _listDetail.ShowExistingDetail(profile);
+    }
+
+    private void ReportRuntimeRefreshFailure(Exception exception)
+        => RunOnUiThread(() => SetStatus(exception.Message, AgentProfileStatusKind.Error));
+
+    private async Task RefreshProfileListAsync(CancellationToken cancellationToken)
+        => _ = await TryRefreshProfileListAsync(cancellationToken).ConfigureAwait(false);
+
+    private async Task<bool> TryRefreshProfileListAsync(CancellationToken cancellationToken)
+    {
+        var request = _requests.Begin(ListRefreshChannel, cancellationToken);
+        var applied = false;
+        try
+        {
+            var profiles = _profileService.ListProfiles();
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (_requests.IsCurrent(request))
+                {
+                    _listDetail.Reconcile(profiles);
+                    applied = true;
+                }
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (
+            request.CancellationToken.IsCancellationRequested
+            && !cancellationToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            _requests.Complete(request);
+        }
+        return applied;
     }
 
     private void EndOperation(OperationGeneration generation)

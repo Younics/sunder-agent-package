@@ -4,7 +4,9 @@ public sealed record DockerExecutionWorkspaceConfig(
     string? ImageReference,
     string? ContainerName,
     string? ShellPath = null,
-    IReadOnlyList<string>? PathEntries = null);
+    IReadOnlyList<string>? PathEntries = null,
+    int SchemaVersion = DockerImageCatalogService.CurrentSchemaVersion,
+    bool ImageReferenceNeedsAttention = false);
 
 public sealed record DockerExecutionMount(
     string HostPath,
@@ -16,4 +18,5 @@ internal sealed record DockerExecutionRuntimeConfig(
     string? ShellPath,
     IReadOnlyList<string>? PathEntries,
     IReadOnlyList<DockerExecutionMount> Mounts,
-    string? DefaultWorkingDirectory);
+    string? DefaultWorkingDirectory,
+    bool ImageReferenceNeedsAttention = false);

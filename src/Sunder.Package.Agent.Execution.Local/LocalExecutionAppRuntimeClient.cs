@@ -13,7 +13,10 @@ internal sealed class LocalExecutionAppRuntimeClient(IPackageRuntimeClient clien
         if (!client.IsAvailable)
         {
             return ValueTask.FromException<LocalExecutionOperationResponse>(
-                new InvalidOperationException("Local execution Runtime is unavailable."));
+                new PackageRuntimeInvocationException(
+                    "runtime.v1.unavailable",
+                    isTransient: true,
+                    statusCode: 503));
         }
 
         return client.InvokeAsync(LocalExecutionRuntimeOperations.Execute, request, cancellationToken);

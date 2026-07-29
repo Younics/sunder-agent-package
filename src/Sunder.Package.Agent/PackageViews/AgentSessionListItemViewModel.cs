@@ -83,10 +83,11 @@ public sealed partial class AgentSessionListItemViewModel : ObservableObject
             StatusBadgeText = checkpoint.Status switch
             {
                 AgentRunStatus.Completed => "Done",
+                AgentRunStatus.Idle => "Queued",
                 _ => checkpoint.Status.ToString()
             };
             StatusBrush = ResolveStatusBrush(checkpoint.Status);
-            IsRunActive = checkpoint.Status == AgentRunStatus.Running;
+            IsRunActive = checkpoint.Status is AgentRunStatus.Idle or AgentRunStatus.Running;
         }
 
         if (markUnread && !IsSelected)
@@ -128,7 +129,7 @@ public sealed partial class AgentSessionListItemViewModel : ObservableObject
         var resourceKey = status switch
         {
             AgentRunStatus.Completed => SunderThemeKeys.SuccessBrush,
-            AgentRunStatus.Running => SunderThemeKeys.AccentBrush,
+            AgentRunStatus.Idle or AgentRunStatus.Running => SunderThemeKeys.AccentBrush,
             AgentRunStatus.Failed => SunderThemeKeys.DangerBrush,
             AgentRunStatus.Interrupted or AgentRunStatus.Stopped => SunderThemeKeys.WarningBrush,
             _ => SunderThemeKeys.ForegroundMutedBrush

@@ -172,40 +172,69 @@ public sealed class SubagentStackContributorTests
 
     private sealed class TestKeyValueStore : IPackageKeyValueStore
     {
-        private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
 
-        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(_values.GetValueOrDefault(key));
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.FromResult(_values.GetValueOrDefault(key));
+        }
 
         public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            TestPackageStorageGuards.Value(value);
             _values[key] = value;
             return Task.CompletedTask;
         }
 
-        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(_values.ContainsKey(key));
+        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.FromResult(_values.ContainsKey(key));
+        }
 
         public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
             _values.Remove(key);
             return Task.CompletedTask;
         }
 
         public Task<IReadOnlyList<string>> ListKeysAsync(string? prefix = null, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<string>>(_values.Keys.Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray());
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Prefix(prefix);
+            return Task.FromResult<IReadOnlyList<string>>(_values.Keys
+                .Where(key => prefix is null || key.StartsWith(prefix, StringComparison.Ordinal))
+                .Order(StringComparer.Ordinal)
+                .ToArray());
+        }
     }
 
     private sealed class TestSettings : EmptyPackageSettings;
 
     private sealed class TestSecrets : InMemoryPackageSecrets
     {
-        public string? GetSecret(string key) => null;
+        public string? GetSecret(string key)
+        {
+            TestPackageStorageGuards.Key(key);
+            return null;
+        }
 
         public void SetSecret(string key, string value)
         {
+            TestPackageStorageGuards.Key(key);
+            TestPackageStorageGuards.Value(value);
         }
 
         public void DeleteSecret(string key)
         {
+            TestPackageStorageGuards.Key(key);
         }
     }
 }

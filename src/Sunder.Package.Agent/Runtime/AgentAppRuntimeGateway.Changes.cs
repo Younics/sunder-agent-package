@@ -1,10 +1,19 @@
+using System.Diagnostics;
 using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Runtime;
 
 internal sealed partial class AgentAppRuntimeGateway
 {
-    private void StartObservingChanges()
+    private enum ChangeObservationStartReason
+    {
+        Initial,
+        HealthySnapshotHandoff,
+        Recovery,
+    }
+
+    private void StartObservingChanges(
+        ChangeObservationStartReason startReason = ChangeObservationStartReason.Initial)
     {
         CancellationTokenSource cancellation;
         int generation;
@@ -20,7 +29,7 @@ internal sealed partial class AgentAppRuntimeGateway
             generation = ++_observationGeneration;
         }
 
-        _ = ObserveChangesAsync(generation, cancellation.Token);
+        _ = ObserveChangesAsync(generation, startReason, cancellation.Token);
     }
 
     private void PauseObservingChanges()
@@ -47,24 +56,36 @@ internal sealed partial class AgentAppRuntimeGateway
         }
     }
 
-    private async Task ObserveChangesAsync(int generation, CancellationToken cancellationToken)
+    private async Task ObserveChangesAsync(
+        int generation,
+        ChangeObservationStartReason startReason,
+        CancellationToken cancellationToken)
     {
         await Task.Yield();
         var reconnectDelay = InitialReconnectDelay;
+        var nextSubscriptionReason = startReason;
         while (!cancellationToken.IsCancellationRequested && IsCurrentObservation(generation))
         {
             if (!_transport.IsAvailable)
             {
                 SetConnectionStateIfCurrent(generation, AgentRuntimeConnectionState.Unavailable);
+                nextSubscriptionReason = ChangeObservationStartReason.Recovery;
                 if (!await DelayForReconnectAsync(reconnectDelay, cancellationToken).ConfigureAwait(false)) return;
                 reconnectDelay = NextReconnectDelay(reconnectDelay);
                 continue;
             }
+            var connectedAt = Stopwatch.GetTimestamp();
             try
             {
-                SetConnectionStateIfCurrent(generation, _revision == 0
-                    ? AgentRuntimeConnectionState.Connecting
-                    : AgentRuntimeConnectionState.Reconnecting);
+                if (nextSubscriptionReason == ChangeObservationStartReason.Initial)
+                {
+                    SetConnectionStateIfCurrent(generation, AgentRuntimeConnectionState.Connecting);
+                }
+                else if (nextSubscriptionReason == ChangeObservationStartReason.Recovery)
+                {
+                    SetConnectionStateIfCurrent(generation, AgentRuntimeConnectionState.Reconnecting);
+                }
+                nextSubscriptionReason = ChangeObservationStartReason.Recovery;
                 await foreach (var change in _transport.SubscribeAsync(
                                    AgentRuntimeOperations.Changes,
                                    new AgentChangeSubscription(
@@ -78,22 +99,35 @@ internal sealed partial class AgentAppRuntimeGateway
                     {
                         await ResnapshotAsync(generation, cancellationToken).ConfigureAwait(false);
                     }
-                    reconnectDelay = InitialReconnectDelay;
                     SetConnectionStateIfCurrent(generation, AgentRuntimeConnectionState.Connected);
                 }
+                reconnectDelay = ResetReconnectDelayAfterStableConnection(connectedAt, reconnectDelay);
                 SetConnectionStateIfCurrent(generation, AgentRuntimeConnectionState.Reconnecting);
                 if (!await DelayForReconnectAsync(reconnectDelay, cancellationToken).ConfigureAwait(false)) return;
                 reconnectDelay = NextReconnectDelay(reconnectDelay);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
-            catch
+            catch (Exception exception) when (IsRuntimeAvailabilityFailure(exception, cancellationToken))
             {
                 SetConnectionStateIfCurrent(generation, AgentRuntimeConnectionState.Reconnecting);
+                reconnectDelay = ResetReconnectDelayAfterStableConnection(connectedAt, reconnectDelay);
                 if (!await DelayForReconnectAsync(reconnectDelay, cancellationToken).ConfigureAwait(false)) return;
                 reconnectDelay = NextReconnectDelay(reconnectDelay);
             }
+            catch
+            {
+                SetConnectionStateIfCurrent(generation, AgentRuntimeConnectionState.Unavailable);
+                return;
+            }
         }
     }
+
+    private static TimeSpan ResetReconnectDelayAfterStableConnection(
+        long connectedAt,
+        TimeSpan reconnectDelay)
+        => Stopwatch.GetElapsedTime(connectedAt) >= TimeSpan.FromSeconds(30)
+            ? InitialReconnectDelay
+            : reconnectDelay;
 
     private bool ApplyChange(AgentRuntimeChange change, int generation)
     {

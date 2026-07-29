@@ -6,13 +6,8 @@ namespace Sunder.Package.Agent.Execution.Local.Tests;
 
 internal sealed class ShellDockerCommandExecutor : IDockerCommandExecutor
 {
-    public int MaxOutputLength { get; init; } = 51200;
-
-    public int DefaultTimeoutSeconds { get; init; } = 5;
-
-    public string? PathEnvironment { get; init; }
-
-    public IReadOnlyList<string>? LastArguments { get; private set; }
+    private const int MaxOutputLength = 51200;
+    private const int DefaultTimeoutSeconds = 5;
 
     public async Task<DockerCliRunResult> RunAsync(
         IReadOnlyList<string> args,
@@ -21,11 +16,10 @@ internal sealed class ShellDockerCommandExecutor : IDockerCommandExecutor
         string? standardInput = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        LastArguments = args.ToArray();
         var commandIndex = args.IndexOf("-c");
-        if (commandIndex <= 0 || commandIndex + 2 >= args.Count)
+        if (commandIndex <= 0 || commandIndex + 1 >= args.Count)
         {
-            throw new InvalidOperationException("The Docker command did not contain a shell helper invocation.");
+            throw new InvalidOperationException("The Docker command did not contain a shell invocation.");
         }
 
         var startInfo = new ProcessStartInfo
@@ -37,11 +31,6 @@ internal sealed class ShellDockerCommandExecutor : IDockerCommandExecutor
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        if (PathEnvironment is not null)
-        {
-            startInfo.Environment["PATH"] = PathEnvironment;
-        }
-
         startInfo.ArgumentList.Add("-c");
         for (var index = commandIndex + 1; index < args.Count; index++)
         {
@@ -57,22 +46,6 @@ internal sealed class ShellDockerCommandExecutor : IDockerCommandExecutor
 
     public Task<int> ResolveDefaultTimeoutSecondsAsync(CancellationToken cancellationToken = default)
         => Task.FromResult(DefaultTimeoutSeconds);
-}
-
-internal sealed class StubDockerCommandExecutor(Func<CancellationToken, DockerCliRunResult> run) : IDockerCommandExecutor
-{
-    public Task<DockerCliRunResult> RunAsync(
-        IReadOnlyList<string> args,
-        int timeoutSeconds,
-        CancellationToken cancellationToken,
-        string? standardInput = null)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(run(cancellationToken));
-    }
-
-    public Task<int> ResolveDefaultTimeoutSecondsAsync(CancellationToken cancellationToken = default)
-        => Task.FromResult(1);
 }
 
 internal static class ReadOnlyListExtensions

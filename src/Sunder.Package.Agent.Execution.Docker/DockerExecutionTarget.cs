@@ -1,25 +1,33 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Collections.Concurrent;
+using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-public sealed class DockerExecutionTarget
-    : IAgentProcessExecutionTarget, IAgentRangedFileExecutionTarget, IAgentExecutionScopeProvider, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment
+public sealed partial class DockerExecutionTarget
+    : IAgentProcessExecutionTarget, IAgentStructuredFileSearchExecutionTarget, IAgentRangedFileExecutionTarget, IAgentExecutionScopeProvider, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment, IAgentScopedInstructionDiscoveryTarget, IAgentResourceAuthorityExecutionTarget
 {
     internal const string DefaultNetworkPolicy = "none";
     internal const string DefaultMemoryLimit = "2g";
     internal const string DefaultCpuLimit = "2";
     internal const string DefaultPidLimit = "256";
-    private const string ContainerSecurityPolicyVersion = "2";
+    private const string ContainerSecurityPolicyVersion = "4";
 
     private readonly DockerExecutionWorkspaceConfigService _configService;
     private readonly DockerContainerLifecycleService _lifecycleService;
     private readonly DockerImageCatalogService _imageCatalogService;
     private readonly DockerCommandRunner _commandRunner;
+    private readonly DockerCliRunner _dockerCliRunner;
     private readonly DockerFileSystemExecutor _fileSystemExecutor;
+    private readonly IDockerMountIdentityVerifier _mountIdentityVerifier;
+    private readonly object _daemonIdentityLock = new();
+    private string? _pinnedEndpointIdentity;
+    private string? _verifiedDaemonIdentity;
+    private readonly ConcurrentDictionary<string, string> _verifiedContainerSignatures = new(StringComparer.Ordinal);
 
     public DockerExecutionTarget(
         IPackageContext packageContext,
@@ -27,13 +35,32 @@ public sealed class DockerExecutionTarget
         DockerContainerLifecycleService lifecycleService,
         DockerImageCatalogService? imageCatalogService = null,
         DockerCliRunner? dockerCliRunner = null)
+        : this(
+            packageContext,
+            configService,
+            lifecycleService,
+            imageCatalogService,
+            dockerCliRunner,
+            new DockerMountIdentityVerifier())
+    {
+    }
+
+    internal DockerExecutionTarget(
+        IPackageContext packageContext,
+        DockerExecutionWorkspaceConfigService configService,
+        DockerContainerLifecycleService lifecycleService,
+        DockerImageCatalogService? imageCatalogService,
+        DockerCliRunner? dockerCliRunner,
+        IDockerMountIdentityVerifier mountIdentityVerifier)
     {
         var runner = dockerCliRunner ?? new DockerCliRunner(packageContext);
         _configService = configService;
         _lifecycleService = lifecycleService;
         _imageCatalogService = imageCatalogService ?? new DockerImageCatalogService(packageContext, runner);
+        _dockerCliRunner = runner;
         _commandRunner = new DockerCommandRunner(packageContext, runner);
-        _fileSystemExecutor = new DockerFileSystemExecutor(_commandRunner);
+        _fileSystemExecutor = new DockerFileSystemExecutor();
+        _mountIdentityVerifier = mountIdentityVerifier;
     }
 
     public AgentExecutionTargetDescriptor Descriptor { get; } = new(
@@ -61,10 +88,9 @@ public sealed class DockerExecutionTarget
                 return new AgentExecutionTargetReadiness(Descriptor.TargetKind, Descriptor.TargetId, AgentExecutionTargetReadinessStatus.NeedsConfiguration, "Configure at least one workspace path before using Docker execution.");
             }
 
-            var missingRoots = config.Mounts.Where(mount => !Directory.Exists(mount.HostPath)).ToArray();
-            if (missingRoots.Length > 0)
+            foreach (var mount in config.Mounts)
             {
-                return new AgentExecutionTargetReadiness(Descriptor.TargetKind, Descriptor.TargetId, AgentExecutionTargetReadinessStatus.Failed, $"Workspace path does not exist: {missingRoots[0].HostPath}");
+                using var root = HostSecurePathEngine.OpenRoot(mount.HostPath, cancellationToken: cancellationToken);
             }
 
             var imageReadiness = await _imageCatalogService.GetReadinessAsync(config.ImageReference, cancellationToken)
@@ -120,21 +146,62 @@ public sealed class DockerExecutionTarget
     {
         cancellationToken.ThrowIfCancellationRequested();
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
-        var resolved = DockerPathResolver.ResolveFileResource(
-            config,
-            path,
-            allowOutsideConfiguredScope: true,
-            exists: false);
-        if (!DockerPathResolver.IsInsideWorkspacePath(config, resolved.CanonicalReference))
+        var binding = DockerPathResolver.ResolveHostBinding(config, path);
+        using var operation = await AcquireStructuredOperationAsync(context, config, cancellationToken);
+        var retainedMountRoot = operation.TakeMountRoot(binding.Mount);
+        LocalSecureApprovalLease? resourceAuthority = null;
+        try
         {
-            return resolved;
+            resourceAuthority = HostSecurePathEngine.CaptureFromRoot(
+                retainedMountRoot,
+                binding.HostPath,
+                cancellationToken: cancellationToken,
+                allowMissingSuffix: true);
+            var identity = CaptureStructuredIdentity(config, context.Binding.BindingId, operation);
+            return _fileSystemExecutor.ResolveFileResource(
+                config,
+                path,
+                identity.NamespaceFingerprint,
+                cancellationToken,
+                resourceAuthority,
+                identity.MountIdentityChains,
+                context);
         }
-
-        var mapping = DockerPathResolver.MapToHostPath(config, resolved.CanonicalReference);
-        return resolved with
+        catch
         {
-            Exists = File.Exists(mapping.HostPath) || Directory.Exists(mapping.HostPath),
-        };
+            if (resourceAuthority is null)
+            {
+                retainedMountRoot.Dispose();
+            }
+            else
+            {
+                resourceAuthority.Dispose();
+            }
+            throw;
+        }
+    }
+
+    public ValueTask<AgentResourceAuthorityValidation> ValidateResourceAuthorityAsync(
+        AgentExecutionTargetContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var valid = context.ApprovedResourceClaims.Count <= 128
+                    && context.ApprovedResourceClaims.All(claim =>
+                        claim.ConfiguredRoot is not null
+                        && claim.NamespaceId.StartsWith(
+                            DockerFileSystemExecutor.ClaimNamespacePrefix,
+                            StringComparison.Ordinal));
+        return ValueTask.FromResult(valid
+            ? new AgentResourceAuthorityValidation(true)
+            : new AgentResourceAuthorityValidation(
+                false,
+                AgentToolResultErrorCodes.PermissionReapprovalRequired,
+                "Docker structured resource claims are missing or invalid."));
+    }
+
+    public void ReleaseResourceAuthority(IReadOnlyList<string> resourceCapabilities)
+    {
     }
 
     public async ValueTask<AgentShellCommandResult> ExecuteShellAsync(
@@ -157,6 +224,41 @@ public sealed class DockerExecutionTarget
         return await _commandRunner.ExecuteProcessAsync(config, lease.ContainerName, context, request, cancellationToken);
     }
 
+    public async ValueTask<AgentFileSearchResult> ExecuteFileSearchAsync(
+        AgentExecutionTargetContext context,
+        AgentFileSearchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!HostSecureFileSearch.TryValidateRequest(request, out var validationError))
+        {
+            return AgentFileSearchResult.Failure(
+                AgentFileSearchErrorCodes.InvalidRequest,
+                validationError!);
+        }
+        var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        try
+        {
+            _ = DockerPathResolver.ResolveHostBinding(config, request.Path);
+        }
+        catch (DockerStructuredBindRequiredException ex)
+        {
+            return AgentFileSearchResult.Failure(ex.ErrorCode, ex.Message);
+        }
+        using var operation = await AcquireStructuredOperationAsync(context, config, cancellationToken);
+        try
+        {
+            var path = DockerPathResolver.ResolveHostBinding(config, request.Path);
+            var identity = CaptureStructuredIdentity(config, context.Binding.BindingId, operation);
+            var authority = CaptureConfiguredResourceAuthority(context, path, identity, operation, cancellationToken);
+            return await _fileSystemExecutor.SearchAsync(config, request, authority, cancellationToken);
+        }
+        catch (LocalSecureApprovalChangedException ex)
+        {
+            return AgentFileSearchResult.Failure(AgentToolResultErrorCodes.PermissionReapprovalRequired, ex.Message);
+        }
+    }
+
     public async ValueTask<AgentExecutionPathMapping> MapToHostPathAsync(
         AgentExecutionTargetContext context,
         string executionPath,
@@ -164,6 +266,8 @@ public sealed class DockerExecutionTarget
     {
         cancellationToken.ThrowIfCancellationRequested();
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        _ = DockerPathResolver.ResolveHostBinding(config, executionPath);
+        using var operation = await AcquireStructuredOperationAsync(context, config, cancellationToken);
         return DockerPathResolver.MapToHostPath(config, executionPath);
     }
 
@@ -200,9 +304,41 @@ public sealed class DockerExecutionTarget
         AgentFileReadRequest request,
         CancellationToken cancellationToken = default)
     {
+        if (!FileOperation.TryValidateRange(request.Offset, request.Limit, out var rangeError))
+        {
+            return AgentFileReadResult.Failure(
+                request.Path,
+                AgentFileReadErrorCodes.InvalidRange,
+                rangeError!);
+        }
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
-        using var lease = await AcquireContainerAsync(context, config, cancellationToken);
-        return await _fileSystemExecutor.ReadFileAsync(config, lease.ContainerName, request, context.AllowOutsideConfiguredScope, cancellationToken);
+        try
+        {
+            _ = DockerPathResolver.ResolveHostBinding(config, request.Path);
+        }
+        catch (DockerStructuredBindRequiredException ex)
+        {
+            return AgentFileReadResult.Failure(request.Path, ex.ErrorCode, ex.Message);
+        }
+        using var operation = await AcquireStructuredOperationAsync(context, config, cancellationToken);
+        try
+        {
+            var path = DockerPathResolver.ResolveHostBinding(config, request.Path);
+            var identity = CaptureStructuredIdentity(config, context.Binding.BindingId, operation);
+            var authority = CaptureConfiguredResourceAuthority(context, path, identity, operation, cancellationToken);
+            return await _fileSystemExecutor.ReadFileAsync(
+                config,
+                request,
+                authority,
+                cancellationToken);
+        }
+        catch (LocalSecureApprovalChangedException ex)
+        {
+            return AgentFileReadResult.Failure(
+                request.Path,
+                AgentToolResultErrorCodes.PermissionReapprovalRequired,
+                ex.Message);
+        }
     }
 
     public async ValueTask<AgentFileMutationResult> WriteFileAsync(
@@ -211,8 +347,48 @@ public sealed class DockerExecutionTarget
         CancellationToken cancellationToken = default)
     {
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
-        using var lease = await AcquireContainerAsync(context, config, cancellationToken);
-        return await _fileSystemExecutor.WriteFileAsync(config, lease.ContainerName, request, context.AllowOutsideConfiguredScope, cancellationToken);
+        try
+        {
+            _ = DockerPathResolver.ResolveHostBinding(config, request.Path);
+        }
+        catch (DockerStructuredBindRequiredException ex)
+        {
+            return FileOperation.Failure(request.Path, ex.Message, ex.ErrorCode);
+        }
+        using var operation = await AcquireStructuredOperationAsync(context, config, cancellationToken);
+        LocalSecureApprovalLease? postMutationAuthority = null;
+        try
+        {
+            var path = DockerPathResolver.ResolveHostBinding(config, request.Path);
+            var identity = CaptureStructuredIdentity(config, context.Binding.BindingId, operation);
+            var authority = CaptureConfiguredResourceAuthority(context, path, identity, operation, cancellationToken);
+            var result = await _fileSystemExecutor.WriteFileAsync(
+                config,
+                request,
+                authority,
+                cancellationToken,
+                postMutationAuthoritySink: context.CapturePostMutationResource
+                    ? captured => postMutationAuthority = captured
+                    : null);
+            return AttachPostMutationResource(
+                config,
+                context,
+                request.Path,
+                identity,
+                result,
+                ref postMutationAuthority);
+        }
+        catch (LocalSecureApprovalChangedException ex)
+        {
+            return FileOperation.Failure(
+                request.Path,
+                ex.Message,
+                AgentToolResultErrorCodes.PermissionReapprovalRequired);
+        }
+        finally
+        {
+            postMutationAuthority?.Dispose();
+        }
     }
 
     public async ValueTask<AgentFileMutationResult> DeleteFileAsync(
@@ -221,29 +397,64 @@ public sealed class DockerExecutionTarget
         CancellationToken cancellationToken = default)
     {
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
-        using var lease = await AcquireContainerAsync(context, config, cancellationToken);
-        return await _fileSystemExecutor.DeleteFileAsync(config, lease.ContainerName, request, context.AllowOutsideConfiguredScope, cancellationToken);
+        try
+        {
+            _ = DockerPathResolver.ResolveHostBinding(config, request.Path);
+        }
+        catch (DockerStructuredBindRequiredException ex)
+        {
+            return FileOperation.Failure(request.Path, ex.Message, ex.ErrorCode);
+        }
+        using var operation = await AcquireStructuredOperationAsync(context, config, cancellationToken);
+        LocalSecureApprovalLease? postMutationAuthority = null;
+        try
+        {
+            var path = DockerPathResolver.ResolveHostBinding(config, request.Path);
+            var identity = CaptureStructuredIdentity(config, context.Binding.BindingId, operation);
+            var authority = CaptureConfiguredResourceAuthority(context, path, identity, operation, cancellationToken);
+            var result = await _fileSystemExecutor.DeleteFileAsync(
+                config,
+                request,
+                authority,
+                identity.MountIdentityChains,
+                cancellationToken,
+                postMutationAuthoritySink: context.CapturePostMutationResource
+                    ? captured => postMutationAuthority = captured
+                    : null);
+            return AttachPostMutationResource(
+                config,
+                context,
+                request.Path,
+                identity,
+                result,
+                ref postMutationAuthority);
+        }
+        catch (LocalSecureApprovalChangedException ex)
+        {
+            return FileOperation.Failure(
+                request.Path,
+                ex.Message,
+                AgentToolResultErrorCodes.PermissionReapprovalRequired);
+        }
+        finally
+        {
+            postMutationAuthority?.Dispose();
+        }
     }
 
-    private async Task<DockerExecutionRuntimeConfig> BuildRuntimeConfigAsync(
+    public async ValueTask<AgentScopedInstructionDiscoveryResult> DiscoverScopedInstructionsAsync(
         AgentExecutionTargetContext context,
-        CancellationToken cancellationToken)
-        => _configService.BuildRuntimeConfig(
-            context.Binding.BindingId,
-            context.Workspace,
-            await _configService.GetConfigAsync(context.Binding.BindingId, cancellationToken));
-
-    private Task<DockerContainerLifecycleService.DockerContainerLease> AcquireContainerAsync(
-        AgentExecutionTargetContext context,
-        DockerExecutionRuntimeConfig config,
-        CancellationToken cancellationToken)
+        AgentScopedInstructionDiscoveryRequest request,
+        CancellationToken cancellationToken = default)
     {
-        var container = ResolveContainerName(config, context.Binding.BindingId);
-        return _lifecycleService.AcquireAsync(
-            container,
-            async ct => await EnsureContainerAsync(context, config, ct)
-                        ?? throw new InvalidOperationException("Docker container is unavailable."),
-            StopContainerAsync,
+        cancellationToken.ThrowIfCancellationRequested();
+        var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        using var operation = await AcquireStructuredOperationAsync(context, config, cancellationToken);
+        var identity = CaptureStructuredIdentity(config, context.Binding.BindingId, operation);
+        return await _fileSystemExecutor.DiscoverScopedInstructionsAsync(
+            config,
+            request,
+            identity.NamespaceFingerprint,
             cancellationToken);
     }
 
@@ -258,59 +469,107 @@ public sealed class DockerExecutionTarget
             throw new InvalidOperationException("Configure a Docker image before using Docker execution.");
         }
 
-        var imageReference = config.ImageReference;
-        var imageIdentity = await ResolveImageIdentityAsync(imageReference, cancellationToken);
-        var signature = BuildContainerSignature(config, mounts, imageIdentity);
-        var inspect = await RunDockerAsync(["inspect", "-f", "{{.State.Running}} {{ index .Config.Labels \"sunder.resources.signature\" }}", container], cancellationToken);
-        var existing = ParseInspectResult(inspect.Output);
-        if (inspect.ExitCode == 0 && existing.Running)
+        var verifiedMounts = OpenVerifiedMounts(mounts, cancellationToken);
+        try
         {
-            if (string.Equals(existing.Signature, signature, StringComparison.Ordinal))
+            var imageReference = config.ImageReference;
+            var hostAccessPolicy = DockerHostAccessPolicy.Resolve();
+            var daemonIdentity = await ResolveLocalDaemonIdentityAsync(cancellationToken);
+            var imageIdentity = await ResolveImageIdentityAsync(imageReference, cancellationToken);
+            var signature = BuildContainerSignature(
+                config,
+                verifiedMounts,
+                imageIdentity,
+                daemonIdentity,
+                hostAccessPolicy);
+            var inspect = await RunDockerAsync(["inspect", "-f", "{{.State.Running}} {{ index .Config.Labels \"sunder.resources.signature\" }}", container], cancellationToken);
+            var existing = ParseInspectResult(inspect.Output);
+            if (inspect.ExitCode == 0 && existing.Running)
             {
-                return container;
-            }
-
-            await RunDockerAsync(["rm", "-f", container], cancellationToken);
-        }
-        else if (inspect.ExitCode == 0)
-        {
-            if (string.Equals(existing.Signature, signature, StringComparison.Ordinal))
-            {
-                var start = await RunDockerAsync(["start", container], cancellationToken);
-                if (start.ExitCode == 0)
+                if (string.Equals(existing.Signature, signature, StringComparison.Ordinal))
                 {
+                    await _mountIdentityVerifier.VerifyAsync(
+                        container,
+                        config,
+                        verifiedMounts,
+                        RunDockerAsync,
+                        cancellationToken);
+                    _verifiedContainerSignatures[container] = signature;
                     return container;
                 }
 
-                throw new InvalidOperationException(FormatDockerContainerStartFailure(container, start.Output));
+                await RunDockerAsync(["rm", "-f", container], cancellationToken);
+            }
+            else if (inspect.ExitCode == 0)
+            {
+                if (string.Equals(existing.Signature, signature, StringComparison.Ordinal))
+                {
+                    var start = await RunDockerAsync(["start", container], cancellationToken);
+                    if (start.ExitCode == 0)
+                    {
+                        await _mountIdentityVerifier.VerifyAsync(
+                            container,
+                            config,
+                            verifiedMounts,
+                            RunDockerAsync,
+                            cancellationToken);
+                        _verifiedContainerSignatures[container] = signature;
+                        return container;
+                    }
+
+                    throw new InvalidOperationException(FormatDockerContainerStartFailure(container, start.Output));
+                }
+
+                await RunDockerAsync(["rm", "-f", container], cancellationToken);
             }
 
-            await RunDockerAsync(["rm", "-f", container], cancellationToken);
-        }
+            var root = DockerPathResolver.ResolveDefaultBaseDirectory(config);
+            var args = new List<string> { "run", "--pull", "never", "-d", "--name", container, "--label", $"sunder.resources.signature={signature}", "-w", root };
+            AddSecurityOptions(args);
+            AddNonInteractiveEnvironment(args);
+            AddOption(args, "--user", hostAccessPolicy.ContainerUser);
+            foreach (var mount in mounts)
+            {
+                args.Add("--mount");
+                args.Add(string.Concat(
+                    "type=bind,source=", mount.HostPath,
+                    ",target=", mount.ContainerPath));
+            }
 
-        var root = DockerPathResolver.ResolveDefaultBaseDirectory(config);
-        var args = new List<string> { "run", "--pull", "never", "-d", "--name", container, "--label", $"sunder.resources.signature={signature}", "-w", root };
-        AddSecurityOptions(args);
-        AddNonInteractiveEnvironment(args);
-        foreach (var mount in mounts)
+            args.Add(imageIdentity);
+            args.Add("tail");
+            args.Add("-f");
+            args.Add("/dev/null");
+            var run = await RunDockerAsync(args, cancellationToken);
+            if (run.ExitCode == 0)
+            {
+                try
+                {
+                    await _mountIdentityVerifier.VerifyAsync(
+                        container,
+                        config,
+                        verifiedMounts,
+                        RunDockerAsync,
+                        cancellationToken);
+                    _verifiedContainerSignatures[container] = signature;
+                    return container;
+                }
+                catch
+                {
+                    await RunDockerAsync(["rm", "-f", container], CancellationToken.None);
+                    throw;
+                }
+            }
+
+            throw new InvalidOperationException(FormatDockerContainerRunFailure(container, imageReference, run.Output));
+        }
+        finally
         {
-            args.Add("--mount");
-            args.Add(string.Concat(
-                "type=bind,source=", mount.HostPath,
-                ",target=", mount.ContainerPath));
+            for (var index = verifiedMounts.Length - 1; index >= 0; index--)
+            {
+                verifiedMounts[index].Root.Dispose();
+            }
         }
-
-        args.Add(imageIdentity);
-        args.Add("tail");
-        args.Add("-f");
-        args.Add("/dev/null");
-        var run = await RunDockerAsync(args, cancellationToken);
-        if (run.ExitCode == 0)
-        {
-            return container;
-        }
-
-        throw new InvalidOperationException(FormatDockerContainerRunFailure(container, imageReference, run.Output));
     }
 
     private static string FormatDockerContainerStartFailure(string containerName, string output)
@@ -395,24 +654,56 @@ public sealed class DockerExecutionTarget
 
     private static string BuildContainerSignature(
         DockerExecutionRuntimeConfig config,
-        IReadOnlyList<DockerExecutionMount> mounts,
-        string imageIdentity)
+        IReadOnlyList<DockerVerifiedMount> mounts,
+        string imageIdentity,
+        string daemonIdentity,
+        DockerHostAccessPolicy hostAccessPolicy)
     {
         var builder = new StringBuilder();
         builder.Append("security-policy:").AppendLine(ContainerSecurityPolicyVersion)
             .AppendLine(config.ImageReference ?? string.Empty)
             .AppendLine(imageIdentity)
+            .AppendLine(daemonIdentity)
+            .AppendLine(hostAccessPolicy.Signature)
             .AppendLine(config.DefaultWorkingDirectory ?? string.Empty)
             .AppendLine(config.ShellPath ?? string.Empty);
 
-        foreach (var mount in mounts.OrderBy(mount => mount.ContainerPath, StringComparer.Ordinal))
+        foreach (var verified in mounts.OrderBy(item => item.Mount.ContainerPath, StringComparer.Ordinal))
         {
+            var mount = verified.Mount;
             builder.Append("mount:")
                 .Append(mount.HostPath).Append('|')
-                .Append(mount.ContainerPath).AppendLine();
+                .Append(mount.ContainerPath).Append('|')
+                .Append(verified.Root.Handle.Identity).AppendLine();
         }
 
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()))).ToLowerInvariant();
+    }
+
+    private static DockerVerifiedMount[] OpenVerifiedMounts(
+        IReadOnlyList<DockerExecutionMount> mounts,
+        CancellationToken cancellationToken)
+    {
+        var opened = new List<DockerVerifiedMount>(mounts.Count);
+        try
+        {
+            foreach (var mount in mounts)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                opened.Add(new DockerVerifiedMount(
+                    mount,
+                    HostSecurePathEngine.OpenRoot(mount.HostPath, cancellationToken: cancellationToken)));
+            }
+            return opened.ToArray();
+        }
+        catch
+        {
+            for (var index = opened.Count - 1; index >= 0; index--)
+            {
+                opened[index].Root.Dispose();
+            }
+            throw;
+        }
     }
 
     private async Task<string> ResolveImageIdentityAsync(
@@ -436,9 +727,47 @@ public sealed class DockerExecutionTarget
         return identity.ToLowerInvariant();
     }
 
-    private async Task<DockerCliRunResult> RunDockerAsync(IReadOnlyList<string> args, CancellationToken cancellationToken)
-        => await _commandRunner.RunAsync(
-            args,
-            await _commandRunner.ResolveDefaultTimeoutSecondsAsync(cancellationToken),
-            cancellationToken);
+    private sealed class DockerStructuredOperationLease(
+        DockerContainerLifecycleService.DockerContainerLease container,
+        IReadOnlyList<DockerVerifiedMount> mounts) : IDisposable
+    {
+        private readonly HashSet<LocalSecureRoot> _detachedRoots = [];
+        private DockerContainerLifecycleService.DockerContainerLease? _container = container;
+
+        public string ContainerName => _container?.ContainerName
+                                       ?? throw new ObjectDisposedException(nameof(DockerStructuredOperationLease));
+
+        public IReadOnlyList<DockerVerifiedMount> Mounts { get; } = mounts;
+
+        public LocalSecureRoot GetMountRoot(DockerExecutionMount mount)
+            => FindMount(mount).Root;
+
+        public LocalSecureRoot TakeMountRoot(DockerExecutionMount mount)
+        {
+            var root = FindMount(mount).Root;
+            if (!_detachedRoots.Add(root))
+            {
+                throw new InvalidOperationException(
+                    $"Docker mount authority for '{mount.ContainerPath}' was already transferred.");
+            }
+            return root;
+        }
+
+        public void Dispose()
+        {
+            foreach (var mount in Mounts)
+            {
+                if (!_detachedRoots.Contains(mount.Root))
+                {
+                    mount.Root.Dispose();
+                }
+            }
+            Interlocked.Exchange(ref _container, null)?.Dispose();
+        }
+
+        private DockerVerifiedMount FindMount(DockerExecutionMount mount)
+            => Mounts.Single(candidate =>
+                string.Equals(candidate.Mount.ContainerPath, mount.ContainerPath, StringComparison.Ordinal));
+    }
+
 }

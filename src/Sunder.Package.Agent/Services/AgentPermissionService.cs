@@ -27,7 +27,8 @@ public sealed class AgentPermissionService(
         ]);
 
     private readonly AgentLocalStore _store = store;
-    private readonly IPackageExtensionCatalog _extensionCatalog = extensionCatalog;
+    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
+        AgentExtensionInvocation.Require(extensionCatalog);
 
     public AgentSessionPermissionState GetSessionState(Guid sessionId)
         => _store.GetSessionPermissionState(sessionId);
@@ -36,13 +37,31 @@ public sealed class AgentPermissionService(
         => _store.SetSessionUnrestrictedMode(sessionId, isEnabled);
 
     public IReadOnlyList<AgentPermissionActionDescriptor> ListActions()
-        => _extensionCatalog.GetExtensions(PackageExtensionPoints.PermissionSurfaces)
-            .SelectMany(surface => surface.ListActions())
+    {
+        var actions = new List<AgentPermissionActionDescriptor>();
+        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.PermissionSurfaces))
+        {
+            if (!reference.TryAcquire(out var lease))
+            {
+                continue;
+            }
+            using (lease)
+            {
+                var contributed = lease.Contribution.ListActions().ToArray();
+                if (!lease.RetirementToken.IsCancellationRequested)
+                {
+                    actions.AddRange(contributed);
+                }
+            }
+        }
+
+        return actions
             .Append(GenericMutationAction)
             .GroupBy(action => action.ActionId, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .OrderBy(action => action.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
 
     public IReadOnlyList<AgentPermissionOverride> ListOverrides()
         => _store.ListPermissionOverrides();

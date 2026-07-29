@@ -131,7 +131,7 @@ Runtime and App catalogs are intentionally separate.
 - Agent re-resolves the advertised source/id/read-only identity immediately before execution.
 - Mutating tools need a specific permission request or receive the generic mutation `Ask` policy.
 - Unknown action/boundary defaults to `Ask`; an empty action id is denied.
-- Outside-scope paths require canonical target classification and approval.
+- Outside-scope paths require target classification plus an exact opaque resource-identity approval; the compatibility boolean is insufficient.
 - Approval is tied to session/run revision/tool call. A superseding run makes it stale.
 - Unrestricted Mode affects the current session tree but is not operating-system isolation.
 
@@ -141,19 +141,34 @@ Runtime and App catalogs are intentionally separate.
 - `ContributionId` must match the target `TargetId` or `TargetKind`.
 - Check target readiness and configured roots.
 - Use execution paths inside containers/remotes, not host paths.
-- Resolve physical symlinks/reparse points and sibling-prefix edge cases.
-- Approval does not bypass a target's final canonicalization/revalidation.
+- Remove symlinks/reparse points and mount/device transitions from Local structured paths, including configured-root ancestors and contained links.
+- On Linux, use a kernel that supports `openat2` with the required resolution flags; unsupported Unix ABIs fail closed. Windows structured reads remain available, but writes and deletes deliberately return `strict-platform-mutation-unavailable` before mutation.
+- `recursive-directory-delete-required` means a Unix directory delete must be retried only with an intentional `Recursive=true`; it also applies to empty directories.
+- `strict-mutation-recovery-required` means a post-publication failure could not durably restore the original name automatically. Stop retries and preserve the hidden reserved entries for recovery; failed new bytes are sanitized and normal listing/search omits the recoverable state.
+- `docker-resource-approval-required` means the operation did not receive the exact current single-use `docker-resource-v3` lease. Re-resolve and reclassify the resource instead of replaying a persisted reference.
+- Docker requires a pinned local socket/npipe endpoint, stable daemon/container signature, host UID/GID execution, and a successful bidirectional challenge for every bind after container create, start, or reuse. Endpoint changes, remote contexts, Windows hosts, inaccessible mounts, or failed challenge cleanup stop execution.
+- Approval retains target-owned handle authority but does not bypass current namespace, mount-root, endpoint, daemon, or container verification.
 
-Local execution has host-user authority. Docker's writable mounts and daemon trust mean it is not a complete sandbox.
+Local shell/process execution has host-user authority and is outside structured no-follow guarantees. Docker's writable mounts and daemon trust mean it is not a complete sandbox.
 
 ### Prompt Or Memory Content Is Missing
 
 - System contributors require non-empty block id/title/content and are deduplicated by source plus block id.
 - Optional contributor exceptions are isolated; inspect bounded package diagnostics.
-- Prompt context is suppressed when `ContextPlan.ShouldContribute` is false.
-- Context blocks are bounded, ordered, and serialized as user-role reference data, never system instructions.
+- Optional recall context is suppressed when `ContextPlan.ShouldContribute` is false; host-reserved profile and scoped safety instructions are standing context with separate bounds.
+- Context blocks are bounded and serialized in a user-role message. Only host-normalized profile/Files blocks receive standing/scoped authority; contributor-set enums do not.
 - Semantic recall works lexically without embeddings; check the profile embedding binding/readiness for vector retrieval.
 - The first-party memory package promotes only direct user turns, not assistant/tool claims.
+
+### Scoped `AGENTS.md` Content Is Missing Or A Mutation Is Deferred
+
+- Scoped discovery requires first-party Files composition plus a target implementing both `IAgentScopedInstructionDiscoveryTarget` and `IAgentExecutionScopeProvider`.
+- Only exact `AGENTS.md` entries on a configured-root-to-target ancestor chain apply; similarly named files, sibling trees, and approved external paths are intentionally ignored.
+- Root instructions are eager even for shell-only profiles. Nested instructions appear only after a structured read/search target or mutation reaches their subtree; listing a parent or naming a path inside arbitrary shell text does not claim children.
+- A `files-prompt-context-refresh-required` mutation result means no file operation started. Let the next provider cycle rebuild context, then replan instead of blindly replaying the same call.
+- Discovery rejects more than 64 probes per batch, ancestor chains over 64 directories, documents over 12,000 characters, or reserved prompt overflow. Partial policy is never accepted.
+- Exact hashes are acknowledged only after final prompt serialization. Required discovery/acknowledgment failure prevents provider progression. Shell mutations do not have the structured Files guarantee.
+- Corrupt current claim state is quarantined and rebuilt; future-version state remains untouched and fails closed. Session deletion removes package-owned claims; transcript rollback invalidates old receipts.
 
 ### MCP Or OAuth Failure
 
@@ -170,7 +185,7 @@ Local execution has host-user authority. Docker's writable mounts and daemon tru
 - Register an idempotent `IAgentSessionDataCleaner` for package-local session data.
 - Unsubscribe events and stop package-owned background services/processes/connections on deactivation.
 - Do not retain contribution instances in static state after catalog removal.
-- Cleaner failures are collected; inspect the owning cleaner id and retry only package-owned cleanup.
+- Cleaner failures remain as ids-only durable jobs with redacted diagnostics. Restore the owning package and stable cleaner id; Runtime retries on startup or package reactivation until the idempotent cleanup succeeds.
 
 ### Base Agent Data Migration Refusal
 

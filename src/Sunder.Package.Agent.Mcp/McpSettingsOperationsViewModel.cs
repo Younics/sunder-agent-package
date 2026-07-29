@@ -52,7 +52,8 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
 
         try
         {
-            await _gateway.InitializeAsync(cancellation.Token);
+            await _gateway.InitializeAsync(cancellation.Token)
+                .WaitAsync(cancellation.Token);
             await _host.ReloadServersAsync(null, cancellation.Token);
             await RunOnUiAsync(() =>
             {
@@ -94,23 +95,34 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
                 snapshot.Name,
                 snapshot.EditorText,
                 existing);
-            await _host.WithSuppressedCatalogEventsAsync(() => _gateway.SaveAsync(parsed, cancellation.Token));
+            await _host.WithSuppressedCatalogEventsAsync(() =>
+                _gateway.SaveAsync(parsed, cancellation.Token).WaitAsync(cancellation.Token));
+            _host.DiscardPendingServerRefresh();
             await _host.ReloadServersAsync(
                 parsed.Server.ServerId,
                 cancellation.Token,
-                loadSelectedDocument: false);
+                loadSelectedDocument: false,
+                expectedIntentRevision: snapshot.IntentRevision);
             await RunOnUiAsync(() =>
             {
+                if (!_host.IsCurrentIntent(snapshot))
+                {
+                    Complete(operation);
+                    return;
+                }
+
                 var editedDuringSave = _host.HasEditorChangedSince(snapshot.Revision);
                 if (!editedDuringSave)
                 {
                     _host.ApplySavedDocument(parsed, snapshot.Revision);
                 }
 
-                if (snapshot.IsCompactLayout && !editedDuringSave)
+                if (_host.IsCurrentMutationLayout(snapshot)
+                    && _host.IsCompactLayout
+                    && existing is not null
+                    && !editedDuringSave)
                 {
-                    _host.SelectedServer = null;
-                    _host.IsEditorActive = false;
+                    _host.ShowListAfterMutation();
                     Complete(operation);
                     return;
                 }
@@ -149,14 +161,29 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
             return;
         }
 
+        var snapshot = _host.CaptureEditorSnapshot();
         try
         {
-            await _host.WithSuppressedCatalogEventsAsync(() => _gateway.DeleteAsync(server.ServerId, cancellation.Token));
+            await _host.WithSuppressedCatalogEventsAsync(() =>
+                _gateway.DeleteAsync(server.ServerId, cancellation.Token).WaitAsync(cancellation.Token));
+            _host.DiscardPendingServerRefresh();
             await _host.ReloadServersAsync(null, cancellation.Token);
             await RunOnUiAsync(() =>
             {
-                _host.IsEditorActive = false;
-                Complete(operation, _host.IsCompactLayout ? string.Empty : $"Deleted MCP server '{server.DisplayName}'.", OperationSeverity.Success, autoClear: true);
+                if (!_host.IsCurrentIntent(snapshot))
+                {
+                    Complete(operation);
+                    return;
+                }
+
+                var currentLayout = _host.IsCurrentMutationLayout(snapshot);
+                Complete(
+                    operation,
+                    currentLayout && _host.IsCompactLayout
+                        ? string.Empty
+                        : $"Deleted MCP server '{server.DisplayName}'.",
+                    OperationSeverity.Success,
+                    autoClear: true);
             }).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -252,6 +279,21 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
 
     public void ClearStatus() => _operation.ClearStatus();
 
+    public void CancelForNavigation()
+    {
+        if (_disposed || !IsBusy)
+        {
+            return;
+        }
+
+        _cancellation?.Cancel();
+        _operation.CancelCurrent();
+        _kind = McpSettingsOperationKind.None;
+        _cancellation?.Dispose();
+        _cancellation = null;
+        NotifyContextChanged();
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -277,6 +319,7 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
         try
         {
             var result = await import(cancellation.Token);
+            _host.DiscardPendingServerRefresh();
             await _host.ReloadServersAsync(_host.SelectedServer?.ServerId, cancellation.Token);
             await RunOnUiAsync(() =>
             {

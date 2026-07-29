@@ -31,7 +31,8 @@ namespace Sunder.Package.Agent.Contracts.Models;
 /// </param>
 /// <param name="MaxChars">
 /// The non-negative maximum combined character count a contributor may return before aggregate Runtime
-/// limits are applied.
+/// limits are applied. Host-reserved profile and scoped safety instructions are not recall: they remain eligible
+/// when ordinary contribution is suppressed and enforce their own fixed bounds.
 /// </param>
 public sealed record AgentPromptContextPlan(
     string Intent,

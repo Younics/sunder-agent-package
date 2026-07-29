@@ -51,19 +51,18 @@ public sealed partial class AgentSessionService
 
     public AgentTranscriptRollbackResult RollbackTranscript(Guid sessionId, Guid anchorTurnId)
     {
-        var result = _store.RollbackTranscript(sessionId, anchorTurnId);
-        var cleanupFailures = DeleteExternalSessionData(result.DeletedSessionIds);
+        var result = _store.RollbackTranscript(
+            sessionId,
+            anchorTurnId,
+            SnapshotSessionDataCleaners());
         NotifyTranscriptResetAndSessionChanged(sessionId);
         foreach (var deletedSessionId in result.DeletedSessionIds)
         {
             NotifySessionChanged(deletedSessionId);
         }
-
-        if (cleanupFailures.Count > 0)
+        if (result.DeletedSessionIds.Count > 0)
         {
-            throw new AggregateException(
-                "Transcript was rolled back, but one or more external cleanup steps failed.",
-                cleanupFailures);
+            DispatchPendingSessionCleanup();
         }
         return result;
     }

@@ -48,31 +48,78 @@ internal sealed class ProviderModelCatalogAdapter(
         CancellationToken cancellationToken) => _load(providerId, cancellationToken);
 
     public static IProviderModelCatalog ForChatProviders(IPackageExtensionCatalog extensionCatalog)
-        => new ProviderModelCatalogAdapter(
-            () => extensionCatalog
-                .GetExtensions(PackageExtensionPoints.ChatProviders)
+    {
+        var invocations = extensionCatalog as IPackageExtensionInvocationCatalog
+            ?? throw new InvalidOperationException(
+                "The host extension catalog does not support activation-scoped invocation leases.");
+        return new ProviderModelCatalogAdapter(
+            () => SnapshotChatProviders(invocations)
                 .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .Select(provider => new ProviderCatalogOption(
                     provider.Descriptor.ProviderId,
                     provider.Descriptor.DisplayName,
-                    provider.Descriptor.PackageId))
+                    provider.PackageId))
                 .ToArray(),
-            async (providerId, cancellationToken) =>
+            (providerId, cancellationToken) => LoadChatProviderAsync(
+                invocations,
+                providerId,
+                cancellationToken));
+    }
+
+    private static IReadOnlyList<OwnedChatProviderReference> SnapshotChatProviders(
+        IPackageExtensionInvocationCatalog invocations)
+    {
+        var providers = new List<OwnedChatProviderReference>();
+        foreach (var reference in invocations.GetExtensionReferences(PackageExtensionPoints.ChatProviders))
+        {
+            if (!reference.TryAcquire(out var lease))
             {
-                var provider = extensionCatalog
-                    .GetExtensions(PackageExtensionPoints.ChatProviders)
-                    .FirstOrDefault(candidate => string.Equals(
-                        candidate.Descriptor.ProviderId,
-                        providerId,
-                        StringComparison.OrdinalIgnoreCase));
-                if (provider is null)
+                continue;
+            }
+            using (lease)
+            {
+                var descriptor = lease.Contribution.Descriptor;
+                if (!lease.RetirementToken.IsCancellationRequested)
+                {
+                    providers.Add(new OwnedChatProviderReference(reference, lease.PackageId, descriptor));
+                }
+            }
+        }
+
+        return providers;
+    }
+
+    private static async Task<ProviderModelCatalogResult> LoadChatProviderAsync(
+        IPackageExtensionInvocationCatalog invocations,
+        string providerId,
+        CancellationToken cancellationToken)
+    {
+        var provider = SnapshotChatProviders(invocations)
+            .FirstOrDefault(candidate => string.Equals(
+                candidate.Descriptor.ProviderId,
+                providerId,
+                StringComparison.OrdinalIgnoreCase));
+        if (provider is null || !provider.Reference.TryAcquire(out var lease))
+        {
+            return new ProviderModelCatalogResult([], "Chat provider is no longer installed.");
+        }
+
+        using (lease)
+        {
+            var retirementToken = lease.RetirementToken;
+            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                retirementToken);
+            try
+            {
+                var modelsTask = lease.Contribution.GetAvailableModelsAsync(invocation.Token).AsTask();
+                var readinessTask = lease.Contribution.GetReadinessAsync(invocation.Token).AsTask();
+                await Task.WhenAll(modelsTask, readinessTask).ConfigureAwait(false);
+                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
                     return new ProviderModelCatalogResult([], "Chat provider is no longer installed.");
                 }
 
-                var modelsTask = provider.GetAvailableModelsAsync(cancellationToken).AsTask();
-                var readinessTask = provider.GetReadinessAsync(cancellationToken).AsTask();
-                await Task.WhenAll(modelsTask, readinessTask).ConfigureAwait(false);
                 var readiness = await readinessTask.ConfigureAwait(false);
                 return new ProviderModelCatalogResult(
                     (await modelsTask.ConfigureAwait(false))
@@ -83,7 +130,15 @@ internal sealed class ProviderModelCatalogAdapter(
                     readiness.Status == AgentProviderReadinessStatus.Ready
                         ? null
                         : readiness.Message);
-            });
+            }
+            catch (OperationCanceledException) when (
+                retirementToken.IsCancellationRequested
+                && !cancellationToken.IsCancellationRequested)
+            {
+                return new ProviderModelCatalogResult([], "Chat provider is no longer installed.");
+            }
+        }
+    }
 
     public static ProviderModelCatalogOption ToCatalogOption(AgentModelDescriptor model)
         => new(
@@ -95,6 +150,11 @@ internal sealed class ProviderModelCatalogAdapter(
 
     public static ProviderModelCatalogOption ToCatalogOption(AgentEmbeddingModelDescriptor model)
         => new(model.ModelId, model.DisplayName);
+
+    private sealed record OwnedChatProviderReference(
+        IPackageExtensionReference<IAgentChatProvider> Reference,
+        string PackageId,
+        AgentProviderDescriptor Descriptor);
 }
 
 internal sealed class ProviderModelLoader(IProviderModelCatalog catalog) : IDisposable

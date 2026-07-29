@@ -9,6 +9,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Storage;
 using Xunit;
 
 namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
@@ -441,21 +442,54 @@ public sealed class OpenAiAgentProviderTests
 
     private sealed class TestPackageSecrets(IReadOnlyDictionary<string, string> values) : IPackageSecrets
     {
-        private readonly Dictionary<string, string> _values = new(values, StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _values = CreateValues(values);
 
         public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default)
-            => Task.FromResult(_values.TryGetValue(key, out var value) ? value : null);
+        {
+            ValidateKey(key);
+            return Task.FromResult(_values.TryGetValue(key, out var value) ? value : null);
+        }
 
         public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default)
         {
+            ValidateKey(key);
+            ValidateValue(value);
             _values[key] = value;
             return Task.CompletedTask;
         }
 
         public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default)
         {
+            ValidateKey(key);
             _values.Remove(key);
             return Task.CompletedTask;
+        }
+
+        private static Dictionary<string, string> CreateValues(IReadOnlyDictionary<string, string> values)
+        {
+            var result = new Dictionary<string, string>(values, StringComparer.Ordinal);
+            foreach (var pair in result)
+            {
+                ValidateKey(pair.Key);
+                ValidateValue(pair.Value);
+            }
+            return result;
+        }
+
+        private static void ValidateKey(string? key)
+        {
+            if (!PackageStorageValidation.IsValidKey(key))
+            {
+                throw new ArgumentException("Invalid test secret key.", nameof(key));
+            }
+        }
+
+        private static void ValidateValue(string? value)
+        {
+            if (!PackageStorageValidation.IsValidValue(value))
+            {
+                throw new ArgumentException("Invalid test secret value.", nameof(value));
+            }
         }
     }
 

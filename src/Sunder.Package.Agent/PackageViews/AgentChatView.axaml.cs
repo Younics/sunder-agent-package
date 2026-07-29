@@ -14,12 +14,16 @@ using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
+using Sunder.Package.Agent.HistorySearch;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavigationTarget
+public partial class AgentChatView : UserControl,
+    IDisposable,
+    IPackageViewNavigationTarget,
+    IPackageViewNavigationPreparationTarget
 {
     private const double WideHeaderMinimumWidth = 520;
     private const double WorkspacePathChipTextFontSize = 11;
@@ -49,6 +53,8 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
     private readonly object _workspacePathLayoutSyncRoot = new();
     private IPackageNotificationService _notificationService = NullPackageNotificationService.Instance;
     private CancellationTokenSource? _navigationCancellation;
+    private CancellationTokenSource? _toolExpansionCancellation;
+    private PreparedAgentHistoryNavigation? _preparedHistoryNavigation;
     private int _navigationGeneration;
     private bool _workspacePathLayoutQueued;
     private bool _workspacePathLayoutDirty;
@@ -61,7 +67,6 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
     {
         _tasks = new PresentationTaskScope();
         InitializeComponent();
-        TranscriptAnchorHost.SetTailAnchor(TranscriptTailAnchor);
         ConfigureComposerDropTarget(ExpandedComposerDropTarget);
         ConfigureComposerDropTarget(ExpandedComposerTextBox);
         ConfigureComposerDropTarget(CollapsedComposerDropTarget);
@@ -95,6 +100,7 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
             exception => ViewModel?.ReportTranscriptPagingFailure(exception),
             enumerateRealizedAnchors: EnumerateRealizedTranscriptAnchors,
             realizeAnchorVisual: RealizeTranscriptAnchor,
+            realizeTailVisual: RealizeTranscriptTailSentinel,
             presentationStateChanged: isActive => ViewModel?.SetTranscriptPresentationActive(isActive),
             anchorHost: TranscriptAnchorHost);
         _renameFocus = new InlineRenameFocusCoordinator<AgentSessionListItemViewModel>(
@@ -122,7 +128,7 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
         : this()
     {
         _notificationService = notificationService;
-        AttachViewModel(new AgentChatViewModel(
+        var viewModel = new AgentChatViewModel(
             profileService,
             workspaceService,
             sessionService,
@@ -132,7 +138,12 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
             toolPresentationService,
             warmupService: warmupService,
             shellViewService: shellViewService,
-            attachmentService: attachmentService));
+            attachmentService: attachmentService);
+        if (sessionService is IAgentTranscriptAnchorGateway transcriptAnchorGateway)
+        {
+            viewModel.SetTranscriptAnchorGateway(transcriptAnchorGateway);
+        }
+        AttachViewModel(viewModel);
     }
 
     internal AgentChatView(AgentChatViewModel viewModel)
@@ -152,6 +163,8 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
         _navigationCancellation?.Cancel();
         _navigationCancellation?.Dispose();
         _navigationCancellation = null;
+        CancelPendingToolExpansion();
+        ToolDetailPreparationPortal.Dispose();
         Loaded -= OnLoaded;
         SizeChanged -= OnSizeChanged;
         _transcriptBehavior.Dispose();
@@ -185,13 +198,15 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
     }
 
     private void OnSizeChanged(object? sender, SizeChangedEventArgs e)
-        => _transcriptBehavior.MutateViewport(() => ApplyHeaderLayout(e.NewSize.Width));
+        => _transcriptBehavior.MutateViewport(
+            () => ApplyHeaderLayout(e.NewSize.Width),
+            TranscriptViewportMutationKind.StructuralLayout);
 
     private void OnViewModelPropertyChanging(object? sender, PropertyChangingEventArgs e)
     {
         if (string.Equals(e.PropertyName, nameof(AgentChatViewModel.DisplayedSession), StringComparison.Ordinal))
         {
-            _transcriptBehavior.MarkInitialPlacementPending();
+            _transcriptBehavior.MarkInitialPlacementPending(_navigationCancellation?.Token ?? default);
         }
 
         if (string.Equals(e.PropertyName, nameof(AgentChatViewModel.IsComposerExpanded), StringComparison.Ordinal))
@@ -269,7 +284,7 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
     }
 
     private void TranscriptMarkdown_OnRendered(object? sender, EventArgs e)
-        => _transcriptBehavior.OnRenderedContentChanged();
+        => _transcriptBehavior.OnRenderedContentChanged(sender as ITranscriptGeometrySource);
 
     private ValueTask PublishClipboardNotificationAsync(string title, string message, PackageNotificationSeverity severity)
         => _notificationService.PublishAsync(new PackageNotificationRequest(
@@ -616,20 +631,13 @@ public partial class AgentChatView : UserControl, IDisposable, IPackageViewNavig
     private void OnTranscriptChanged() => _transcriptBehavior.OnTranscriptChanged();
 
     private void OnTranscriptChanging(bool isPageApplication)
-        => _transcriptBehavior.OnTranscriptChanging(isPageApplication);
-
-    private void ToolStepHeader_OnClick(object? sender, RoutedEventArgs e)
     {
-        if ((sender as Control)?.DataContext is not AgentToolInvocationRowViewModel toolRow)
+        // Keyed page application retains the active row; expansion currentness handles actual replacement.
+        if (!isPageApplication)
         {
-            return;
+            CancelPendingToolExpansion();
         }
-
-        _transcriptBehavior.MutateViewport(() =>
-        {
-            toolRow.ToggleExpandedCommand.Execute(null);
-            ViewModel?.SetTranscriptRowExpanded(toolRow, toolRow.IsExpanded);
-        });
+        _transcriptBehavior.OnTranscriptChanging(isPageApplication);
     }
 
 }

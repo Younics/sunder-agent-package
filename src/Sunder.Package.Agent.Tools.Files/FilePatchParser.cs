@@ -2,6 +2,8 @@ namespace Sunder.Package.Agent.Tools.Files;
 
 internal static class FilePatchParser
 {
+    internal const int MaximumOperations = 64;
+
     public static IReadOnlyList<FilePatchOperation> Parse(string patchText)
     {
         var lines = patchText.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
@@ -28,6 +30,7 @@ internal static class FilePatchParser
             if (line.StartsWith("*** Add File: ", StringComparison.Ordinal))
             {
                 operations.Add(ParseAdd(lines, ref index, line[14..].Trim()));
+                ValidateOperationCount(operations.Count);
                 continue;
             }
 
@@ -35,6 +38,7 @@ internal static class FilePatchParser
             {
                 var path = RequirePath(line[17..].Trim());
                 operations.Add(new FilePatchOperation(FilePatchOperationKind.Delete, path, null, []));
+                ValidateOperationCount(operations.Count);
                 index++;
                 continue;
             }
@@ -42,6 +46,7 @@ internal static class FilePatchParser
             if (line.StartsWith("*** Update File: ", StringComparison.Ordinal))
             {
                 operations.Add(ParseUpdate(lines, ref index, line[17..].Trim()));
+                ValidateOperationCount(operations.Count);
                 continue;
             }
 
@@ -148,4 +153,15 @@ internal static class FilePatchParser
         => string.IsNullOrWhiteSpace(path)
             ? throw new InvalidOperationException("Patch file paths must not be empty.")
             : path;
+
+    private static void ValidateOperationCount(int count)
+    {
+        if (count > MaximumOperations)
+        {
+            throw new FilePatchOperationLimitException(MaximumOperations);
+        }
+    }
 }
+
+internal sealed class FilePatchOperationLimitException(int maximumOperations)
+    : InvalidOperationException($"Patches support at most {maximumOperations} file operations.");

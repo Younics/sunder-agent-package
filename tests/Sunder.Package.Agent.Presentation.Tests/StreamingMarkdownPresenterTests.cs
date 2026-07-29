@@ -1,4 +1,6 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -118,7 +120,9 @@ public sealed class StreamingMarkdownPresenterTests
         Assert.True(presenter.IsRenderPending);
 
         renderer.ClearSelection();
-        await WaitUntilAsync(window, () => renderer.RenderedSource == expandedSource);
+        await WaitUntilAsync(window, () =>
+            renderer.RenderedSource == expandedSource
+            && !presenter.IsRenderPending);
 
         Assert.Equal(1, presenter.RendererCreationCount);
         Assert.False(presenter.IsRenderPending);
@@ -461,6 +465,156 @@ public sealed class StreamingMarkdownPresenterTests
         await CloseWindowAsync(window);
     }
 
+    [AvaloniaFact]
+    public async Task RevisionGate_TracksFallbackParsePromotionAndLateHeightWithoutDelay()
+    {
+        var parseStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseParse = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pipeline = new MarkdownPipelineBuilder().UseAdvancedExtensions().Build();
+        var builder = new ObservableStringBuilder(
+            "## Gated content\n\n" + string.Join("\n\n", Enumerable.Repeat("A wrapping paragraph.", 30)));
+        var presenter = new StreamingMarkdownPresenter(() => StableMarkdownRenderer.Create(source =>
+        {
+            if (source.Contains("Gated content", StringComparison.Ordinal))
+            {
+                parseStarted.TrySetResult();
+                releaseParse.Task.GetAwaiter().GetResult();
+            }
+            return Markdown.Parse(source, pipeline);
+        }))
+        {
+            MarkdownBuilder = builder,
+        };
+        var renderedCount = 0;
+        var geometrySignals = 0;
+        presenter.Rendered += (_, _) => renderedCount++;
+        presenter.GeometryChanged += (_, _) => geometrySignals++;
+        var window = new Window { Width = 420, Height = 500, Content = presenter };
+        window.Show();
+
+        await parseStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await PumpLayoutUntilAsync(window, () => presenter.GetVisualDescendants()
+            .OfType<SelectableTextBlock>()
+            .Any(block => block.Classes.Contains("markdown-fallback")));
+
+        Assert.True(presenter.IsGeometryPending);
+        Assert.True(presenter.RequestedRevision > presenter.SettledRevision);
+        Assert.Equal(0, renderedCount);
+
+        var pendingRenderer = Assert.Single(
+            presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>());
+        releaseParse.TrySetResult();
+        await pendingRenderer.PendingRenderOperations.WaitAsync(TimeSpan.FromSeconds(2));
+        await PumpLayoutUntilAsync(window, () =>
+            !presenter.IsGeometryPending
+            && presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>()
+                .Any(renderer => renderer.Opacity == 1));
+        var renderer = Assert.Single(
+            presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>());
+        var settledRevision = presenter.SettledRevision;
+        var geometryRevision = presenter.GeometryRevision;
+        var renderedBeforeLateHeight = renderedCount;
+
+        renderer.Height = renderer.Bounds.Height + 60;
+        await PumpLayoutUntilAsync(window, () =>
+            presenter.GeometryRevision > geometryRevision
+            && renderedCount > renderedBeforeLateHeight);
+
+        Assert.Equal(presenter.RequestedRevision, settledRevision);
+        Assert.Equal(presenter.RequestedRevision, presenter.SettledRevision);
+        Assert.True(geometrySignals >= 3);
+        await presenter.PendingRenderOperations;
+        await CloseWindowAsync(window);
+    }
+
+    [AvaloniaFact]
+    public async Task ToolDetailsPortal_PreparesOneVisualAndCollapseDestroysRenderer()
+    {
+        var portal = new TranscriptToolPreparationPortal { Width = 480, Height = 1 };
+        var host = new TranscriptToolDetailHost();
+        var root = new Grid { Children = { portal, host } };
+        var window = new Window { Width = 520, Height = 320, Content = root };
+        window.Show();
+        try
+        {
+            var template = new FuncDataTemplate<object>((_, _) => new Border
+            {
+                Padding = new Thickness(16),
+                Child = new StreamingMarkdownPresenter
+                {
+                    MarkdownBuilder = new ObservableStringBuilder(
+                        "## Staged details\n\n"
+                        + string.Join("\n\n", Enumerable.Repeat("A wrapping staged paragraph.", 24))),
+                },
+            });
+            var content = new object();
+            var prepared = await portal.PrepareAsync(content, template, 480)
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            var markdown = Assert.Single(
+                prepared.Presenter.GetVisualDescendants().OfType<StreamingMarkdownPresenter>());
+            var renderer = Assert.Single(
+                markdown.GetVisualDescendants().OfType<StableMarkdownRenderer>());
+            var owner = new TestExpansionOwner();
+            Assert.True(portal.Commit(prepared, host, owner));
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            Assert.True(host.Bounds.Height > 0);
+            Assert.Equal(1, prepared.Presenter.Opacity);
+            Assert.True(prepared.Presenter.IsHitTestVisible);
+            Assert.True(prepared.Presenter.IsEffectivelyVisible);
+            Assert.Equal(1, markdown.RendererCreationCount);
+
+            owner.Invalidate();
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            Assert.False(host.HasDetailVisual);
+            Assert.Empty(host.GetVisualDescendants().OfType<StableMarkdownRenderer>());
+
+            var replacement = await portal.PrepareAsync(content, template, 300)
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            var replacementRenderer = Assert.Single(
+                replacement.Presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>());
+            Assert.NotSame(renderer, replacementRenderer);
+        }
+        finally
+        {
+            portal.Dispose();
+            await CloseWindowAsync(window);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task ToolDetailsPortal_SupersededPreparationRequiresReplacementGeometry()
+    {
+        var first = new ControlledGeometrySource();
+        first.Request();
+        var portal = new TranscriptToolPreparationPortal { Width = 420, Height = 1 };
+        var template = new FuncDataTemplate<object>((value, _) => (Control)value);
+        var window = new Window { Width = 420, Height = 320, Content = portal };
+        window.Show();
+        try
+        {
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            var preparation = portal.PrepareAsync(first, template, 420);
+            Assert.False(preparation.IsCompleted);
+
+            var replacement = new ControlledGeometrySource();
+            replacement.Request();
+            var replacementPreparation = portal.PrepareAsync(replacement, template, 420);
+            first.Settle();
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await preparation);
+            Assert.False(replacementPreparation.IsCompleted);
+            replacement.Settle();
+            var prepared = await replacementPreparation.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Same(replacement, prepared.Presenter.Child);
+        }
+        finally
+        {
+            portal.Dispose();
+            await CloseWindowAsync(window);
+        }
+    }
+
     private static async Task WaitUntilAsync(
         Window window,
         Func<bool> condition)
@@ -483,5 +637,71 @@ public sealed class StreamingMarkdownPresenterTests
     {
         window.Close();
         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.SystemIdle);
+    }
+
+    private static async Task PumpLayoutUntilAsync(Window window, Func<bool> condition)
+    {
+        for (var pass = 0; pass < 80; pass++)
+        {
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            if (condition())
+            {
+                return;
+            }
+        }
+
+        var presenter = window.GetVisualDescendants()
+            .OfType<StreamingMarkdownPresenter>()
+            .SingleOrDefault();
+        var renderer = presenter?.GetVisualDescendants()
+            .OfType<StableMarkdownRenderer>()
+            .SingleOrDefault();
+        Assert.Fail(
+            $"The controlled Markdown geometry stage did not settle. "
+            + $"requested={presenter?.RequestedRevision}, settled={presenter?.SettledRevision}, "
+            + $"geometry={presenter?.GeometryRevision}, pending={presenter?.IsGeometryPending}, "
+            + $"renderPending={presenter?.IsRenderPending}, opacity={renderer?.Opacity}, "
+            + $"renderedLength={renderer?.RenderedSource.Length}, "
+            + $"presenterDesired={presenter?.DesiredSize}, rendererDesired={renderer?.DesiredSize}.");
+    }
+
+    private sealed class ControlledGeometrySource : Border, ITranscriptGeometrySource
+    {
+        public long RequestedRevision { get; private set; }
+
+        public long SettledRevision { get; private set; }
+
+        public long GeometryRevision { get; private set; }
+
+        public bool IsGeometryPending => SettledRevision < RequestedRevision;
+
+        public event EventHandler? GeometryChanged;
+
+        public void Request()
+        {
+            RequestedRevision++;
+            GeometryChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        public void RequestSilently() => RequestedRevision++;
+
+        public void Settle()
+        {
+            SettledRevision = RequestedRevision;
+            GeometryRevision++;
+            GeometryChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private sealed class TestExpansionOwner : ITranscriptToolExpansionOwner
+    {
+        public event Action? DetailVisualInvalidated;
+
+        public void OnDetailVisualInvalidated()
+        {
+        }
+
+        public void Invalidate() => DetailVisualInvalidated?.Invoke();
     }
 }

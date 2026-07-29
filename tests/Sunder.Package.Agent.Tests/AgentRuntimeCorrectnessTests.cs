@@ -11,6 +11,7 @@ using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Runtime;
+using Sunder.Sdk.Storage;
 using Xunit;
 using CorePresentation = AgentCore::Sunder.Package.Agent.Shared.PackageViews;
 
@@ -18,6 +19,24 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class AgentRuntimeCorrectnessTests
 {
+    [Fact]
+    public async Task ChatSelection_UsesPortablePhysicalKeyForImportedWorkspaceId()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var workspaceId = " imported:/\u65E5\u672C\u8A9E workspace/" + new string('w', 300);
+        var sessionId = Guid.NewGuid();
+        var selections = new AgentChatSelectionStateService(scope.Context);
+
+        await selections.SaveSelectedSessionIdAsync(workspaceId, sessionId);
+
+        Assert.Equal(sessionId, await selections.GetSelectedSessionIdAsync(workspaceId));
+        var key = Assert.Single(await scope.Context.Storage.State.ListKeysAsync());
+        Assert.True(PackageStorageValidation.IsValidKey(key));
+        Assert.Equal(
+            PackageStorageKeyFactory.Create("agent.chat.selected-session", 1, workspaceId.Trim()),
+            key);
+    }
+
     [Fact]
     public async Task ChatSnapshotHandler_ResolvesSelectionsWithoutPersistingBeforeUiApply()
     {
@@ -256,6 +275,49 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     [Fact]
+    public async Task ChatViewModel_CanceledSelectionPersistenceReleasesSerializationGate()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var selectionState = new AgentChatSelectionStateService(scope.Context);
+        Assert.Null(await selectionState.GetSelectedProfileIdAsync());
+        var state = Assert.IsType<RegressionTestKeyValueStore>(scope.Context.Storage.State);
+        var blockedWrite = state.BlockNextWrite();
+        var client = new BlockingChatSnapshotRuntimeClient(CreateChatSnapshot(revision: 17));
+        using var gateway = new AgentAppRuntimeGateway(client);
+        using var viewModel = new AgentChatViewModel(
+            gateway,
+            gateway,
+            gateway,
+            gateway,
+            gateway,
+            selectionState);
+        var persistSelection = typeof(AgentChatViewModel)
+            .GetMethods(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single(method => method.Name == "PersistAppliedSelectionAsync"
+                              && method.GetParameters().Length == 5);
+        var sessionId = Guid.NewGuid();
+        using var cancellation = new CancellationTokenSource();
+
+        var canceledPersistence = Assert.IsAssignableFrom<Task>(persistSelection.Invoke(
+            viewModel,
+            ["profile-a", "workspace-a", sessionId, 0, cancellation.Token]));
+        await blockedWrite.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => canceledPersistence.WaitAsync(TimeSpan.FromSeconds(2)));
+        var completedPersistence = Assert.IsAssignableFrom<Task>(persistSelection.Invoke(
+            viewModel,
+            ["profile-b", "workspace-b", sessionId, 0, CancellationToken.None]));
+        await completedPersistence.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal("profile-b", await selectionState.GetSelectedProfileIdAsync());
+        Assert.Equal("workspace-b", await selectionState.GetSelectedWorkspaceIdAsync());
+        Assert.Equal(sessionId, await selectionState.GetSelectedSessionIdAsync("workspace-b"));
+        blockedWrite.Release.TrySetResult();
+    }
+
+    [Fact]
     public async Task ChatViewModel_ConcurrentInitializeAsyncCallsApplyOneDeterministicSnapshot()
     {
         var snapshot = CreateChatSnapshot(revision: 23);
@@ -277,6 +339,104 @@ public sealed class AgentRuntimeCorrectnessTests
         Assert.Equal(1, client.SnapshotInvocationCount);
         Assert.Equal(snapshot.SelectedWorkspace?.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
         Assert.Equal(snapshot.SelectedSession?.Session.SessionId, viewModel.SelectedSession?.SessionId);
+    }
+
+    [Fact]
+    public async Task ChatViewModel_UnavailableStartupAutomaticallyInitializesWhenRuntimeBecomesReady()
+    {
+        var snapshot = CreateChatSnapshot(revision: 29);
+        var client = new UnavailableThenReadyChatRuntimeClient(snapshot);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        using var viewModel = new AgentChatViewModel(
+            gateway,
+            gateway,
+            gateway,
+            gateway,
+            gateway);
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => viewModel.InitializeAsync());
+        viewModel.ReportStartupFailure(failure);
+        Assert.False(viewModel.IsInitialized);
+
+        client.MakeReady();
+        await WaitUntilAsync(() => viewModel.IsInitialized);
+
+        Assert.Equal(1, client.SuccessfulSnapshotInvocationCount);
+        Assert.Equal(snapshot.SelectedWorkspace?.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+        Assert.Equal(snapshot.SelectedSession?.Session.SessionId, viewModel.SelectedSession?.SessionId);
+        Assert.Equal(AgentRuntimeConnectionState.Connected, gateway.ConnectionState);
+    }
+
+    [Fact]
+    public async Task ChatViewModel_ConnectedDuringSecondTransientFailureDrainsPendingRecovery()
+    {
+        var snapshot = CreateChatSnapshot(revision: 30);
+        var startup = new InterleavedStartupProfileGateway(snapshot);
+        using var dataGateway = new AgentAppRuntimeGateway(new StaticChatSnapshotRuntimeClient(snapshot));
+        using var viewModel = new AgentChatViewModel(
+            startup,
+            dataGateway,
+            dataGateway,
+            dataGateway,
+            dataGateway);
+
+        var failure = await Assert.ThrowsAsync<TimeoutException>(() => viewModel.InitializeAsync());
+        viewModel.ReportStartupFailure(failure);
+        Assert.Equal(1, startup.SnapshotInvocationCount);
+
+        startup.Connect();
+        await WaitUntilAsync(() => viewModel.IsInitialized);
+
+        Assert.True(startup.ConnectedRaisedDuringSecondFailure);
+        Assert.Equal(2, startup.ClassificationCount);
+        Assert.Equal(3, startup.SnapshotInvocationCount);
+        Assert.Equal(snapshot.SelectedWorkspace?.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+        Assert.Equal(snapshot.SelectedSession?.Session.SessionId, viewModel.SelectedSession?.SessionId);
+    }
+
+    [Fact]
+    public async Task ChatViewModel_PermanentStartupFailureDoesNotRetryAfterChangeStreamConnects()
+    {
+        var client = new PermanentChatStartupFailureRuntimeClient();
+        using var gateway = new AgentAppRuntimeGateway(client);
+        using var viewModel = new AgentChatViewModel(
+            gateway,
+            gateway,
+            gateway,
+            gateway,
+            gateway);
+
+        var failure = await Assert.ThrowsAsync<PackageRuntimeInvocationException>(
+            () => viewModel.InitializeAsync());
+        viewModel.ReportStartupFailure(failure);
+        await gateway.InitializeAsync();
+        await client.ChangeStreamConnected.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.False(viewModel.IsInitialized);
+        Assert.Equal(1, client.ChatSnapshotInvocationCount);
+    }
+
+    [Fact]
+    public async Task AppRuntimeGateway_HealthySnapshotHandoffDoesNotReportReconnect()
+    {
+        var snapshot = CreateChatSnapshot(revision: 31);
+        var client = new BlockingChatSnapshotRuntimeClient(snapshot);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        var states = new ConcurrentQueue<AgentRuntimeConnectionState>();
+        gateway.ConnectionStateChanged += states.Enqueue;
+
+        var load = gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
+        await client.SnapshotStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        client.ReleaseSnapshot();
+        var loaded = await load;
+        gateway.CompleteChatSnapshot(loaded, applied: true);
+        await WaitUntilAsync(() => client.AfterRevisions.Contains(snapshot.Revision));
+
+        Assert.Equal(AgentRuntimeConnectionState.Connected, gateway.ConnectionState);
+        Assert.Contains(AgentRuntimeConnectionState.Connected, states);
+        Assert.DoesNotContain(AgentRuntimeConnectionState.Reconnecting, states);
+        Assert.DoesNotContain(AgentRuntimeConnectionState.Unavailable, states);
     }
 
     [Fact]
@@ -324,6 +484,68 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     [Fact]
+    public async Task ChatViewModel_ResnapshotTreatsIdleAdmissionAsQueuedActiveWork()
+    {
+        var snapshot = CreateChatSnapshot(80);
+        var sessionId = snapshot.SelectedSession!.Session.SessionId;
+        var now = DateTimeOffset.UtcNow;
+        var userTurn = new AgentTurnRecord(
+            Guid.NewGuid(),
+            sessionId,
+            AgentMessageRole.User,
+            AgentTurnKind.Message,
+            [new AgentTurnItemRecord(
+                Guid.NewGuid(),
+                Guid.Empty,
+                0,
+                AgentTurnItemKind.Text,
+                "admitted while disconnected",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                false,
+                null,
+                null)],
+            now,
+            now);
+        userTurn = userTurn with
+        {
+            Items = userTurn.Items.Select(item => item with { TurnId = userTurn.TurnId }).ToArray(),
+        };
+        snapshot = snapshot with
+        {
+            InitialTranscript = new AgentTranscriptPage(snapshot.Revision, [userTurn], false),
+        };
+        using var gateway = new AgentAppRuntimeGateway(new StaticChatSnapshotRuntimeClient(snapshot));
+        using var viewModel = new AgentChatViewModel(
+            gateway,
+            gateway,
+            gateway,
+            gateway,
+            gateway);
+
+        await viewModel.InitializeAsync();
+        var restarted = snapshot with
+        {
+            Revision = 1,
+            RuntimeInstanceId = "runtime-after-reconnect",
+            InitialTranscript = snapshot.InitialTranscript with { Revision = 1 },
+        };
+        typeof(AgentChatViewModel).GetMethod(
+                "ApplyChatSnapshot",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(viewModel, [restarted, true]);
+
+        Assert.True(viewModel.SelectedSession?.IsRunActive);
+        Assert.Equal("Queued", viewModel.SelectedSession?.StatusBadgeText);
+        Assert.Single(viewModel.Messages, row => row.RowId == userTurn.TurnId);
+    }
+
+    [Fact]
     public async Task AppRuntimeGateway_CorrelatedRunsCarryRequestedUserTurnIds()
     {
         var client = new CapturingRunRuntimeClient();
@@ -362,6 +584,34 @@ public sealed class AgentRuntimeCorrectnessTests
         Assert.Equal(
             new AgentRunCommandStatusRequest(sessionId, startUserTurnId),
             client.LastStatusRequest);
+    }
+
+    [Fact]
+    public async Task AppRuntimeGateway_UncorrelatedOverloadsGenerateStablePerCallUserTurnIds()
+    {
+        var client = new CapturingRunRuntimeClient();
+        using var gateway = new AgentAppRuntimeGateway(client);
+        var sessionId = Guid.NewGuid();
+
+        await gateway.QueueUserMessageAsync(
+            sessionId,
+            "profile",
+            "start",
+            "workspace",
+            []);
+        await gateway.RollbackAndQueueUserMessageAsync(
+            sessionId,
+            Guid.NewGuid(),
+            "profile",
+            "replacement",
+            "workspace",
+            []);
+
+        var commands = client.Commands.ToArray();
+        Assert.Equal(2, commands.Length);
+        Assert.NotNull(commands[0].UserTurnId);
+        Assert.NotNull(commands[1].UserTurnId);
+        Assert.NotEqual(commands[0].UserTurnId, commands[1].UserTurnId);
     }
 
     [Fact]
@@ -681,8 +931,20 @@ public sealed class AgentRuntimeCorrectnessTests
             PreferredSessionId: session.SessionId));
         var roundTrip = AgentChatSnapshotPayload.RoundTrip(snapshot);
 
-        Assert.True(snapshot.InitialTranscript.HasMore);
-        Assert.InRange(snapshot.InitialTranscript.Turns.Count, 1, 179);
+        Assert.False(snapshot.InitialTranscript.HasMore);
+        Assert.Equal(180, snapshot.InitialTranscript.Turns.Count);
+        Assert.All(snapshot.InitialTranscript.Turns, turn =>
+        {
+            var item = Assert.Single(turn.Items);
+            Assert.True(item.IsToolHeaderProjection);
+            Assert.True(item.ToolHasDetails);
+            Assert.Null(item.TextContent);
+            Assert.Null(item.ArgumentsJson);
+            Assert.Null(item.ResultSummary);
+            Assert.Null(item.StructuredPayloadJson);
+            Assert.Null(item.SourcesJson);
+            Assert.Null(item.PresentationPayloadJson);
+        });
         Assert.True(
             AgentChatSnapshotPayload.GetSerializedByteCount(snapshot)
             <= AgentChatSnapshotPayload.MaximumSerializedBytes);
@@ -691,6 +953,50 @@ public sealed class AgentRuntimeCorrectnessTests
             < AgentChatSnapshotPayload.RuntimeMaximumBytes);
         Assert.Equal(snapshot.SelectedSession?.Session.SessionId, roundTrip.SelectedSession?.Session.SessionId);
         Assert.Equal(snapshot.InitialTranscript.Turns.Count, roundTrip.InitialTranscript.Turns.Count);
+    }
+
+    [Fact]
+    public async Task ChatSnapshot_OversizedSingleTurnRemainsCursorReachable()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var runtime = CreateSnapshotRuntime(scope.Context);
+        using var profiles = runtime.Profiles;
+        using var changes = runtime.Changes;
+        var profile = await profiles.CreateProfileAsync("Oversized turn profile");
+        var workspace = runtime.Workspaces.CreateWorkspace("Oversized turn workspace");
+        var session = runtime.Sessions.CreateSession(
+            "Oversized turn session",
+            profileId: profile.ProfileId,
+            workspaceId: workspace.WorkspaceId);
+        var turn = runtime.Sessions.AppendTextTurn(
+            session.SessionId,
+            AgentMessageRole.Assistant,
+            new string('x', 6 * 1024 * 1024));
+        var handler = new AgentChatSnapshotHandler(
+            runtime.Store,
+            new AgentChatSelectionStateService(scope.Context),
+            changes);
+
+        var snapshot = await handler.HandleAsync(new AgentChatSnapshotRequest(
+            InitialTranscriptLimit: 1,
+            PreferredWorkspaceId: workspace.WorkspaceId,
+            PreferredSessionId: session.SessionId));
+        var projectedTurn = Assert.Single(snapshot.InitialTranscript.Turns);
+
+        Assert.Equal(turn.TurnId, projectedTurn.TurnId);
+        Assert.True(snapshot.InitialTranscript.HasMore);
+        Assert.Equal(turn.TurnId, snapshot.InitialTranscript.Continuation?.TurnId);
+        var projectedItem = Assert.Single(projectedTurn.Items);
+        Assert.True(projectedItem.WasTruncated);
+        Assert.Contains(
+            "Content truncated for display",
+            projectedItem.TextContent,
+            StringComparison.Ordinal);
+        Assert.True(
+            AgentChatSnapshotPayload.GetSerializedByteCount(snapshot)
+            <= AgentChatSnapshotPayload.MaximumSerializedBytes);
+        var roundTrip = AgentChatSnapshotPayload.RoundTrip(snapshot);
+        Assert.Equal(turn.TurnId, roundTrip.InitialTranscript.Continuation?.TurnId);
     }
 
     [Fact]
@@ -1832,6 +2138,266 @@ public sealed class AgentRuntimeCorrectnessTests
         }
     }
 
+    private sealed class UnavailableThenReadyChatRuntimeClient(
+        AgentChatSnapshotProjection snapshot) : IPackageRuntimeClient
+    {
+        private int _isAvailable;
+        private int _successfulSnapshotInvocationCount;
+
+        public bool IsAvailable => Volatile.Read(ref _isAvailable) != 0;
+
+        public int SuccessfulSnapshotInvocationCount
+            => Volatile.Read(ref _successfulSnapshotInvocationCount);
+
+        public void MakeReady() => Volatile.Write(ref _isAvailable, 1);
+
+        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            PackageRuntimeOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsAvailable)
+            {
+                throw new InvalidOperationException("Runtime unavailable.");
+            }
+            if (!ReferenceEquals(operation, AgentRuntimeOperations.ChatSnapshot))
+            {
+                throw new NotSupportedException(operation.OperationId);
+            }
+
+            Interlocked.Increment(ref _successfulSnapshotInvocationCount);
+            return ValueTask.FromResult((TResponse)(object)snapshot);
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            PackageRuntimeStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            if (!IsAvailable)
+            {
+                throw new InvalidOperationException("Runtime unavailable.");
+            }
+
+            yield return (TEvent)(object)new AgentRuntimeChange(
+                snapshot.Revision,
+                AgentRuntimeChangeKind.Connected,
+                RuntimeInstanceId: snapshot.RuntimeInstanceId);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
+    private sealed class InterleavedStartupProfileGateway(
+        AgentChatSnapshotProjection snapshot) :
+        IAgentProfileGateway,
+        IAgentChatSnapshotGateway,
+        IAgentRuntimeAvailability,
+        IAgentRuntimeFailureClassifier
+    {
+        private int _connectionState = (int)AgentRuntimeConnectionState.Unavailable;
+        private int _snapshotInvocationCount;
+        private int _classificationCount;
+        private int _connectedRaisedDuringSecondFailure;
+
+        public int SnapshotInvocationCount => Volatile.Read(ref _snapshotInvocationCount);
+
+        public int ClassificationCount => Volatile.Read(ref _classificationCount);
+
+        public bool ConnectedRaisedDuringSecondFailure
+            => Volatile.Read(ref _connectedRaisedDuringSecondFailure) != 0;
+
+        public AgentRuntimeConnectionState ConnectionState
+            => (AgentRuntimeConnectionState)Volatile.Read(ref _connectionState);
+
+        public bool IsRuntimeAvailable => ConnectionState == AgentRuntimeConnectionState.Connected;
+
+        public event Action<AgentRuntimeConnectionState>? ConnectionStateChanged;
+
+        public event Action<string>? ProfileChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public event Action? SelectableCapabilitiesChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public event Action<AgentChatSnapshotProjection>? ChatSnapshotReloaded
+        {
+            add { }
+            remove { }
+        }
+
+        public void Connect()
+        {
+            Volatile.Write(ref _connectionState, (int)AgentRuntimeConnectionState.Connected);
+            ConnectionStateChanged?.Invoke(AgentRuntimeConnectionState.Connected);
+        }
+
+        public bool IsRetryableRuntimeFailure(
+            Exception exception,
+            CancellationToken callerCancellationToken = default)
+        {
+            if (exception is not TimeoutException || callerCancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            if (Interlocked.Increment(ref _classificationCount) == 2)
+            {
+                Interlocked.Exchange(ref _connectedRaisedDuringSecondFailure, 1);
+                ConnectionStateChanged?.Invoke(AgentRuntimeConnectionState.Connected);
+            }
+            return true;
+        }
+
+        public Task<AgentChatSnapshotProjection> LoadChatSnapshotAsync(
+            AgentChatSnapshotRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Interlocked.Increment(ref _snapshotInvocationCount) <= 2
+                ? Task.FromException<AgentChatSnapshotProjection>(
+                    new TimeoutException("Injected transient Agent Chat startup failure."))
+                : Task.FromResult(snapshot);
+        }
+
+        public void CompleteChatSnapshot(AgentChatSnapshotProjection completedSnapshot, bool applied) { }
+
+        public IReadOnlyList<AgentProfileRecord> ListProfiles() => snapshot.Profiles;
+
+        public AgentProfileRecord? GetProfile(string profileId)
+            => snapshot.Profiles.FirstOrDefault(profile => string.Equals(
+                profile.ProfileId,
+                profileId,
+                StringComparison.OrdinalIgnoreCase));
+
+        public AgentProfileModelBindingRecord? GetChatBinding(string profileId)
+            => (GetProfile(profileId)?.ModelBindings ?? []).FirstOrDefault(binding => string.Equals(
+                binding.CapabilityKind,
+                AgentModelCapabilityKinds.Chat,
+                StringComparison.OrdinalIgnoreCase));
+
+        public Task<AgentProfileRecord> CreateProfileAsync(
+            string displayName,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public void SaveProfile(
+            string profileId,
+            string displayName,
+            string? description,
+            string? instructions,
+            string? chatProviderId,
+            string? chatModelId,
+            string? embeddingProviderId,
+            string? embeddingModelId,
+            IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord>? selectableCapabilityAssignments = null,
+            string? behaviorLoopId = null,
+            string? behaviorLoopSourceId = null,
+            string? behaviorLoopSettingsJson = null,
+            string? chatModelSettingsJson = null)
+            => throw new NotSupportedException();
+
+        public void DeleteProfile(string profileId) => throw new NotSupportedException();
+
+        public IReadOnlyList<AgentBehaviorLoopDescriptor> ListBehaviorLoopDescriptors() => [];
+
+        public IReadOnlyList<AgentProviderDescriptor> ListChatProviderDescriptors() => [];
+
+        public IReadOnlyList<AgentEmbeddingProviderDescriptor> ListEmbeddingProviderDescriptors() => [];
+
+        public bool HasProfileCapabilityConsumers(string capabilityKind) => false;
+
+        public Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListSelectableProfileCapabilitiesAsync(
+            AgentProfileRecord? profile = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
+
+        public Task<IReadOnlyList<AgentToolCatalogEntry>> ListInstalledLocalToolsAsync(
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentToolCatalogEntry>>([]);
+
+        public Task<IReadOnlyList<AgentModelDescriptor>> ListChatModelsAsync(
+            string? providerId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentModelDescriptor>>([]);
+
+        public Task<IReadOnlyList<AgentEmbeddingModelDescriptor>> ListEmbeddingModelsAsync(
+            string? providerId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentEmbeddingModelDescriptor>>([]);
+
+        public Task<AgentProviderReadiness?> GetChatProviderReadinessAsync(
+            string? providerId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<AgentProviderReadiness?>(null);
+
+        public Task<AgentEmbeddingProviderReadiness?> GetEmbeddingProviderReadinessAsync(
+            string? providerId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<AgentEmbeddingProviderReadiness?>(null);
+    }
+
+    private sealed class PermanentChatStartupFailureRuntimeClient : IPackageRuntimeClient
+    {
+        private int _chatSnapshotInvocationCount;
+
+        public bool IsAvailable => true;
+
+        public int ChatSnapshotInvocationCount => Volatile.Read(ref _chatSnapshotInvocationCount);
+
+        public TaskCompletionSource ChangeStreamConnected { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            PackageRuntimeOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (ReferenceEquals(operation, AgentRuntimeOperations.ChatSnapshot))
+            {
+                Interlocked.Increment(ref _chatSnapshotInvocationCount);
+                return ValueTask.FromException<TResponse>(new PackageRuntimeInvocationException(
+                    "runtime.v1.validation",
+                    isTransient: false,
+                    statusCode: 400));
+            }
+            if (ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
+            {
+                return ValueTask.FromResult((TResponse)(object)new AgentDashboardProjection(0, [], [], []));
+            }
+
+            throw new NotSupportedException(operation.OperationId);
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            PackageRuntimeStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            yield return (TEvent)(object)new AgentRuntimeChange(
+                0,
+                AgentRuntimeChangeKind.Connected,
+                RuntimeInstanceId: "permanent-startup-failure-runtime");
+            ChangeStreamConnected.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
     private sealed class CapturingRunRuntimeClient : IPackageRuntimeClient
     {
         public bool IsAvailable => true;
@@ -2384,7 +2950,7 @@ public sealed class AgentRuntimeCorrectnessTests
         }
     }
 
-    private sealed class ThrowingPermissionCatalog : IPackageExtensionCatalog
+    private sealed class ThrowingPermissionCatalog : IPackageExtensionCatalog, IPackageExtensionInvocationCatalog
     {
         public IReadOnlyList<TContract> GetExtensions<TContract>(
             PackageExtensionPoint<TContract> extensionPoint)
@@ -2393,9 +2959,13 @@ public sealed class AgentRuntimeCorrectnessTests
         public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(
             PackageExtensionPoint<TContract> extensionPoint)
             => throw new InvalidOperationException("Global permission actions must not be read for Chat snapshots.");
+
+        public IReadOnlyList<IPackageExtensionReference<TContract>> GetExtensionReferences<TContract>(
+            PackageExtensionPoint<TContract> extensionPoint)
+            => throw new InvalidOperationException("Global permission actions must not be read for Chat snapshots.");
     }
 
-    private sealed class CountingExtensionCatalog : IPackageExtensionCatalog
+    private sealed class CountingExtensionCatalog : IPackageExtensionCatalog, IPackageExtensionInvocationCatalog
     {
         private int _invocationCount;
 
@@ -2409,6 +2979,13 @@ public sealed class AgentRuntimeCorrectnessTests
         }
 
         public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(
+            PackageExtensionPoint<TContract> extensionPoint)
+        {
+            Interlocked.Increment(ref _invocationCount);
+            return [];
+        }
+
+        public IReadOnlyList<IPackageExtensionReference<TContract>> GetExtensionReferences<TContract>(
             PackageExtensionPoint<TContract> extensionPoint)
         {
             Interlocked.Increment(ref _invocationCount);

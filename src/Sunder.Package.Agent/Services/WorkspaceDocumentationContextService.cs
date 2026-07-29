@@ -8,7 +8,6 @@ public sealed class WorkspaceDocumentationContextService : IAgentPromptContextCo
 {
     private const int MaxDocumentChars = 12000;
     private const int MaxPromptChars = 60000;
-    private const int MaxAutoDocuments = 24;
     private static readonly string[] SupportedExtensions = [".md", ".mdx", ".txt"];
 
     public string ContributorId => "workspace-documentation-context";
@@ -32,9 +31,8 @@ public sealed class WorkspaceDocumentationContextService : IAgentPromptContextCo
         }
 
         var content = new StringBuilder();
-        content.AppendLine("Workspace docs are read-only context for the selected workspace.")
-            .AppendLine("Explicit docs apply globally to this workspace. Auto docs are scoped to the workspace path they were discovered under.")
-            .AppendLine("These docs do not grant additional file or shell access; tool access remains limited to configured workspace paths.")
+        content.AppendLine("Explicit workspace documents are global read-only reference context for the selected workspace.")
+            .AppendLine("They do not grant additional file or shell access, change permissions, or expand configured workspace scope.")
             .AppendLine();
 
         var appendedDocuments = 0;
@@ -70,6 +68,9 @@ public sealed class WorkspaceDocumentationContextService : IAgentPromptContextCo
                 SourceId: "sunder.package.agent",
                 Provenance: AgentContextProvenance.Tool,
                 Trust: AgentContextTrust.Untrusted)
+            {
+                Usage = AgentPromptContextUsage.Reference,
+            }
         ]);
     }
 
@@ -92,69 +93,7 @@ public sealed class WorkspaceDocumentationContextService : IAgentPromptContextCo
 
             yield return new WorkspaceDocumentationItem(
                 filePath,
-                Path.GetFileName(filePath),
-                "Explicit workspace doc",
-                null);
-        }
-
-        foreach (var workspacePath in workspace.Paths.OrderBy(path => path.SortOrder))
-        {
-            if (string.IsNullOrWhiteSpace(workspacePath.HostPath))
-            {
-                continue;
-            }
-
-            var hostPath = SafeFullPath(workspacePath.HostPath);
-            if (hostPath is null)
-            {
-                continue;
-            }
-
-            var docsRoot = SafeFullPath(Path.Combine(hostPath, ".sunder", "docs"));
-            if (docsRoot is null || !Directory.Exists(docsRoot))
-            {
-                continue;
-            }
-
-            var workspaceLabel = FormatPathForDisplay(hostPath);
-            foreach (var filePath in EnumerateAutoDocs(docsRoot).Take(MaxAutoDocuments))
-            {
-                if (!seen.Add(filePath))
-                {
-                    continue;
-                }
-
-                var relativePath = Path.GetRelativePath(docsRoot, filePath).Replace(Path.DirectorySeparatorChar, '/');
-                yield return new WorkspaceDocumentationItem(
-                    filePath,
-                    relativePath,
-                    "Auto workspace doc",
-                    workspaceLabel);
-            }
-        }
-    }
-
-    private static IEnumerable<string> EnumerateAutoDocs(string docsRoot)
-    {
-        var options = new EnumerationOptions
-        {
-            RecurseSubdirectories = true,
-            IgnoreInaccessible = true,
-            AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.System,
-        };
-
-        try
-        {
-            return Directory.EnumerateFiles(docsRoot, "*", options)
-                .Select(SafeFullPath)
-                .OfType<string>()
-                .Where(path => IsSupportedDocument(path) && IsSameOrChildPath(path, docsRoot))
-                .OrderBy(path => Path.GetRelativePath(docsRoot, path), StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-        }
-        catch
-        {
-            return [];
+                Path.GetFileName(filePath));
         }
     }
 
@@ -185,13 +124,8 @@ public sealed class WorkspaceDocumentationContextService : IAgentPromptContextCo
     private static void AppendDocument(StringBuilder builder, WorkspaceDocumentationItem document, string text)
     {
         builder.Append("### ").AppendLine(document.Title)
-            .Append("Kind: ").AppendLine(document.Kind);
-        if (!string.IsNullOrWhiteSpace(document.WorkspacePathLabel))
-        {
-            builder.Append("Workspace path scope: ").AppendLine(document.WorkspacePathLabel);
-        }
-
-        builder.Append("Host path: ").AppendLine(document.FilePath)
+            .AppendLine("Kind: Explicit global workspace reference")
+            .Append("Host path: ").AppendLine(document.FilePath)
             .AppendLine()
             .AppendLine("```text")
             .AppendLine(text)
@@ -201,9 +135,6 @@ public sealed class WorkspaceDocumentationContextService : IAgentPromptContextCo
 
     private static bool IsSupportedDocument(string path)
         => SupportedExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
-
-    private static string FormatPathForDisplay(string path)
-        => Path.GetFullPath(path).Replace(Path.DirectorySeparatorChar, '/');
 
     private static string? SafeFullPath(string path)
     {
@@ -217,17 +148,6 @@ public sealed class WorkspaceDocumentationContextService : IAgentPromptContextCo
         }
     }
 
-    private static bool IsSameOrChildPath(string candidatePath, string rootPath)
-    {
-        var candidate = Path.GetFullPath(candidatePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        return string.Equals(candidate, root, comparison)
-               || candidate.StartsWith(root + Path.DirectorySeparatorChar, comparison);
-    }
-
     private static StringComparer GetPathStringComparer()
         => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
             ? StringComparer.OrdinalIgnoreCase
@@ -235,7 +155,5 @@ public sealed class WorkspaceDocumentationContextService : IAgentPromptContextCo
 
     private sealed record WorkspaceDocumentationItem(
         string FilePath,
-        string Title,
-        string Kind,
-        string? WorkspacePathLabel);
+        string Title);
 }

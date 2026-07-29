@@ -1,6 +1,8 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
+using Sunder.Package.Agent.HistorySearch;
+using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Runtime;
@@ -31,13 +33,26 @@ internal static class AgentRuntimeOperations
         new("agent.attachments.transfer.v1");
     public static readonly PackageRuntimeStream<AgentChangeSubscription, AgentRuntimeChange> Changes =
         new("agent.changes.v1");
+    public static readonly PackageRuntimeOperation<HistorySearchRequest, HistorySearchResponse> HistorySearch =
+        new("agent.history.search.v1");
+    public static readonly PackageRuntimeOperation<HistorySearchStateRequest, HistorySearchState> HistoryState =
+        new("agent.history.state.v1");
+    public static readonly PackageRuntimeOperation<HistorySearchCommand, HistorySearchCommandResult> HistoryCommands =
+        new("agent.history.command.v1");
+    public static readonly PackageRuntimeOperation<AgentTranscriptAroundTurnRequest, AgentTranscriptAroundTurnPage> TranscriptAround =
+        new("agent.transcript.around.v1");
+    public static readonly PackageRuntimeOperation<AgentTranscriptToolDetailRequest, AgentTranscriptToolDetailResponse> TranscriptToolDetail =
+        new("agent.transcript.tool-detail.v1");
+    public static readonly PackageRuntimeStream<HistorySearchStatusSubscription, HistorySearchStatus> HistoryStatus =
+        new("agent.history.status.v1");
 }
 
 internal sealed record AgentChatSnapshotRequest(
     int InitialTranscriptLimit = 60,
     string? PreferredProfileId = null,
     string? PreferredWorkspaceId = null,
-    Guid? PreferredSessionId = null);
+    Guid? PreferredSessionId = null,
+    bool IncludeInitialTranscript = true);
 internal sealed record AgentChatPermissionProjection(
     long Revision,
     AgentSessionPermissionState? SessionState,
@@ -82,12 +97,26 @@ internal sealed record AgentTranscriptPageRequest(
     int Limit = 60,
     DateTimeOffset? AnchorCreatedAtUtc = null,
     Guid? AnchorTurnId = null);
-internal sealed record AgentTranscriptPage(long Revision, IReadOnlyList<AgentTurnRecord> Turns, bool HasMore);
+internal sealed record AgentTranscriptPage(
+    long Revision,
+    IReadOnlyList<AgentTurnRecord> Turns,
+    bool HasMore,
+    TranscriptPageCursor? Continuation = null);
+internal sealed record AgentTranscriptToolDetailResponse(AgentTranscriptToolDetailRecord? Detail);
 
 internal interface IAgentTranscriptPageGateway
 {
     Task<AgentTranscriptPage> LoadTranscriptPageAsync(
         AgentTranscriptPageRequest request,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>Loads exact tool detail for lightweight transcript rows.</summary>
+public interface IAgentTranscriptToolDetailGateway
+{
+    /// <summary>Loads the detail matching the request's exact session and tool identity.</summary>
+    Task<AgentTranscriptToolDetailRecord?> LoadToolDetailAsync(
+        AgentTranscriptToolDetailRequest request,
         CancellationToken cancellationToken = default);
 }
 
@@ -230,7 +259,11 @@ internal sealed record AgentRunCommand(
     string? PermissionRequestId = null,
     bool ApproveForSession = false,
     Guid? UserTurnId = null);
-internal sealed record AgentRunCommandResult(long Revision, AgentRunCheckpointRecord? Checkpoint);
+internal sealed record AgentRunCommandResult(
+    long Revision,
+    AgentRunCheckpointRecord? Checkpoint,
+    Guid? RunId = null,
+    Guid? UserTurnId = null);
 internal sealed record AgentRunCommandStatusRequest(Guid SessionId, Guid UserTurnId);
 internal enum AgentRunCommandStatus { Pending, Committed, Absent }
 internal sealed record AgentRunCommandStatusResult(long Revision, AgentRunCommandStatus Status);

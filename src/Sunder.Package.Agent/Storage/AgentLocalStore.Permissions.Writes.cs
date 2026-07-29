@@ -38,6 +38,9 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$continuationConsumedAtUtc", record.ContinuationConsumedAtUtc?.ToString("O") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$executionStartedAtUtc", record.ExecutionStartedAtUtc?.ToString("O") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$executionSnapshotJson", record.ExecutionSnapshotJson);
+        command.Parameters.AddWithValue("$toolExecutionId", record.ToolExecutionId?.ToString() ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$resourceClaimSetVersion", record.ResourceClaimSetVersion);
+        command.Parameters.AddWithValue("$resourceClaimsJson", SerializeResourceClaims(record.ResourceClaims));
     }
 
     private static IReadOnlyList<AgentCompletedStreamingTurn>? TryFinalizePermissionRun(

@@ -279,21 +279,55 @@ public sealed class BuilderServiceTests
     {
         var resolver = new BlockingWorkspaceExecutionResolver();
         var service = new BuilderWorkspaceExecutionService(resolver);
-        var callingThreadId = Environment.CurrentManagedThreadId;
         using var cancellation = new CancellationTokenSource();
+        using var allowCallerToExit = new ManualResetEventSlim();
+        var callReturned = new TaskCompletionSource<Task<IReadOnlyList<AgentWorkspaceRecord>>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var callerThread = new Thread(() =>
+        {
+            try
+            {
+                callReturned.TrySetResult(service.ListWorkspacesAsync(cancellation.Token));
+            }
+            catch (Exception exception)
+            {
+                callReturned.TrySetException(exception);
+            }
+            finally
+            {
+                allowCallerToExit.Wait();
+            }
+        })
+        {
+            IsBackground = true,
+            Name = nameof(WorkspaceList_RunsSynchronousResolverOffCallingThreadAndSupportsCallerCancellation),
+        };
 
-        var listing = service.ListWorkspacesAsync(cancellation.Token);
-        await resolver.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.NotEqual(callingThreadId, resolver.InvocationThreadId);
-        await cancellation.CancelAsync();
-
+        callerThread.Start();
         try
         {
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => listing);
+            await Task.WhenAll(resolver.Started.Task, callReturned.Task)
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            var listing = await callReturned.Task;
+            var invocationThread = Assert.IsType<Thread>(resolver.InvocationThread);
+            Assert.NotSame(callerThread, invocationThread);
+            Assert.False(resolver.Release.Task.IsCompleted);
+            Assert.False(listing.IsCompleted);
+
+            await cancellation.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => listing)
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.False(resolver.Release.Task.IsCompleted);
         }
         finally
         {
             resolver.Release.TrySetResult();
+            allowCallerToExit.Set();
+            Assert.True(callerThread.Join(TimeSpan.FromSeconds(2)));
+            if (resolver.Started.Task.IsCompletedSuccessfully)
+            {
+                await resolver.Completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            }
         }
     }
 
@@ -698,7 +732,9 @@ public sealed class BuilderServiceTests
         }
     }
 
-    private sealed class TestExtensionCatalog(IAgentWorkspaceExecutionResolver resolver) : IPackageExtensionCatalog
+    private sealed class TestExtensionCatalog(IAgentWorkspaceExecutionResolver resolver) :
+        IPackageExtensionCatalog,
+        IPackageExtensionInvocationCatalog
     {
         public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
             => resolver is TContract typedResolver
@@ -710,6 +746,53 @@ public sealed class BuilderServiceTests
             => GetExtensions(extensionPoint)
                 .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
                 .ToArray();
+
+        public IReadOnlyList<IPackageExtensionReference<TContract>> GetExtensionReferences<TContract>(
+            PackageExtensionPoint<TContract> extensionPoint)
+            => GetExtensions(extensionPoint)
+                .Select(extension => (IPackageExtensionReference<TContract>)new TestReference<TContract>(extension))
+                .ToArray();
+
+        private sealed class TestReference<TContract>(TContract contribution)
+            : IPackageExtensionReference<TContract>
+        {
+            public bool TryAcquire(
+                [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
+                out IPackageExtensionLease<TContract>? lease)
+            {
+                lease = new TestLease<TContract>(contribution);
+                return true;
+            }
+        }
+
+        private sealed class TestLease<TContract>(TContract contribution) : IPackageExtensionLease<TContract>
+        {
+            private object? _contribution = contribution;
+
+            public string PackageId
+            {
+                get
+                {
+                    ObjectDisposedException.ThrowIf(_contribution is null, this);
+                    return "test.package";
+                }
+            }
+
+            public TContract Contribution
+                => (TContract)(Volatile.Read(ref _contribution)
+                    ?? throw new ObjectDisposedException(nameof(TestLease<TContract>)));
+
+            public CancellationToken RetirementToken
+            {
+                get
+                {
+                    ObjectDisposedException.ThrowIf(_contribution is null, this);
+                    return CancellationToken.None;
+                }
+            }
+
+            public void Dispose() => Interlocked.Exchange(ref _contribution, null);
+        }
     }
 
     private sealed class TestWorkspaceExecutionResolver(AgentWorkspaceRecord workspace, TestExecutionTarget target)
@@ -757,14 +840,22 @@ public sealed class BuilderServiceTests
     {
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public int InvocationThreadId { get; private set; }
+        public TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Thread? InvocationThread { get; private set; }
 
         public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces()
         {
-            InvocationThreadId = Environment.CurrentManagedThreadId;
+            InvocationThread = Thread.CurrentThread;
             Started.TrySetResult();
-            Release.Task.GetAwaiter().GetResult();
-            return [];
+            try
+            {
+                Release.Task.GetAwaiter().GetResult();
+                return [];
+            }
+            finally
+            {
+                Completed.TrySetResult();
+            }
         }
 
         public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(

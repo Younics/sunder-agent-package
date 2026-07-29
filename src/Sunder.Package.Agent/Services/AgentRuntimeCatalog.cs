@@ -3,7 +3,7 @@ using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentRuntimeCatalog : IAgentRuntimeCatalog
+public sealed class AgentRuntimeCatalog : IAgentRuntimeCatalog, IAgentTranscriptCatalog
 {
     private readonly AgentSessionService _sessionService;
     private readonly AgentProfileService _profileService;
@@ -61,13 +61,37 @@ public sealed class AgentRuntimeCatalog : IAgentRuntimeCatalog
 
     public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => _sessionService.GetLatestCheckpoint(sessionId);
 
-    public IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit) => _sessionService.ListRecentTurns(sessionId, limit);
+    public IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit)
+        => _sessionService.ListRecentTurns(sessionId, limit);
 
     public IReadOnlyList<AgentTurnRecord> ListTurnsBefore(Guid sessionId, DateTimeOffset beforeCreatedAtUtc, Guid beforeTurnId, int limit)
         => _sessionService.ListTurnsBefore(sessionId, beforeCreatedAtUtc, beforeTurnId, limit);
 
     public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(Guid sessionId, DateTimeOffset afterCreatedAtUtc, Guid afterTurnId, int limit)
         => _sessionService.ListTurnsAfter(sessionId, afterCreatedAtUtc, afterTurnId, limit);
+
+    IReadOnlyList<AgentTurnRecord> IAgentTranscriptCatalog.ListRecentTranscriptHeaders(
+        Guid sessionId,
+        int limit)
+        => _sessionService.ListRecentTranscriptHeaders(sessionId, limit);
+
+    IReadOnlyList<AgentTurnRecord> IAgentTranscriptCatalog.ListTranscriptHeadersBefore(
+        Guid sessionId,
+        DateTimeOffset beforeCreatedAtUtc,
+        Guid beforeTurnId,
+        int limit)
+        => _sessionService.ListTranscriptHeadersBefore(sessionId, beforeCreatedAtUtc, beforeTurnId, limit);
+
+    IReadOnlyList<AgentTurnRecord> IAgentTranscriptCatalog.ListTranscriptHeadersAfter(
+        Guid sessionId,
+        DateTimeOffset afterCreatedAtUtc,
+        Guid afterTurnId,
+        int limit)
+        => _sessionService.ListTranscriptHeadersAfter(sessionId, afterCreatedAtUtc, afterTurnId, limit);
+
+    AgentTranscriptToolDetailRecord? IAgentTranscriptCatalog.GetTranscriptToolDetail(
+        AgentTranscriptToolDetailRequest request)
+        => _sessionService.GetTranscriptToolDetail(request);
 
     public IReadOnlyList<AgentProfileRecord> ListProfiles() => _profileService.ListProfiles();
 

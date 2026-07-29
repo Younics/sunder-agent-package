@@ -112,7 +112,12 @@ public sealed partial class AgentLocalStore
         string toolId,
         string argumentsJson,
         DateTimeOffset createdAtUtc,
-        DateTimeOffset updatedAtUtc)
+        DateTimeOffset updatedAtUtc,
+        Guid? toolExecutionId = null,
+        AgentToolExecutionStatus? toolExecutionStatus = null,
+        string? toolOwnerPackageId = null,
+        string? toolSchemaId = null,
+        string? toolSchemaVersion = null)
         => new(
             turnId,
             sessionId,
@@ -135,6 +140,13 @@ public sealed partial class AgentLocalStore
                     false,
                     null,
                     null)
+                {
+                    ToolExecutionId = toolExecutionId,
+                    ToolExecutionStatus = toolExecutionStatus,
+                    ToolOwnerPackageId = toolOwnerPackageId,
+                    ToolSchemaId = toolSchemaId,
+                    ToolSchemaVersion = toolSchemaVersion,
+                }
             ],
             createdAtUtc,
             updatedAtUtc);
@@ -155,7 +167,12 @@ public sealed partial class AgentLocalStore
         string? backendId,
         string? presentationPayloadJson,
         DateTimeOffset createdAtUtc,
-        DateTimeOffset updatedAtUtc)
+        DateTimeOffset updatedAtUtc,
+        Guid? toolExecutionId = null,
+        AgentToolExecutionStatus? toolExecutionStatus = null,
+        string? toolOwnerPackageId = null,
+        string? toolSchemaId = null,
+        string? toolSchemaVersion = null)
         => new(
             turnId,
             sessionId,
@@ -179,6 +196,13 @@ public sealed partial class AgentLocalStore
                     errorCode,
                     backendId,
                     presentationPayloadJson)
+                {
+                    ToolExecutionId = toolExecutionId,
+                    ToolExecutionStatus = toolExecutionStatus,
+                    ToolOwnerPackageId = toolOwnerPackageId,
+                    ToolSchemaId = toolSchemaId,
+                    ToolSchemaVersion = toolSchemaVersion,
+                }
             ],
             createdAtUtc,
             updatedAtUtc);

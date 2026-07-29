@@ -18,6 +18,7 @@ public sealed class ToolPackageRoleCompositionTests
                 Extension("sunder.package.agent:tool-sources", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
                 Extension("sunder.package.agent:permission-surfaces", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
                 Extension("sunder.package.agent:prompt-context-contributors", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
+                Extension("sunder.package.agent:session-data-cleaners", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
             ]
         },
         {
@@ -120,6 +121,7 @@ public sealed class ToolPackageRoleCompositionTests
         public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
             ReadKeys.Add(key);
             return Task.FromResult(value);
         }
@@ -141,14 +143,22 @@ public sealed class ToolPackageRoleCompositionTests
         public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
             ReadKeys.Add(key);
             return Task.FromResult(value);
         }
 
         public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+        {
+            TestPackageStorageGuards.Key(key);
+            TestPackageStorageGuards.Value(value);
+            throw new NotSupportedException();
+        }
 
         public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+        {
+            TestPackageStorageGuards.Key(key);
+            throw new NotSupportedException();
+        }
     }
 }

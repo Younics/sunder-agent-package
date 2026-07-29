@@ -20,11 +20,13 @@ internal sealed partial class TranscriptScrollCoordinator
 
         if (change.Property == ScrollViewer.ExtentProperty || change.Property == ScrollViewer.ViewportProperty)
         {
+            SignalViewportMutation(ViewportMutationSignalCause.ExtentChanged);
             if (_bottomPlacementLockActive)
             {
-                if (_bottomPlacementInteractionRevision == _interactionRevision)
+                if (_bottomPlacementInteractionRevision == _interactionRevision
+                    && _bottomPlacementAuthorityRevision == _viewportAuthorityRevision)
                 {
-                    PinToBottom();
+                    PinToBottom(TranscriptProgrammaticOffsetWriteSource.BottomPlacementExtentChanged);
                 }
                 else
                 {
@@ -34,32 +36,7 @@ internal sealed partial class TranscriptScrollCoordinator
                 return;
             }
 
-            if (ShouldPinToBottomForLayoutGrowth())
-            {
-                if (_anchorHost is not null)
-                {
-                    PinToBottom();
-                }
-                else
-                {
-                    QueueScrollToBottom();
-                }
-                UpdateJumpToLatestVisibility();
-                return;
-            }
-
             UpdateJumpToLatestVisibility();
-            if (_suppressEdgeLoadsUntilNextScroll
-                || _isRestoringAnchor
-                || _pendingAnchor is not null
-                || _loadOlderPending
-                || _loadNewerPending)
-            {
-                return;
-            }
-
-            QueueLoadOlderRowsIfNearTop();
-            QueueLoadNewerRowsIfAtBottom(requireActualBottom: false);
         }
     }
 
@@ -84,54 +61,14 @@ internal sealed partial class TranscriptScrollCoordinator
         CaptureViewportAnchor();
     }
 
-    public void OnRenderedContentChanged()
+    public void OnRenderedContentChanged(ITranscriptGeometrySource? source = null)
     {
         if (_disposed || !_presentationActive)
         {
             return;
         }
 
-        if (_isRestoringAnchor || _restoreAnchorPending)
-        {
-            if (_pendingAnchor is not null)
-            {
-                _renderedContentChangedDuringAnchorRestore = true;
-            }
-            return;
-        }
-        if (_pendingAnchor is not null)
-        {
-            QueueRestoreScrollAnchor();
-            return;
-        }
-
-        if (IsFollowingTail)
-        {
-            if (_bottomPlacementLockActive)
-            {
-                PinToBottom();
-            }
-            else if (_anchorHost is not null)
-            {
-                PinToBottom();
-            }
-            else
-            {
-                QueueScrollToBottom();
-            }
-            return;
-        }
-
-        CaptureViewportAnchor();
+        SignalViewportMutation(ViewportMutationSignalCause.RenderedContent, source);
+        UpdateJumpToLatestVisibility();
     }
-
-    private bool ShouldPinToBottomForLayoutGrowth()
-        => _presentationActive
-           && IsFollowingTail
-           && _tailFollowInteractionRevision == _interactionRevision
-           && !_hasNewerRows()
-           && !_isRestoringAnchor
-           && _pendingAnchor is null
-           && !_loadOlderPending
-           && !_loadNewerPending;
 }

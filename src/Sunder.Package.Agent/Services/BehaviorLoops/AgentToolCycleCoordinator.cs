@@ -93,7 +93,8 @@ internal sealed class AgentToolCycleCoordinator(AgentLoopTerminalHandler termina
             return AgentToolCycleResult.Terminal(result);
         }
 
-        return AgentToolCycleResult.Continue;
+        return AgentToolCycleResult.Continue(
+            outcomes.Any(outcome => outcome.Result?.RequiresPromptContextRefresh == true));
     }
 
     private static AgentToolCallRequest CreateToolCallRequest(FunctionCallContent functionCall)
@@ -123,9 +124,11 @@ internal sealed class AgentToolCycleCoordinator(AgentLoopTerminalHandler termina
 
 internal sealed record AgentToolCycleResult(
     bool ShouldContinue,
-    AgentBehaviorLoopResult? TerminalResult)
+    AgentBehaviorLoopResult? TerminalResult,
+    bool RequiresPromptContextRefresh = false)
 {
-    public static AgentToolCycleResult Continue { get; } = new(true, null);
+    public static AgentToolCycleResult Continue(bool requiresPromptContextRefresh)
+        => new(true, null, requiresPromptContextRefresh);
 
     public static AgentToolCycleResult Terminal(AgentBehaviorLoopResult result) => new(false, result);
 }

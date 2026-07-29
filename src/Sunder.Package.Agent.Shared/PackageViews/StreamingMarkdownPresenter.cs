@@ -7,8 +7,13 @@ using LiveMarkdown.Avalonia;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
-internal sealed class StreamingMarkdownPresenter : Panel
+internal sealed class StreamingMarkdownPresenter : Panel, ITranscriptGeometrySource
 {
+    internal static readonly AttachedProperty<bool> IsPreparingToolDetailProperty =
+        AvaloniaProperty.RegisterAttached<StreamingMarkdownPresenter, StyledElement, bool>(
+            "IsPreparingToolDetail",
+            inherits: true);
+
     public static readonly DirectProperty<StreamingMarkdownPresenter, ObservableStringBuilder?> MarkdownBuilderProperty =
         AvaloniaProperty.RegisterDirect<StreamingMarkdownPresenter, ObservableStringBuilder?>(
             nameof(MarkdownBuilder),
@@ -16,49 +21,75 @@ internal sealed class StreamingMarkdownPresenter : Panel
             (presenter, value) => presenter.MarkdownBuilder = value);
 
     private ObservableStringBuilder? _markdownBuilder;
+    private readonly Func<StableMarkdownRenderer> _createRenderer;
     private readonly List<Visual> _visibilitySources = [];
     private StableMarkdownRenderer? _currentRenderer;
     private ObservableStringBuilder? _displayBuilder;
     private SelectableTextBlock? _fallback;
     private string _requestedSource = string.Empty;
     private string _appliedSource = string.Empty;
-    private string _notifiedRenderedSource = string.Empty;
     private Task _refreshOperation = Task.CompletedTask;
+    private Task _geometrySettlementOperation = Task.CompletedTask;
     private bool _isAttached;
     private bool _isSubscribed;
     private bool _refreshQueued;
     private bool _hasRenderedContent;
-    private bool _initialLayoutNotificationPending;
     private bool _currentLayoutObserved;
+    private bool _geometryConfirmationQueued;
+    private int _stableLayoutObservations;
     private Size _currentDesiredSize;
+    private long _appliedRevision;
 
     public StreamingMarkdownPresenter()
+        : this(() => StableMarkdownRenderer.Create())
     {
+    }
+
+    internal StreamingMarkdownPresenter(Func<StableMarkdownRenderer> createRenderer)
+    {
+        _createRenderer = createRenderer;
         ClipToBounds = false;
         MarkdownTextBlock.SetIsSelectionScope(this, true);
         AttachedToVisualTree += OnAttachedToVisualTree;
         DetachedFromVisualTree += OnDetachedFromVisualTree;
+        LayoutUpdated += OnPresenterLayoutUpdated;
     }
 
     public event EventHandler? Rendered;
 
+    public event EventHandler? GeometryChanged;
+
+    public long RequestedRevision { get; private set; }
+
+    public long SettledRevision { get; private set; }
+
+    public long GeometryRevision { get; private set; }
+
+    public bool IsGeometryPending => SettledRevision < RequestedRevision;
+
     internal Task PendingRenderOperations => Task.WhenAll(
         _refreshOperation,
+        _geometrySettlementOperation,
         _currentRenderer?.PendingRenderOperations ?? Task.CompletedTask);
 
     internal bool IsRenderPending
         => _refreshQueued
            || !_refreshOperation.IsCompleted
+           || IsGeometryPending
            || _currentRenderer is null
            || !_currentRenderer.PendingRenderOperations.IsCompleted
            || !string.Equals(_requestedSource, _appliedSource, StringComparison.Ordinal)
            || !HasCurrentTerminalRenderFailure
            && (!string.Equals(_currentRenderer.RenderedSource, _appliedSource, StringComparison.Ordinal)
-               || !_hasRenderedContent
-               || _initialLayoutNotificationPending
-               || !_currentLayoutObserved);
+                || !_hasRenderedContent
+                || !_currentLayoutObserved);
 
     internal int RendererCreationCount { get; private set; }
+
+    internal bool PreserveRenderedContentOnDetach { get; set; }
+
+    internal static void SetIsPreparingToolDetail(StyledElement element, bool value)
+        => element.SetValue(IsPreparingToolDetailProperty, value);
 
     private bool HasCurrentTerminalRenderFailure
         => _currentRenderer?.HasTerminalRenderFailure == true
@@ -75,10 +106,11 @@ internal sealed class StreamingMarkdownPresenter : Panel
             }
 
             UnsubscribeFromBuilder();
+            SettleOutstandingGeometry();
             SetAndRaise(MarkdownBuilderProperty, ref _markdownBuilder, value);
             SubscribeToBuilder();
             ResetRenderedContent();
-            _requestedSource = value?.ToString() ?? string.Empty;
+            CaptureRequestedSource(forceRevision: true);
             RequestRefresh();
         }
     }
@@ -118,6 +150,10 @@ internal sealed class StreamingMarkdownPresenter : Panel
         _isAttached = true;
         RefreshVisibilitySubscriptions();
         SubscribeToBuilder();
+        if (SettledRevision == RequestedRevision && _currentRenderer is null)
+        {
+            CaptureRequestedSource(forceRevision: true);
+        }
         RequestRefresh();
     }
 
@@ -126,6 +162,13 @@ internal sealed class StreamingMarkdownPresenter : Panel
         _isAttached = false;
         ClearVisibilitySubscriptions();
         UnsubscribeFromBuilder();
+        if (PreserveRenderedContentOnDetach)
+        {
+            ResetLayoutSettlement();
+            return;
+        }
+
+        SettleOutstandingGeometry();
         ResetRenderedContent();
     }
 
@@ -147,6 +190,7 @@ internal sealed class StreamingMarkdownPresenter : Panel
         {
             // A role branch that is itself hidden should not retain duplicate Markdown visuals.
             // Ancestor visibility changes are temporary package-view suspension and retain state.
+            SettleOutstandingGeometry();
             ResetRenderedContent();
         }
     }
@@ -204,7 +248,7 @@ internal sealed class StreamingMarkdownPresenter : Panel
             return;
         }
 
-        _requestedSource = _markdownBuilder?.ToString() ?? string.Empty;
+        CaptureRequestedSource();
         EnsureFallback();
         if (_fallback is { } fallback
             && string.IsNullOrEmpty(fallback.SelectedText)
@@ -232,6 +276,7 @@ internal sealed class StreamingMarkdownPresenter : Panel
         }
 
         _requestedSource = _markdownBuilder?.ToString() ?? string.Empty;
+        CaptureRequestedSource();
         EnsureRenderer();
         if (_currentRenderer is null || _displayBuilder is null)
         {
@@ -247,6 +292,7 @@ internal sealed class StreamingMarkdownPresenter : Panel
         }
         if (string.Equals(_requestedSource, _appliedSource, StringComparison.Ordinal))
         {
+            _appliedRevision = RequestedRevision;
             TryPromoteInitialRenderer();
             return;
         }
@@ -262,6 +308,8 @@ internal sealed class StreamingMarkdownPresenter : Panel
         }
 
         _appliedSource = _requestedSource;
+        _appliedRevision = RequestedRevision;
+        ResetLayoutSettlement();
         if (_fallback is { } fallback
             && string.IsNullOrEmpty(fallback.SelectedText)
             && !fallback.IsKeyboardFocusWithin)
@@ -280,7 +328,7 @@ internal sealed class StreamingMarkdownPresenter : Panel
 
         EnsureFallback();
         _displayBuilder = new ObservableStringBuilder();
-        var renderer = StableMarkdownRenderer.Create();
+        var renderer = _createRenderer();
         renderer.SourceBuilder = _displayBuilder;
         renderer.MinWidth = 0;
         renderer.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch;
@@ -290,12 +338,50 @@ internal sealed class StreamingMarkdownPresenter : Panel
         renderer.Focusable = false;
         _currentRenderer = renderer;
         RendererCreationCount++;
+        TranscriptToolDiagnostics.MarkdownRendererCreated();
         renderer.PropertyChanged += OnCurrentRendererPropertyChanged;
-        renderer.LayoutUpdated += OnCurrentRendererLayoutUpdated;
+        renderer.RenderStateChanged += OnCurrentRendererRenderStateChanged;
         Children.Add(renderer);
     }
 
-    private void OnCurrentRendererLayoutUpdated(object? sender, EventArgs e)
+    private void OnPresenterLayoutUpdated(object? sender, EventArgs e)
+    {
+        TryPromoteInitialRenderer();
+        var desiredSize = DesiredSize;
+        if (!_currentLayoutObserved)
+        {
+            _currentLayoutObserved = true;
+            _currentDesiredSize = desiredSize;
+            _stableLayoutObservations = 0;
+            PublishGeometryChange();
+        }
+        else if (GeometryChangedByAtLeastHalfPixel(desiredSize, _currentDesiredSize))
+        {
+            _currentDesiredSize = desiredSize;
+            _stableLayoutObservations = 0;
+            PublishGeometryChange(raiseRenderedWhenSettled: true);
+        }
+        else
+        {
+            _stableLayoutObservations++;
+        }
+
+        if (!CanSettleCurrentRevision())
+        {
+            return;
+        }
+
+        if (_stableLayoutObservations >= 2)
+        {
+            SettleCurrentRevision();
+        }
+        else
+        {
+            QueueGeometryConfirmation();
+        }
+    }
+
+    private void OnCurrentRendererRenderStateChanged(object? sender, EventArgs e)
     {
         if (sender is not StableMarkdownRenderer renderer
             || !ReferenceEquals(renderer, _currentRenderer))
@@ -303,56 +389,19 @@ internal sealed class StreamingMarkdownPresenter : Panel
             return;
         }
 
-        var desiredSize = renderer.DesiredSize;
-        if (!_hasRenderedContent)
+        if (HasCurrentTerminalRenderFailure)
         {
-            TryPromoteInitialRenderer();
-            return;
-        }
-        if (_initialLayoutNotificationPending)
-        {
-            if (!_currentLayoutObserved)
-            {
-                _currentLayoutObserved = true;
-                _currentDesiredSize = desiredSize;
-                return;
-            }
-            if (Math.Abs(desiredSize.Height - _currentDesiredSize.Height) >= 0.5)
-            {
-                _currentDesiredSize = desiredSize;
-                return;
-            }
-
-            _initialLayoutNotificationPending = false;
-            _currentDesiredSize = desiredSize;
-            _notifiedRenderedSource = renderer.RenderedSource;
-            Rendered?.Invoke(this, EventArgs.Empty);
+            SettleCurrentRevision();
             return;
         }
 
-        if (!_currentLayoutObserved)
+        TryPromoteInitialRenderer();
+        if (HasRenderedCurrentContent(renderer))
         {
-            _currentLayoutObserved = true;
-            _currentDesiredSize = desiredSize;
-            return;
+            ResetLayoutSettlement();
+            InvalidateMeasure();
+            QueueGeometryConfirmation();
         }
-        if (Math.Abs(desiredSize.Height - _currentDesiredSize.Height) < 0.5)
-        {
-            _currentDesiredSize = desiredSize;
-            if (!string.Equals(
-                    _notifiedRenderedSource,
-                    renderer.RenderedSource,
-                    StringComparison.Ordinal))
-            {
-                _notifiedRenderedSource = renderer.RenderedSource;
-                Rendered?.Invoke(this, EventArgs.Empty);
-            }
-            return;
-        }
-
-        _currentDesiredSize = desiredSize;
-        _notifiedRenderedSource = renderer.RenderedSource;
-        Rendered?.Invoke(this, EventArgs.Empty);
     }
 
     private bool HasRenderedCurrentContent(StableMarkdownRenderer renderer)
@@ -381,14 +430,17 @@ internal sealed class StreamingMarkdownPresenter : Panel
         renderer.IsHitTestVisible = true;
         renderer.IsEnabled = true;
         renderer.Focusable = true;
-        _initialLayoutNotificationPending = true;
-        _currentLayoutObserved = false;
+        ResetLayoutSettlement();
+        PublishGeometryChange();
         InvalidateMeasure();
+        QueueGeometryConfirmation();
     }
 
     private void EnsureFallback()
     {
-        if (_currentRenderer is not null || _fallback is not null)
+        if (_currentRenderer is not null
+            || _fallback is not null
+            || GetValue(IsPreparingToolDetailProperty))
         {
             return;
         }
@@ -436,13 +488,109 @@ internal sealed class StreamingMarkdownPresenter : Panel
         }
     }
 
+    private void CaptureRequestedSource(bool forceRevision = false)
+    {
+        var source = _markdownBuilder?.ToString() ?? string.Empty;
+        if (!forceRevision && string.Equals(source, _requestedSource, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _requestedSource = source;
+        RequestedRevision++;
+        ResetLayoutSettlement();
+        GeometryChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private bool CanSettleCurrentRevision()
+        => IsGeometryPending
+           && _appliedRevision == RequestedRevision
+           && (HasCurrentTerminalRenderFailure
+               || _hasRenderedContent
+               && _currentRenderer is { } renderer
+               && HasRenderedCurrentContent(renderer));
+
+    private void SettleCurrentRevision()
+    {
+        if (!IsGeometryPending)
+        {
+            return;
+        }
+
+        SettledRevision = RequestedRevision;
+        GeometryRevision++;
+        GeometryChanged?.Invoke(this, EventArgs.Empty);
+        Rendered?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void SettleOutstandingGeometry()
+    {
+        if (!IsGeometryPending)
+        {
+            return;
+        }
+
+        SettledRevision = RequestedRevision;
+        GeometryRevision++;
+        GeometryChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void PublishGeometryChange(bool raiseRenderedWhenSettled = false)
+    {
+        GeometryRevision++;
+        GeometryChanged?.Invoke(this, EventArgs.Empty);
+        if (raiseRenderedWhenSettled
+            && !IsGeometryPending
+            && _currentRenderer is { } renderer
+            && HasRenderedCurrentContent(renderer))
+        {
+            Rendered?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void ResetLayoutSettlement()
+    {
+        _currentLayoutObserved = false;
+        _stableLayoutObservations = 0;
+        _currentDesiredSize = default;
+    }
+
+    private void QueueGeometryConfirmation()
+    {
+        if (_geometryConfirmationQueued || !CanRender || !IsGeometryPending)
+        {
+            return;
+        }
+
+        _geometryConfirmationQueued = true;
+        _geometrySettlementOperation = AwaitDispatcherOperationAsync(
+            Dispatcher.UIThread.InvokeAsync(
+                () =>
+                {
+                    _geometryConfirmationQueued = false;
+                    if (!CanRender || !IsGeometryPending)
+                    {
+                        return;
+                    }
+
+                    _currentRenderer?.InvalidateMeasure();
+                    InvalidateMeasure();
+                },
+                DispatcherPriority.Background));
+    }
+
+    private static bool GeometryChangedByAtLeastHalfPixel(Size current, Size previous)
+        => Math.Abs(current.Width - previous.Width) >= 0.5
+           || Math.Abs(current.Height - previous.Height) >= 0.5;
+
     private void ResetRenderedContent()
     {
         if (_currentRenderer is not null)
         {
             _currentRenderer.PropertyChanged -= OnCurrentRendererPropertyChanged;
-            _currentRenderer.LayoutUpdated -= OnCurrentRendererLayoutUpdated;
+            _currentRenderer.RenderStateChanged -= OnCurrentRendererRenderStateChanged;
             _currentRenderer.SourceBuilder = null;
+            TranscriptToolDiagnostics.MarkdownRendererDestroyed();
         }
         if (_fallback is not null)
         {
@@ -453,12 +601,12 @@ internal sealed class StreamingMarkdownPresenter : Panel
         _currentRenderer = null;
         _displayBuilder = null;
         _hasRenderedContent = false;
-        _initialLayoutNotificationPending = false;
         _currentLayoutObserved = false;
+        _stableLayoutObservations = 0;
         _currentDesiredSize = default;
-        _notifiedRenderedSource = string.Empty;
         _fallback = null;
         _appliedSource = string.Empty;
+        _appliedRevision = 0;
     }
 
     private static async Task AwaitDispatcherOperationAsync(DispatcherOperation operation)

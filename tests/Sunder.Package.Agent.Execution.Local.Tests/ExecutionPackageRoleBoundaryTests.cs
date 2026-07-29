@@ -113,15 +113,17 @@ public sealed class ExecutionPackageRoleBoundaryTests
         var editor = new LocalExecutionWorkspaceEditorContributor(config, catalog);
         var handler = new LocalExecutionRuntimeOperationHandler(scope.Context, catalog, editor);
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await handler.HandleAsync(new LocalExecutionOperationRequest(
+        var response = await handler.HandleAsync(new LocalExecutionOperationRequest(
                 LocalExecutionOperationKind.SaveShells,
                 Shells:
                 [
                     new LocalShellDefinition("custom", "Custom", "relative/shell", "custom", false),
-                ])));
+                ],
+                ExpectedShellCatalogRevision: 0));
 
-        Assert.Contains("absolute paths", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(response.Success);
+        Assert.Equal("local.shell.path-invalid", response.Error?.Code);
+        Assert.Contains("absolute paths", response.Error?.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -134,13 +136,115 @@ public sealed class ExecutionPackageRoleBoundaryTests
         var editor = new DockerExecutionWorkspaceEditorContributor(config, catalog);
         var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog, editor);
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await handler.HandleAsync(new DockerExecutionOperationRequest(
+        var response = await handler.HandleAsync(new DockerExecutionOperationRequest(
                 DockerExecutionOperationKind.SaveSettings,
                 TimeoutSeconds: "300",
-                DockerCliPath: "relative/docker")));
+                DockerCliPath: "relative/docker"));
 
-        Assert.Contains("absolute executable path", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(response.Success);
+        Assert.Equal("docker.cli-path.invalid", response.Error?.Code);
+        Assert.Contains("absolute executable path", response.Error?.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(null, "docker.image-reference.required")]
+    [InlineData("repository/image", "docker.image-reference.unpinned")]
+    [InlineData("repository/image:latest", "docker.image-reference.latest")]
+    [InlineData("repository/image@sha256:abc", "docker.image-reference.invalid-digest")]
+    public async Task DockerRuntimeOperation_ReturnsTypedPinnedReferenceValidation(
+        string? imageReference,
+        string expectedCode)
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var runner = new DockerCliRunner(scope.Context);
+        var catalog = new DockerImageCatalogService(scope.Context, runner);
+        var config = new DockerExecutionWorkspaceConfigService(scope.Context, catalog);
+        var editor = new DockerExecutionWorkspaceEditorContributor(config, catalog);
+        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog, editor);
+
+        var response = await handler.HandleAsync(new DockerExecutionOperationRequest(
+            DockerExecutionOperationKind.AddImage,
+            ImageReference: imageReference));
+
+        Assert.False(response.Success);
+        Assert.Equal(expectedCode, response.Error?.Code);
+        Assert.NotNull(response.Error?.CorrelationId);
+        Assert.Null(await scope.Context.Storage.State.GetValueAsync(DockerImageCatalogService.ImagesKey));
+    }
+
+    [Fact]
+    public async Task DockerRuntimeOperation_ReturnsCachedSemanticCatalogFailureAfterBackgroundStart()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        const string json = "{\"Version\":1,\"Images\":[],\"UnknownPolicy\":true}";
+        await scope.Context.Storage.State.SetValueAsync(DockerImageCatalogService.ImagesKey, json);
+        var migration = new DockerPackageStorageMigration(scope.Context);
+        await migration.StartAsync();
+        var runner = new DockerCliRunner(scope.Context);
+        var catalog = new DockerImageCatalogService(scope.Context, runner, migration);
+        var config = new DockerExecutionWorkspaceConfigService(scope.Context, catalog, migration);
+        var editor = new DockerExecutionWorkspaceEditorContributor(config, catalog);
+        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog, editor);
+
+        var response = await handler.HandleAsync(new DockerExecutionOperationRequest(
+            DockerExecutionOperationKind.GetSettings));
+
+        Assert.False(response.Success);
+        Assert.Equal("docker.catalog.unknown-data", response.Error?.Code);
+        Assert.NotNull(response.Error?.CorrelationId);
+        Assert.Equal(json, await scope.Context.Storage.State.GetValueAsync(DockerImageCatalogService.ImagesKey));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AppRuntimeProxy_WhenRuntimeIsUnavailable_ThrowsSanitizedSdkFailure(bool local)
+    {
+        PackageRuntimeInvocationException exception;
+        if (local)
+        {
+            var client = new LocalExecutionAppRuntimeClient(NullPackageRuntimeClient.Instance);
+            exception = await Assert.ThrowsAsync<PackageRuntimeInvocationException>(async () =>
+                await client.InvokeAsync(new LocalExecutionOperationRequest(
+                    LocalExecutionOperationKind.GetWorkspaceEditor)));
+        }
+        else
+        {
+            var client = new DockerExecutionAppRuntimeClient(NullPackageRuntimeClient.Instance);
+            exception = await Assert.ThrowsAsync<PackageRuntimeInvocationException>(async () =>
+                await client.InvokeAsync(new DockerExecutionOperationRequest(
+                    DockerExecutionOperationKind.GetWorkspaceEditor)));
+        }
+
+        Assert.Equal("runtime.v1.unavailable", exception.Code);
+        Assert.True(exception.IsTransient);
+        Assert.Equal(503, exception.StatusCode);
+        Assert.Null(exception.InnerException);
+    }
+
+    [Fact]
+    public async Task DockerTypedRuntimeFailure_DoesNotEscapePreparationOrRemoveSettingsContribution()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var services = new ServiceCollection();
+        services.AddSingleton(scope.Context);
+        services.AddSingleton<IPackageRuntimeClient>(new FailingDockerRuntimeClient());
+        services.AddSingleton<IBackgroundProcessQueue, NoopBackgroundProcessQueue>();
+        var module = new Sunder.Package.Agent.Execution.Docker.AppPackageModule();
+        module.ConfigureAppServices(services, scope.Context);
+        using var provider = services.BuildServiceProvider();
+        var registry = new RecordingAppRegistry();
+        module.RegisterAppContributions(registry, provider);
+        using var viewModel = provider.GetRequiredService<DockerExecutionSettingsViewModel>();
+
+        var prepared = await viewModel.PrepareNavigationAsync(new PackageViewNavigationContext(
+            "settings:sunder.package.agent.execution.docker",
+            new Dictionary<string, string?>()));
+
+        Assert.True(prepared);
+        Assert.True(viewModel.IsError);
+        Assert.Equal("docker.command.failed", viewModel.RuntimeErrorCode);
+        Assert.Equal([typeof(DockerExecutionSettingsView)], registry.SettingsViews);
     }
 
     [Fact]
@@ -221,7 +325,8 @@ public sealed class ExecutionPackageRoleBoundaryTests
             var response = new DockerExecutionOperationResponse(
                 "300",
                 string.Empty,
-                [new DockerImageDefinition("agent0ai/agent-zero:1.0", DockerImageStatus.NotPulled, null, null)]);
+                [new DockerImageDefinition("agent0ai/agent-zero:1.0", DockerImageStatus.NotPulled, null, null)],
+                CatalogRevision: 1);
             return ValueTask.FromResult((TResponse)(object)response);
         }
 
@@ -233,6 +338,38 @@ public sealed class ExecutionPackageRoleBoundaryTests
             where TEvent : class
         {
             cancellationToken.ThrowIfCancellationRequested();
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
+
+    private sealed class FailingDockerRuntimeClient : IPackageRuntimeClient
+    {
+        public bool IsAvailable => true;
+
+        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            PackageRuntimeOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromException<TResponse>(new PackageRuntimeInvocationException(
+                "docker.command.failed",
+                isTransient: true,
+                statusCode: 503,
+                correlationId: "docker-host-defense"));
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            PackageRuntimeStream<TRequest, TEvent> stream,
+            TRequest request,
+            [System.Runtime.CompilerServices.EnumeratorCancellation]
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
             await Task.CompletedTask;
             yield break;
         }

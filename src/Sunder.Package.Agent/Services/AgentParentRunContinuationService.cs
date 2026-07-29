@@ -151,6 +151,7 @@ public sealed class AgentParentRunContinuationService(
 
     internal async Task ProcessPendingWorkAsync(CancellationToken cancellationToken)
     {
+        _sessionService.Store.EnsureRuntimeGenerationCurrent();
         foreach (var work in _sessionService.ListDispatchableParentContinuationWork())
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -215,10 +216,11 @@ public sealed class AgentParentRunContinuationService(
                 "The durable parent continuation context is no longer available.");
         }
 
-        var providerSelection = _providerResolver.ResolveChatProvider(parentProfile);
-        var provider = providerSelection.Provider;
+        using var providerSelection = _providerResolver.ResolveChatProvider(parentProfile);
         var chatBinding = providerSelection.ChatBinding;
-        if (provider is null || chatBinding is null || string.IsNullOrWhiteSpace(chatBinding.ModelId))
+        if (!providerSelection.IsAvailable
+            || chatBinding is null
+            || string.IsNullOrWhiteSpace(chatBinding.ModelId))
         {
             return FailDispatch(
                 dispatch.Work.WorkId,
@@ -230,7 +232,7 @@ public sealed class AgentParentRunContinuationService(
         try
         {
             metadata = await _providerResolver
-                .ResolveRunMetadataAsync(provider, chatBinding, cancellationToken)
+                .ResolveRunMetadataAsync(providerSelection, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -251,7 +253,9 @@ public sealed class AgentParentRunContinuationService(
             dispatch.Run.StartedAtUtc,
             dispatch.Run.ProfileId,
             dispatch.Run.UserMessage,
-            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                providerSelection.RetirementToken))
         {
             DurableLease = lease,
         };
@@ -319,7 +323,7 @@ public sealed class AgentParentRunContinuationService(
             }
 
             var host = _behaviorLoopHostFactory.Create(
-                provider,
+                providerSelection.Provider,
                 parentSession,
                 parentProfile,
                 workspace,
@@ -329,11 +333,12 @@ public sealed class AgentParentRunContinuationService(
                 dispatch.Run.UserMessage,
                 parentUserTurn.TurnId,
                 ResolveExecutionBinding(workspace));
-            var loopResult = await _behaviorLoopResolver.Resolve(parentProfile).RunAsync(
+            using var behaviorLoop = _behaviorLoopResolver.Resolve(parentProfile);
+            var loopResult = await behaviorLoop.RunAsync(
                 new AgentBehaviorLoopContext(
                     parentSession,
                     parentProfile,
-                    provider.Descriptor.ProviderId,
+                    providerSelection.Descriptor!.ProviderId,
                     chatBinding.ModelId,
                     metadata.RunCapabilities,
                     workspace,
@@ -379,6 +384,9 @@ public sealed class AgentParentRunContinuationService(
         }
         catch (OperationCanceledException)
         {
+            var cancellationSummary = providerSelection.IsRetiring
+                ? $"Package '{providerSelection.OwnerPackageId}' became unavailable during parent continuation."
+                : "Parent continuation was stopped or canceled.";
             var checkpoint = _sessionService.GetLatestCheckpoint(
                 key.SessionId,
                 key.RunRevision);
@@ -389,13 +397,13 @@ public sealed class AgentParentRunContinuationService(
                 checkpoint = _sessionService.TryTransitionRun(
                     lease,
                     AgentRunStatus.Interrupted,
-                    "Parent continuation was stopped or canceled.")?.Checkpoint
+                    cancellationSummary)?.Checkpoint
                     ?? _sessionService.GetLatestCheckpoint(key.SessionId, key.RunRevision);
             }
             _sessionService.CompleteParentContinuationWork(
                 dispatch.Work.WorkId,
                 failed: true,
-                "Parent continuation was stopped or canceled.");
+                cancellationSummary);
             return checkpoint;
         }
         catch (Exception ex)
@@ -501,29 +509,41 @@ public sealed class AgentParentRunContinuationService(
             .Select(task => task.ToolCallId)
             .Distinct(StringComparer.Ordinal)
             .Single();
-        if (_sessionService.ListTurns(parentSessionId)
-            .SelectMany(turn => turn.Items)
-            .Any(item => item.Kind == AgentTurnItemKind.ToolResult
-                         && string.Equals(item.CallId, toolCallId, StringComparison.Ordinal)))
+        var hasFailure = suspension.CompletedTasks.Any(task => task.Status != AgentRunStatus.Completed);
+        var result = new AgentToolResult(
+            suspension.ToolId,
+            hasFailure
+                ? "One or more subagent tasks ended without completing."
+                : "Subagent tasks completed.",
+            Content: string.Join("\n\n", suspension.CompletedTasks.Select(RenderTaskResult)),
+            IsError: hasFailure,
+            ErrorCode: hasFailure ? AgentToolResultErrorCodes.SubagentRunFailed : null);
+        if (_sessionService.TryReplaceChildSuspensionToolResult(lease, toolCallId, result) is not null)
         {
             return;
         }
 
-        var hasFailure = suspension.CompletedTasks.Any(task => task.Status != AgentRunStatus.Completed);
+        var existingResult = _sessionService.ListTurns(parentSessionId)
+            .SelectMany(turn => turn.Items)
+            .FirstOrDefault(item => item.Kind == AgentTurnItemKind.ToolResult
+                                    && string.Equals(item.CallId, toolCallId, StringComparison.Ordinal));
+        if (existingResult is not null)
+        {
+            return;
+        }
+
         _sessionService.AppendToolResultTurn(
             lease,
             toolCallId,
             suspension.ToolId,
             suspension.ArgumentsJson,
-            string.Join("\n\n", suspension.CompletedTasks.Select(RenderTaskResult)),
-            hasFailure
-                ? "One or more subagent tasks ended without completing."
-                : "Subagent tasks completed.",
+            result.Content,
+            result.Summary,
             structuredPayloadJson: null,
             sourcesJson: null,
             wasTruncated: false,
-            isError: hasFailure,
-            errorCode: hasFailure ? AgentToolResultErrorCodes.SubagentRunFailed : null,
+            isError: result.IsError,
+            errorCode: result.ErrorCode,
             backendId: null);
     }
 

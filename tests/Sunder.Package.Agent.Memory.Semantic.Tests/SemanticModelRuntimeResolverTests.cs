@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -25,12 +26,14 @@ public sealed class SemanticModelRuntimeResolverTests
         catalog.EmbeddingProviders.Add(replacement);
         var reinstalled = await resolver.ResolveForProfileAsync("profile-1");
 
-        Assert.Same(original, first?.Provider);
+        Assert.Equal("original", first?.ProviderDisplayName);
+        Assert.Equal(1, original.ReadinessCallCount);
         Assert.Null(removed);
-        Assert.Same(replacement, reinstalled?.Provider);
+        Assert.Equal("replacement", reinstalled?.ProviderDisplayName);
+        Assert.Equal(1, replacement.ReadinessCallCount);
     }
 
-    private sealed class MutableExtensionCatalog : IPackageExtensionCatalog
+    private sealed class MutableExtensionCatalog : IPackageExtensionCatalog, IPackageExtensionInvocationCatalog
     {
         public List<IAgentRuntimeCatalog> RuntimeCatalogs { get; } = [];
         public List<IAgentEmbeddingProvider> EmbeddingProviders { get; } = [];
@@ -51,11 +54,36 @@ public sealed class SemanticModelRuntimeResolverTests
             => GetExtensions(extensionPoint)
                 .Select(extension => new PackageExtensionContribution<T>("test.package", extension))
                 .ToArray();
+
+        public IReadOnlyList<IPackageExtensionReference<T>> GetExtensionReferences<T>(PackageExtensionPoint<T> extensionPoint)
+            => GetExtensions(extensionPoint)
+                .Select(extension => (IPackageExtensionReference<T>)new ExtensionReference<T>(extension))
+                .ToArray();
+
+        private sealed class ExtensionReference<T>(T contribution) : IPackageExtensionReference<T>
+        {
+            public bool TryAcquire([NotNullWhen(true)] out IPackageExtensionLease<T>? lease)
+            {
+                lease = new ExtensionLease<T>(contribution);
+                return true;
+            }
+        }
+
+        private sealed class ExtensionLease<T>(T contribution) : IPackageExtensionLease<T>
+        {
+            private object? _contribution = contribution;
+
+            public string PackageId => "test.package";
+            public T Contribution => (T)(_contribution ?? throw new ObjectDisposedException(nameof(ExtensionLease<T>)));
+            public CancellationToken RetirementToken => CancellationToken.None;
+            public void Dispose() => _contribution = null;
+        }
     }
 
     private sealed class TestEmbeddingProvider(string instanceName) : IAgentEmbeddingProvider
     {
         public AgentEmbeddingProviderDescriptor Descriptor { get; } = new("embedding", instanceName, []);
+        public int ReadinessCallCount { get; private set; }
 
         public ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> GetAvailableModelsAsync(
             CancellationToken cancellationToken = default)
@@ -63,10 +91,13 @@ public sealed class SemanticModelRuntimeResolverTests
 
         public ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(
             CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentEmbeddingProviderReadiness(
+        {
+            ReadinessCallCount++;
+            return ValueTask.FromResult(new AgentEmbeddingProviderReadiness(
                 Descriptor.ProviderId,
                 AgentProviderReadinessStatus.Ready,
                 "Ready."));
+        }
 
         public ValueTask<AgentEmbeddingGenerationResult?> GenerateEmbeddingAsync(
             string modelId,

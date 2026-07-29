@@ -9,7 +9,9 @@ namespace Sunder.Package.Agent.Contracts.Contracts;
 /// App-side implementations should be presentation proxies only; authoritative loading, validation, and persistence of execution configuration
 /// belong in Runtime implementations. Editor field values and context identifiers can cross the App/Runtime boundary and must be treated as
 /// untrusted input. Contributors must not expose secrets in section values or messages, must not require UI-thread affinity, and must tolerate
-/// overlapping discovery and save calls or serialize access to their own state.
+/// overlapping discovery and save calls or serialize access to their own state. The App isolates contributor discovery, refresh, and save
+/// failures: one contributor no longer aborts aggregate discovery or hides healthy sections. A retry can reacquire only the exact owner
+/// activation that produced the failed section.
 /// </remarks>
 public interface IAgentWorkspaceEditorContributor
 {

@@ -11,67 +11,92 @@
   <ScrollViewer>
     <StackPanel Margin="0,0,0,8"
                 Spacing="16">
-      <Border Classes="card-surface">
-        <StackPanel Spacing="14">
-          <Grid ColumnDefinitions="*,Auto"
-                ColumnSpacing="12">
-            <TextBlock Classes="section-title"
-                       Text="Connection"
-                       VerticalAlignment="Center" />
-            <Border Grid.Column="1"
-                    Classes="settings-status-pill"
-                    Classes.success="{Binding IsConnectionConfigured}"
-                    Classes.warning="{Binding IsConnectionStatusWarning}"
-                    Classes.danger="{Binding IsConnectionStatusError}">
-              <TextBlock Classes="settings-status-label"
-                         Text="{Binding ConnectionStatusLabel}" />
+      <Border Classes="card-surface"
+              IsVisible="{Binding IsLoading}">
+        <TextBlock Text="Loading LM Studio settings..."
+                   TextWrapping="Wrap" />
+      </Border>
+
+      <Border Classes="card-surface"
+              IsVisible="{Binding IsError}">
+        <StackPanel Spacing="8">
+          <TextBlock Classes="section-title"
+                     Text="LM Studio settings could not be loaded" />
+          <TextBlock Classes="caption"
+                     Text="{Binding StatusText}"
+                     TextWrapping="Wrap" />
+          <Button Classes="secondary-action"
+                  Content="Retry"
+                  HorizontalAlignment="Left"
+                  Command="{Binding RetryInitializationCommand}" />
+        </StackPanel>
+      </Border>
+
+      <StackPanel Spacing="16"
+                  IsVisible="{Binding IsReady}"
+                  IsEnabled="{Binding CanMutate}">
+        <Border Classes="card-surface">
+          <StackPanel Spacing="14">
+            <Grid ColumnDefinitions="*,Auto"
+                  ColumnSpacing="12">
+              <TextBlock Classes="section-title"
+                         Text="Connection"
+                         VerticalAlignment="Center" />
+              <Border Grid.Column="1"
+                      Classes="settings-status-pill"
+                      Classes.success="{Binding IsConnectionConfigured}"
+                      Classes.warning="{Binding IsConnectionStatusWarning}"
+                      Classes.danger="{Binding IsConnectionStatusError}">
+                <TextBlock Classes="settings-status-label"
+                           Text="{Binding ConnectionStatusLabel}" />
+              </Border>
+            </Grid>
+            <Border Classes="settings-detail-card">
+              <StackPanel Spacing="6">
+                <TextBlock Classes="caption"
+                           Text="Point the provider at an LM Studio OpenAI-compatible endpoint. Endpoint behavior remains local-provider specific."
+                           TextWrapping="Wrap" />
+                <TextBlock Classes="muted"
+                           Text="{Binding ConnectionStatusDetail}"
+                           TextWrapping="Wrap" />
+              </StackPanel>
             </Border>
-          </Grid>
-          <Border Classes="settings-detail-card">
             <StackPanel Spacing="6">
               <TextBlock Classes="caption"
-                         Text="Point the provider at an LM Studio OpenAI-compatible endpoint. Endpoint behavior remains local-provider specific."
-                         TextWrapping="Wrap" />
-              <TextBlock Classes="muted"
-                         Text="{Binding ConnectionStatusDetail}"
+                         Text="Base URL" />
+              <TextBox Text="{Binding BaseUrl, Mode=TwoWay}"
+                       PlaceholderText="http://127.0.0.1:1234/v1" />
+            </StackPanel>
+            <Button Classes="primary-action"
+                    Content="Save Connection"
+                    HorizontalAlignment="Left"
+                    Command="{Binding SaveConnectionCommand}"
+                    IsEnabled="{Binding CanSaveSettings}" />
+          </StackPanel>
+        </Border>
+
+        <ContentControl Content="{Binding ApiKeySettings}"
+                        ContentTemplate="{StaticResource ProviderApiKeySettingsTemplate}" />
+
+        <Border Classes="card-surface">
+          <StackPanel Spacing="14">
+            <StackPanel Spacing="6">
+              <TextBlock Classes="section-title"
+                         Text="Utility Model" />
+              <TextBlock Classes="caption"
+                         Text="Used for short background tasks. Leave blank to use the first model returned by LM Studio."
                          TextWrapping="Wrap" />
             </StackPanel>
-          </Border>
-          <StackPanel Spacing="6">
-            <TextBlock Classes="caption"
-                       Text="Base URL" />
-            <TextBox Text="{Binding BaseUrl, Mode=TwoWay}"
-                     PlaceholderText="http://127.0.0.1:1234/v1" />
+            <TextBox Text="{Binding UtilityModelId, Mode=TwoWay}"
+                     PlaceholderText="lmstudio/model-name" />
+            <Button Classes="primary-action"
+                    Content="Save Utility Model"
+                    HorizontalAlignment="Left"
+                    Command="{Binding SaveUtilityModelCommand}"
+                    IsEnabled="{Binding CanSaveSettings}" />
           </StackPanel>
-          <Button Classes="primary-action"
-                  Content="Save Connection"
-                  HorizontalAlignment="Left"
-                  Command="{Binding SaveConnectionCommand}"
-                  IsEnabled="{Binding CanSaveSettings}" />
-        </StackPanel>
-      </Border>
-
-      <ContentControl Content="{Binding ApiKeySettings}"
-                      ContentTemplate="{StaticResource ProviderApiKeySettingsTemplate}" />
-
-      <Border Classes="card-surface">
-        <StackPanel Spacing="14">
-          <StackPanel Spacing="6">
-            <TextBlock Classes="section-title"
-                       Text="Utility Model" />
-            <TextBlock Classes="caption"
-                       Text="Used for short background tasks. Leave blank to use the first model returned by LM Studio."
-                       TextWrapping="Wrap" />
-          </StackPanel>
-          <TextBox Text="{Binding UtilityModelId, Mode=TwoWay}"
-                   PlaceholderText="lmstudio/model-name" />
-          <Button Classes="primary-action"
-                  Content="Save Utility Model"
-                  HorizontalAlignment="Left"
-                  Command="{Binding SaveUtilityModelCommand}"
-                  IsEnabled="{Binding CanSaveSettings}" />
-        </StackPanel>
-      </Border>
+        </Border>
+      </StackPanel>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

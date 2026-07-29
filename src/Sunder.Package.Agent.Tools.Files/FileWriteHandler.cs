@@ -1,3 +1,4 @@
+using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 
@@ -50,7 +51,19 @@ internal static class FileWriteHandler
             return FileToolResult.Error(request.ToolId, "oldString was not found.", "edit-old-string-not-found");
         }
 
-        var result = await WriteAsync(target, context, args.Path, next, overwrite: true, cancellationToken);
+        var mutationResource = await target.ResolveFileResourceAsync(context, args.Path, cancellationToken);
+        var mutationContext = context with
+        {
+            ApprovedResourceReferences = [mutationResource.CanonicalReference],
+        };
+        var result = await WriteAsync(
+            target,
+            mutationContext,
+            args.Path,
+            next,
+            overwrite: true,
+            cancellationToken,
+            FileOperation.ComputeContentHash(current.Content));
         return new AgentToolResult(
             request.ToolId,
             result.Summary,

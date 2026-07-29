@@ -20,7 +20,8 @@ public sealed class AgentPermissionResumeCoordinator(
     AgentParentRunContinuationService parentRunContinuationService,
     AgentSessionTransitionGate? transitionGate = null,
     AgentSessionDeletionFence? deletionFence = null,
-    AgentBackgroundWorkService? backgroundWork = null
+    AgentBackgroundWorkService? backgroundWork = null,
+    AgentToolService? toolService = null
 )
 {
     private readonly AgentSessionService _sessionService = sessionService;
@@ -40,6 +41,7 @@ public sealed class AgentPermissionResumeCoordinator(
     private readonly AgentSessionDeletionFence _deletionFence =
         deletionFence ?? AgentSessionDeletionFence.Shared;
     private readonly AgentBackgroundWorkService? _backgroundWork = backgroundWork;
+    private readonly AgentToolService? _toolService = toolService;
 
     public Task<AgentRunCheckpointRecord?> ApproveAsync(
         Guid sessionId,
@@ -127,6 +129,8 @@ public sealed class AgentPermissionResumeCoordinator(
                 }
             }
 
+            ReleasePreparedAuthority(pending);
+
             return checkpoint
                 ?? _sessionService.GetLatestCheckpoint(sessionId, pending.RunRevision)
                 ?? _sessionService.GetLatestCheckpoint(sessionId);
@@ -141,7 +145,10 @@ public sealed class AgentPermissionResumeCoordinator(
         var sessionId = pending.SessionId;
 
         void Complete(AgentPendingPermissionStatus status, string summary)
-            => _permissionService.CompleteClaimedRequest(pending, status, summary);
+        {
+            _permissionService.CompleteClaimedRequest(pending, status, summary);
+            ReleasePreparedAuthority(pending);
+        }
 
         AgentRunCheckpointRecord? FinalizeSuspension(
             AgentPendingPermissionStatus status,
@@ -153,6 +160,7 @@ public sealed class AgentPermissionResumeCoordinator(
                 status,
                 runStatus,
                 summary);
+            ReleasePreparedAuthority(pending);
             PublishPermissionFinalization(finalization);
             return finalization?.Checkpoint;
         }
@@ -164,6 +172,19 @@ public sealed class AgentPermissionResumeCoordinator(
                        AgentPendingPermissionStatus.Expired,
                        AgentRunStatus.Failed,
                        "The session used for this permission request was not found.")
+                   ?? _sessionService.GetLatestCheckpoint(sessionId);
+        }
+
+        if (string.Equals(
+                pending.BoundaryId,
+                AgentPermissionBoundaryIds.OutsideConfiguredScope,
+                StringComparison.OrdinalIgnoreCase)
+            && (pending.ResourceClaimSetVersion != 1 || pending.ResourceClaims.Count == 0))
+        {
+            return FinalizeSuspension(
+                       AgentPendingPermissionStatus.Expired,
+                       AgentRunStatus.Interrupted,
+                       "permission-reapproval-required: Outside resource authority is not restorable; submit the tool call for explicit reapproval.")
                    ?? _sessionService.GetLatestCheckpoint(sessionId);
         }
 
@@ -197,11 +218,10 @@ public sealed class AgentPermissionResumeCoordinator(
                    ?? _sessionService.GetLatestCheckpoint(sessionId);
         }
 
-        var providerSelection = _providerResolver.ResolveChatProvider(profile);
+        using var providerSelection = _providerResolver.ResolveChatProvider(profile);
         var chatBinding = providerSelection.ChatBinding;
-        var provider = providerSelection.Provider;
         if (
-            provider is null
+            !providerSelection.IsAvailable
             || chatBinding is null
             || string.IsNullOrWhiteSpace(chatBinding.ModelId)
         )
@@ -252,7 +272,9 @@ public sealed class AgentPermissionResumeCoordinator(
                 runStartedAtUtc,
                 profile.ProfileId,
                 pending.UserMessage,
-                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    providerSelection.RetirementToken))
             {
                 DurableLease = runLease,
             };
@@ -302,7 +324,7 @@ public sealed class AgentPermissionResumeCoordinator(
         try
         {
             var host = _behaviorLoopHostFactory.Create(
-                provider,
+                providerSelection.Provider,
                 session,
                 profile,
                 workspace,
@@ -384,8 +406,7 @@ public sealed class AgentPermissionResumeCoordinator(
             {
                 var metadata = await _providerResolver
                     .ResolveRunMetadataAsync(
-                        provider,
-                        chatBinding,
+                        providerSelection,
                         runCancellationToken
                     )
                     .ConfigureAwait(false);
@@ -426,13 +447,13 @@ public sealed class AgentPermissionResumeCoordinator(
                 AgentRunStatus.Running,
                 $"Approved tool '{pending.ToolId}' completed. Continuing provider execution.");
             var executionBinding = ResolveExecutionBinding(workspace);
-            var behaviorLoop = _behaviorLoopResolver.Resolve(profile);
+            using var behaviorLoop = _behaviorLoopResolver.Resolve(profile);
             var loopResult = await behaviorLoop
                 .RunAsync(
                     new AgentBehaviorLoopContext(
                         session,
                         profile,
-                        provider.Descriptor.ProviderId,
+                        providerSelection.Descriptor!.ProviderId,
                         chatBinding.ModelId,
                         runCapabilities,
                         workspace,
@@ -481,14 +502,17 @@ public sealed class AgentPermissionResumeCoordinator(
         }
         catch (OperationCanceledException)
         {
-            Complete(AgentPendingPermissionStatus.Failed, "Approved permission resume was canceled.");
+            var cancellationSummary = providerSelection.IsRetiring
+                ? $"Package '{providerSelection.OwnerPackageId}' became unavailable during approved permission resume."
+                : "Approved permission resume was canceled.";
+            Complete(AgentPendingPermissionStatus.Failed, cancellationSummary);
             _runEventLogger.LogRunEvent(
                 PackageLogLevel.Warning,
                 sessionId,
                 pending.RunId,
                 pending.RunRevision,
                 "permission.approved_resume.canceled",
-                "Approved permission resume was canceled.",
+                cancellationSummary,
                 resumeStopwatch.ElapsedMilliseconds
             );
             var canceledCheckpoint = _sessionService.GetLatestCheckpoint(
@@ -501,7 +525,7 @@ public sealed class AgentPermissionResumeCoordinator(
                 canceledCheckpoint = _sessionService.TryTransitionRun(
                     runLease,
                     AgentRunStatus.Interrupted,
-                    "Approved permission resume was canceled.")?.Checkpoint
+                    cancellationSummary)?.Checkpoint
                     ?? _sessionService.GetLatestCheckpoint(
                         sessionId,
                         pending.RunRevision);
@@ -564,15 +588,15 @@ public sealed class AgentPermissionResumeCoordinator(
                 {
                     return false;
                 }
-                var currentProviderSelection = _providerResolver.ResolveChatProvider(currentProfile);
                 var currentBinding = ResolveExecutionBinding(currentWorkspace);
                 if (cancellationToken.IsCancellationRequested
+                    || !providerSelection.CanAcquireExactOwner()
                     || !AgentPermissionFingerprint.MatchesExecutionContext(
                         pending.ExecutionSnapshotJson,
                         pending,
                         currentProfile,
-                        currentProviderSelection.Provider?.Descriptor.ProviderId,
-                        currentProviderSelection.ChatBinding?.ModelId,
+                        providerSelection.Descriptor?.ProviderId,
+                        chatBinding.ModelId,
                         currentWorkspace,
                         currentBinding)
                     || !_activeRunRegistry.IsCurrent(
@@ -622,6 +646,8 @@ public sealed class AgentPermissionResumeCoordinator(
         {
             return _sessionService.GetLatestCheckpoint(sessionId);
         }
+
+        ReleasePreparedAuthority(decision.Request);
 
         var finalization = decision.Finalization
             ?? throw new InvalidOperationException("The denied permission suspension did not produce a finalization result.");
@@ -673,4 +699,12 @@ public sealed class AgentPermissionResumeCoordinator(
                         StringComparison.OrdinalIgnoreCase
                     )
                 );
+
+    private void ReleasePreparedAuthority(AgentPendingPermissionRequestRecord request)
+    {
+        if (request.ToolExecutionId is { } executionId)
+        {
+            _toolService?.ReleasePreparedInvocation(executionId);
+        }
+    }
 }

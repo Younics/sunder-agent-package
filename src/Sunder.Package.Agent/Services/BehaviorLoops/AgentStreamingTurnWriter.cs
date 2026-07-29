@@ -8,17 +8,20 @@ using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
-internal sealed class AgentStreamingTurnWriter(AgentLoopTerminalHandler terminalHandler)
+internal sealed class AgentStreamingTurnWriter(
+    AgentLoopTerminalHandler terminalHandler,
+    TimeProvider? timeProvider = null)
 {
     private static readonly TimeSpan AssistantStreamFlushInterval = TimeSpan.FromMilliseconds(50);
     private readonly AgentLoopTerminalHandler _terminalHandler = terminalHandler;
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public AgentStreamingTurnState BeginCycle(
         IAgentBehaviorLoopRuntime host,
         AgentBehaviorLoopContext context,
         AgentAssistantTurnState assistantTurnState,
         Stopwatch loopStopwatch)
-        => new(host, context, assistantTurnState, loopStopwatch);
+        => new(host, context, assistantTurnState, loopStopwatch, _timeProvider);
 
     public void ResetForRetry(AgentStreamingTurnState state)
     {
@@ -34,7 +37,7 @@ internal sealed class AgentStreamingTurnWriter(AgentLoopTerminalHandler terminal
             state.Content.Clear();
             state.PersistedContentLength = 0;
             state.ToolCalls.Clear();
-            state.LastAssistantFlushElapsed = TimeSpan.MinValue;
+            state.LastAssistantFlushTimestamp = null;
             state.SuppressPendingFlush = false;
         }
     }
@@ -167,8 +170,8 @@ internal sealed class AgentStreamingTurnWriter(AgentLoopTerminalHandler terminal
 
     private static bool ShouldFlushAssistantStream(AgentStreamingTurnState state)
         => state.AssistantTurnState.Turn is null
-           || state.LastAssistantFlushElapsed == TimeSpan.MinValue
-           || state.LoopStopwatch.Elapsed - state.LastAssistantFlushElapsed >= AssistantStreamFlushInterval;
+           || state.LastAssistantFlushTimestamp is not { } lastFlushTimestamp
+           || state.TimeProvider.GetElapsedTime(lastFlushTimestamp) >= AssistantStreamFlushInterval;
 
     private static void FlushAssistantStream(AgentStreamingTurnState state)
     {
@@ -176,21 +179,22 @@ internal sealed class AgentStreamingTurnWriter(AgentLoopTerminalHandler terminal
             state.AssistantTurnState.Turn,
             state.Content.ToString());
         state.PersistedContentLength = state.Content.Length;
-        state.LastAssistantFlushElapsed = state.LoopStopwatch.Elapsed;
+        state.LastAssistantFlushTimestamp = state.TimeProvider.GetTimestamp();
     }
 
     private static async Task FlushPendingTextAsync(
         AgentStreamingTurnState state,
         CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(AssistantStreamFlushInterval);
+        using var timer = new PeriodicTimer(AssistantStreamFlushInterval, state.TimeProvider);
         while (await timer.WaitForNextTickAsync(cancellationToken))
         {
             lock (state.SyncRoot)
             {
                 if (state.Host.IsCurrentRun()
                     && !state.SuppressPendingFlush
-                    && state.Content.Length > state.PersistedContentLength)
+                    && state.Content.Length > state.PersistedContentLength
+                    && ShouldFlushAssistantStream(state))
                 {
                     FlushAssistantStream(state);
                 }
@@ -203,7 +207,8 @@ internal sealed class AgentStreamingTurnState(
     IAgentBehaviorLoopRuntime host,
     AgentBehaviorLoopContext context,
     AgentAssistantTurnState assistantTurnState,
-    Stopwatch loopStopwatch)
+    Stopwatch loopStopwatch,
+    TimeProvider timeProvider)
 {
     public IAgentBehaviorLoopRuntime Host { get; } = host;
 
@@ -213,6 +218,8 @@ internal sealed class AgentStreamingTurnState(
 
     public Stopwatch LoopStopwatch { get; } = loopStopwatch;
 
+    public TimeProvider TimeProvider { get; } = timeProvider;
+
     public StringBuilder Content { get; } = new();
 
     public object SyncRoot { get; } = new();
@@ -221,7 +228,7 @@ internal sealed class AgentStreamingTurnState(
 
     public ReasoningActivityReporter ReasoningActivity { get; } = new(host as IAgentRunActivitySink);
 
-    public TimeSpan LastAssistantFlushElapsed { get; set; } = TimeSpan.MinValue;
+    public long? LastAssistantFlushTimestamp { get; set; }
 
     public int PersistedContentLength { get; set; }
 

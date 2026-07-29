@@ -5,7 +5,7 @@ namespace Sunder.Package.Agent.Tools.Files;
 
 internal static class FileReadHandler
 {
-    public static async Task<AgentToolResult> ExecuteAsync(
+    public static async Task<FileReadToolResult> ExecuteAsync(
         IAgentExecutionTarget target,
         AgentExecutionTargetContext context,
         AgentToolRequest request,
@@ -13,7 +13,9 @@ internal static class FileReadHandler
     {
         if (!FileToolArguments.TryParseRead(request.ArgumentsJson, out var args, out var error))
         {
-            return FileToolResult.Error(request.ToolId, error!, "files-arguments-invalid");
+            return new FileReadToolResult(
+                FileToolResult.Error(request.ToolId, error!, "files-arguments-invalid"),
+                IsDirectory: false);
         }
 
         var result = await target.ReadFileAsync(
@@ -22,29 +24,33 @@ internal static class FileReadHandler
             cancellationToken);
         if (result.IsError)
         {
-            return FileToolResult.ReadError(request.ToolId, result);
+            return new FileReadToolResult(FileToolResult.ReadError(request.ToolId, result), IsDirectory: false);
         }
 
         if (result.IsDirectory)
         {
-            return new AgentToolResult(
-                request.ToolId,
-                $"Read {result.Path}",
-                Content: result.Content,
-                WasTruncated: result.WasTruncated,
-                BackendId: FileToolResult.BackendId(target));
+            return new FileReadToolResult(
+                new AgentToolResult(
+                    request.ToolId,
+                    $"Read {result.Path}",
+                    Content: result.Content,
+                    WasTruncated: result.WasTruncated,
+                    BackendId: FileToolResult.BackendId(target)),
+                IsDirectory: true);
         }
 
         var legacyTruncated = false;
         var content = target is IAgentRangedFileExecutionTarget
             ? NumberLines(result.Content, args.EffectiveOffset)
             : SliceAndNumberLegacyResult(result.Content, args.EffectiveOffset, args.EffectiveLimit, out legacyTruncated);
-        return new AgentToolResult(
-            request.ToolId,
-            $"Read {result.Path}",
-            Content: content,
-            WasTruncated: result.WasTruncated || (target is not IAgentRangedFileExecutionTarget && legacyTruncated),
-            BackendId: FileToolResult.BackendId(target));
+        return new FileReadToolResult(
+            new AgentToolResult(
+                request.ToolId,
+                $"Read {result.Path}",
+                Content: content,
+                WasTruncated: result.WasTruncated || (target is not IAgentRangedFileExecutionTarget && legacyTruncated),
+                BackendId: FileToolResult.BackendId(target)),
+            IsDirectory: false);
     }
 
     private static string SliceAndNumberLegacyResult(string content, int offset, int limit, out bool wasTruncated)
@@ -66,3 +72,5 @@ internal static class FileReadHandler
     private static string[] SplitLines(string content)
         => content.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
 }
+
+internal sealed record FileReadToolResult(AgentToolResult Result, bool IsDirectory);

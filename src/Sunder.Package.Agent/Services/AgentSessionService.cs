@@ -9,10 +9,18 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.Services;
 
 public sealed partial class AgentSessionService(AgentLocalStore store, IPackageExtensionCatalog? extensionCatalog = null)
-    : IAgentSessionGateway, IAgentTurnMutationGateway
+    : IAgentSessionGateway,
+      IAgentTurnMutationGateway,
+      IAgentTranscriptHeaderGateway,
+      IAgentTranscriptToolDetailGateway
 {
     private readonly AgentLocalStore _store = store;
     private readonly IPackageExtensionCatalog? _extensionCatalog = extensionCatalog;
+
+    internal AgentLocalStore Store => _store;
+
+    internal AgentMemoryConsistencyBarrier? GetMemoryConsistencyBarrier(Guid runId)
+        => _store.GetMemoryConsistencyBarrier(runId);
 
     public event Action<Guid>? SessionChanged;
 
@@ -52,28 +60,25 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
 
     public void DeleteSession(Guid sessionId)
     {
-        var deletedSessionIds = _store.DeleteSessionTree(sessionId);
+        var deletedSessionIds = _store.DeleteSessionTree(sessionId, SnapshotSessionDataCleaners());
         CompleteSessionDeletion(deletedSessionIds);
     }
 
     public void DeleteSessionsForWorkspace(string workspaceId)
     {
-        var deletedSessionIds = _store.DeleteSessionTreesForWorkspace(workspaceId);
+        var deletedSessionIds = _store.DeleteSessionTreesForWorkspace(
+            workspaceId,
+            SnapshotSessionDataCleaners());
         CompleteSessionDeletion(deletedSessionIds);
     }
 
-    private void CompleteSessionDeletion(IReadOnlyList<Guid> deletedSessionIds)
+    internal void CompleteSessionDeletion(IReadOnlyList<Guid> deletedSessionIds)
     {
-        var cleanupFailures = DeleteExternalSessionData(deletedSessionIds);
         foreach (var deletedSessionId in deletedSessionIds)
         {
             NotifySessionChanged(deletedSessionId);
         }
-
-        if (cleanupFailures.Count > 0)
-        {
-            throw new AggregateException("Session was deleted, but one or more external cleanup steps failed.", cleanupFailures);
-        }
+        DispatchPendingSessionCleanup();
     }
 
     private string ResolveWorkspaceId(Guid? parentSessionId, string? workspaceId)
@@ -148,36 +153,48 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
     private static bool IsUnassignedSessionsWorkspace(string workspaceId)
         => string.Equals(workspaceId, AgentLocalStore.UnassignedSessionsWorkspaceId, StringComparison.OrdinalIgnoreCase);
 
-    private IReadOnlyList<Exception> DeleteExternalSessionData(IReadOnlyList<Guid> deletedSessionIds)
+    internal IReadOnlyList<AgentSessionDataCleanerIdentity> SnapshotSessionDataCleaners()
+        => SnapshotSessionDataCleaners(_extensionCatalog);
+
+    internal static IReadOnlyList<AgentSessionDataCleanerIdentity> SnapshotSessionDataCleaners(
+        IPackageExtensionCatalog? extensionCatalog)
     {
-        if (_extensionCatalog is null || deletedSessionIds.Count == 0)
+        if (extensionCatalog is null)
         {
             return [];
         }
 
-        var cleaners = _extensionCatalog.GetExtensions(PackageExtensionPoints.SessionDataCleaners);
-        if (cleaners.Count == 0)
+        var cleaners = AgentExtensionInvocation.Snapshot(
+            AgentExtensionInvocation.Require(extensionCatalog),
+            PackageExtensionPoints.SessionDataCleaners,
+            static cleaner => cleaner.CleanerId);
+        return cleaners
+            .Where(cleaner => !string.IsNullOrWhiteSpace(cleaner.PackageId)
+                              && cleaner.PackageId.Trim().Length <= 256
+                              && !string.IsNullOrWhiteSpace(cleaner.Metadata)
+                              && cleaner.Metadata.Trim().Length <= 512)
+            .Select(cleaner => new AgentSessionDataCleanerIdentity(
+                cleaner.PackageId.Trim(),
+                cleaner.Metadata.Trim()))
+            .Distinct()
+            .ToArray();
+    }
+
+    private void DispatchPendingSessionCleanup()
+    {
+        if (_extensionCatalog is null)
         {
-            return [];
+            return;
         }
 
-        var failures = new List<Exception>();
-        foreach (var deletedSessionId in deletedSessionIds)
+        try
         {
-            foreach (var cleaner in cleaners)
-            {
-                try
-                {
-                    cleaner.DeleteSessionData(deletedSessionId);
-                }
-                catch (Exception ex)
-                {
-                    failures.Add(new InvalidOperationException($"Session data cleaner '{cleaner.CleanerId}' failed for session '{deletedSessionId}'.", ex));
-                }
-            }
+            AgentSessionCleanupDispatcher.DispatchAvailableNow(_store, _extensionCatalog);
         }
-
-        return failures;
+        catch
+        {
+            // The ids-only jobs remain durable for startup or package-reactivation retry.
+        }
     }
 
     internal AgentRunTransitionResult? TryTransitionRun(
@@ -199,7 +216,52 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
                 lease,
                 () => NotifyCompletedStreamingTurnsAndSessionChanged(
                     lease.Key.SessionId,
-                    transition.CompletedStreamingTurns));
+                    transition.CompletedStreamingTurns,
+                    transition.ToolResultTurns));
+        }
+        DrainLeaseNotifications(lease);
+        return transition;
+    }
+
+    internal AgentUserTurnAdmissionResult AdmitUserTurn(AgentUserTurnAdmissionRequest request)
+    {
+        var cleaners = request.AdmissionKind == AgentRunAdmissionKind.Rollback
+            ? SnapshotSessionDataCleaners()
+            : [];
+        var result = _store.AdmitUserTurn(request, cleaners);
+        if (result.IsExisting)
+        {
+            return result;
+        }
+
+        NotifyRunAdmissionChanged(result);
+        foreach (var deletedSessionId in result.Rollback?.DeletedSessionIds ?? [])
+        {
+            NotifySessionChanged(deletedSessionId);
+        }
+        if (result.Rollback?.DeletedSessionIds.Count > 0)
+        {
+            DispatchPendingSessionCleanup();
+        }
+        return result;
+    }
+
+    internal AgentRunTransitionResult? TryBeginAdmittedRunExecution(
+        AgentDurableRunLease lease,
+        string summary)
+    {
+        AgentRunTransitionResult? transition;
+        lock (lease.SyncRoot)
+        {
+            transition = _store.TryBeginAdmittedRunExecution(lease.Key, lease.Epoch, summary);
+            if (transition is null)
+            {
+                return null;
+            }
+            lease.AdvanceTo(transition.Run.Epoch);
+            EnqueueLeaseNotification(
+                lease,
+                () => NotifySessionChanged(lease.Key.SessionId));
         }
         DrainLeaseNotifications(lease);
         return transition;
@@ -227,6 +289,9 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
         Guid? rollbackAnchorTurnId,
         string runningSummary)
     {
+        var activeCleaners = rollbackAnchorTurnId is null
+            ? []
+            : SnapshotSessionDataCleaners();
         AgentRunStartPersistenceResult? result;
         lock (lease.SyncRoot)
         {
@@ -237,7 +302,8 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
                 userMessage,
                 attachments,
                 rollbackAnchorTurnId,
-                runningSummary);
+                runningSummary,
+                activeCleaners);
             if (result is null)
             {
                 return null;
@@ -253,18 +319,13 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
         }
         DrainLeaseNotifications(lease);
 
-        var cleanupFailures = DeleteExternalSessionData(result.Rollback?.DeletedSessionIds ?? []);
         if (result.Rollback is not null)
         {
             foreach (var deletedSessionId in result.Rollback.DeletedSessionIds)
             {
                 NotifySessionChanged(deletedSessionId);
             }
-        }
-
-        if (cleanupFailures.Count > 0)
-        {
-            throw new AgentRunStartCleanupException(cleanupFailures);
+            DispatchPendingSessionCleanup();
         }
 
         return result;
@@ -291,7 +352,8 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
                 lease,
                 () => NotifyCompletedStreamingTurnsAndSessionChanged(
                     lease.Key.SessionId,
-                    transition.CompletedStreamingTurns));
+                    transition.CompletedStreamingTurns,
+                    transition.Transition.ToolResultTurns));
         }
         DrainLeaseNotifications(lease);
         return transition.Transition;
@@ -627,7 +689,8 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
             summary);
         NotifyCompletedStreamingTurnsAndSessionChanged(
             sessionId,
-            result.CompletedStreamingTurns);
+            result.CompletedStreamingTurns,
+            result.ToolResultTurns);
         return result.Checkpoint;
     }
 
@@ -635,7 +698,8 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
     {
         NotifyCompletedStreamingTurnsAndSessionChanged(
             result.Checkpoint.SessionId,
-            result.CompletedStreamingTurns);
+            result.CompletedStreamingTurns,
+            result.ToolResultTurns);
     }
 
     internal void PublishCommittedSessionChanged(Guid sessionId)
@@ -653,6 +717,13 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
             DispatchTurnChanged(
                 finalization.Checkpoint.SessionId,
                 toolResultTurn);
+            foreach (var terminalizedTurn in finalization.ToolResultTurns)
+            {
+                if (terminalizedTurn.TurnId != toolResultTurn.TurnId)
+                {
+                    DispatchTurnChanged(finalization.Checkpoint.SessionId, terminalizedTurn);
+                }
+            }
             DispatchSessionChanged(finalization.Checkpoint.SessionId);
         });
     }

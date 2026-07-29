@@ -15,7 +15,10 @@ internal sealed class SubagentChildRunCoordinator(
     SubagentPermissionStatusAdapter permissionStatusAdapter,
     SubagentBatchResultRenderer resultRenderer)
 {
-    private readonly IPackageExtensionCatalog _extensionCatalog = extensionCatalog;
+    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
+        extensionCatalog as IPackageExtensionInvocationCatalog
+        ?? throw new InvalidOperationException(
+            "The host extension catalog does not support activation-scoped invocation leases.");
     private readonly SubagentDescriptorSchema _descriptors = descriptors;
     private readonly SubagentPermissionStatusAdapter _permissionStatusAdapter = permissionStatusAdapter;
     private readonly SubagentBatchResultRenderer _resultRenderer = resultRenderer;
@@ -34,15 +37,35 @@ internal sealed class SubagentChildRunCoordinator(
             return false;
         }
 
-        var runtimeCatalog = _extensionCatalog.GetExtensions(PackageExtensionPoints.RuntimeCatalogs).FirstOrDefault();
-        if (runtimeCatalog is null)
+        AgentProfileRecord? parentProfile = null;
+        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.RuntimeCatalogs))
+        {
+            if (!reference.TryAcquire(out var lease))
+            {
+                continue;
+            }
+            using (lease)
+            {
+                parentProfile = string.IsNullOrWhiteSpace(context.ProfileId)
+                    ? null
+                    : lease.Contribution.GetProfile(context.ProfileId);
+                if (!lease.RetirementToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                parentProfile = null;
+            }
+        }
+        if (parentProfile is null)
         {
             failure = _permissionStatusAdapter.CreateTaskFailure(resultToolId, "Task tool requires the base Agent runtime catalog extension.", "task-runtime-unavailable");
             return false;
         }
 
-        var childRunExecutor = _extensionCatalog.GetExtensions(PackageExtensionPoints.ChildRunExecutors).FirstOrDefault();
-        if (childRunExecutor is null)
+        var childRunExecutorReference = _invocationCatalog
+            .GetExtensionReferences(PackageExtensionPoints.ChildRunExecutors)
+            .FirstOrDefault(IsAvailable);
+        if (childRunExecutorReference is null)
         {
             failure = _permissionStatusAdapter.CreateTaskFailure(resultToolId, "Task tool requires the base Agent child-run executor extension.", "task-child-executor-unavailable");
             return false;
@@ -54,14 +77,13 @@ internal sealed class SubagentChildRunCoordinator(
             return false;
         }
 
-        var parentProfile = string.IsNullOrWhiteSpace(context.ProfileId) ? null : runtimeCatalog.GetProfile(context.ProfileId);
         if (!_descriptors.SupportsSubagentFeature(parentProfile))
         {
             failure = _permissionStatusAdapter.CreateTaskFailure(resultToolId, "The task tool is only available to profiles using a behavior loop with subagent support.", "task-loop-disabled");
             return false;
         }
 
-        environment = new SubagentChildRunEnvironment(context, parentProfile!, childRunExecutor);
+        environment = new SubagentChildRunEnvironment(context, parentProfile, childRunExecutorReference);
         return true;
     }
 
@@ -77,18 +99,53 @@ internal sealed class SubagentChildRunCoordinator(
             ? subagent.DisplayName
             : request.Description.Trim();
         var context = environment.Context;
-        var result = await environment.ChildRunExecutor.RunChildAsync(
-            new AgentChildRunRequest(
-                context.SessionId!.Value,
-                context.RunId!.Value,
-                context.RunRevision!.Value,
-                context.ToolCallId!,
-                context.Workspace!.WorkspaceId,
-                request.TaskId,
-                childProfile,
-                request.Prompt!,
-                childSessionTitle),
-            cancellationToken);
+        if (!environment.ChildRunExecutorReference.TryAcquire(out var executorLease))
+        {
+            return _permissionStatusAdapter.CreateTaskFailure(
+                resultToolId,
+                "The child-run executor package became unavailable before the task started.",
+                AgentToolResultErrorCodes.PackageUnavailable);
+        }
+
+        AgentChildRunResult result;
+        using (executorLease)
+        {
+            var retirementToken = executorLease.RetirementToken;
+            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                retirementToken);
+            try
+            {
+                result = await executorLease.Contribution.RunChildAsync(
+                    new AgentChildRunRequest(
+                        context.SessionId!.Value,
+                        context.RunId!.Value,
+                        context.RunRevision!.Value,
+                        context.ToolCallId!,
+                        context.Workspace!.WorkspaceId,
+                        request.TaskId,
+                        childProfile,
+                        request.Prompt!,
+                        childSessionTitle),
+                    invocation.Token);
+                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    return _permissionStatusAdapter.CreateTaskFailure(
+                        resultToolId,
+                        $"Child-run executor package '{executorLease.PackageId}' became unavailable while the task was running.",
+                        AgentToolResultErrorCodes.PackageUnavailable);
+                }
+            }
+            catch (OperationCanceledException) when (
+                retirementToken.IsCancellationRequested
+                && !cancellationToken.IsCancellationRequested)
+            {
+                return _permissionStatusAdapter.CreateTaskFailure(
+                    resultToolId,
+                    $"Child-run executor package '{executorLease.PackageId}' became unavailable while the task was running.",
+                    AgentToolResultErrorCodes.PackageUnavailable);
+            }
+        }
         var state = SubagentPermissionStatusAdapter.ToTaskState(result.Status);
         var payload = _resultRenderer.BuildChildSessionPayload(result, subagent, childSessionTitle, state);
         return _permissionStatusAdapter.AdaptChildResult(resultToolId, result, subagent, payload);
@@ -138,6 +195,18 @@ internal sealed class SubagentChildRunCoordinator(
         => profile.ModelBindings?.FirstOrDefault(binding =>
             string.Equals(binding.CapabilityKind, capabilityKind, StringComparison.OrdinalIgnoreCase));
 
+    private static bool IsAvailable(IPackageExtensionReference<IAgentChildRunExecutor> reference)
+    {
+        if (!reference.TryAcquire(out var lease))
+        {
+            return false;
+        }
+        using (lease)
+        {
+            return !lease.RetirementToken.IsCancellationRequested;
+        }
+    }
+
     private static string BuildProfileSnapshotId(
         AgentProfileRecord parentProfile,
         SubagentRecord subagent)
@@ -167,4 +236,4 @@ internal sealed class SubagentChildRunCoordinator(
 internal sealed record SubagentChildRunEnvironment(
     AgentToolExecutionContext Context,
     AgentProfileRecord ParentProfile,
-    IAgentChildRunExecutor ChildRunExecutor);
+    IPackageExtensionReference<IAgentChildRunExecutor> ChildRunExecutorReference);

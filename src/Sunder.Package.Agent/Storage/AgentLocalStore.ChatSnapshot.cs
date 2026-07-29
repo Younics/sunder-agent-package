@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Runtime;
+using Sunder.Package.Agent.Shared.PackageViews;
 
 namespace Sunder.Package.Agent.Storage;
 
@@ -79,6 +80,7 @@ public sealed partial class AgentLocalStore
 
         var limit = Math.Clamp(request.InitialTranscriptLimit, 1, 500);
         IReadOnlyList<AgentTurnRecord> turns = selectedSession is null
+            || !request.IncludeInitialTranscript
             ? []
             : ListChatRecentTurns(
                 connection,
@@ -211,9 +213,9 @@ public sealed partial class AgentLocalStore
                 limit,
                 transaction)
             .OrderBy(turn => turn.CreatedAtUtc)
-            .ThenBy(turn => turn.TurnId)
+            .ThenBy(turn => turn.TurnId.ToString("D"), StringComparer.Ordinal)
             .ToArray();
-        var items = ListTurnItemsForTurns(
+        var items = ListTranscriptHeaderItemsForTurns(
             connection,
             turns.Select(turn => turn.TurnId).ToArray(),
             transaction);
@@ -488,26 +490,79 @@ internal static class AgentChatSnapshotPayload
 
     internal static AgentChatSnapshotProjection Fit(AgentChatSnapshotProjection snapshot)
     {
+        if (snapshot.InitialTranscript.Turns.FirstOrDefault() is { } oldestTurn)
+        {
+            snapshot = snapshot with
+            {
+                InitialTranscript = snapshot.InitialTranscript with
+                {
+                    Continuation = snapshot.InitialTranscript.Continuation
+                                   ?? TranscriptPageCursor.FromTurn(oldestTurn),
+                },
+            };
+        }
+
+        var initialTranscriptProjected = false;
         var serializedBytes = GetSerializedByteCount(snapshot);
         while (serializedBytes > MaximumSerializedBytes)
         {
-            if (snapshot.InitialTranscript.Turns.Count > 0)
+            if (snapshot.InitialTranscript.Turns.Count > 1)
             {
                 var turnCount = snapshot.InitialTranscript.Turns.Count;
                 var removeCount = Math.Clamp(
                     (int)Math.Ceiling(
                         turnCount * (serializedBytes - MaximumSerializedBytes) / (double)serializedBytes),
                     1,
-                    turnCount);
+                    turnCount - 1);
+                var retainedTurns = snapshot.InitialTranscript.Turns.Skip(removeCount).ToArray();
                 snapshot = snapshot with
                 {
                     InitialTranscript = snapshot.InitialTranscript with
                     {
-                        Turns = snapshot.InitialTranscript.Turns.Skip(removeCount).ToArray(),
+                        Turns = retainedTurns,
                         HasMore = true,
+                        Continuation = TranscriptPageCursor.FromTurn(retainedTurns[0]),
                     },
                 };
                 serializedBytes = GetSerializedByteCount(snapshot);
+                continue;
+            }
+
+            if (!initialTranscriptProjected
+                && snapshot.InitialTranscript.Turns.FirstOrDefault() is { } retainedTurn)
+            {
+                var characterBudget = AgentRuntimePayloadLimits.InitialProjectedTurnCharacterBudget;
+                while (true)
+                {
+                    snapshot = snapshot with
+                    {
+                        InitialTranscript = snapshot.InitialTranscript with
+                        {
+                            Turns =
+                            [
+                                TranscriptTurnTransportProjection.Project(
+                                    retainedTurn,
+                                    characterBudget,
+                                    AgentRuntimePayloadLimits.MaximumProjectedTurnItems),
+                            ],
+                            HasMore = true,
+                            Continuation = TranscriptPageCursor.FromTurn(retainedTurn),
+                        },
+                    };
+                    serializedBytes = GetSerializedByteCount(snapshot);
+                    if (serializedBytes <= MaximumSerializedBytes)
+                    {
+                        return snapshot;
+                    }
+
+                    if (characterBudget == 0)
+                    {
+                        break;
+                    }
+                    characterBudget /= 2;
+                }
+
+                initialTranscriptProjected = true;
                 continue;
             }
 

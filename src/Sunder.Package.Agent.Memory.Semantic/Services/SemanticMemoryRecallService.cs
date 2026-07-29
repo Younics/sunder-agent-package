@@ -17,6 +17,12 @@ public sealed class SemanticMemoryRecallService(
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (request.MemoryConsistencyBarrier is { } barrier
+            && !_store.HasLifecycleInboxReceipt(barrier))
+        {
+            return null;
+        }
+
         if (!request.RecallPlan.ShouldRecall)
         {
             return null;

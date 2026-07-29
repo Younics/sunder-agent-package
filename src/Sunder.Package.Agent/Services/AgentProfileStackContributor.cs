@@ -19,6 +19,8 @@ public sealed class AgentProfileStackContributor(
     private const string DetailModels = "model-choices";
     private const string DetailBehaviorLoop = "behavior-loop";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
+        AgentExtensionInvocation.Require(extensionCatalog);
 
     public string ContributorId => "sunder.package.agent.profiles";
 
@@ -204,9 +206,12 @@ public sealed class AgentProfileStackContributor(
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.BehaviorLoops))
+        foreach (var contribution in AgentExtensionInvocation.Snapshot(
+                     _invocationCatalog,
+                     PackageExtensionPoints.BehaviorLoops,
+                     static loop => loop.Descriptor))
         {
-            var descriptor = contribution.Contribution.Descriptor;
+            var descriptor = contribution.Metadata;
             if (behaviorLoopIds.Contains(descriptor.LoopId)
                 || (!string.IsNullOrWhiteSpace(descriptor.SourceId) && behaviorLoopSourceIds.Contains(descriptor.SourceId)))
             {
@@ -233,17 +238,23 @@ public sealed class AgentProfileStackContributor(
             return;
         }
 
-        foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ChatProviders))
+        foreach (var contribution in AgentExtensionInvocation.Snapshot(
+                     _invocationCatalog,
+                     PackageExtensionPoints.ChatProviders,
+                     static provider => provider.Descriptor.ProviderId))
         {
-            if (providerIds.Contains(contribution.Contribution.Descriptor.ProviderId))
+            if (providerIds.Contains(contribution.Metadata))
             {
                 AddPackageId(packageIds, contribution.PackageId);
             }
         }
 
-        foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.EmbeddingProviders))
+        foreach (var contribution in AgentExtensionInvocation.Snapshot(
+                     _invocationCatalog,
+                     PackageExtensionPoints.EmbeddingProviders,
+                     static provider => provider.Descriptor.ProviderId))
         {
-            if (providerIds.Contains(contribution.Contribution.Descriptor.ProviderId))
+            if (providerIds.Contains(contribution.Metadata))
             {
                 AddPackageId(packageIds, contribution.PackageId);
             }
@@ -264,9 +275,12 @@ public sealed class AgentProfileStackContributor(
             return;
         }
 
-        foreach (var contribution in extensionCatalog.GetExtensionContributions(PackageExtensionPoints.ProfileSelectableCapabilityProviders))
+        foreach (var contribution in AgentExtensionInvocation.Snapshot(
+                     _invocationCatalog,
+                     PackageExtensionPoints.ProfileSelectableCapabilityProviders,
+                     static provider => provider.ProviderId))
         {
-            if (sourceIds.Contains(contribution.Contribution.ProviderId))
+            if (sourceIds.Contains(contribution.Metadata))
             {
                 AddPackageId(packageIds, contribution.PackageId);
             }

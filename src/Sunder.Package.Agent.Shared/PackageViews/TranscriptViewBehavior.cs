@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
 internal sealed class TranscriptViewBehavior : IDisposable
@@ -22,6 +23,8 @@ internal sealed class TranscriptViewBehavior : IDisposable
     private bool _restoreAnchorOnActivation;
     private bool _initialPlacementPending = true;
     private bool _initialPlacementQueued;
+    private bool _hideDuringInitialPlacement = true;
+    private object? _initialAnchorKey;
     private int _initialPlacementVersion;
     private TaskCompletionSource _initialPresentation = CreatePresentationCompletion();
     private CancellationTokenSource? _initialPlacementCancellation;
@@ -30,6 +33,19 @@ internal sealed class TranscriptViewBehavior : IDisposable
     private bool _loaded;
     private bool _presentationActive = true;
     private bool _disposed;
+    private int _initialPlacementCompletionCallbacks;
+    private int _initialPlacementCancellationCallbacks;
+    private int _initialPlacementStaleCallbacks;
+
+    internal TranscriptViewBehaviorDiagnosticSnapshot DiagnosticSnapshot
+        => new(
+            _initialPlacementVersion,
+            _initialPlacementPending,
+            _initialPlacementQueued,
+            _initialPlacementCancellationOperation.IsCompleted,
+            _initialPlacementCompletionCallbacks,
+            _initialPlacementCancellationCallbacks,
+            _initialPlacementStaleCallbacks);
 
     public TranscriptViewBehavior(
         Control owner,
@@ -53,6 +69,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
         Action<Exception>? pagingFailed = null,
         Func<IEnumerable<(object Item, Control Visual)>>? enumerateRealizedAnchors = null,
         Func<object, Control?>? realizeAnchorVisual = null,
+        Func<Control?>? realizeTailVisual = null,
         Action<bool>? presentationStateChanged = null,
         TranscriptScrollAnchorHost? anchorHost = null)
     {
@@ -87,6 +104,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
             pagingFailed,
             enumerateRealizedAnchors,
             realizeAnchorVisual,
+            realizeTailVisual: realizeTailVisual,
             anchorHost: anchorHost);
         _owner.Loaded += OnLoaded;
         _owner.AttachedToVisualTree += OnPresentationStateChanged;
@@ -143,7 +161,10 @@ internal sealed class TranscriptViewBehavior : IDisposable
         }
     }
 
-    public void MarkInitialPlacementPending(CancellationToken cancellationToken = default)
+    public void MarkInitialPlacementPending(
+        CancellationToken cancellationToken = default,
+        object? initialAnchorKey = null,
+        bool hideTranscript = true)
     {
         if (_disposed)
         {
@@ -165,8 +186,13 @@ internal sealed class TranscriptViewBehavior : IDisposable
 
         _initialPlacementPending = true;
         _initialPlacementQueued = false;
-        _scrollViewer.Opacity = 0;
-        _scrollCoordinator.BeginInitialPlacement();
+        _hideDuringInitialPlacement = hideTranscript;
+        _initialAnchorKey = initialAnchorKey;
+        if (hideTranscript)
+        {
+            _scrollViewer.Opacity = 0;
+        }
+        _scrollCoordinator.BeginInitialPlacement(followTail: initialAnchorKey is null);
         var version = _initialPlacementVersion;
         var placementCancellationToken = _initialPlacementCancellation.Token;
         _initialPlacementCancellationRegistration = placementCancellationToken.Register(() =>
@@ -178,8 +204,26 @@ internal sealed class TranscriptViewBehavior : IDisposable
         });
     }
 
-    public Task WaitForInitialPresentationAsync(CancellationToken cancellationToken = default)
-        => _initialPresentation.Task.WaitAsync(cancellationToken);
+    public async Task WaitForInitialPresentationAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await _initialPresentation.Task;
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    public void SetInitialPlacementAnchor(
+        object anchorKey,
+        CancellationToken cancellationToken = default,
+        bool hideTranscript = true)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        MarkInitialPlacementPending(cancellationToken, anchorKey, hideTranscript);
+        TryPlaceInitialTranscript();
+    }
 
     public void JumpToLatest(Action jumpToLatest)
     {
@@ -198,16 +242,56 @@ internal sealed class TranscriptViewBehavior : IDisposable
         jumpToLatest();
     }
 
-    public void MutateViewport(Action mutation)
+    public void MutateViewport(
+        Action mutation,
+        TranscriptViewportMutationKind kind = TranscriptViewportMutationKind.ToolExpansion,
+        object? preferredAnchorKey = null,
+        Control? scope = null,
+        bool? isExpanding = null)
     {
         if (_disposed)
         {
             return;
         }
 
-        _scrollCoordinator.BeginViewportMutation();
-        mutation();
-        _scrollCoordinator.OnViewportContentChanged();
+        _scrollCoordinator.BeginViewportMutation(
+            kind,
+            preferredAnchorKey,
+            scope,
+            isExpanding);
+        try
+        {
+            mutation();
+        }
+        finally
+        {
+            _scrollCoordinator.OnViewportContentChanged();
+        }
+    }
+
+    public long BeginViewportMutationPreparation(
+        TranscriptViewportMutationKind kind,
+        object preferredAnchorKey,
+        Control scope,
+        bool? isExpanding = null)
+        => _disposed
+            ? 0
+            : _scrollCoordinator.BeginViewportMutationPreparation(
+                kind,
+                preferredAnchorKey,
+                scope,
+                isExpanding);
+
+    public bool CommitViewportMutationPreparation(long generation, Action mutation)
+        => !_disposed
+           && _scrollCoordinator.CommitViewportMutationPreparation(generation, mutation);
+
+    public void CancelViewportMutationPreparation(long generation)
+    {
+        if (!_disposed)
+        {
+            _scrollCoordinator.CancelViewportMutationPreparation(generation);
+        }
     }
 
     public void ScrollToBottom() => _scrollCoordinator.QueueScrollToBottom(force: true);
@@ -215,11 +299,11 @@ internal sealed class TranscriptViewBehavior : IDisposable
     public void FollowLatestFromExplicitIntent()
         => _scrollCoordinator.QueueScrollToBottom(force: true);
 
-    public void OnRenderedContentChanged()
+    public void OnRenderedContentChanged(ITranscriptGeometrySource? source = null)
     {
         if (!_disposed && _loaded && _presentationActive && !_initialPlacementPending)
         {
-            _scrollCoordinator.OnRenderedContentChanged();
+            _scrollCoordinator.OnRenderedContentChanged(source);
         }
     }
 
@@ -397,10 +481,23 @@ internal sealed class TranscriptViewBehavior : IDisposable
         _initialPlacementQueued = true;
         var version = _initialPlacementVersion;
         var placementCancellationToken = _initialPlacementCancellation?.Token ?? default;
-        _scrollViewer.Opacity = 0;
-        _scrollCoordinator.QueueScrollToBottomAfterLayoutSettles(
-            () => CompleteInitialPlacement(version, placementCancellationToken),
-            placementCancellationToken);
+        if (_hideDuringInitialPlacement)
+        {
+            _scrollViewer.Opacity = 0;
+        }
+        if (_initialAnchorKey is { } anchorKey)
+        {
+            _scrollCoordinator.QueuePlaceAnchorAfterLayout(
+                anchorKey,
+                () => CompleteInitialPlacement(version, placementCancellationToken),
+                placementCancellationToken);
+        }
+        else
+        {
+            _scrollCoordinator.QueueScrollToBottomAfterLayoutSettles(
+                () => CompleteInitialPlacement(version, placementCancellationToken),
+                placementCancellationToken);
+        }
         return true;
     }
 
@@ -408,38 +505,43 @@ internal sealed class TranscriptViewBehavior : IDisposable
         int version,
         CancellationToken cancellationToken = default)
     {
+        _initialPlacementCompletionCallbacks++;
         if (_disposed || version != _initialPlacementVersion)
         {
+            _initialPlacementStaleCallbacks++;
+            return;
+        }
+        if (cancellationToken.IsCancellationRequested)
+        {
+            CancelInitialPlacement(version, cancellationToken);
             return;
         }
 
         _initialPlacementPending = false;
         _initialPlacementQueued = false;
+        _initialAnchorKey = null;
         _scrollViewer.Opacity = 1;
         _initialPlacementCancellation?.Dispose();
         _initialPlacementCancellation = null;
         _initialPlacementCancellationRegistration?.Dispose();
         _initialPlacementCancellationRegistration = null;
-        if (cancellationToken.IsCancellationRequested)
-        {
-            _initialPresentation.TrySetCanceled(cancellationToken);
-        }
-        else
-        {
-            _initialPresentation.TrySetResult();
-        }
+        _initialPresentation.TrySetResult();
     }
 
     private void CancelInitialPlacement(int version, CancellationToken cancellationToken)
     {
+        _initialPlacementCancellationCallbacks++;
         if (_disposed || version != _initialPlacementVersion || !_initialPlacementPending)
         {
+            _initialPlacementStaleCallbacks++;
             return;
         }
 
         _initialPlacementVersion++;
+        _scrollCoordinator.CancelInitialPlacement();
         _initialPlacementPending = false;
         _initialPlacementQueued = false;
+        _initialAnchorKey = null;
         _scrollViewer.Opacity = 1;
         _initialPlacementCancellationRegistration?.Dispose();
         _initialPlacementCancellationRegistration = null;
@@ -454,3 +556,12 @@ internal sealed class TranscriptViewBehavior : IDisposable
     private static TaskCompletionSource CreatePresentationCompletion()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
+
+internal readonly record struct TranscriptViewBehaviorDiagnosticSnapshot(
+    int InitialPlacementVersion,
+    bool InitialPlacementPending,
+    bool InitialPlacementQueued,
+    bool CancellationOperationCompleted,
+    int CompletionCallbacks,
+    int CancellationCallbacks,
+    int StaleCallbacks);

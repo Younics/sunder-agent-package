@@ -7,16 +7,11 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentProfilesViewModel
 {
-    private async Task LoadSelectedProfileAsync(AgentProfileRecord? profile, int version)
+    private async Task LoadSelectedProfileAsync(
+        AgentProfileRecord profile,
+        AdaptiveDetailTicket<string> ticket)
     {
-        if (profile is null)
-        {
-            ClearEditor();
-            EndHydration(version);
-            return;
-        }
-
-        BeginHydration(version);
+        var cancellationToken = ticket.Request.CancellationToken;
         var startEditRevision = _editRevision;
         try
         {
@@ -29,10 +24,10 @@ public sealed partial class AgentProfilesViewModel
                 _drafts[profile.ProfileId] = document;
             }
 
-            var localToolsTask = _profileService.ListInstalledLocalToolsAsync(_lifetimeCancellation.Token);
+            var localToolsTask = _profileService.ListInstalledLocalToolsAsync(cancellationToken);
             var packageCapabilitiesTask = _profileService.ListSelectableProfileCapabilitiesAsync(
                 BuildCapabilityRequestProfile(profile, draft),
-                _lifetimeCancellation.Token);
+                cancellationToken);
             var behaviorLoops = _profileService.ListBehaviorLoopDescriptors()
                 .Select(loop => new BehaviorLoopOption(
                     loop.LoopId,
@@ -56,15 +51,17 @@ public sealed partial class AgentProfilesViewModel
             }
 
             await Task.WhenAll(
-                ChatBinding.RefreshAsync(draft.ChatBinding, _lifetimeCancellation.Token),
-                EmbeddingBinding.RefreshAsync(draft.EmbeddingBinding, _lifetimeCancellation.Token),
-                localToolsTask,
-                packageCapabilitiesTask).ConfigureAwait(false);
-            var localTools = await localToolsTask.ConfigureAwait(false);
-            var packageCapabilities = await packageCapabilitiesTask.ConfigureAwait(false);
+                    ChatBinding.RefreshAsync(draft.ChatBinding, cancellationToken),
+                    EmbeddingBinding.RefreshAsync(draft.EmbeddingBinding, cancellationToken),
+                    localToolsTask,
+                    packageCapabilitiesTask)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+            var localTools = await localToolsTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var packageCapabilities = await packageCapabilitiesTask.WaitAsync(cancellationToken).ConfigureAwait(false);
             await _uiDispatcher.InvokeAsync(() =>
             {
-                if (!IsCurrentProfileLoad(version, profile.ProfileId))
+                if (!_listDetail.IsCurrentDetail(ticket))
                 {
                     return;
                 }
@@ -95,21 +92,23 @@ public sealed partial class AgentProfilesViewModel
                 }
 
                 OnPropertyChanged(nameof(IsDirty));
+                _listDetail.TrySetDetailReady(ticket);
             }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await _uiDispatcher.InvokeAsync(() =>
+                _listDetail.TryCancelDetailLoad(ticket)).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             await _uiDispatcher.InvokeAsync(() =>
             {
-                if (!_disposed && IsCurrentProfileLoad(version, profile.ProfileId))
+                if (_listDetail.TrySetDetailError(ticket, ex))
                 {
                     SetStatus(ex.Message, AgentProfileStatusKind.Error);
                 }
             }).ConfigureAwait(false);
-        }
-        finally
-        {
-            await _uiDispatcher.InvokeAsync(() => EndHydration(version)).ConfigureAwait(false);
         }
     }
 
@@ -121,21 +120,29 @@ public sealed partial class AgentProfilesViewModel
             return;
         }
 
-        var version = _profileLoadVersion;
+        var intentRevision = IntentRevision;
+        var request = _requests.Begin(CapabilitiesChannel, _lifetimeCancellation.Token);
         var operation = BeginOperation(AgentProfileOperation.RefreshCapabilities);
         try
         {
             var requestProfile = BuildCapabilityRequestProfile(profile, CaptureDraft());
-            var localToolsTask = _profileService.ListInstalledLocalToolsAsync(_lifetimeCancellation.Token);
+            var localToolsTask = _profileService.ListInstalledLocalToolsAsync(request.CancellationToken);
             var packageCapabilitiesTask = _profileService.ListSelectableProfileCapabilitiesAsync(
                 requestProfile,
-                _lifetimeCancellation.Token);
-            await Task.WhenAll(localToolsTask, packageCapabilitiesTask).ConfigureAwait(false);
-            var localTools = await localToolsTask.ConfigureAwait(false);
-            var packageCapabilities = await packageCapabilitiesTask.ConfigureAwait(false);
+                request.CancellationToken);
+            await Task.WhenAll(localToolsTask, packageCapabilitiesTask)
+                .WaitAsync(request.CancellationToken)
+                .ConfigureAwait(false);
+            var localTools = await localToolsTask.WaitAsync(request.CancellationToken).ConfigureAwait(false);
+            var packageCapabilities = await packageCapabilitiesTask.WaitAsync(request.CancellationToken).ConfigureAwait(false);
             await _uiDispatcher.InvokeAsync(() =>
             {
-                if (!IsCurrentProfileLoad(version, profile.ProfileId))
+                if (!_requests.IsCurrent(request)
+                    || intentRevision != IntentRevision
+                    || !string.Equals(
+                        SelectedProfile?.ProfileId,
+                        profile.ProfileId,
+                        StringComparison.OrdinalIgnoreCase))
                 {
                     return;
                 }
@@ -157,11 +164,19 @@ public sealed partial class AgentProfilesViewModel
                 UpdateCurrentDraft();
             }).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (request.CancellationToken.IsCancellationRequested)
+        {
+        }
         catch (Exception ex)
         {
             await _uiDispatcher.InvokeAsync(() =>
             {
-                if (!_disposed && IsCurrentProfileLoad(version, profile.ProfileId))
+                if (_requests.IsCurrent(request)
+                    && intentRevision == IntentRevision
+                    && string.Equals(
+                        SelectedProfile?.ProfileId,
+                        profile.ProfileId,
+                        StringComparison.OrdinalIgnoreCase))
                 {
                     SetStatus(ex.Message, AgentProfileStatusKind.Error);
                 }
@@ -169,6 +184,7 @@ public sealed partial class AgentProfilesViewModel
         }
         finally
         {
+            _requests.Complete(request);
             await _uiDispatcher.InvokeAsync(() =>
             {
                 if (!_disposed)
@@ -317,6 +333,7 @@ public sealed partial class AgentProfilesViewModel
             return;
         }
 
+        _listDetail.PromoteSelectionToExplicit();
         _editRevision++;
         UpdateCurrentDraft();
     }

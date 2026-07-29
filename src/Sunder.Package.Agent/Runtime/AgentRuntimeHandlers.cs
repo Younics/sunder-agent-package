@@ -154,7 +154,7 @@ internal sealed class AgentRuntimeChangeHub :
             0,
             AgentRuntimeChangeKind.TurnMutation,
             SessionId: mutation.SessionId,
-            Turn: _sessions.GetTurn(mutation.TurnId) ?? mutation.Turn,
+            Turn: _sessions.GetTranscriptHeader(mutation.TurnId) ?? mutation.Turn,
             TurnMutation: mutation));
 
     private void OnTranscriptReset(Guid sessionId)
@@ -350,15 +350,15 @@ internal sealed class AgentTranscriptPageHandler(
         var limit = Math.Clamp(request.Limit, 1, 500);
         IReadOnlyList<AgentTurnRecord> turns = request.Direction switch
         {
-            AgentTranscriptPageDirection.Recent => sessions.ListRecentTurns(request.SessionId, limit + 1),
+            AgentTranscriptPageDirection.Recent => sessions.ListRecentTranscriptHeaders(request.SessionId, limit + 1),
             AgentTranscriptPageDirection.Before when request.AnchorCreatedAtUtc is { } createdAt
                                                      && request.AnchorTurnId is { } turnId
-                => sessions.ListTurnsBefore(request.SessionId, createdAt, turnId, limit + 1),
+                => sessions.ListTranscriptHeadersBefore(request.SessionId, createdAt, turnId, limit + 1),
             AgentTranscriptPageDirection.After when request.AnchorCreatedAtUtc is { } createdAt
                                                     && request.AnchorTurnId is { } turnId
-                => sessions.ListTurnsAfter(request.SessionId, createdAt, turnId, limit + 1),
+                => sessions.ListTranscriptHeadersAfter(request.SessionId, createdAt, turnId, limit + 1),
             AgentTranscriptPageDirection.Turn when request.AnchorTurnId is { } turnId
-                => sessions.GetTurn(turnId) is { } turn ? [turn] : [],
+                => sessions.GetTranscriptHeader(turnId) is { } turn ? [turn] : [],
             _ => throw new InvalidOperationException("The transcript page anchor is invalid."),
         };
         var hasMore = turns.Count > limit;
@@ -370,6 +370,20 @@ internal sealed class AgentTranscriptPageHandler(
         return ValueTask.FromResult(AgentRuntimePayloadLimits.FitTranscriptPage(
             new AgentTranscriptPage(changes.Revision, pageTurns, hasMore),
             request.Direction));
+    }
+}
+
+internal sealed class AgentTranscriptToolDetailHandler(AgentSessionService sessions)
+    : IPackageRuntimeOperationHandler<AgentTranscriptToolDetailRequest, AgentTranscriptToolDetailResponse>
+{
+    public ValueTask<AgentTranscriptToolDetailResponse> HandleAsync(
+        AgentTranscriptToolDetailRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var detail = sessions.GetTranscriptToolDetail(request);
+        return ValueTask.FromResult(new AgentTranscriptToolDetailResponse(
+            detail is null ? null : AgentRuntimePayloadLimits.FitToolDetail(detail)));
     }
 }
 
@@ -543,69 +557,64 @@ internal sealed class AgentRunCommandHandler(
     public async ValueTask<AgentRunCommandResult> HandleAsync(
         AgentRunCommand request, CancellationToken cancellationToken = default)
     {
-        var tracksUserTurn = request.UserTurnId is not null
-                             && request.Kind is (AgentRunCommandKind.Start or AgentRunCommandKind.RollbackAndStart);
-        if (tracksUserTurn
-            && !_pendingUserTurns.TryAdd(request.UserTurnId!.Value, request.SessionId))
+        if (request.Kind is AgentRunCommandKind.Start or AgentRunCommandKind.RollbackAndStart)
         {
-            throw new InvalidOperationException("The correlated run command is already pending.");
-        }
-        try
-        {
-            IReadOnlyList<AgentAttachmentUploadRequest> attachments = [];
-            if (request.Kind is AgentRunCommandKind.Start or AgentRunCommandKind.RollbackAndStart)
+            var userTurnId = request.UserTurnId ?? Guid.NewGuid();
+            if (!_pendingUserTurns.TryAdd(userTurnId, request.SessionId))
+            {
+                throw new InvalidOperationException("The correlated run command is already pending.");
+            }
+            try
             {
                 if ((request.UserMessage?.Length ?? 0) > AgentRuntimePayloadLimits.MaximumRunMessageCharacters)
                 {
                     throw new InvalidOperationException(
                         $"Agent message exceeds the {AgentRuntimePayloadLimits.MaximumRunMessageCharacters} character Runtime transport limit.");
                 }
-                attachments = attachmentTransfers.ConsumeUploads(request.AttachmentHandles ?? []);
-            }
-
-            var checkpoint = request.Kind switch
-            {
-                AgentRunCommandKind.Start => request.UserTurnId is { } startUserTurnId
-                    ? await ((IAgentCorrelatedRunGateway)runs).QueueUserMessageAsync(request.SessionId,
-                        Require(request.ProfileId, "Profile id"), request.UserMessage ?? string.Empty,
-                        Require(request.WorkspaceId, "Workspace id"), attachments, startUserTurnId,
-                        cancellationToken)
-                    : await runs.QueueUserMessageAsync(request.SessionId,
-                        Require(request.ProfileId, "Profile id"), request.UserMessage ?? string.Empty,
-                        Require(request.WorkspaceId, "Workspace id"), attachments, cancellationToken),
-                AgentRunCommandKind.RollbackAndStart => request.UserTurnId is { } rollbackUserTurnId
-                    ? await ((IAgentCorrelatedRunGateway)runs).RollbackAndQueueUserMessageAsync(request.SessionId,
-                        request.RollbackAnchorTurnId ?? throw new InvalidOperationException("Rollback anchor is required."),
-                        Require(request.ProfileId, "Profile id"), request.UserMessage ?? string.Empty,
-                        Require(request.WorkspaceId, "Workspace id"), attachments, rollbackUserTurnId,
-                        cancellationToken)
-                    : await runs.RollbackAndQueueUserMessageAsync(request.SessionId,
-                        request.RollbackAnchorTurnId ?? throw new InvalidOperationException("Rollback anchor is required."),
-                        Require(request.ProfileId, "Profile id"), request.UserMessage ?? string.Empty,
-                        Require(request.WorkspaceId, "Workspace id"), attachments, cancellationToken),
-                AgentRunCommandKind.Stop => await ((IAgentRunGateway)runs).StopAsync(request.SessionId, cancellationToken),
-                AgentRunCommandKind.ApprovePermission => await runs.ApprovePendingPermissionAsync(
+                Guid? rollbackAnchorTurnId = request.Kind == AgentRunCommandKind.RollbackAndStart
+                    ? request.RollbackAnchorTurnId
+                      ?? throw new InvalidOperationException("Rollback anchor is required.")
+                    : null;
+                var admission = await runs.AdmitTransferredUserTurnAsync(
                     request.SessionId,
-                    Require(request.PermissionRequestId, "Permission request id"),
-                    request.ApproveForSession,
-                    cancellationToken),
-                AgentRunCommandKind.DenyPermission => await ((IAgentRunGateway)runs).DenyPendingPermissionAsync(
-                    request.SessionId, Require(request.PermissionRequestId, "Permission request id"), cancellationToken),
-                _ => throw new InvalidOperationException("Unknown run command."),
-            };
-            if (request.Kind is AgentRunCommandKind.ApprovePermission or AgentRunCommandKind.DenyPermission)
-            {
-                changes.NotifyPermissionChanged(request.SessionId);
+                    Require(request.ProfileId, "Profile id"),
+                    request.UserMessage ?? string.Empty,
+                    Require(request.WorkspaceId, "Workspace id"),
+                    request.AttachmentHandles ?? [],
+                    attachmentTransfers,
+                    userTurnId,
+                    rollbackAnchorTurnId,
+                    cancellationToken).ConfigureAwait(false);
+                runs.SignalDispatcher();
+                return new AgentRunCommandResult(
+                    changes.Revision,
+                    admission.Checkpoint,
+                    admission.Run.Key.RunId,
+                    userTurnId);
             }
-            return new AgentRunCommandResult(changes.Revision, checkpoint);
+            finally
+            {
+                _pendingUserTurns.TryRemove(userTurnId, out _);
+            }
         }
-        finally
+
+        var checkpoint = request.Kind switch
         {
-            if (tracksUserTurn)
-            {
-                _pendingUserTurns.TryRemove(request.UserTurnId!.Value, out _);
-            }
+            AgentRunCommandKind.Stop => await ((IAgentRunGateway)runs).StopAsync(request.SessionId, cancellationToken),
+            AgentRunCommandKind.ApprovePermission => await runs.ApprovePendingPermissionAsync(
+                request.SessionId,
+                Require(request.PermissionRequestId, "Permission request id"),
+                request.ApproveForSession,
+                cancellationToken),
+            AgentRunCommandKind.DenyPermission => await ((IAgentRunGateway)runs).DenyPendingPermissionAsync(
+                request.SessionId, Require(request.PermissionRequestId, "Permission request id"), cancellationToken),
+            _ => throw new InvalidOperationException("Unknown run command."),
+        };
+        if (request.Kind is AgentRunCommandKind.ApprovePermission or AgentRunCommandKind.DenyPermission)
+        {
+            changes.NotifyPermissionChanged(request.SessionId);
         }
+        return new AgentRunCommandResult(changes.Revision, checkpoint);
     }
 
     public ValueTask<AgentRunCommandStatusResult> HandleAsync(
@@ -613,25 +622,27 @@ internal sealed class AgentRunCommandHandler(
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var turn = sessions.GetTurn(request.UserTurnId);
-        AgentRunCommandStatus status;
-        if (turn?.SessionId == request.SessionId && turn.Role == AgentMessageRole.User)
-        {
-            status = AgentRunCommandStatus.Committed;
-        }
-        else if (_pendingUserTurns.TryGetValue(request.UserTurnId, out var pendingSessionId)
-                 && pendingSessionId == request.SessionId)
+        var status = GetCommittedStatus(request);
+        if (status != AgentRunCommandStatus.Committed
+            && _pendingUserTurns.TryGetValue(request.UserTurnId, out var pendingSessionId)
+            && pendingSessionId == request.SessionId)
         {
             status = AgentRunCommandStatus.Pending;
         }
-        else
+        else if (status != AgentRunCommandStatus.Committed)
         {
-            turn = sessions.GetTurn(request.UserTurnId);
-            status = turn?.SessionId == request.SessionId && turn.Role == AgentMessageRole.User
-                ? AgentRunCommandStatus.Committed
-                : AgentRunCommandStatus.Absent;
+            // Admission can commit between the first durable read and pending-map removal.
+            status = GetCommittedStatus(request);
         }
         return ValueTask.FromResult(new AgentRunCommandStatusResult(changes.Revision, status));
+    }
+
+    private AgentRunCommandStatus GetCommittedStatus(AgentRunCommandStatusRequest request)
+    {
+        var run = sessions.Store.GetRunByUserTurnId(request.UserTurnId);
+        return run?.Key.SessionId == request.SessionId
+            ? AgentRunCommandStatus.Committed
+            : AgentRunCommandStatus.Absent;
     }
 
     private static string Require(string? value, string name)

@@ -30,9 +30,10 @@ namespace Sunder.Package.Agent.Contracts.Services;
 public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
 {
     private readonly IPackageExtensionCatalog _extensionCatalog;
+    private readonly IPackageExtensionInvocationCatalog _invocationCatalog;
     private readonly IPackageExtensionCatalogMonitor? _extensionCatalogMonitor;
     private readonly object _syncRoot = new();
-    private readonly HashSet<IAgentProfileSelectableCapabilityChangeNotifier> _subscribedProviders = [];
+    private readonly List<ProviderSubscription> _providerSubscriptions = [];
     private bool _disposed;
 
     /// <summary>
@@ -44,6 +45,9 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
     public AgentProfileSelectableCapabilityChangeObserver(IPackageExtensionCatalog extensionCatalog)
     {
         _extensionCatalog = extensionCatalog;
+        _invocationCatalog = extensionCatalog as IPackageExtensionInvocationCatalog
+            ?? throw new InvalidOperationException(
+                "The host extension catalog does not support activation-scoped invocation leases.");
         if (_extensionCatalog is IPackageExtensionCatalogMonitor monitor)
         {
             _extensionCatalogMonitor = monitor;
@@ -78,21 +82,44 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
                 return;
             }
 
-            var currentProviders = _extensionCatalog.GetExtensions(PackageExtensionPoints.ProfileSelectableCapabilityProviders)
-                .OfType<IAgentProfileSelectableCapabilityChangeNotifier>()
-                .ToHashSet();
-            foreach (var provider in _subscribedProviders.Except(currentProviders).ToArray())
+            var currentSubscriptions = new HashSet<ProviderSubscription>();
+            foreach (var reference in _invocationCatalog.GetExtensionReferences(
+                         PackageExtensionPoints.ProfileSelectableCapabilityProviders))
             {
-                provider.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
-                _subscribedProviders.Remove(provider);
+                if (!reference.TryAcquire(out var lease))
+                {
+                    continue;
+                }
+
+                if (lease.Contribution is not IAgentProfileSelectableCapabilityChangeNotifier notifier
+                    || lease.RetirementToken.IsCancellationRequested)
+                {
+                    lease.Dispose();
+                    continue;
+                }
+
+                var existing = _providerSubscriptions.FirstOrDefault(subscription =>
+                    ReferenceEquals(subscription.Notifier, notifier));
+                if (existing is not null)
+                {
+                    currentSubscriptions.Add(existing);
+                    lease.Dispose();
+                    continue;
+                }
+
+                var added = new ProviderSubscription(lease, notifier);
+                notifier.SelectableCapabilitiesChanged += OnSelectableCapabilitiesChanged;
+                _providerSubscriptions.Add(added);
+                currentSubscriptions.Add(added);
             }
 
-            foreach (var provider in currentProviders)
+            foreach (var subscription in _providerSubscriptions
+                         .Where(subscription => !currentSubscriptions.Contains(subscription))
+                         .ToArray())
             {
-                if (_subscribedProviders.Add(provider))
-                {
-                    provider.SelectableCapabilitiesChanged += OnSelectableCapabilitiesChanged;
-                }
+                subscription.Notifier.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
+                _providerSubscriptions.Remove(subscription);
+                subscription.Dispose();
             }
         }
     }
@@ -128,12 +155,24 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
                 _extensionCatalogMonitor.Changed -= OnExtensionCatalogChanged;
             }
 
-            foreach (var provider in _subscribedProviders)
+            foreach (var subscription in _providerSubscriptions)
             {
-                provider.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
+                subscription.Notifier.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
+                subscription.Dispose();
             }
 
-            _subscribedProviders.Clear();
+            _providerSubscriptions.Clear();
         }
+    }
+
+    private sealed class ProviderSubscription(
+        IPackageExtensionLease<IAgentProfileSelectableCapabilityProvider> lease,
+        IAgentProfileSelectableCapabilityChangeNotifier notifier) : IDisposable
+    {
+        private IPackageExtensionLease<IAgentProfileSelectableCapabilityProvider>? _lease = lease;
+
+        internal IAgentProfileSelectableCapabilityChangeNotifier Notifier { get; } = notifier;
+
+        public void Dispose() => Interlocked.Exchange(ref _lease, null)?.Dispose();
     }
 }

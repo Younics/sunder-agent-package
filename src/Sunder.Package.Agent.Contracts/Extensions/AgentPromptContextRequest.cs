@@ -1,3 +1,6 @@
+using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Sdk.Abstractions;
+
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
@@ -50,4 +53,16 @@ public sealed record AgentPromptContextRequest(
     /// <summary>Gets the bounded ready-tool snapshot used for this model request.</summary>
     /// <remarks>Descriptor metadata is read-only and does not authorize tool use or context retrieval.</remarks>
     public IReadOnlyList<AgentToolDescriptor> AvailableTools { get; init; } = [];
+
+    /// <summary>
+    /// Gets the exact durable rollback receipt that memory contributors must observe before returning context.
+    /// </summary>
+    /// <remarks>A contributor that cannot verify this barrier must return no rollback-sensitive context rather than block the run.</remarks>
+    public AgentMemoryConsistencyBarrier? MemoryConsistencyBarrier { get; init; }
+
+    /// <summary>Gets the current durable transcript epoch used to invalidate rollback-sensitive session context.</summary>
+    public long TranscriptEpoch { get; init; }
+
+    /// <summary>Gets an opaque reference to the exact execution-target activation selected for this prompt-context callback.</summary>
+    public IPackageExtensionReference<IAgentExecutionTarget>? ExecutionTargetReference { get; init; }
 }

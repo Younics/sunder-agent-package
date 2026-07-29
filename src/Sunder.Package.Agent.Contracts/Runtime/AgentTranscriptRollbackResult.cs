@@ -17,4 +17,8 @@ public sealed record AgentTranscriptRollbackResult(
     Guid SessionId,
     Guid AnchorTurnId,
     IReadOnlyList<Guid> DeletedTurnIds,
-    IReadOnlyList<Guid> DeletedSessionIds);
+    IReadOnlyList<Guid> DeletedSessionIds)
+{
+    /// <summary>Gets the durable memory-consistency barrier emitted by this rollback, when any turns were removed.</summary>
+    public AgentMemoryConsistencyBarrier? MemoryConsistencyBarrier { get; init; }
+}

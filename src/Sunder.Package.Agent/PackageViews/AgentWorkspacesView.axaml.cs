@@ -56,10 +56,16 @@ public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageVie
         IAgentExecutionGateway executionGateway,
         IPackageExtensionCatalog extensionCatalog,
         IPackageSettingsNavigationService? settingsNavigationService = null,
-        AgentWorkspacesViewContext? context = null)
+        AgentWorkspacesViewContext? context = null,
+        IPackageExtensionInvocationCatalog? extensionInvocationCatalog = null)
         : this(context ?? new AgentWorkspacesViewContext())
     {
-        _viewModel = new AgentWorkspacesViewModel(workspaceService, executionGateway, extensionCatalog, settingsNavigationService);
+        _viewModel = new AgentWorkspacesViewModel(
+            workspaceService,
+            executionGateway,
+            extensionCatalog,
+            settingsNavigationService,
+            extensionInvocationCatalog);
         DataContext = _viewModel;
     }
 
@@ -690,7 +696,8 @@ public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageVie
             var viewModel = _viewModel ?? DataContext as AgentWorkspacesViewModel;
             if (viewModel is not null)
             {
-                _context.Run(_ => viewModel.ExecuteEditorActionAsync(action));
+                _context.Run(cancellationToken =>
+                    viewModel.ExecuteEditorActionAsync(action, cancellationToken));
             }
         }
     }

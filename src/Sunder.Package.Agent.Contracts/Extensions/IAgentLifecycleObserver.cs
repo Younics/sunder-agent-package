@@ -13,21 +13,22 @@ namespace Sunder.Package.Agent.Contracts.Contracts;
 /// return mutations and cannot replace Agent-owned session, transcript, or checkpoint state.
 /// </para>
 /// <para>
-/// Identity and ordering: <see cref="ObserverId"/> is stable package-scoped metadata, but registrations
-/// are not deduplicated by it. Observers are invoked sequentially by <see cref="DisplayName"/>, using
-/// ordinal case-insensitive ordering. The same logical event can be delivered more than once after
-/// recovery or retries, so persistent effects should be idempotent using event record identities.
+/// Identity and ordering: <see cref="ObserverId"/> is the stable package-scoped identity of a persisted
+/// compatibility subscription. Duplicate active registrations with the same package and observer id are ignored.
+/// Retained compatible events are replayed in bounded batches and serialized per subscription and ordering scope.
+/// The same logical event can be delivered more than once after recovery or retries, so persistent effects should
+/// be idempotent using <see cref="AgentLifecycleEvent.EventId"/>.
 /// </para>
 /// <para>
 /// Ownership and threading: the host owns activation-scoped observer instances and event snapshots;
-/// callers must not dispose or mutate them. Different runs and sessions can notify the same observer
-/// concurrently, with no thread-affinity guarantee.
+/// callers must not dispose or mutate them. Calls for one subscription are serialized and have no thread affinity.
 /// </para>
 /// <para>
 /// Cancellation and failure isolation: implementations must observe the supplied token. The Runtime
-/// propagates <see cref="OperationCanceledException"/> and suppresses other observer exceptions so an
-/// optional observer cannot block the base run flow. Some terminal notifications use
-/// <see cref="CancellationToken.None"/>, so observers must also bound their own work.
+/// uses cancellation for dispatcher shutdown. Observer failures do not change the source run, but are retried and
+/// eventually enter a poison state that blocks later events in the same ordering scope until recovery. Implementations
+/// must bound their own work and should use <see cref="IAgentDurableLifecycleObserver"/> when deletion events and
+/// explicit erasure receipts are required.
 /// </para>
 /// <para>
 /// Trust, provenance, and security: event kind and message roles describe provenance; assistant text,

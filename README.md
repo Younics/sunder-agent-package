@@ -27,7 +27,7 @@ The packages in this repository are normal Sunder runtime packages built with `S
 
 | Capability | What it enables |
 | --- | --- |
-| Agent workspace | Sessions, chat, profiles, workspaces, permissions, and runtime orchestration inside Sunder. |
+| Agent workspace | Sessions, chat, profiles, workspaces, permissions, local History Search, and runtime orchestration inside Sunder. |
 | Model providers | OpenAI, Anthropic, Gemini, and LM Studio package integrations. |
 | Execution targets | Local machine and Docker-backed agent execution surfaces. |
 | Tools | File-system tools, shell tools, web fetch/search, MCP tools, and package-provided native tools. |
@@ -50,6 +50,8 @@ For local development, build package archives from source or load generated `sun
 ## Documentation
 
 Extension authors should start with the **[Agent Extension Author Guide](docs/README.md)**. It includes the [quickstart](docs/extension-quickstart.md), the complete [extension-point catalog](docs/extension-points.md), capability-specific guides, testing guidance, and compatibility/troubleshooting policy. A compiled minimal extension is available under [`samples/Sunder.Agent.Extension.Minimal`](samples/Sunder.Agent.Extension.Minimal/README.md).
+
+The Agent workspace includes [local History Search](docs/history-search.md): it opens on recent history for the current workspace, searches lexical text and safe path/activity metadata locally, and maintains its disposable index automatically without embedding-provider calls.
 
 ## Package Family
 
@@ -82,7 +84,7 @@ Extension authors should start with the **[Agent Extension Author Guide](docs/RE
 | Local model setup | Agent, LM Studio provider, local execution |
 | Extensible agent workspace | Agent, MCP, skills, subagents, provider of choice |
 
-Local execution runs commands and file operations with the current host user's privileges. It is a trusted host-user execution target, not an operating-system sandbox. Workspace bindings, canonical path checks, and tool permission contracts constrain requested paths, but they do not isolate a malicious process from the host. Docker execution adds a container boundary, drops Linux capabilities, enables no-new-privileges, bounds CPU/memory/PIDs, and disables networking by default. It is still not a complete security sandbox: configured workspace paths are writable bind mounts, container images are trusted code, and access to the Docker daemon remains security-sensitive.
+Local execution runs with the current host user's privileges and is not an operating-system sandbox. Local structured Files operations and scoped `AGENTS.md` discovery use operation-owned no-follow filesystem authority, reject links/reparse points, hard-linked files, and device transitions, and require single-use process-local approval leases outside configured roots. Docker applies the same host-handle guarantees to configured workspace bind mounts without acquiring a container for structured operations; container-private and outside-bind paths fail closed. General shell/process execution is outside that structured guarantee. Docker accepts local daemon endpoints only, binds container reuse to daemon/image/mount identities, drops Linux capabilities, enables no-new-privileges, bounds CPU/memory/PIDs, and disables networking by default. It is not a complete security sandbox: configured workspace paths are writable bind mounts, container images are trusted code, and access to the Docker daemon remains security-sensitive.
 
 ## How It Fits Together
 
@@ -124,7 +126,7 @@ Browser callbacks are host-owned; packages never bind callback ports. OpenAI Cod
 
 Version `1.1.0` is an intentional clean break from the unused public `1.0.0` line. Every Agent package and `Sunder.Package.Agent.Contracts` ships at one family version; Sunder NuGet references use `[1.1.0,1.2.0)` and extension runtime dependencies use `>=1.1.0 <1.2.0`. Rebuild and release the complete family together. There are no 1.0 compatibility shims, and the Runtime rejects mixed SDK/package baselines before assembly load. The immutable contract ledger is `src/Sunder.Package.Agent.Contracts/PublicAPI.Shipped.txt`.
 
-Agent data upgrades are forward-only through one ordered SQLite migration ledger. Each applied migration records its number, immutable name, and SHA-256 checksum in the same transaction as its schema change. Startup refuses unknown, newer, renamed, or checksum-mismatched entries. If validation fails, back up `agent/agent.db` and use an Agent build that recognizes the ledger; do not edit or delete ledger rows.
+Agent data upgrades are forward-only through one ordered SQLite migration ledger, currently through migration 20, `durable-resource-claims`, with checksum `849bc5010a9c700c8cb683e2992e442dc4471fed275135b39f60ae8d54f46fa0`. Migration 20 adds durable resource-claim persistence and execution-target ownership while leaving migrations 1-19 and their checksums unchanged. Each applied migration records its number, immutable name, and SHA-256 checksum in the same transaction as its schema change. Startup refuses unknown, newer, renamed, or checksum-mismatched entries. If validation fails, back up `agent/agent.db` and use an Agent build that recognizes the ledger; do not edit or delete ledger rows.
 
 App package modules own presentation and async Runtime gateways only. Runtime stores and authorities stay in Runtime composition, and Subsessions reads sessions, checkpoints, transcript pages, and change notifications through separate narrow async ports.
 
@@ -148,6 +150,7 @@ GitHub CI resolves `Younics/sunder-core` `main` once at the start of each run an
 
 ```powershell
 dotnet test tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj --no-restore
+dotnet test tests/Sunder.Package.Agent.Execution.Local.Tests/Sunder.Package.Agent.Execution.Local.Tests.csproj --no-restore
 dotnet test tests/Sunder.Package.Agent.Provider.OpenAI.Tests/Sunder.Package.Agent.Provider.OpenAI.Tests.csproj --no-restore
 ```
 

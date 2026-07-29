@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol.Client;
@@ -8,6 +9,7 @@ using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Callbacks;
+using Sunder.Sdk.Storage;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -95,6 +97,217 @@ public sealed class McpRefactorTests
 
         Assert.Contains("already exists", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Single(await catalog.ListServersAsync());
+    }
+
+    [Fact]
+    public async Task Catalog_UsesPortablePhysicalKeysForImportedServerAndSecretIdentifiers()
+    {
+        var serverId = " imported:/\u65E5\u672C\u8A9E/" + new string('s', 300);
+        const string headerName = "X Imported / \u00E9";
+        const string environmentName = "TOKEN / \u65E5";
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var server = CreateServer(serverId, "portable") with
+        {
+            HeaderNames = [headerName],
+            EnvironmentVariableNames = [environmentName],
+        };
+
+        await catalog.SaveServerAsync(
+            server,
+            new Dictionary<string, string> { [headerName] = "header-secret" },
+            new Dictionary<string, string> { [environmentName] = "environment-secret" });
+
+        Assert.Equal(serverId, Assert.Single(await catalog.ListServersAsync()).ServerId);
+        Assert.All(await context.State.ListKeysAsync(), key => Assert.True(PackageStorageValidation.IsValidKey(key)));
+        Assert.All(context.Secrets.Keys, key => Assert.True(PackageStorageValidation.IsValidKey(key)));
+        Assert.True(PackageStorageValidation.IsValidKey(McpOAuthSecretKeys.TokenCache(serverId)));
+        Assert.True(PackageStorageValidation.IsValidKey(McpOAuthSecretKeys.ClientRegistration(serverId)));
+        Assert.True(PackageStorageValidation.IsValidKey(McpOAuthSecretKeys.ClientSecret(serverId)));
+    }
+
+    [Fact]
+    public async Task PackageStorageMigration_UsesCaseEquivalentPayloadServerIdForStateAndSecrets()
+    {
+        const string payloadServerId = "server-one";
+        const string legacyKeyServerId = "SERVER-ONE";
+        var context = new TestPackageContext();
+        var server = CreateServer(payloadServerId, "case-preserved");
+        var payload = JsonSerializer.Serialize(server);
+        var legacyStateKey = $"mcp.servers.{legacyKeyServerId}";
+        var legacySecretKey = McpServerCatalogService.BuildLegacyApiKeySecretKey(payloadServerId);
+        await context.State.SetValueAsync(legacyStateKey, payload);
+        await context.Secrets.SetSecretAsync(legacySecretKey, "secret");
+
+        var migration = new McpPackageStorageMigration(context);
+        await migration.EnsureAsync();
+
+        Assert.Null(await context.State.GetValueAsync(legacyStateKey));
+        Assert.Equal(payload, await context.State.GetValueAsync(McpServerCatalogService.BuildServerKey(payloadServerId)));
+        Assert.Null(await context.Secrets.GetSecretAsync(legacySecretKey));
+        Assert.Equal(
+            "secret",
+            await context.Secrets.GetSecretAsync(McpServerCatalogService.BuildApiKeySecretKey(payloadServerId)));
+        var catalog = new McpServerCatalogService(context, migration);
+        Assert.Equal(payloadServerId, Assert.Single(await catalog.ListServersAsync()).ServerId);
+
+        await catalog.DeleteServerAsync(legacyKeyServerId);
+
+        Assert.Empty(await catalog.ListServersAsync());
+        Assert.Null(await catalog.GetServerAsync(payloadServerId));
+        Assert.Null(await context.State.GetValueAsync(McpServerCatalogService.BuildServerKey(payloadServerId)));
+    }
+
+    [Fact]
+    public async Task PackageStorageMigration_RejectsCaseCollidingPayloadIdentitiesWithoutMutation()
+    {
+        const string firstKey = "mcp.servers.Server-One";
+        const string secondKey = "mcp.servers.SERVER-ONE";
+        var context = new TestPackageContext();
+        var firstPayload = JsonSerializer.Serialize(CreateServer("server-one", "first"));
+        var secondPayload = JsonSerializer.Serialize(CreateServer("SERVER-ONE", "second"));
+        await context.State.SetValueAsync(firstKey, firstPayload);
+        await context.State.SetValueAsync(secondKey, secondPayload);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new McpPackageStorageMigration(context).EnsureAsync());
+
+        Assert.Contains("collision", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(firstPayload, await context.State.GetValueAsync(firstKey));
+        Assert.Equal(secondPayload, await context.State.GetValueAsync(secondKey));
+        Assert.Null(await context.State.GetValueAsync(McpServerCatalogService.BuildServerKey("server-one")));
+    }
+
+    [Fact]
+    public async Task PackageStorageMigration_CleansCrashRemnantsWithoutOrphanResurrection()
+    {
+        const string liveServerId = "live-server";
+        const string deletedServerId = "deleted-server";
+        const string headerName = "X-Token";
+        const string environmentName = "TOKEN";
+        var context = new TestPackageContext();
+        var live = CreateServer(liveServerId, "live") with
+        {
+            PersistenceVersion = 3,
+            HeaderNames = [headerName],
+            EnvironmentVariableNames = [environmentName],
+            OAuthEnabled = true,
+        };
+        await context.State.SetValueAsync(
+            McpServerCatalogService.BuildServerKey(liveServerId),
+            JsonSerializer.Serialize(live));
+
+        var exactHeader = McpServerCatalogService.BuildLegacyHeaderSecretKey(
+            liveServerId,
+            live.PersistenceVersion,
+            headerName);
+        var mixedCaseHeader = McpServerCatalogService.BuildLegacyHeaderSecretKey(
+            liveServerId.ToUpperInvariant(),
+            live.PersistenceVersion,
+            headerName.ToLowerInvariant());
+        var currentEnvironment = McpServerCatalogService.BuildEnvironmentSecretKey(
+            liveServerId,
+            live.PersistenceVersion,
+            environmentName);
+        context.Secrets.Seed(exactHeader, "current-header");
+        context.Secrets.Seed(mixedCaseHeader, "conflicting-case-remnant");
+        context.Secrets.Seed(currentEnvironment, "current-environment");
+        context.Secrets.Seed(
+            McpServerCatalogService.BuildLegacyEnvironmentSecretKey(
+                liveServerId.ToUpperInvariant(),
+                live.PersistenceVersion,
+                environmentName.ToLowerInvariant()),
+            "stale-environment");
+        context.Secrets.Seed(McpOAuthSecretKeys.LegacyTokenCache(liveServerId.ToUpperInvariant()), "oauth-token");
+
+        context.Secrets.Seed(
+            McpServerCatalogService.BuildLegacyHeaderSecretKey(liveServerId, 2, headerName),
+            "old-version");
+        context.Secrets.Seed(
+            McpServerCatalogService.BuildHeaderSecretKey(liveServerId, 2, headerName),
+            "portable-old-version");
+        context.Secrets.Seed(
+            McpServerCatalogService.BuildApiKeySecretKey(liveServerId),
+            "superseded-live-api-key");
+        context.Secrets.Seed(McpServerCatalogService.BuildLegacyApiKeySecretKey(deletedServerId), "orphan-api-key");
+        context.Secrets.Seed(McpServerCatalogService.BuildLegacyAuthorizationSecretKey(deletedServerId), "orphan-authorization");
+        context.Secrets.Seed(McpOAuthSecretKeys.LegacyTokenCache(deletedServerId), "orphan-token-cache");
+        context.Secrets.Seed(McpOAuthSecretKeys.LegacyClientRegistration(deletedServerId), "orphan-registration");
+        context.Secrets.Seed(McpOAuthSecretKeys.LegacyClientSecret(deletedServerId), "orphan-client-secret");
+        context.Secrets.Seed(
+            McpServerCatalogService.BuildLegacyHeaderSecretKey(deletedServerId, 0, "X-Legacy"),
+            "orphan-unversioned-header");
+        context.Secrets.Seed(
+            McpServerCatalogService.BuildLegacyHeaderSecretKey(deletedServerId, 7, "X-Orphan"),
+            "orphan-header");
+        context.Secrets.Seed(
+            McpServerCatalogService.BuildLegacyEnvironmentSecretKey(deletedServerId, 0, "LEGACY_ENV"),
+            "orphan-unversioned-environment");
+        context.Secrets.Seed(
+            McpServerCatalogService.BuildLegacyEnvironmentSecretKey(deletedServerId, 7, "ORPHAN_ENV"),
+            "orphan-environment");
+        context.Secrets.Seed(
+            McpServerCatalogService.BuildApiKeySecretKey(deletedServerId),
+            "portable-orphan-api-key");
+        context.Secrets.Seed("unrelated.secret", "preserved");
+
+        var migration = new McpPackageStorageMigration(context);
+        await migration.EnsureAsync();
+        var catalog = new McpServerCatalogService(context, migration);
+        var migrated = Assert.Single(await catalog.ListServersAsync());
+
+        Assert.Equal("current-header", (await catalog.GetHeadersAsync(migrated))[headerName]);
+        Assert.Equal("current-environment", (await catalog.GetEnvironmentVariablesAsync(migrated))[environmentName]);
+        Assert.Equal("oauth-token", await context.Secrets.GetSecretAsync(McpOAuthSecretKeys.TokenCache(liveServerId)));
+        Assert.Equal("preserved", await context.Secrets.GetSecretAsync("unrelated.secret"));
+        Assert.DoesNotContain(
+            context.Secrets.Keys,
+            key => key.StartsWith("mcp.servers.", StringComparison.OrdinalIgnoreCase));
+        Assert.Null(await context.Secrets.GetSecretAsync(
+            McpServerCatalogService.BuildHeaderSecretKey(liveServerId, 2, headerName)));
+        Assert.Null(await context.Secrets.GetSecretAsync(
+            McpServerCatalogService.BuildApiKeySecretKey(liveServerId)));
+        Assert.Null(await context.Secrets.GetSecretAsync(
+            McpServerCatalogService.BuildApiKeySecretKey(deletedServerId)));
+
+        var recreated = CreateServer(deletedServerId, "recreated") with
+        {
+            IsEnabled = false,
+            HeaderNames = ["X-Orphan"],
+        };
+        await catalog.SaveServerAsync(recreated, Empty, Empty);
+        var savedRecreated = Assert.IsType<ConfiguredMcpServerRecord>(await catalog.GetServerAsync(deletedServerId));
+
+        Assert.Empty(await catalog.GetHeadersAsync(savedRecreated));
+        Assert.Null(await context.Secrets.GetSecretAsync(McpOAuthSecretKeys.ClientSecret(deletedServerId)));
+    }
+
+    [Fact]
+    public async Task PackageStorageMigration_UnknownOwnedSecretShapeFailsAtomically()
+    {
+        var context = new TestPackageContext();
+        var live = CreateServer("live-server", "live") with
+        {
+            PersistenceVersion = 1,
+            HeaderNames = ["X-Token"],
+        };
+        await context.State.SetValueAsync(
+            McpServerCatalogService.BuildServerKey(live.ServerId),
+            JsonSerializer.Serialize(live));
+        var legacyHeader = McpServerCatalogService.BuildLegacyHeaderSecretKey(
+            live.ServerId,
+            live.PersistenceVersion,
+            "X-Token");
+        context.Secrets.Seed(legacyHeader, "preserved");
+        context.Secrets.Seed("mcp.servers.live-server.unknown:shape", "unknown");
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => new McpPackageStorageMigration(context).EnsureAsync());
+
+        Assert.Equal("preserved", context.Secrets.GetRaw(legacyHeader));
+        Assert.Equal("unknown", context.Secrets.GetRaw("mcp.servers.live-server.unknown:shape"));
+        Assert.Null(context.Secrets.GetRaw(
+            McpServerCatalogService.BuildHeaderSecretKey(live.ServerId, live.PersistenceVersion, "X-Token")));
     }
 
     [Fact]
@@ -479,13 +692,14 @@ public sealed class McpRefactorTests
         var context = new TestPackageContext();
         var catalog = new McpServerCatalogService(context);
         await catalog.SaveServerAsync(CreateServer("one", "one"), Empty, Empty);
-        await context.State.SetValueAsync("mcp.servers.broken", "{ not-json");
+        var storageKey = McpServerCatalogService.BuildServerKey("broken");
+        await context.State.SetValueAsync(storageKey, "{ not-json");
 
         var servers = await catalog.ListServersAsync();
 
         Assert.Single(servers);
-        Assert.Contains(catalog.LastDiagnostics, diagnostic => diagnostic.StorageKey == "mcp.servers.broken");
-        Assert.Equal("{ not-json", await context.State.GetValueAsync("mcp.servers.broken"));
+        Assert.Contains(catalog.LastDiagnostics, diagnostic => diagnostic.StorageKey == storageKey);
+        Assert.Equal("{ not-json", await context.State.GetValueAsync(storageKey));
     }
 
     [Fact]
@@ -556,7 +770,7 @@ public sealed class McpRefactorTests
 
         viewModel.CancelDiscoveryCommand.Execute(null);
         await discovery;
-        await WaitUntilAsync(() => viewModel.Servers.Any(server => server.ServerId == "two"));
+        await WaitUntilAsync(() => viewModel.Servers.Count == 2);
 
         Assert.Contains(viewModel.Servers, server => server.ServerId == "two");
     }
@@ -709,20 +923,26 @@ public sealed class McpRefactorTests
         public TestFiles() : base(Path.GetTempPath()) { }
     }
 
-    private sealed class TestState : IPackageKeyValueStore
+    private sealed class TestState : IPackageKeyValueStore, IPackageStorageKeyMigrator
     {
-        private readonly ConcurrentDictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, string> _values = new(StringComparer.Ordinal);
         public int SetCount { get; private set; }
         public bool ThrowOnNextSet { get; set; }
         public bool BlockOnNextSet { get; set; }
         public TaskCompletionSource SetStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseSet { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
-            => Task.FromResult(_values.GetValueOrDefault(key));
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.FromResult(_values.GetValueOrDefault(key));
+        }
 
         public async Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            TestPackageStorageGuards.Value(value);
             SetCount++;
             if (ThrowOnNextSet)
             {
@@ -740,29 +960,69 @@ public sealed class McpRefactorTests
             _values[key] = value;
         }
 
-        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(_values.ContainsKey(key));
+        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.FromResult(_values.ContainsKey(key));
+        }
 
         public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
             _values.TryRemove(key, out _);
             return Task.CompletedTask;
         }
 
         public Task<IReadOnlyList<string>> ListKeysAsync(string? prefix = null, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<string>>(_values.Keys.Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray());
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Prefix(prefix);
+            return Task.FromResult<IReadOnlyList<string>>(_values.Keys
+                .Where(key => prefix is null || key.StartsWith(prefix, StringComparison.Ordinal))
+                .Order(StringComparer.Ordinal)
+                .ToArray());
+        }
+
+        public Task MigrateKeysAsync(
+            IReadOnlyList<PackageStorageKeyMigration> migrations,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = ApplyKeyMigrations(_values, migrations);
+            if (result.Changed)
+            {
+                _values.Clear();
+                foreach (var pair in result.Values)
+                {
+                    _values[pair.Key] = pair.Value;
+                }
+            }
+            return Task.CompletedTask;
+        }
     }
 
-    private sealed class FaultingSecrets : IPackageSecrets
+    private sealed class FaultingSecrets : IPackageSecrets, IPackageStorageKeyMigrator
     {
-        private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
         public int SetCount { get; private set; }
         public int? FailOnSetNumber { get; set; }
         public IReadOnlyCollection<string> Keys => _values.Keys;
+        public void Seed(string key, string value) => _values[key] = value;
+        public string? GetRaw(string key) => _values.GetValueOrDefault(key);
         public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default)
-            => Task.FromResult(_values.GetValueOrDefault(key));
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.FromResult(_values.GetValueOrDefault(key));
+        }
 
         public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            TestPackageStorageGuards.Value(value);
             SetCount++;
             if (SetCount == FailOnSetNumber)
             {
@@ -775,9 +1035,120 @@ public sealed class McpRefactorTests
 
         public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
             _values.Remove(key);
             return Task.CompletedTask;
         }
+
+        public Task MigrateKeysAsync(
+            IReadOnlyList<PackageStorageKeyMigration> migrations,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = ApplyKeyMigrations(_values, migrations);
+            if (result.Changed)
+            {
+                _values.Clear();
+                foreach (var pair in result.Values)
+                {
+                    _values[pair.Key] = pair.Value;
+                }
+            }
+            return Task.CompletedTask;
+        }
+    }
+
+    private static (Dictionary<string, string> Values, bool Changed) ApplyKeyMigrations(
+        IEnumerable<KeyValuePair<string, string>> values,
+        IReadOnlyList<PackageStorageKeyMigration> migrations)
+    {
+        var source = values.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        var mutations = new List<(string Source, string? Destination, string Value, int Precedence, bool Cleanup)>();
+        foreach (var pair in source)
+        {
+            PackageStorageKeyMigrationAction? resolved = null;
+            var cleanup = false;
+            foreach (var migration in migrations)
+            {
+                var candidate = migration.Resolve(pair.Key, pair.Value);
+                if (candidate.Kind == PackageStorageKeyMigrationActionKind.NoMatch)
+                {
+                    continue;
+                }
+                if (resolved is not null)
+                {
+                    throw new InvalidOperationException("Legacy package key matches multiple migration rules.");
+                }
+                resolved = candidate;
+                cleanup = migration.IsDynamicCleanup;
+            }
+            if (resolved is null)
+            {
+                if (!PackageStorageValidation.IsValidKey(pair.Key))
+                {
+                    throw new InvalidDataException($"Stored package key '{pair.Key}' is invalid and has no declared migration.");
+                }
+                continue;
+            }
+
+            mutations.Add((
+                pair.Key,
+                resolved.DestinationKey,
+                pair.Value,
+                resolved.Precedence,
+                cleanup));
+        }
+
+        if (mutations.Count == 0)
+        {
+            return (source, false);
+        }
+        foreach (var mutation in mutations)
+        {
+            source.Remove(mutation.Source);
+        }
+        foreach (var group in mutations
+                     .Where(mutation => mutation.Destination is not null)
+                     .GroupBy(mutation => mutation.Destination!, StringComparer.Ordinal))
+        {
+            var rewrites = group.ToArray();
+            if (rewrites.Any(rewrite => !rewrite.Cleanup))
+            {
+                var expected = rewrites[0].Value;
+                if (rewrites.Any(rewrite => !string.Equals(rewrite.Value, expected, StringComparison.Ordinal))
+                    || source.TryGetValue(group.Key, out var existing)
+                    && !string.Equals(existing, expected, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"Package storage key migration collision at '{group.Key}' contains nonidentical values.");
+                }
+                source[group.Key] = expected;
+                continue;
+            }
+
+            if (source.ContainsKey(group.Key))
+            {
+                continue;
+            }
+            var precedence = rewrites.Max(rewrite => rewrite.Precedence);
+            var preferred = rewrites
+                .Where(rewrite => rewrite.Precedence == precedence)
+                .Select(rewrite => rewrite.Value)
+                .Distinct(StringComparer.Ordinal)
+                .Take(2)
+                .ToArray();
+            if (preferred.Length == 1)
+            {
+                source[group.Key] = preferred[0];
+            }
+        }
+        if (source.Any(pair => !PackageStorageValidation.IsValidKey(pair.Key)
+                               || !PackageStorageValidation.IsValidValue(pair.Value)))
+        {
+            throw new InvalidDataException("Migrated package storage is invalid.");
+        }
+        return (source, true);
     }
 
     private sealed class EmptySettings : EmptyPackageSettings;

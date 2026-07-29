@@ -15,10 +15,12 @@ namespace Sunder.Package.Agent.PackageViews;
 public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDisposable
 {
     private static readonly TimeSpan SuccessStatusDisplayDuration = TimeSpan.FromSeconds(3);
+    private const string ListRefreshChannel = "workspaces-list";
 
     private readonly IAgentWorkspaceGateway _workspaceService;
     private readonly IAgentExecutionGateway _executionGateway;
     private readonly IPackageExtensionCatalog _extensionCatalog;
+    private readonly IPackageExtensionInvocationCatalog _extensionInvocationCatalog;
     private readonly IPackageExtensionCatalogMonitor? _extensionCatalogMonitor;
     private readonly IPackageSettingsNavigationService? _settingsNavigationService;
     private readonly IAgentRuntimeAvailability? _runtimeAvailability;
@@ -28,25 +30,49 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private readonly TimedStatusController _statusClear;
     private readonly OperationState<AgentWorkspaceOperation> _operation = new();
     private readonly AsyncOnce _initialization = new();
-    private bool _suppressSelectionHandlers;
-    private bool _suppressWorkspaceChangeNotifications;
+    private readonly LatestRequestCoordinator _requests = new();
+    private readonly KeyedAdaptiveListDetailState<string, AgentWorkspaceRecord> _listDetail;
+    private readonly SerializedRefreshLoop _runtimeRefresh;
+    private readonly Dictionary<string, AgentWorkspaceDraftState> _workspaceDrafts =
+        new(StringComparer.OrdinalIgnoreCase);
+    private bool _suppressDraftTracking;
+    private bool _initializationRefreshPending;
     private bool _isInitialized;
     private bool _disposed;
     private string? _initializationFailureStatus;
+    private Task _currentEditorSectionRefresh = Task.CompletedTask;
+    private Task _currentEditorSectionRetry = Task.CompletedTask;
+    private long _editorIntentRevision;
+    private long _workspaceDraftRevision;
 
     public AgentWorkspacesViewModel(
         IAgentWorkspaceGateway workspaceService,
         IAgentExecutionGateway executionGateway,
         IPackageExtensionCatalog extensionCatalog,
-        IPackageSettingsNavigationService? settingsNavigationService = null)
+        IPackageSettingsNavigationService? settingsNavigationService = null,
+        IPackageExtensionInvocationCatalog? extensionInvocationCatalog = null)
     {
         _workspaceService = workspaceService;
         _executionGateway = executionGateway;
         _extensionCatalog = extensionCatalog;
+        _extensionInvocationCatalog = extensionInvocationCatalog
+            ?? extensionCatalog as IPackageExtensionInvocationCatalog
+            ?? throw new InvalidOperationException(
+                "The host extension catalog does not support activation-scoped extension invocation.");
         _settingsNavigationService = settingsNavigationService;
         _uiDispatcher = PresentationDispatcher.Capture();
         _tasks = new PresentationTaskScope(exception => ReportPresentationFailure(exception));
         _statusClear = new TimedStatusController(dispatcher: _uiDispatcher);
+        _listDetail = new KeyedAdaptiveListDetailState<string, AgentWorkspaceRecord>(
+            Workspaces,
+            static workspace => workspace.WorkspaceId,
+            keyComparer: StringComparer.OrdinalIgnoreCase);
+        _listDetail.SelectionChanging += OnWorkspaceSelectionChanging;
+        _listDetail.SelectionChanged += OnWorkspaceSelectionChanged;
+        _listDetail.PropertyChanged += OnListDetailPropertyChanged;
+        _runtimeRefresh = new SerializedRefreshLoop(
+            RefreshWorkspaceListAsync,
+            exception => RunOnUiThread(() => ReportPresentationFailure(exception)));
         _operation.PropertyChanged += OnOperationPropertyChanged;
         _runtimeAvailability = workspaceService as IAgentRuntimeAvailability;
         if (_runtimeAvailability is not null)
@@ -131,7 +157,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     public bool IsListActive => !IsEditorActive;
 
-    public bool ShowWideLayout => !IsCompactLayout;
+    public bool ShowWideLayout => _listDetail.Layout == AdaptiveListDetailLayout.Wide;
 
     public bool ShowCompactList => IsCompactLayout && IsListActive;
 
@@ -141,14 +167,55 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     public bool ShowEditorPane => ShowWideLayout || ShowCompactEditor;
 
-    [ObservableProperty]
-    private AgentWorkspaceRecord? _selectedWorkspace;
+    public AgentWorkspaceRecord? SelectedWorkspace
+    {
+        get => _listDetail.SelectedItem;
+        set
+        {
+            if (value is null)
+            {
+                _listDetail.ShowList();
+            }
+            else if (!(_listDetail.IsExistingDetail && ReferenceEquals(value, SelectedWorkspace)))
+            {
+                _listDetail.ShowExistingDetail(value);
+            }
+        }
+    }
 
-    [ObservableProperty]
-    private bool _isCompactLayout;
+    public bool IsCompactLayout
+    {
+        get => _listDetail.Layout == AdaptiveListDetailLayout.Compact;
+        set
+        {
+            var layout = value
+                ? AdaptiveListDetailLayout.Compact
+                : AdaptiveListDetailLayout.Wide;
+            if (layout != _listDetail.Layout)
+            {
+                _editorIntentRevision++;
+                _listDetail.SetLayout(layout);
+            }
+        }
+    }
 
-    [ObservableProperty]
-    private bool _isEditorActive;
+    public bool IsEditorActive => IsCompactLayout && !_listDetail.IsList;
+
+    internal AdaptiveListDetailRoute Route => _listDetail.Route;
+
+    internal AdaptiveListDetailLayout Layout => _listDetail.Layout;
+
+    internal AdaptiveDetailPhase DetailPhase => _listDetail.DetailPhase;
+
+    internal long IntentRevision => _listDetail.IntentRevision;
+
+    internal long LayoutRevision => _listDetail.LayoutRevision;
+
+    internal Task CurrentEditorSectionRefresh => _currentEditorSectionRefresh;
+
+    internal Task CurrentEditorSectionRetry => _currentEditorSectionRetry;
+
+    internal Task CurrentRuntimeRefresh => _runtimeRefresh.WhenIdle;
 
     [ObservableProperty]
     private string _displayName = string.Empty;
@@ -185,24 +252,6 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     public bool IsStatusError => StatusKind == AgentWorkspaceStatusKind.Error;
 
-    partial void OnSelectedWorkspaceChanged(AgentWorkspaceRecord? value)
-    {
-        DeleteWorkspaceCommand.NotifyCanExecuteChanged();
-        SaveWorkspaceCommand.NotifyCanExecuteChanged();
-        OnPropertyChanged(nameof(HasSelectedWorkspace));
-
-        if (_suppressSelectionHandlers)
-        {
-            return;
-        }
-
-        LoadWorkspace(value);
-        if (IsCompactLayout && value is not null)
-        {
-            IsEditorActive = true;
-        }
-    }
-
     public void Dispose()
     {
         if (_disposed)
@@ -227,45 +276,30 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             _extensionCatalogMonitor.Changed -= OnExtensionCatalogChanged;
         }
 
+        _listDetail.PropertyChanged -= OnListDetailPropertyChanged;
+        _listDetail.SelectionChanging -= OnWorkspaceSelectionChanging;
+        _listDetail.SelectionChanged -= OnWorkspaceSelectionChanged;
+        _runtimeRefresh.Dispose();
+        _listDetail.Dispose();
+        _requests.Dispose();
         _lifetimeCancellation.Dispose();
-    }
-
-    partial void OnIsCompactLayoutChanged(bool value)
-    {
-        if (value && !IsEditorActive)
-        {
-            SelectedWorkspace = null;
-        }
-        else if (!value && SelectedWorkspace is null)
-        {
-            SelectedWorkspace = Workspaces.FirstOrDefault();
-        }
-
-        OnPropertyChanged(nameof(ShowWideLayout));
-        OnPropertyChanged(nameof(ShowCompactList));
-        OnPropertyChanged(nameof(ShowCompactEditor));
-        OnPropertyChanged(nameof(ShowListPane));
-        OnPropertyChanged(nameof(ShowEditorPane));
-    }
-
-    partial void OnIsEditorActiveChanged(bool value)
-    {
-        OnPropertyChanged(nameof(IsListActive));
-        OnPropertyChanged(nameof(ShowCompactList));
-        OnPropertyChanged(nameof(ShowCompactEditor));
-        OnPropertyChanged(nameof(ShowListPane));
-        OnPropertyChanged(nameof(ShowEditorPane));
     }
 
     partial void OnSelectedExecutionTargetChanged(ExecutionTargetOption? value)
     {
-        if (_suppressSelectionHandlers)
+        if (_suppressDraftTracking)
         {
             return;
         }
 
-        TrackOperation(RefreshEditorSectionsAsync());
+        _editorIntentRevision++;
+        OnWorkspaceEditorChanged();
+        StartEditorSectionRefresh();
     }
+
+    partial void OnDisplayNameChanged(string value) => OnWorkspaceEditorChanged();
+
+    partial void OnDescriptionChanged(string value) => OnWorkspaceEditorChanged();
 
     partial void OnSelectedWorkspacePathChanged(AgentWorkspacePathItemViewModel? value)
     {
@@ -281,19 +315,11 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     {
         try
         {
-            AgentWorkspaceRecord workspace;
-            _suppressWorkspaceChangeNotifications = true;
-            try
-            {
-                workspace = _workspaceService.CreateWorkspace("New Workspace");
-            }
-            finally
-            {
-                _suppressWorkspaceChangeNotifications = false;
-            }
-
-            ReloadWorkspaces(workspace.WorkspaceId);
-            IsEditorActive = true;
+            var intentRevision = _listDetail.ShowNewDetail();
+            var workspace = _workspaceService.CreateWorkspace("New Workspace");
+            _listDetail.Reconcile(_workspaceService.ListWorkspaces());
+            _listDetail.TryShowCreatedDetail(workspace.WorkspaceId, intentRevision);
+            DiscardPendingWorkspaceRefresh();
             ClearStatus();
         }
         catch (Exception ex)
@@ -313,27 +339,16 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         try
         {
             var shouldClearSelection = IsCompactLayout;
-            _suppressWorkspaceChangeNotifications = true;
-            try
-            {
-                _workspaceService.DeleteWorkspace(SelectedWorkspace.WorkspaceId);
-            }
-            finally
-            {
-                _suppressWorkspaceChangeNotifications = false;
-            }
+            var workspaceId = SelectedWorkspace.WorkspaceId;
+            _workspaceService.DeleteWorkspace(workspaceId);
+            _workspaceDrafts.Remove(workspaceId);
+            DiscardPendingWorkspaceRefresh();
 
             if (shouldClearSelection)
             {
-                ReloadWorkspaceList(selectWorkspaceId: null);
-                SelectedWorkspace = null;
+                _listDetail.ShowList();
             }
-            else
-            {
-                ReloadWorkspaces(selectWorkspaceId: null);
-            }
-
-            IsEditorActive = false;
+            _listDetail.Reconcile(_workspaceService.ListWorkspaces());
             if (shouldClearSelection)
             {
                 ClearStatus();
@@ -356,40 +371,35 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     [RelayCommand]
     private void BackToWorkspaceList()
     {
-        if (IsCompactLayout)
-        {
-            SelectedWorkspace = null;
-        }
-
-        IsEditorActive = false;
+        _operation.CancelCurrent();
+        _listDetail.ShowList();
     }
 
     [RelayCommand]
     private void OpenWorkspaceEditor(AgentWorkspaceRecord workspace)
     {
         ActivateWorkspace(workspace);
-        IsEditorActive = true;
     }
 
     public void ActivateWorkspace(AgentWorkspaceRecord workspace)
     {
-        if (!string.Equals(SelectedWorkspace?.WorkspaceId, workspace.WorkspaceId, StringComparison.OrdinalIgnoreCase))
+        if (!(_listDetail.IsExistingDetail && ReferenceEquals(SelectedWorkspace, workspace)))
         {
-            SelectedWorkspace = workspace;
-        }
-
-        if (IsCompactLayout)
-        {
-            IsEditorActive = true;
+            _operation.CancelCurrent();
+            _listDetail.ShowExistingDetail(workspace);
         }
     }
 
     private void OnWorkspacesChanged()
         => RunOnUiThread(() =>
         {
-            if (!_disposed && _isInitialized && !_suppressWorkspaceChangeNotifications)
+            if (!_disposed && _isInitialized)
             {
-                ReloadWorkspaces(SelectedWorkspace?.WorkspaceId);
+                _tasks.Run(_runtimeRefresh.MarkDirty());
+            }
+            else if (!_disposed)
+            {
+                _initializationRefreshPending = true;
             }
         });
 
@@ -403,7 +413,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             if (state == AgentRuntimeConnectionState.Connected && _isInitialized)
             {
                 ReloadTargets(SelectedExecutionTarget?.TargetId);
-                ReloadWorkspaces(SelectedWorkspace?.WorkspaceId);
+                _tasks.Run(_runtimeRefresh.MarkDirty());
                 ClearStatus();
             }
             else if (state == AgentRuntimeConnectionState.Connected)
@@ -418,101 +428,119 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
-        var targetsTask = _executionGateway is IAgentExecutionTargetLoader loader
-            ? loader.ListTargetsAsync(cancellationToken)
-            : Task.FromResult(_executionGateway.ListTargets());
-        await Task.WhenAll(
-            _workspaceService.InitializeAsync(cancellationToken),
-            targetsTask).ConfigureAwait(false);
-        var targets = await targetsTask.ConfigureAwait(false);
-        var workspaces = _workspaceService.ListWorkspaces();
-        cancellationToken.ThrowIfCancellationRequested();
-        await _uiDispatcher.InvokeAsync(() =>
+        while (true)
         {
-            if (_disposed)
+            var request = _requests.Begin(ListRefreshChannel, cancellationToken);
+            var applied = false;
+            var replayPendingRefresh = false;
+            try
             {
-                return;
+                var targetsTask = _executionGateway is IAgentExecutionTargetLoader loader
+                    ? loader.ListTargetsAsync(request.CancellationToken)
+                    : Task.FromResult(_executionGateway.ListTargets());
+                await Task.WhenAll(
+                        _workspaceService.InitializeAsync(request.CancellationToken),
+                        targetsTask)
+                    .WaitAsync(request.CancellationToken)
+                    .ConfigureAwait(false);
+                var targets = await targetsTask.WaitAsync(request.CancellationToken).ConfigureAwait(false);
+                var workspaces = _workspaceService.ListWorkspaces();
+                request.CancellationToken.ThrowIfCancellationRequested();
+                await _uiDispatcher.InvokeAsync(() =>
+                {
+                    if (_disposed || !_requests.IsCurrent(request))
+                    {
+                        return;
+                    }
+
+                    ReloadTargets(targets);
+                    _listDetail.Reconcile(workspaces);
+                    _isInitialized = true;
+                    replayPendingRefresh = _initializationRefreshPending;
+                    _initializationRefreshPending = false;
+                    applied = true;
+                }).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (
+                request.CancellationToken.IsCancellationRequested
+                && !cancellationToken.IsCancellationRequested)
+            {
+            }
+            finally
+            {
+                _requests.Complete(request);
             }
 
-            ReloadTargets(targets);
-            ReloadWorkspaceList(selectWorkspaceId: null, workspaces);
-            LoadWorkspace(SelectedWorkspace);
-            _isInitialized = true;
-        }).ConfigureAwait(false);
-    }
-
-    private void ReloadWorkspaces(string? selectWorkspaceId)
-    {
-        ReloadWorkspaceList(selectWorkspaceId);
-        LoadWorkspace(SelectedWorkspace);
-    }
-
-    private void ReloadWorkspaceList(
-        string? selectWorkspaceId,
-        IReadOnlyList<AgentWorkspaceRecord>? workspaces = null)
-    {
-        workspaces ??= _workspaceService.ListWorkspaces();
-        _suppressSelectionHandlers = true;
-        try
-        {
-            Workspaces.Clear();
-            foreach (var workspace in workspaces)
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!applied)
             {
-                Workspaces.Add(workspace);
+                continue;
             }
-
-            SelectedWorkspace = Workspaces.FirstOrDefault(workspace => string.Equals(workspace.WorkspaceId, selectWorkspaceId, StringComparison.OrdinalIgnoreCase))
-                ?? Workspaces.FirstOrDefault();
-        }
-        finally
-        {
-            _suppressSelectionHandlers = false;
+            if (replayPendingRefresh)
+            {
+                await _runtimeRefresh.MarkDirty().WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            return;
         }
     }
 
-    private void LoadWorkspace(AgentWorkspaceRecord? workspace)
+    private void LoadWorkspace(
+        AgentWorkspaceRecord? workspace,
+        bool refreshEditorSections = true)
     {
-        DisplayName = workspace?.DisplayName ?? string.Empty;
-        Description = workspace?.Description ?? string.Empty;
-        LoadWorkspacePaths(workspace);
-        LoadWorkspaceDocuments(workspace);
+        if (workspace is not null
+            && _workspaceDrafts.TryGetValue(workspace.WorkspaceId, out var draft)
+            && draft.IsDirty)
+        {
+            ApplyWorkspaceDraft(workspace, draft);
+            return;
+        }
+
         var binding = workspace is null
             ? null
             : _workspaceService.ListBindings(workspace.WorkspaceId)
                 .FirstOrDefault(item => string.Equals(item.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase));
-        SetSelectionSilently(() => SelectedExecutionTarget = ResolveTargetOption(binding?.ContributionId));
-        TrackOperation(RefreshEditorSectionsAsync());
+        var target = ResolveTargetOption(binding?.ContributionId);
+        _suppressDraftTracking = true;
+        try
+        {
+            DisplayName = workspace?.DisplayName ?? string.Empty;
+            Description = workspace?.Description ?? string.Empty;
+            LoadWorkspacePaths(workspace);
+            LoadWorkspaceDocuments(workspace);
+            SelectedExecutionTarget = target;
+            if (workspace is null || refreshEditorSections)
+            {
+                ReplaceEditorSections([]);
+            }
+        }
+        finally
+        {
+            _suppressDraftTracking = false;
+        }
+
+        if (workspace is null)
+        {
+            _currentEditorSectionRefresh = Task.CompletedTask;
+            return;
+        }
+
+        RegisterCleanWorkspaceDraft(workspace);
+        if (refreshEditorSections)
+        {
+            StartEditorSectionRefresh();
+        }
+        else
+        {
+            MarkCurrentWorkspaceDetailReady();
+        }
     }
 
     private void LoadWorkspacePaths(AgentWorkspaceRecord? workspace)
-    {
-        WorkspacePaths.Clear();
-        if (workspace is not null)
-        {
-            foreach (var path in workspace.Paths.OrderBy(path => path.SortOrder))
-            {
-                WorkspacePaths.Add(new AgentWorkspacePathItemViewModel(path));
-            }
-        }
-
-        SelectedWorkspacePath = WorkspacePaths.FirstOrDefault(path => path.IsDefault) ?? WorkspacePaths.FirstOrDefault();
-        NotifyWorkspacePathCollectionChanged();
-    }
+        => ReplaceWorkspacePaths(workspace?.Paths ?? []);
 
     private void LoadWorkspaceDocuments(AgentWorkspaceRecord? workspace)
-    {
-        WorkspaceDocuments.Clear();
-        if (workspace is not null)
-        {
-            foreach (var document in workspace.Documents.OrderBy(document => document.SortOrder))
-            {
-                WorkspaceDocuments.Add(new AgentWorkspaceDocumentItemViewModel(document));
-            }
-        }
-
-        SelectedWorkspaceDocument = WorkspaceDocuments.FirstOrDefault();
-        NotifyWorkspaceDocumentCollectionChanged();
-    }
+        => ReplaceWorkspaceDocuments(workspace?.Documents ?? []);
 
     private bool ValidateWorkspacePathsAndDocuments(out string message)
     {
@@ -624,23 +652,70 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         DeleteWorkspaceCommand.NotifyCanExecuteChanged();
     }
 
-    private void SetSelectionSilently(Action action)
-    {
-        _suppressSelectionHandlers = true;
-        try
-        {
-            action();
-        }
-        finally
-        {
-            _suppressSelectionHandlers = false;
-        }
-    }
-
     private static StringComparison GetPathStringComparison()
         => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
+
+    private void OnListDetailPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        OnPropertyChanged(nameof(IsCompactLayout));
+        OnPropertyChanged(nameof(IsEditorActive));
+        OnPropertyChanged(nameof(IsListActive));
+        OnPropertyChanged(nameof(ShowWideLayout));
+        OnPropertyChanged(nameof(ShowCompactList));
+        OnPropertyChanged(nameof(ShowCompactEditor));
+        OnPropertyChanged(nameof(ShowListPane));
+        OnPropertyChanged(nameof(ShowEditorPane));
+    }
+
+    private void OnWorkspaceSelectionChanged(
+        AgentWorkspaceRecord? previous,
+        AgentWorkspaceRecord? current)
+    {
+        OnPropertyChanged(nameof(SelectedWorkspace));
+        OnPropertyChanged(nameof(HasSelectedWorkspace));
+        DeleteWorkspaceCommand.NotifyCanExecuteChanged();
+        SaveWorkspaceCommand.NotifyCanExecuteChanged();
+        var sameWorkspace = previous is not null
+            && current is not null
+            && string.Equals(
+                previous.WorkspaceId,
+                current.WorkspaceId,
+                StringComparison.OrdinalIgnoreCase);
+        LoadWorkspace(current, refreshEditorSections: !sameWorkspace);
+    }
+
+    private void OnWorkspaceSelectionChanging(
+        AgentWorkspaceRecord? previous,
+        AgentWorkspaceRecord? current)
+        => CaptureCurrentWorkspaceDraft();
+
+    private async Task RefreshWorkspaceListAsync(CancellationToken cancellationToken)
+    {
+        var request = _requests.Begin(ListRefreshChannel, cancellationToken);
+        try
+        {
+            var workspaces = _workspaceService.ListWorkspaces();
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (_requests.IsCurrent(request))
+                {
+                    _listDetail.Reconcile(workspaces);
+                }
+            }).ConfigureAwait(false);
+        }
+        finally
+        {
+            _requests.Complete(request);
+        }
+    }
+
+    private void DiscardPendingWorkspaceRefresh()
+    {
+        _runtimeRefresh.DiscardPending();
+        _requests.Invalidate(ListRefreshChannel);
+    }
 }
 
 internal enum AgentWorkspaceOperation

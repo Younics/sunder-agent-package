@@ -83,7 +83,11 @@ public sealed partial class AgentChatViewModel
         AgentTranscriptPage page,
         IReadOnlyList<AgentTurnRecord>? previousRunActivityTurns)
     {
-        if (!_timeline.TryCompleteInitialLoad(ticket, page.Turns, page.HasMore))
+        if (!_timeline.TryCompleteInitialLoad(
+                ticket,
+                page.Turns,
+                page.HasMore,
+                page.Continuation))
         {
             return;
         }
@@ -118,7 +122,7 @@ public sealed partial class AgentChatViewModel
                         beforeTurnId),
                     linkedCancellation.Token).ConfigureAwait(false);
                 linkedCancellation.Token.ThrowIfCancellationRequested();
-                return page.Turns;
+                return new TranscriptTurnPage(page.Turns, page.HasMore, page.Continuation);
             },
             protectedAnchorKey,
             cancellationToken);
@@ -150,7 +154,7 @@ public sealed partial class AgentChatViewModel
                         afterTurnId),
                     linkedCancellation.Token).ConfigureAwait(false);
                 linkedCancellation.Token.ThrowIfCancellationRequested();
-                return page.Turns;
+                return new TranscriptTurnPage(page.Turns, page.HasMore, page.Continuation);
             },
             protectedAnchorKey,
             cancellationToken);
@@ -738,31 +742,57 @@ public sealed partial class AgentChatViewModel
             return _transcriptPageGateway.LoadTranscriptPageAsync(request, cancellationToken);
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
-        var limit = Math.Clamp(request.Limit, 1, 500);
-        IReadOnlyList<AgentTurnRecord> turns = request.Direction switch
+        return Task.Run(() =>
         {
-            AgentTranscriptPageDirection.Recent =>
-                _sessionService.ListRecentTurns(request.SessionId, limit + 1),
-            AgentTranscriptPageDirection.Before when request.AnchorCreatedAtUtc is { } createdAt
-                                                     && request.AnchorTurnId is { } turnId =>
-                _sessionService.ListTurnsBefore(request.SessionId, createdAt, turnId, limit + 1),
-            AgentTranscriptPageDirection.After when request.AnchorCreatedAtUtc is { } createdAt
-                                                    && request.AnchorTurnId is { } turnId =>
-                _sessionService.ListTurnsAfter(request.SessionId, createdAt, turnId, limit + 1),
-            AgentTranscriptPageDirection.Turn when request.AnchorTurnId is { } turnId =>
-                _sessionService.GetTurn(turnId) is { } turn ? [turn] : [],
-            _ => throw new InvalidOperationException("The transcript page anchor is invalid."),
-        };
-        var hasMore = turns.Count > limit;
-        var pageTurns = !hasMore
-            ? turns
-            : request.Direction is AgentTranscriptPageDirection.Recent or AgentTranscriptPageDirection.Before
-                ? turns.Skip(turns.Count - limit).ToArray()
-                : turns.Take(limit).ToArray();
-        return Task.FromResult(new AgentTranscriptPage(
-            0,
-            pageTurns,
-            hasMore));
+            cancellationToken.ThrowIfCancellationRequested();
+            var limit = Math.Clamp(request.Limit, 1, 500);
+            var transcriptHeaders = _sessionService as IAgentTranscriptHeaderGateway;
+            IReadOnlyList<AgentTurnRecord> turns = request.Direction switch
+            {
+                AgentTranscriptPageDirection.Recent =>
+                    transcriptHeaders?.ListRecentTranscriptHeaders(request.SessionId, limit + 1)
+                    ?? _sessionService.ListRecentTurns(request.SessionId, limit + 1)
+                        .Select(TranscriptTurnTransportProjection.ProjectToolHeaders)
+                        .ToArray(),
+                AgentTranscriptPageDirection.Before when request.AnchorCreatedAtUtc is { } createdAt
+                                                          && request.AnchorTurnId is { } turnId =>
+                    transcriptHeaders?.ListTranscriptHeadersBefore(
+                        request.SessionId,
+                        createdAt,
+                        turnId,
+                        limit + 1)
+                    ?? _sessionService.ListTurnsBefore(request.SessionId, createdAt, turnId, limit + 1)
+                        .Select(TranscriptTurnTransportProjection.ProjectToolHeaders)
+                        .ToArray(),
+                AgentTranscriptPageDirection.After when request.AnchorCreatedAtUtc is { } createdAt
+                                                         && request.AnchorTurnId is { } turnId =>
+                    transcriptHeaders?.ListTranscriptHeadersAfter(
+                        request.SessionId,
+                        createdAt,
+                        turnId,
+                        limit + 1)
+                    ?? _sessionService.ListTurnsAfter(request.SessionId, createdAt, turnId, limit + 1)
+                        .Select(TranscriptTurnTransportProjection.ProjectToolHeaders)
+                        .ToArray(),
+                AgentTranscriptPageDirection.Turn when request.AnchorTurnId is { } turnId =>
+                    (transcriptHeaders is null
+                        ? _sessionService.GetTurn(turnId)
+                        : transcriptHeaders.GetTranscriptHeader(turnId)) is { } turn
+                        ? [TranscriptTurnTransportProjection.ProjectToolHeaders(turn)]
+                        : [],
+                _ => throw new InvalidOperationException("The transcript page anchor is invalid."),
+            };
+            cancellationToken.ThrowIfCancellationRequested();
+            var hasMore = turns.Count > limit;
+            var pageTurns = !hasMore
+                ? turns
+                : request.Direction is AgentTranscriptPageDirection.Recent or AgentTranscriptPageDirection.Before
+                    ? turns.Skip(turns.Count - limit).ToArray()
+                    : turns.Take(limit).ToArray();
+            return new AgentTranscriptPage(
+                0,
+                pageTurns,
+                hasMore);
+        }, cancellationToken);
     }
 }

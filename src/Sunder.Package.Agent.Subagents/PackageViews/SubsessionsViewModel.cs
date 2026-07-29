@@ -22,13 +22,19 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private const int InitialTranscriptTurnLimit = 60;
     private const int OlderTranscriptTurnPageSize = 30;
     private const int TranscriptVisibleRowLimit = 60;
+    private const string ListRefreshChannel = "subsessions-list";
+    private const string NavigationChannel = "subsessions-navigation";
 
     private readonly IPackageExtensionCatalog? _extensionCatalog;
     private readonly TranscriptTimelineState<SubsessionTranscriptRowViewModel> _timeline;
+    private readonly TranscriptItemsProjection<SubsessionTranscriptRowViewModel> _transcriptItemsProjection;
     private readonly ActivityTicker _activityTicker = new();
     private readonly AgentRunActivityState _runActivity;
     private readonly AsyncOnce _initialization = new();
     private readonly PresentationTaskScope _tasks = new();
+    private readonly LatestRequestCoordinator _requests = new();
+    private readonly KeyedAdaptiveListDetailState<Guid, SubsessionListItemViewModel> _listDetail;
+    private readonly SerializedRefreshLoop _runtimeRefresh;
     private readonly Dictionary<Guid, AgentSessionRecord> _knownSessions = [];
     private readonly Dictionary<string, AgentProfileRecord> _knownProfiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<Guid, AgentRunCheckpointRecord> _knownCheckpoints = [];
@@ -36,8 +42,11 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private ISubsessionCheckpointReader? _checkpointReader;
     private ISubsessionTranscriptPageReader? _transcriptReader;
     private ISubsessionChangeNotifications? _changeNotifications;
-    private bool _isReconcilingSubsessionSelection;
-    private bool _isRestoringReconciledSubsessionSelection;
+    private CancellationTokenSource? _navigationHighlightCancellation;
+    private long _navigationHighlightGeneration;
+    private Task _transcriptLoadOperation = Task.CompletedTask;
+    private int _forceRuntimeTranscriptRefresh;
+    private int _suppressAutomaticTranscriptLoad;
     private bool _disposed;
 
     public SubsessionsViewModel(
@@ -47,11 +56,14 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         _activityTicker.SetEnabled(false);
         _extensionCatalog = extensionCatalog;
         var toolPresentation = new TranscriptToolPresentationService(() =>
-            extensionCatalog?.GetExtensions(PackageExtensionPoints.ToolSources)
-                .OfType<IAgentToolPresentationResolver>()
-            ?? []);
+            extensionCatalog is IPackageExtensionInvocationCatalog invocationCatalog
+                ? invocationCatalog.GetExtensionReferences(PackageExtensionPoints.ToolSources)
+                    .Select(static reference =>
+                        (IAgentToolPresentationResolver)new PackageToolSourcePresentationResolver(reference))
+                : []);
         var rowFactory = new SubsessionTranscriptRowFactory(
             toolPresentation,
+            LoadToolDetailAsync,
             _activityTicker,
             ResolveChildSessionLinksFromRuntime);
         var rowProjector = new TranscriptRowProjector<SubsessionTranscriptRowViewModel>(
@@ -63,6 +75,17 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             InitialTranscriptTurnLimit,
             OlderTranscriptTurnPageSize,
             TranscriptVisibleRowLimit);
+        RunActivityRow = new SubsessionActivityTranscriptRowViewModel(_activityTicker);
+        TailSentinelRow = new SubsessionTranscriptTailSentinelRowViewModel();
+        _transcriptItemsProjection = new TranscriptItemsProjection<SubsessionTranscriptRowViewModel>(
+            Messages,
+            RunActivityRow,
+            TailSentinelRow);
+        TranscriptItems = _transcriptItemsProjection.Items;
+        _listDetail = new KeyedAdaptiveListDetailState<Guid, SubsessionListItemViewModel>(
+            Subsessions,
+            static subsession => subsession.SessionId,
+            static (current, incoming) => current.UpdateFrom(incoming));
         _runActivity = new AgentRunActivityState(
             () => IsSelectedSubsessionRunActive,
             () => _timeline.IsFollowingLatest,
@@ -72,7 +95,17 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         _timeline.PropertyChanged += OnTimelinePropertyChanged;
         _timeline.TurnProjected += OnTimelineTurnProjected;
         _runActivity.Changed += OnRunActivityStateChanged;
+        _listDetail.PropertyChanged += OnListDetailPropertyChanged;
+        _runtimeRefresh = new SerializedRefreshLoop(
+            RefreshFromRuntimeAsync,
+            exception => RunOnUiThread(() => StatusText = exception.Message));
     }
+
+    private Task<AgentTranscriptToolDetailRecord?> LoadToolDetailAsync(
+        AgentTranscriptToolDetailRequest request,
+        CancellationToken cancellationToken)
+        => _transcriptReader?.LoadToolDetailAsync(request, cancellationToken)
+           ?? Task.FromResult<AgentTranscriptToolDetailRecord?>(null);
 
     public SubsessionsViewModel()
         : this(null, null)
@@ -81,7 +114,14 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<SubsessionListItemViewModel> Subsessions { get; } = [];
 
-    public ObservableCollection<SubsessionTranscriptRowViewModel> Messages { get; } = [];
+    public ObservableCollection<SubsessionTranscriptRowViewModel> Messages { get; }
+        = new TranscriptObservableCollection<SubsessionTranscriptRowViewModel>();
+
+    public SubsessionActivityTranscriptRowViewModel RunActivityRow { get; }
+
+    internal SubsessionTranscriptTailSentinelRowViewModel TailSentinelRow { get; }
+
+    public ReadOnlyObservableCollection<SubsessionTranscriptRowViewModel> TranscriptItems { get; }
 
     public event Action? TranscriptChanged;
 
@@ -89,7 +129,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     public bool IsListActive => !IsDetailActive;
 
-    public bool ShowWideLayout => !IsCompactLayout;
+    public bool ShowWideLayout => _listDetail.Layout == AdaptiveListDetailLayout.Wide;
 
     public bool ShowCompactList => IsCompactLayout && IsListActive;
 
@@ -125,117 +165,69 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     public bool IsSelectedSubsessionRunActive => SelectedSubsession?.IsRunActive == true;
 
-    [ObservableProperty]
-    private SubsessionListItemViewModel? _selectedSubsession;
+    internal object? NavigationAnchorKey { get; private set; }
 
-    [ObservableProperty]
-    private bool _isCompactLayout;
+    internal long? NavigationSelectionAuthorityRevision { get; private set; }
 
-    [ObservableProperty]
-    private bool _isDetailActive;
+    public SubsessionListItemViewModel? SelectedSubsession
+    {
+        get => _listDetail.SelectedItem;
+        set
+        {
+            if (value is null)
+            {
+                CancelNavigation();
+                _listDetail.ShowList();
+            }
+            else
+            {
+                ActivateSubsession(value);
+            }
+        }
+    }
+
+    public bool IsCompactLayout
+    {
+        get => _listDetail.Layout == AdaptiveListDetailLayout.Compact;
+        set => _listDetail.SetLayout(value
+            ? AdaptiveListDetailLayout.Compact
+            : AdaptiveListDetailLayout.Wide);
+    }
+
+    public bool IsDetailActive
+    {
+        get => IsCompactLayout && !_listDetail.IsList;
+        set
+        {
+            if (!value)
+            {
+                CancelNavigation();
+                _listDetail.ShowList();
+            }
+            else if (SelectedSubsession is { } selected
+                     && !_listDetail.IsExistingDetail)
+            {
+                _listDetail.ShowExistingDetail(selected);
+            }
+        }
+    }
+
+    internal AdaptiveListDetailRoute Route => _listDetail.Route;
+
+    internal AdaptiveListDetailLayout Layout => _listDetail.Layout;
+
+    internal AdaptiveDetailPhase DetailPhase => _listDetail.DetailPhase;
+
+    internal long IntentRevision => _listDetail.IntentRevision;
 
     [ObservableProperty]
     private string _statusText = string.Empty;
 
-    partial void OnSelectedSubsessionChanged(SubsessionListItemViewModel? value)
-    {
-        if (_isReconcilingSubsessionSelection)
-        {
-            return;
-        }
-
-        OnPropertyChanged(nameof(HasSelectedSubsession));
-        OnPropertyChanged(nameof(IsSelectedSubsessionRunActive));
-        if (!_isRestoringReconciledSubsessionSelection)
-        {
-            LoadTranscript(value?.SessionId);
-        }
-
-        if (IsCompactLayout && value is not null)
-        {
-            IsDetailActive = true;
-        }
-    }
-
-    partial void OnIsCompactLayoutChanged(bool value)
-    {
-        if (value && !IsDetailActive)
-        {
-            SelectedSubsession = null;
-        }
-        else if (!value && SelectedSubsession is null)
-        {
-            SelectedSubsession = Subsessions.FirstOrDefault();
-        }
-
-        OnPropertyChanged(nameof(ShowWideLayout));
-        OnPropertyChanged(nameof(ShowCompactList));
-        OnPropertyChanged(nameof(ShowCompactDetail));
-        OnPropertyChanged(nameof(ShowListPane));
-        OnPropertyChanged(nameof(ShowDetailPane));
-    }
-
-    partial void OnIsDetailActiveChanged(bool value)
-    {
-        OnPropertyChanged(nameof(IsListActive));
-        OnPropertyChanged(nameof(ShowCompactList));
-        OnPropertyChanged(nameof(ShowCompactDetail));
-        OnPropertyChanged(nameof(ShowListPane));
-        OnPropertyChanged(nameof(ShowDetailPane));
-    }
-
-    public async ValueTask OnNavigatedToAsync(
-        PackageViewNavigationContext context,
-        CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        var sessionId = TryGetSessionId(context.Parameters);
-        try
-        {
-            await EnsureInitializedAsync(sessionId, cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            StatusText = ex.Message;
-            return;
-        }
-        if (sessionId is not null
-            && SelectedSubsession?.SessionId == sessionId.Value
-            && IsDetailActive)
-        {
-            return;
-        }
-
-        if (sessionId is null)
-        {
-            return;
-        }
-
-        if (FindSubsessionItem(sessionId.Value) is { } subsession)
-        {
-            SelectedSubsession = subsession;
-        }
-        else
-        {
-            await ReloadSubsessionsAsync(sessionId, cancellationToken);
-        }
-
-        IsDetailActive = true;
-    }
-
     [RelayCommand]
     private void BackToSubsessionsList()
     {
-        if (IsCompactLayout)
-        {
-            SelectedSubsession = null;
-        }
-
-        IsDetailActive = false;
+        CancelNavigation();
+        _listDetail.ShowList();
     }
 
     [RelayCommand]
@@ -249,14 +241,10 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     public void ActivateSubsession(SubsessionListItemViewModel subsession)
     {
-        if (SelectedSubsession?.SessionId != subsession.SessionId)
+        if (!(_listDetail.IsExistingDetail && ReferenceEquals(SelectedSubsession, subsession)))
         {
-            SelectedSubsession = subsession;
-        }
-
-        if (IsCompactLayout)
-        {
-            IsDetailActive = true;
+            CancelNavigation();
+            _listDetail.ShowExistingDetail(subsession);
         }
     }
 
@@ -264,13 +252,13 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private async Task OpenChildSessionAsync(SubsessionChildSessionLinkViewModel? childSession)
     {
         if (childSession is null
-            || SelectedSubsession?.SessionId == childSession.SessionId && IsDetailActive)
+            || SelectedSubsession?.SessionId == childSession.SessionId
+            && _listDetail.IsExistingDetail)
         {
             return;
         }
 
         await ReloadSubsessionsAsync(childSession.SessionId);
-        IsDetailActive = true;
     }
 
     [RelayCommand]
@@ -329,46 +317,86 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var runtime = _extensionCatalog
-            .GetExtensions(PackageExtensionPoints.RuntimeCatalogs)
+        var runtimeReference = (_extensionCatalog as IPackageExtensionInvocationCatalog)?
+            .GetExtensionReferences(PackageExtensionPoints.RuntimeCatalogs)
             .FirstOrDefault();
-        if (runtime is not null)
+        if (runtimeReference is not null)
         {
-            var adapter = new SubsessionLocalRuntimeAdapter(runtime);
+            var adapter = new SubsessionLocalRuntimeAdapter(runtimeReference);
             SetRuntimePorts(adapter, adapter, adapter, adapter);
         }
     }
 
-    private async Task ReloadSubsessionsAsync(
+    internal async Task ReloadSubsessionsAsync(
         Guid? selectedSessionId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool suppressTranscriptLoad = false)
     {
         EnsureRuntimeReaders();
         if (_sessionReader is null || _checkpointReader is null)
         {
-            StatusText = "The Agent runtime is not available.";
+            await RunOnUiThreadAsync(
+                () => StatusText = "The Agent runtime is not available.",
+                cancellationToken);
             return;
         }
 
+        var refresh = _requests.Begin(ListRefreshChannel, cancellationToken);
+        var selectionAuthorityRevision = IntentRevision;
         var currentSelectionId = selectedSessionId ?? SelectedSubsession?.SessionId;
-        var sessionsTask = _sessionReader.ListSessionsAsync(cancellationToken);
-        var checkpointsTask = _checkpointReader.ListLatestCheckpointsAsync(cancellationToken);
-        await Task.WhenAll(sessionsTask, checkpointsTask);
-        var catalog = await sessionsTask;
-        var checkpoints = await checkpointsTask;
-        var subsessions = catalog.Sessions
-            .Where(session => session.ParentSessionId is not null)
-            .OrderByDescending(session => session.UpdatedAtUtc)
-            .ThenByDescending(session => session.CreatedAtUtc)
-            .ToArray();
-        await RunOnUiThreadAsync(
-            () => ApplySubsessionSnapshot(
-                selectedSessionId,
-                currentSelectionId,
-                catalog,
-                checkpoints,
-                subsessions),
-            cancellationToken);
+        try
+        {
+            var sessionsTask = _sessionReader.ListSessionsAsync(refresh.CancellationToken);
+            var checkpointsTask = _checkpointReader.ListLatestCheckpointsAsync(refresh.CancellationToken);
+            await Task.WhenAll(sessionsTask, checkpointsTask);
+            var catalog = await sessionsTask;
+            var checkpoints = await checkpointsTask;
+            var subsessions = catalog.Sessions
+                .Where(session => session.ParentSessionId is not null)
+                .OrderByDescending(session => session.UpdatedAtUtc)
+                .ThenByDescending(session => session.CreatedAtUtc)
+                .ToArray();
+            var applied = false;
+            var transcriptLoadOperation = Task.CompletedTask;
+            await RunOnUiThreadAsync(
+                () =>
+                {
+                    if (_disposed || !_requests.IsCurrent(refresh))
+                    {
+                        return;
+                    }
+
+                    var preserveLiveSelection = selectionAuthorityRevision != IntentRevision;
+                    var liveSelectionId = preserveLiveSelection
+                        ? SelectedSubsession?.SessionId
+                        : currentSelectionId;
+                    RunWithAutomaticTranscriptLoadSuppressed(
+                        () => ApplySubsessionSnapshot(
+                            preserveLiveSelection ? null : selectedSessionId,
+                            liveSelectionId,
+                            catalog,
+                            checkpoints,
+                            subsessions,
+                            preserveLiveSelection),
+                        suppressTranscriptLoad);
+                    transcriptLoadOperation = Volatile.Read(ref _transcriptLoadOperation);
+                    applied = true;
+                },
+                refresh.CancellationToken);
+            if (applied)
+            {
+                await transcriptLoadOperation.WaitAsync(refresh.CancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (
+            refresh.CancellationToken.IsCancellationRequested
+            && !cancellationToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            _requests.Complete(refresh);
+        }
     }
 
     private void ApplySubsessionSnapshot(
@@ -376,116 +404,40 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         Guid? currentSelectionId,
         SubsessionSessionCatalog catalog,
         IReadOnlyList<AgentRunCheckpointRecord> checkpoints,
-        IReadOnlyList<AgentSessionRecord> subsessions)
+        IReadOnlyList<AgentSessionRecord> subsessions,
+        bool preserveLiveSelection = false)
     {
         ReplaceRuntimeSnapshot(catalog, checkpoints);
-        ReconcileSubsessions(subsessions);
-        OnPropertyChanged(nameof(HasNoSubsessions));
-        var selectedSubsession = Subsessions.FirstOrDefault(
-            session => session.SessionId == currentSelectionId);
-        if (selectedSubsession is null && (!IsCompactLayout || requestedSessionId is not null))
+        var rows = subsessions.Select(session =>
         {
-            selectedSubsession = Subsessions.FirstOrDefault();
+            _knownCheckpoints.TryGetValue(session.SessionId, out var checkpoint);
+            return new SubsessionListItemViewModel(session, BuildSubtitle(session), checkpoint);
+        }).ToArray();
+        StatusText = rows.Length == 0
+            ? "No sub-sessions have been created yet."
+            : $"{rows.Length} sub-session(s).";
+        _listDetail.Reconcile(rows);
+        OnPropertyChanged(nameof(HasNoSubsessions));
+
+        if (!preserveLiveSelection && requestedSessionId is { } requested
+            && FindSubsessionItem(requested) is { } requestedSubsession)
+        {
+            _listDetail.ShowExistingDetail(requestedSubsession);
+        }
+        else if (!preserveLiveSelection
+                 && currentSelectionId is { } current
+                 && !_listDetail.IsExistingDetail
+                 && FindSubsessionItem(current) is { } currentSubsession)
+        {
+            _listDetail.ShowExistingDetail(currentSubsession);
         }
 
-        SelectedSubsession = selectedSubsession;
         OnPropertyChanged(nameof(IsSelectedSubsessionRunActive));
-        StatusText = Subsessions.Count == 0
-            ? "No sub-sessions have been created yet."
-            : $"{Subsessions.Count} sub-session(s).";
         ApplyRunActivityState();
     }
 
-    private void ReconcileSubsessions(IReadOnlyList<AgentSessionRecord> sessions)
-    {
-        var desiredSessionIds = sessions.Select(session => session.SessionId).ToHashSet();
-        var selectedSessionId = SelectedSubsession?.SessionId;
-        var shouldPreserveSelection = selectedSessionId is not null
-            && desiredSessionIds.Contains(selectedSessionId.Value);
-
-        _isReconcilingSubsessionSelection = shouldPreserveSelection;
-        try
-        {
-            for (var index = Subsessions.Count - 1; index >= 0; index--)
-            {
-                if (!desiredSessionIds.Contains(Subsessions[index].SessionId))
-                {
-                    Subsessions.RemoveAt(index);
-                }
-            }
-
-            for (var index = 0; index < sessions.Count; index++)
-            {
-                var session = sessions[index];
-                var existingIndex = FindSubsessionIndex(session.SessionId);
-                var subtitle = BuildSubtitle(session);
-                _knownCheckpoints.TryGetValue(session.SessionId, out var checkpoint);
-                if (existingIndex < 0)
-                {
-                    Subsessions.Insert(
-                        index,
-                        new SubsessionListItemViewModel(session, subtitle, checkpoint));
-                    continue;
-                }
-
-                var item = Subsessions[existingIndex];
-                item.UpdateSession(session, subtitle);
-                item.ApplyCheckpoint(checkpoint);
-                if (existingIndex != index)
-                {
-                    Subsessions.Move(existingIndex, index);
-                }
-            }
-        }
-        finally
-        {
-            _isReconcilingSubsessionSelection = false;
-        }
-
-        RestoreReconciledSubsessionSelection(selectedSessionId, shouldPreserveSelection);
-    }
-
-    private void RestoreReconciledSubsessionSelection(
-        Guid? sessionId,
-        bool shouldPreserveSession)
-    {
-        if (!shouldPreserveSession
-            || sessionId is null
-            || SelectedSubsession?.SessionId == sessionId.Value
-            || FindSubsessionItem(sessionId.Value) is not { } session)
-        {
-            return;
-        }
-
-        _isRestoringReconciledSubsessionSelection = true;
-        try
-        {
-            SelectedSubsession = session;
-        }
-        finally
-        {
-            _isRestoringReconciledSubsessionSelection = false;
-        }
-    }
-
-    private int FindSubsessionIndex(Guid sessionId)
-    {
-        for (var index = 0; index < Subsessions.Count; index++)
-        {
-            if (Subsessions[index].SessionId == sessionId)
-            {
-                return index;
-            }
-        }
-
-        return -1;
-    }
-
     private SubsessionListItemViewModel? FindSubsessionItem(Guid sessionId)
-    {
-        var index = FindSubsessionIndex(sessionId);
-        return index < 0 ? null : Subsessions[index];
-    }
+        => Subsessions.FirstOrDefault(session => session.SessionId == sessionId);
 
     private string BuildSubtitle(AgentSessionRecord session)
     {
@@ -557,21 +509,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
                StringComparison.OrdinalIgnoreCase);
 
     private void OnSessionChanged(Guid sessionId)
-        => _tasks.Run(async cancellationToken =>
-        {
-            try
-            {
-                await ReloadSubsessionsAsync(SelectedSubsession?.SessionId, cancellationToken);
-                await RunOnUiThreadAsync(() => ApplySessionChanged(sessionId), cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-            }
-            catch (Exception ex)
-            {
-                await RunOnUiThreadAsync(() => StatusText = ex.Message, cancellationToken);
-            }
-        });
+        => _tasks.Run(_runtimeRefresh.MarkDirty());
 
     private void ApplySessionChanged(Guid sessionId)
     {
@@ -619,9 +557,8 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     }
 
     private void ApplyRunActivityState()
-        => _timeline.ApplyActivity(
+        => RunActivityRow.SetPresentation(
             _runActivity.Text,
-            _runActivity.IsReasoning,
             _runActivity.ShouldShow);
 
     private void OnTimelineRowsChanged()
@@ -686,6 +623,111 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         });
     }
 
+    private void OnListDetailPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(KeyedAdaptiveListDetailState<Guid, SubsessionListItemViewModel>.SelectedItem))
+        {
+            NavigationAnchorKey = null;
+            NavigationSelectionAuthorityRevision = null;
+            OnPropertyChanged(nameof(SelectedSubsession));
+            OnPropertyChanged(nameof(HasSelectedSubsession));
+            OnPropertyChanged(nameof(IsSelectedSubsessionRunActive));
+            if (_listDetail.IsExistingDetail && SelectedSubsession is { } selected)
+            {
+                var ticket = _listDetail.BeginDetailLoad();
+                _listDetail.TrySetDetailReady(ticket);
+                if (Volatile.Read(ref _suppressAutomaticTranscriptLoad) == 0)
+                {
+                    LoadTranscript(selected.SessionId);
+                }
+                else
+                {
+                    Volatile.Write(ref _transcriptLoadOperation, Task.CompletedTask);
+                }
+            }
+            else
+            {
+                if (Volatile.Read(ref _suppressAutomaticTranscriptLoad) == 0)
+                {
+                    LoadTranscript(null);
+                }
+                else
+                {
+                    Volatile.Write(ref _transcriptLoadOperation, Task.CompletedTask);
+                }
+            }
+        }
+
+        OnPropertyChanged(nameof(IsCompactLayout));
+        OnPropertyChanged(nameof(IsDetailActive));
+        OnPropertyChanged(nameof(IsListActive));
+        OnPropertyChanged(nameof(ShowWideLayout));
+        OnPropertyChanged(nameof(ShowCompactList));
+        OnPropertyChanged(nameof(ShowCompactDetail));
+        OnPropertyChanged(nameof(ShowListPane));
+        OnPropertyChanged(nameof(ShowDetailPane));
+    }
+
+    private void CancelNavigation()
+    {
+        _requests.Invalidate(NavigationChannel);
+        NavigationAnchorKey = null;
+        NavigationSelectionAuthorityRevision = null;
+    }
+
+    private void RunWithAutomaticTranscriptLoadSuppressed(Action action, bool suppress = true)
+    {
+        if (!suppress)
+        {
+            action();
+            return;
+        }
+
+        Interlocked.Increment(ref _suppressAutomaticTranscriptLoad);
+        try
+        {
+            action();
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _suppressAutomaticTranscriptLoad);
+        }
+    }
+
+    private async Task RefreshFromRuntimeAsync(CancellationToken cancellationToken)
+    {
+        Guid? selectedSessionId = null;
+        var selectionAuthorityRevision = 0L;
+        await RunOnUiThreadAsync(() =>
+        {
+            selectedSessionId = SelectedSubsession?.SessionId;
+            selectionAuthorityRevision = IntentRevision;
+        }, cancellationToken);
+
+        await ReloadSubsessionsAsync(null, cancellationToken);
+        var forceTranscript = Interlocked.Exchange(ref _forceRuntimeTranscriptRefresh, 0) != 0;
+        Task transcriptLoad = Task.CompletedTask;
+        await RunOnUiThreadAsync(() =>
+        {
+            if (selectionAuthorityRevision != IntentRevision
+                || SelectedSubsession?.SessionId != selectedSessionId)
+            {
+                return;
+            }
+
+            if (forceTranscript)
+            {
+                LoadTranscript(selectedSessionId, forceReplacement: true);
+                transcriptLoad = Volatile.Read(ref _transcriptLoadOperation);
+            }
+            if (selectedSessionId is { } sessionId)
+            {
+                ApplySessionChanged(sessionId);
+            }
+        }, cancellationToken);
+        await transcriptLoad.WaitAsync(cancellationToken);
+    }
+
     private async Task RunOnUiThreadAsync(Action action, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -740,6 +782,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         _changeNotifications = changeNotifications;
         changeNotifications.SessionChanged += OnSessionChanged;
         changeNotifications.TurnChanged += OnTurnChanged;
+        changeNotifications.ResnapshotRequired += OnRuntimeResnapshotRequired;
     }
 
     private static Guid? TryGetSessionId(IReadOnlyDictionary<string, string?> parameters)
@@ -749,4 +792,5 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
            && Guid.TryParse(value, out var sessionId)
             ? sessionId
             : null;
+
 }

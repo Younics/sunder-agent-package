@@ -5,6 +5,7 @@ using Sunder.Package.Agent.Skills.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Runtime;
+using Sunder.Sdk.Storage;
 using Xunit;
 
 namespace Sunder.Package.Agent.Skills.Tests;
@@ -106,20 +107,40 @@ public sealed class SkillRuntimeTransferTests
         private readonly Dictionary<string, byte[]> _files = new(StringComparer.Ordinal);
         public IReadOnlyCollection<string> Paths => _files.Keys;
         public Task<byte[]?> ReadAsync(string relativePath, CancellationToken cancellationToken = default)
-            => Task.FromResult(_files.TryGetValue(relativePath, out var value) ? value.ToArray() : null);
-        public Task WriteAsync(string relativePath, ReadOnlyMemory<byte> contents, CancellationToken cancellationToken = default) { _files[relativePath] = contents.ToArray(); return Task.CompletedTask; }
-        public Task DeleteAsync(string relativePath, CancellationToken cancellationToken = default) { _files.Remove(relativePath); return Task.CompletedTask; }
+        {
+            ValidatePath(relativePath);
+            return Task.FromResult(_files.TryGetValue(relativePath, out var value) ? value.ToArray() : null);
+        }
+        public Task WriteAsync(string relativePath, ReadOnlyMemory<byte> contents, CancellationToken cancellationToken = default)
+        {
+            ValidatePath(relativePath);
+            if (!PackageStorageValidation.IsValidFileLength(contents.Length)) throw new ArgumentException("Invalid test file length.", nameof(contents));
+            _files[relativePath] = contents.ToArray();
+            return Task.CompletedTask;
+        }
+        public Task DeleteAsync(string relativePath, CancellationToken cancellationToken = default)
+        {
+            ValidatePath(relativePath);
+            _files.Remove(relativePath);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class MemoryStateStore : IPackageKeyValueStore
     {
         private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
-        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(_values.GetValueOrDefault(key));
-        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default) { _values[key] = value; return Task.CompletedTask; }
-        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(_values.ContainsKey(key));
-        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default) { _values.Remove(key); return Task.CompletedTask; }
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) { ValidateKey(key); return Task.FromResult(_values.GetValueOrDefault(key)); }
+        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default) { ValidateKey(key); ValidateValue(value); _values[key] = value; return Task.CompletedTask; }
+        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default) { ValidateKey(key); return Task.FromResult(_values.ContainsKey(key)); }
+        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default) { ValidateKey(key); _values.Remove(key); return Task.CompletedTask; }
         public Task<IReadOnlyList<string>> ListKeysAsync(string? prefix = null, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<string>>(_values.Keys.Where(key => prefix is null || key.StartsWith(prefix, StringComparison.Ordinal)).ToArray());
+        {
+            ValidatePrefix(prefix);
+            return Task.FromResult<IReadOnlyList<string>>(_values.Keys
+                .Where(key => prefix is null || key.StartsWith(prefix, StringComparison.Ordinal))
+                .Order(StringComparer.Ordinal)
+                .ToArray());
+        }
     }
 
     private sealed class EmptySettings : IPackageSettings
@@ -132,9 +153,9 @@ public sealed class SkillRuntimeTransferTests
 
     private sealed class EmptySecrets : IPackageSecrets
     {
-        public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
-        public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default) { ValidateKey(key); return Task.FromResult<string?>(null); }
+        public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default) { ValidateKey(key); ValidateValue(value); return Task.CompletedTask; }
+        public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default) { ValidateKey(key); return Task.CompletedTask; }
     }
 
     private sealed class UnusedGitHubClient : IGitHubSkillClient
@@ -144,5 +165,25 @@ public sealed class SkillRuntimeTransferTests
         public Task<GitHubSkillFolder?> TryGetSkillFolderAsync(GitHubSkillFolderRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<GitHubSkillFile>> ListFilesAsync(GitHubSkillFolder folder, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<byte[]> ReadFileAsync(GitHubSkillFolder folder, GitHubSkillFile file, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    private static void ValidateKey(string? key)
+    {
+        if (!PackageStorageValidation.IsValidKey(key)) throw new ArgumentException("Invalid test storage key.", nameof(key));
+    }
+
+    private static void ValidatePrefix(string? prefix)
+    {
+        if (prefix is not null && prefix.Length != 0 && !PackageStorageValidation.IsValidKey(prefix)) throw new ArgumentException("Invalid test storage prefix.", nameof(prefix));
+    }
+
+    private static void ValidateValue(string? value)
+    {
+        if (!PackageStorageValidation.IsValidValue(value)) throw new ArgumentException("Invalid test storage value.", nameof(value));
+    }
+
+    private static void ValidatePath(string? path)
+    {
+        if (!PackageStorageValidation.IsValidRelativePath(path)) throw new ArgumentException("Invalid test storage path.", nameof(path));
     }
 }

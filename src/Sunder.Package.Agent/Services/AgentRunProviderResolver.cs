@@ -10,40 +10,85 @@ public sealed class AgentRunProviderResolver(
     IPackageExtensionCatalog extensionCatalog)
 {
     private readonly AgentProfileService _profileService = profileService;
-    private readonly IPackageExtensionCatalog _extensionCatalog = extensionCatalog;
+    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
+        AgentExtensionInvocation.Require(extensionCatalog);
 
     public AgentRunProviderSelection ResolveChatProvider(AgentProfileRecord profile)
     {
         var chatBinding = _profileService.GetChatBinding(profile.ProfileId);
-        var provider = _extensionCatalog.GetExtensions(PackageExtensionPoints.ChatProviders)
-            .FirstOrDefault(x => string.Equals(x.Descriptor.ProviderId, chatBinding?.ProviderId, StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(chatBinding?.ProviderId))
+        {
+            return new AgentRunProviderSelection(chatBinding);
+        }
 
-        return new AgentRunProviderSelection(chatBinding, provider);
+        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.ChatProviders))
+        {
+            if (!reference.TryAcquire(out var lease))
+            {
+                continue;
+            }
+
+            var descriptor = SnapshotDescriptor(lease.Contribution.Descriptor);
+            if (!string.Equals(
+                    descriptor.ProviderId,
+                    chatBinding.ProviderId,
+                    StringComparison.OrdinalIgnoreCase)
+                || lease.RetirementToken.IsCancellationRequested)
+            {
+                lease.Dispose();
+                continue;
+            }
+
+            return new AgentRunProviderSelection(
+                chatBinding,
+                reference,
+                lease,
+                descriptor);
+        }
+
+        return new AgentRunProviderSelection(chatBinding);
     }
 
     public async ValueTask<AgentRunProviderMetadata> ResolveRunMetadataAsync(
-        IAgentChatProvider provider,
-        AgentProfileModelBindingRecord chatBinding,
+        AgentRunProviderSelection selection,
         CancellationToken cancellationToken)
     {
-        var runCapabilities = await provider.GetRunCapabilitiesAsync(chatBinding.ModelId, cancellationToken).ConfigureAwait(false);
-        var model = await ResolveModelDescriptorAsync(provider, chatBinding.ModelId, cancellationToken).ConfigureAwait(false);
-        runCapabilities = EnrichRunCapabilities(runCapabilities, model);
-        var settings = AgentChatModelSettingsJson.Parse(chatBinding.SettingsJson);
-        var modelModeOption = ResolveModelModeOption(model, settings);
-        var modelVariant = modelModeOption?.DisablesReasoning == true
-            ? null
-            : ResolveModelVariant(model, settings);
-        var modelSpeedOption = ResolveModelSpeedOption(model, settings)
-                               ?? ResolveLegacyFastSpeedOption(model, chatBinding.ModelId);
-        return new AgentRunProviderMetadata(runCapabilities, modelVariant, modelSpeedOption, modelModeOption);
+        var chatBinding = selection.ChatBinding
+            ?? throw new InvalidOperationException("The selected chat provider has no model binding.");
+        return await selection.InvokeAsync(
+            cancellationToken,
+            async (provider, invocationToken) =>
+            {
+                var runCapabilities = await provider
+                    .GetRunCapabilitiesAsync(chatBinding.ModelId, invocationToken)
+                    .ConfigureAwait(false);
+                var model = await ResolveModelDescriptorAsync(
+                    provider,
+                    chatBinding.ModelId,
+                    invocationToken).ConfigureAwait(false);
+                runCapabilities = EnrichRunCapabilities(runCapabilities, model);
+                var settings = AgentChatModelSettingsJson.Parse(chatBinding.SettingsJson);
+                var modelModeOption = ResolveModelModeOption(model, settings);
+                var modelVariant = modelModeOption?.DisablesReasoning == true
+                    ? null
+                    : ResolveModelVariant(model, settings);
+                var modelSpeedOption = ResolveModelSpeedOption(model, settings)
+                                       ?? ResolveLegacyFastSpeedOption(model, chatBinding.ModelId);
+                return new AgentRunProviderMetadata(
+                    runCapabilities,
+                    modelVariant,
+                    modelSpeedOption,
+                    modelModeOption);
+            }).ConfigureAwait(false);
     }
 
     public async ValueTask<AgentProviderRunCapabilities> ResolveRunCapabilitiesAsync(
-        IAgentChatProvider provider,
-        AgentProfileModelBindingRecord chatBinding,
+        AgentRunProviderSelection selection,
         CancellationToken cancellationToken)
-        => (await ResolveRunMetadataAsync(provider, chatBinding, cancellationToken).ConfigureAwait(false)).RunCapabilities;
+        => (await ResolveRunMetadataAsync(selection, cancellationToken).ConfigureAwait(false)).RunCapabilities;
+
+    private static AgentProviderDescriptor SnapshotDescriptor(AgentProviderDescriptor descriptor)
+        => descriptor with { SupportedAuthModes = descriptor.SupportedAuthModes.ToArray() };
 
     private static async ValueTask<AgentModelDescriptor?> ResolveModelDescriptorAsync(
         IAgentChatProvider provider,
@@ -129,9 +174,117 @@ public sealed class AgentRunProviderResolver(
             : null;
 }
 
-public sealed record AgentRunProviderSelection(
-    AgentProfileModelBindingRecord? ChatBinding,
-    IAgentChatProvider? Provider);
+public sealed class AgentRunProviderSelection : IDisposable
+{
+    private IPackageExtensionLease<IAgentChatProvider>? _lease;
+
+    internal AgentRunProviderSelection(
+        AgentProfileModelBindingRecord? chatBinding,
+        IPackageExtensionReference<IAgentChatProvider>? reference = null,
+        IPackageExtensionLease<IAgentChatProvider>? lease = null,
+        AgentProviderDescriptor? descriptor = null)
+    {
+        ChatBinding = chatBinding;
+        Reference = reference;
+        _lease = lease;
+        Descriptor = descriptor;
+        OwnerPackageId = lease?.PackageId;
+        RetirementToken = lease?.RetirementToken ?? CancellationToken.None;
+    }
+
+    public AgentProfileModelBindingRecord? ChatBinding { get; }
+
+    public AgentProviderDescriptor? Descriptor { get; }
+
+    public string? OwnerPackageId { get; }
+
+    public bool IsAvailable => Volatile.Read(ref _lease) is not null;
+
+    internal IPackageExtensionReference<IAgentChatProvider>? Reference { get; }
+
+    internal CancellationToken RetirementToken { get; }
+
+    internal bool IsRetiring => RetirementToken.IsCancellationRequested;
+
+    internal IAgentChatProvider Provider
+        => Volatile.Read(ref _lease)?.Contribution
+           ?? throw new ObjectDisposedException(nameof(AgentRunProviderSelection));
+
+    internal AgentRunProviderSelection? TryRetain()
+    {
+        var reference = Reference;
+        if (reference is null || !reference.TryAcquire(out var lease))
+        {
+            return null;
+        }
+
+        if (lease.RetirementToken.IsCancellationRequested)
+        {
+            lease.Dispose();
+            return null;
+        }
+
+        return new AgentRunProviderSelection(
+            ChatBinding,
+            reference,
+            lease,
+            Descriptor);
+    }
+
+    internal bool CanAcquireExactOwner()
+    {
+        var reference = Reference;
+        if (reference is null || !reference.TryAcquire(out var lease))
+        {
+            return false;
+        }
+
+        using (lease)
+        {
+            return !lease.RetirementToken.IsCancellationRequested;
+        }
+    }
+
+    internal async ValueTask<TResult> InvokeAsync<TResult>(
+        CancellationToken cancellationToken,
+        Func<IAgentChatProvider, CancellationToken, ValueTask<TResult>> callback)
+    {
+        var lease = Volatile.Read(ref _lease)
+            ?? throw new ObjectDisposedException(nameof(AgentRunProviderSelection));
+        using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            RetirementToken);
+        try
+        {
+            var result = await callback(lease.Contribution, invocation.Token).ConfigureAwait(false);
+            if (IsRetiring && !cancellationToken.IsCancellationRequested)
+            {
+                throw AgentExtensionInvocation.Unavailable(OwnerPackageId!);
+            }
+
+            return result;
+        }
+        catch (AgentPackageUnavailableException)
+        {
+            throw;
+        }
+        catch (OperationCanceledException exception) when (
+            IsRetiring
+            && !cancellationToken.IsCancellationRequested)
+        {
+            throw AgentExtensionInvocation.Unavailable(OwnerPackageId!, exception);
+        }
+        catch (Exception exception) when (
+            IsRetiring
+            && !cancellationToken.IsCancellationRequested)
+        {
+            throw AgentExtensionInvocation.Unavailable(OwnerPackageId!, exception);
+        }
+    }
+
+    public void Dispose()
+        => Interlocked.Exchange(ref _lease, null)?.Dispose();
+}
 
 public sealed record AgentRunProviderMetadata(
     AgentProviderRunCapabilities RunCapabilities,

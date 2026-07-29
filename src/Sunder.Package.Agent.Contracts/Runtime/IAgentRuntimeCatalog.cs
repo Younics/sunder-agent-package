@@ -59,9 +59,9 @@ public interface IAgentRuntimeCatalog
     /// <returns>The summary, or <see langword="null"/> when none is persisted.</returns>
     AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId);
 
-    /// <summary>Gets the newest durable context checkpoint for omitted transcript history.</summary>
+    /// <summary>Gets the active, anchor-validated durable context checkpoint for omitted transcript history.</summary>
     /// <param name="sessionId">The stable session identifier.</param>
-    /// <returns>The newest context checkpoint, or <see langword="null"/> when none is persisted.</returns>
+    /// <returns>The active checkpoint, or <see langword="null"/> when no checkpoint is valid for the current transcript epoch.</returns>
     AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId);
 
     /// <summary>Gets the newest checkpoint from the highest persisted run revision for a session.</summary>

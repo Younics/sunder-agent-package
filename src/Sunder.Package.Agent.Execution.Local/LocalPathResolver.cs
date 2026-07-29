@@ -7,19 +7,8 @@ internal static class LocalPathResolver
     public static string ResolvePath(LocalExecutionRuntimeConfig config, string path, bool allowOutsideConfiguredScope)
         => ResolvePathFromBase(config, path, ResolveDefaultBaseDirectory(config), allowOutsideConfiguredScope);
 
-    public static string ResolveFileSystemPath(LocalExecutionRuntimeConfig config, string path, bool allowOutsideConfiguredScope)
-    {
-        var candidate = ResolvePath(config, path, allowOutsideConfiguredScope);
-        var physicalCandidate = HostPath.ResolvePhysical(candidate);
-
-        if (!allowOutsideConfiguredScope && !IsInsideResolvedPhysicalWorkspacePath(config, physicalCandidate))
-        {
-            throw new InvalidOperationException($"Path '{path}' resolves outside the configured workspace paths.");
-        }
-
-        return physicalCandidate;
-    }
-
+    // Working-directory resolution belongs to unrestricted shell/process execution, not to the
+    // structured no-follow filesystem guarantee implemented by LocalSecurePathEngine.
     public static string ResolveWorkingDirectory(LocalExecutionRuntimeConfig config, string? requestedWorkingDirectory, bool allowOutsideConfiguredScope)
     {
         var requested = string.IsNullOrWhiteSpace(requestedWorkingDirectory) ? "." : requestedWorkingDirectory;
@@ -49,9 +38,6 @@ internal static class LocalPathResolver
 
     public static bool IsInsideWorkspacePath(LocalExecutionRuntimeConfig config, string candidate)
         => config.WorkspacePaths.Any(root => LocalExecutionWorkspaceConfigService.IsSameOrChildPath(candidate, root));
-
-    public static bool IsInsidePhysicalWorkspacePath(LocalExecutionRuntimeConfig config, string candidate)
-        => IsInsideResolvedPhysicalWorkspacePath(config, HostPath.ResolvePhysical(candidate));
 
     public static string ResolvePhysicalPath(string path)
         => HostPath.ResolvePhysical(path);

@@ -158,11 +158,11 @@
       </DataTemplate>
 
       <DataTemplate x:Key="AgentToolDetailsTemplate"
-                    x:DataType="vm:AgentToolInvocationRowViewModel">
+                    x:DataType="shared:TranscriptToolDetailViewModel">
         <Border Classes="tool-output-card"
                 Margin="28,10,0,0"
                 MinWidth="0">
-          <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+          <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
                 MinWidth="0">
             <Border Classes="tool-output-header"
                     IsVisible="{Binding HasOutput}">
@@ -200,6 +200,7 @@
               <shared:StreamingMarkdownPresenter MarkdownBuilder="{Binding DetailMarkdownBuilder}"
                                                  MinWidth="0"
                                                  HorizontalAlignment="Stretch"
+                                                 GeometryChanged="TranscriptMarkdown_OnRendered"
                                                  Rendered="TranscriptMarkdown_OnRendered" />
             </Border>
 
@@ -249,6 +250,21 @@
                   </Grid>
                 </Border>
               </WrapPanel>
+            </Border>
+
+            <Border Grid.Row="5"
+                    Classes="tool-ambiguous-warning"
+                    IsVisible="{Binding HasAmbiguousWarning}">
+              <TextBlock Text="{Binding AmbiguousWarningText}"
+                         TextWrapping="Wrap"
+                         Foreground="{DynamicResource Sunder.Brush.Warning}" />
+            </Border>
+            <Border Grid.Row="6"
+                    Classes="tool-ambiguous-warning"
+                    IsVisible="{Binding WasTransportTruncated}">
+              <TextBlock Text="{Binding TransportTruncatedText}"
+                         TextWrapping="Wrap"
+                         Foreground="{DynamicResource Sunder.Brush.Warning}" />
             </Border>
           </Grid>
         </Border>
@@ -881,6 +897,7 @@
             ColumnSpacing="16"
             Margin="0,0,0,22"
             MinWidth="0"
+            IsVisible="{Binding IsLayoutVisible}"
             HorizontalAlignment="Stretch">
         <Border Classes="message-avatar"
                 VerticalAlignment="Top">
@@ -900,6 +917,13 @@
                      Text="{Binding ThinkingText}" />
         </Grid>
       </Grid>
+    </DataTemplate>
+
+    <DataTemplate x:DataType="vm:AgentTranscriptTailSentinelRowViewModel">
+      <Border Height="1"
+              MinHeight="1"
+              MaxHeight="1"
+              IsHitTestVisible="False" />
     </DataTemplate>
 
     <DataTemplate x:DataType="vm:AgentTextTranscriptRowViewModel">
@@ -925,14 +949,16 @@
               <TextBlock Classes="message-header"
                          Text="{Binding MessageHeaderText}"
                          IsVisible="{Binding ShowMessageHeader}" />
-              <Border Classes="message-bubble"
-                      MinWidth="0">
-                <StackPanel Spacing="10"
-                            MinWidth="0">
+              <Grid MinWidth="0">
+                <Border Classes="message-bubble"
+                        MinWidth="0">
+                  <StackPanel Spacing="10"
+                              MinWidth="0">
                   <shared:StreamingMarkdownPresenter MarkdownBuilder="{Binding MarkdownBuilder}"
                                                      MinWidth="0"
                                                      HorizontalAlignment="Stretch"
                                                      IsVisible="{Binding HasContent}"
+                                                     GeometryChanged="TranscriptMarkdown_OnRendered"
                                                      Rendered="TranscriptMarkdown_OnRendered" />
                   <ItemsControl ItemsSource="{Binding Attachments}"
                                 MinWidth="0"
@@ -973,8 +999,12 @@
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
                   </ItemsControl>
-                </StackPanel>
-              </Border>
+                  </StackPanel>
+                </Border>
+                <Border Classes="navigation-highlight-overlay"
+                        Classes.fading="{Binding IsNavigationTargetFading}"
+                        IsVisible="{Binding IsNavigationTargetHighlighted}" />
+              </Grid>
               <Button Classes="message-copy-action"
                       Content="⧉"
                       Tag="{Binding Content}"
@@ -996,14 +1026,16 @@
               <TextBlock Classes="message-header user"
                          Text="{Binding MessageHeaderText}"
                          IsVisible="{Binding ShowMessageHeader}" />
-              <Border Classes="message-bubble user"
-                      MinWidth="0">
-                <StackPanel Spacing="10"
-                            MinWidth="0">
+              <Grid MinWidth="0">
+                <Border Classes="message-bubble user"
+                        MinWidth="0">
+                  <StackPanel Spacing="10"
+                              MinWidth="0">
                   <shared:StreamingMarkdownPresenter MarkdownBuilder="{Binding MarkdownBuilder}"
                                                      MinWidth="0"
                                                      HorizontalAlignment="Stretch"
                                                      IsVisible="{Binding HasContent}"
+                                                     GeometryChanged="TranscriptMarkdown_OnRendered"
                                                      Rendered="TranscriptMarkdown_OnRendered" />
                   <ItemsControl ItemsSource="{Binding Attachments}"
                                 MinWidth="0"
@@ -1044,8 +1076,12 @@
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
                   </ItemsControl>
-                </StackPanel>
-              </Border>
+                  </StackPanel>
+                </Border>
+                <Border Classes="navigation-highlight-overlay"
+                        Classes.fading="{Binding IsNavigationTargetFading}"
+                        IsVisible="{Binding IsNavigationTargetHighlighted}" />
+              </Grid>
               <StackPanel Orientation="Horizontal"
                           HorizontalAlignment="Right"
                           Spacing="4">
@@ -1074,16 +1110,22 @@
             MinWidth="0"
             HorizontalAlignment="Stretch">
         <Border Classes="timeline-spine"
+                Classes.navigation-target="{Binding IsNavigationTargetHighlighted}"
                 Margin="0,-22,0,-6" />
 
         <StackPanel Grid.Column="1"
                     MinWidth="0"
                     HorizontalAlignment="Stretch">
-          <Button Classes="tool-step-header"
-                  MinWidth="0"
-                  Click="ToolStepHeader_OnClick">
-            <Grid RowDefinitions="Auto,Auto"
-                  ColumnDefinitions="Auto,*,Auto"
+          <Grid MinWidth="0">
+            <Button Classes="tool-step-header"
+                    shared:TranscriptRowPresenter.IsExactAnchorTarget="True"
+                     MinWidth="0"
+                     Click="OnToolStepHeaderClick"
+                     IsEnabled="{Binding HasDetails}"
+                     AutomationProperties.Name="{Binding ToolLabel}"
+                     AutomationProperties.HelpText="{Binding HeaderAccessibilityText}">
+              <Grid RowDefinitions="Auto,Auto"
+                  ColumnDefinitions="Auto,*,Auto,Auto"
                   RowSpacing="3"
                   ColumnSpacing="8"
                   MinWidth="0"
@@ -1103,10 +1145,14 @@
                          Text="{Binding ToolLabel}"
                          MinWidth="0"
                          VerticalAlignment="Center" />
-              <TextBlock Grid.Row="0"
-                         Grid.Column="2"
-                         Classes="tool-chevron"
-                         Text="{Binding ExpandGlyph}" />
+               <TextBlock Grid.Row="0"
+                          Grid.Column="2"
+                          Classes="tool-status"
+                          Text="{Binding StatusText}" />
+               <TextBlock Grid.Row="0"
+                          Grid.Column="3"
+                          Classes="tool-chevron"
+                          Text="{Binding ExpandGlyph}" />
               <TextBlock Grid.Row="1"
                            Grid.Column="1"
                            Classes="tool-command"
@@ -1117,8 +1163,12 @@
                           TextTrimming="CharacterEllipsis"
                           Margin="0,-1,8,0"
                           IsVisible="{Binding HasHeaderDetail}" />
-            </Grid>
-          </Button>
+              </Grid>
+            </Button>
+            <Border Classes="navigation-highlight-overlay"
+                    Classes.fading="{Binding IsNavigationTargetFading}"
+                    IsVisible="{Binding IsNavigationTargetHighlighted}" />
+          </Grid>
 
           <ItemsControl ItemsSource="{Binding ChildSessionLinks}"
                         IsVisible="{Binding HasChildSessionLinks}"
@@ -1154,11 +1204,16 @@
             </ItemsControl.ItemTemplate>
           </ItemsControl>
 
-          <ContentControl Content="{Binding ExpandedDetails}"
-                          ContentTemplate="{StaticResource AgentToolDetailsTemplate}"
-                          MinWidth="0"
-                          HorizontalAlignment="Stretch"
-                          HorizontalContentAlignment="Stretch" />
+          <TextBlock Classes="tool-detail-load-error"
+                     Text="{Binding DetailLoadFailureText}"
+                     IsVisible="{Binding IsDetailLoadFailed}" />
+          <TextBlock Height="0"
+                     Opacity="0"
+                     IsHitTestVisible="False"
+                     Text="{Binding ExpansionAnnouncement}"
+                     AutomationProperties.LiveSetting="Polite" />
+          <shared:TranscriptToolDetailHost MinWidth="0"
+                                           HorizontalAlignment="Stretch" />
         </StackPanel>
       </Grid>
     </DataTemplate>
@@ -1324,6 +1379,14 @@
                 Classes="transcript-surface"
                 IsVisible="{Binding ShowTranscriptSurface}">
           <Grid>
+            <shared:TranscriptToolPreparationPortal x:Name="ToolDetailPreparationPortal"
+                                                    Width="1"
+                                                    Height="1"
+                                                    HorizontalAlignment="Left"
+                                                    VerticalAlignment="Top"
+                                                    ClipToBounds="True"
+                                                    Opacity="0"
+                                                    IsHitTestVisible="False" />
             <ScrollViewer x:Name="TranscriptScrollViewer"
                            Classes="transcript-scroll"
                            HorizontalScrollBarVisibility="Disabled"
@@ -1331,35 +1394,27 @@
                            IsVisible="{Binding !ShowSetupInstructions}">
               <Border x:Name="TranscriptScrollContent"
                       Classes="transcript-content">
-                <shared:TranscriptScrollAnchorHost x:Name="TranscriptAnchorHost"
-                                                   RowDefinitions="Auto,Auto,Auto">
+                <shared:TranscriptScrollAnchorHost x:Name="TranscriptAnchorHost">
                   <ItemsRepeater x:Name="TranscriptItemsControl"
-                                 Grid.Row="0"
                                  Classes="transcript-items"
-                                 ItemsSource="{Binding Messages}">
+                                 ItemsSource="{Binding TranscriptItems}">
                     <ItemsRepeater.Layout>
                       <StackLayout />
                     </ItemsRepeater.Layout>
                     <ItemsRepeater.ItemTemplate>
                       <DataTemplate x:DataType="vm:AgentTranscriptRowViewModel">
                         <shared:TranscriptRowPresenter Classes="transcript-row-anchor"
+                                                       Classes.navigation-target="{Binding IsNavigationTargetHighlighted}"
                                                        AnchorKey="{Binding AnchorKey}"
+                                                       AnchorRole="{Binding AnchorRole}"
+                                                       AutomationProperties.HelpText="{Binding NavigationHighlightHelpText}"
                                                        IsRepeaterHosted="True"
+                                                       IsHitTestVisible="{Binding IsRowHitTestVisible}"
+                                                       MinHeight="{Binding MinimumLayoutHeight}"
                                                        Content="{Binding}" />
                       </DataTemplate>
                     </ItemsRepeater.ItemTemplate>
                   </ItemsRepeater>
-                  <shared:TranscriptRowPresenter Grid.Row="1"
-                                                 Classes="transcript-row-anchor"
-                                                 AnchorKey="{Binding RunActivityRow.AnchorKey}"
-                                                 IsRepeaterHosted="True"
-                                                 IsVisible="{Binding RunActivityRow.IsVisible}"
-                                                 Content="{Binding RunActivityRow}" />
-                  <Border x:Name="TranscriptTailAnchor"
-                          Grid.Row="2"
-                          Height="1"
-                          VerticalAlignment="Bottom"
-                          IsHitTestVisible="False" />
                 </shared:TranscriptScrollAnchorHost>
               </Border>
             </ScrollViewer>

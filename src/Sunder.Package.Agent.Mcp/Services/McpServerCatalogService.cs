@@ -1,17 +1,34 @@
 using System.Text;
 using System.Text.Json;
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Storage;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
-public sealed class McpServerCatalogService(IPackageContext packageContext)
+public sealed class McpServerCatalogService
 {
-    private const string ServerKeyPrefix = "mcp.servers.";
-    private readonly IPackageContext _packageContext = packageContext;
-    private readonly ILogger<McpServerCatalogService> _logger = packageContext.Logging.LoggerFactory.CreateLogger<McpServerCatalogService>();
+    internal const string ServerKeyPrefix = "mcp.catalog.server.v1.";
+    private readonly IPackageContext _packageContext;
+    private readonly ILogger<McpServerCatalogService> _logger;
+    private readonly McpPackageStorageMigration _storageMigration;
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
     private IReadOnlyList<McpCatalogDiagnostic> _lastDiagnostics = [];
+
+    public McpServerCatalogService(IPackageContext packageContext)
+        : this(packageContext, new McpPackageStorageMigration(packageContext))
+    {
+    }
+
+    internal McpServerCatalogService(
+        IPackageContext packageContext,
+        McpPackageStorageMigration storageMigration)
+    {
+        _packageContext = packageContext;
+        _storageMigration = storageMigration;
+        _logger = packageContext.Logging.LoggerFactory.CreateLogger<McpServerCatalogService>();
+    }
 
     public event Action? ServersChanged;
 
@@ -21,12 +38,13 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
 
     public async Task<IReadOnlyList<ConfiguredMcpServerRecord>> ListServersAsync(CancellationToken cancellationToken = default)
     {
+        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var diagnostics = new List<McpCatalogDiagnostic>();
         var servers = new List<ConfiguredMcpServerRecord>();
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var keys = await _packageContext.Storage.State.ListKeysAsync(ServerKeyPrefix, cancellationToken).ConfigureAwait(false);
-        foreach (var key in keys.OrderBy(key => key, StringComparer.OrdinalIgnoreCase))
+        foreach (var key in keys.OrderBy(key => key, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
@@ -46,7 +64,7 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
                     continue;
                 }
 
-                if (!string.Equals(key, BuildServerKey(server.ServerId), StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(key, BuildServerKey(server.ServerId), StringComparison.Ordinal))
                 {
                     diagnostics.Add(new McpCatalogDiagnostic(key, $"Stored ServerId '{server.ServerId}' does not match its storage key."));
                     continue;
@@ -78,6 +96,7 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
 
     public async Task<ConfiguredMcpServerRecord?> GetServerAsync(string serverId, CancellationToken cancellationToken = default)
     {
+        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var payload = await _packageContext.Storage.State.GetValueAsync(BuildServerKey(serverId), cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(payload))
         {
@@ -114,6 +133,7 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         IReadOnlyCollection<string> deletedServerIds,
         CancellationToken cancellationToken = default)
     {
+        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -476,21 +496,61 @@ public sealed class McpServerCatalogService(IPackageContext packageContext)
         }
     }
 
-    private static string BuildServerKey(string serverId) => ServerKeyPrefix + serverId;
+    internal static string BuildServerKey(string serverId)
+        => PackageStorageKeyFactory.Create("mcp.catalog.server", 1, CanonicalizeServerId(serverId));
 
-    internal static string BuildApiKeySecretKey(string serverId) => $"mcp.servers.{serverId}.apiKey";
+    internal static string BuildApiKeySecretKey(string serverId)
+        => PackageStorageKeyFactory.Create("mcp.secret.api-key", 1, CanonicalizeServerId(serverId));
 
-    internal static string BuildAuthorizationSecretKey(string serverId) => $"mcp.servers.{serverId}.authorization";
+    internal static string BuildAuthorizationSecretKey(string serverId)
+        => PackageStorageKeyFactory.Create("mcp.secret.authorization", 1, CanonicalizeServerId(serverId));
 
-    private static string BuildHeaderSecretKey(string serverId, int version, string name)
+    internal static string BuildHeaderSecretKey(string serverId, int version, string name)
+        => PackageStorageKeyFactory.Create(
+            "mcp.secret.header",
+            1,
+            BuildCompositeOpaqueId(serverId, version, name));
+
+    internal static string BuildEnvironmentSecretKey(string serverId, int version, string name)
+        => PackageStorageKeyFactory.Create(
+            "mcp.secret.environment",
+            1,
+            BuildCompositeOpaqueId(serverId, version, name));
+
+    internal static string BuildLegacyApiKeySecretKey(string serverId) => $"mcp.servers.{serverId}.apiKey";
+
+    internal static string BuildLegacyAuthorizationSecretKey(string serverId) => $"mcp.servers.{serverId}.authorization";
+
+    internal static string BuildLegacyHeaderSecretKey(string serverId, int version, string name)
         => version <= 0
             ? $"mcp.servers.{serverId}.headers.{Uri.EscapeDataString(name)}"
             : $"mcp.servers.{serverId}.v{version}.headers.{Uri.EscapeDataString(name)}";
 
-    private static string BuildEnvironmentSecretKey(string serverId, int version, string name)
+    internal static string BuildLegacyEnvironmentSecretKey(string serverId, int version, string name)
         => version <= 0
             ? $"mcp.servers.{serverId}.environment.{Uri.EscapeDataString(name)}"
             : $"mcp.servers.{serverId}.v{version}.environment.{Uri.EscapeDataString(name)}";
+
+    private static string BuildCompositeOpaqueId(string serverId, int version, string name)
+    {
+        var canonicalServerId = CanonicalizeServerId(serverId);
+        return string.Concat(
+            canonicalServerId.Length.ToString(CultureInfo.InvariantCulture),
+            ":",
+            canonicalServerId,
+            ":",
+            version.ToString(CultureInfo.InvariantCulture),
+            ":",
+            name.Length.ToString(CultureInfo.InvariantCulture),
+            ":",
+            name);
+    }
+
+    internal static string CanonicalizeServerId(string serverId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(serverId);
+        return serverId.ToUpperInvariant();
+    }
 
     private sealed record StagedCatalogWrite(
         McpServerCatalogWrite Write,

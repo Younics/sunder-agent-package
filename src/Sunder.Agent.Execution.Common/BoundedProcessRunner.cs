@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Sunder.Agent.Execution.Common;
@@ -26,6 +27,7 @@ public static class BoundedProcessRunner
 {
     public const int MaximumTimeoutSeconds = 86_400;
     public const int MaximumOutputLength = 10 * 1024 * 1024;
+    private const int MaximumProcessTreeSize = 4096;
 
     public static async Task<ProcessRunResult> RunAsync(
         ProcessStartInfo startInfo,
@@ -237,13 +239,140 @@ public static class BoundedProcessRunner
         {
             if (!process.HasExited)
             {
-                process.Kill(entireProcessTree: true);
+                if (!TryKillUnixProcessTree(process.Id))
+                {
+                    process.Kill(entireProcessTree: true);
+                }
             }
         }
         catch
         {
         }
     }
+
+    private static bool TryKillUnixProcessTree(int rootProcessId)
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+        {
+            return false;
+        }
+
+        try
+        {
+            var processIds = new List<int> { rootProcessId };
+            var knownProcessIds = new HashSet<int> { rootProcessId };
+            var stablePasses = 0;
+            for (var pass = 0; pass < 16 && stablePasses < 2; pass++)
+            {
+                foreach (var processId in processIds)
+                {
+                    _ = KillUnixProcess(processId, GetUnixStopSignal());
+                }
+
+                Thread.Sleep(TimeSpan.FromMilliseconds(5));
+                var added = false;
+                for (var index = 0; index < processIds.Count; index++)
+                {
+                    if (!TryGetUnixChildProcessIds(processIds[index], out var childProcessIds))
+                    {
+                        return false;
+                    }
+                    foreach (var childProcessId in childProcessIds)
+                    {
+                        if (childProcessId <= 0 || !knownProcessIds.Add(childProcessId))
+                        {
+                            continue;
+                        }
+                        if (processIds.Count >= MaximumProcessTreeSize)
+                        {
+                            return false;
+                        }
+                        processIds.Add(childProcessId);
+                        added = true;
+                    }
+                }
+
+                stablePasses = added ? 0 : stablePasses + 1;
+            }
+
+            for (var index = processIds.Count - 1; index >= 0; index--)
+            {
+                _ = KillUnixProcess(processIds[index], 9);
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException
+                                   or UnauthorizedAccessException
+                                   or FormatException
+                                   or OverflowException
+                                   or DllNotFoundException
+                                   or EntryPointNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryGetUnixChildProcessIds(int processId, out IReadOnlyList<int> childProcessIds)
+    {
+        if (OperatingSystem.IsMacOS())
+        {
+            var count = ListMacChildProcesses(processId, null, 0);
+            if (count < 0)
+            {
+                childProcessIds = [];
+                return false;
+            }
+            if (count == 0)
+            {
+                childProcessIds = [];
+                return true;
+            }
+
+            var buffer = new int[Math.Min(count + 16, MaximumProcessTreeSize)];
+            var result = ListMacChildProcesses(processId, buffer, checked(buffer.Length * sizeof(int)));
+            if (result < 0)
+            {
+                childProcessIds = [];
+                return false;
+            }
+            var resultCount = result <= buffer.Length ? result : result / sizeof(int);
+            if (resultCount > buffer.Length)
+            {
+                childProcessIds = [];
+                return false;
+            }
+            childProcessIds = buffer[..resultCount];
+            return true;
+        }
+
+        var childrenPath = $"/proc/{processId}/task/{processId}/children";
+        try
+        {
+            childProcessIds = File.ReadAllText(childrenPath)
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                .Select(static value => int.Parse(value, System.Globalization.CultureInfo.InvariantCulture))
+                .ToArray();
+            return true;
+        }
+        catch (FileNotFoundException)
+        {
+            childProcessIds = [];
+            return true;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            childProcessIds = [];
+            return true;
+        }
+    }
+
+    private static int GetUnixStopSignal() => OperatingSystem.IsMacOS() ? 17 : 19;
+
+    [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
+    private static extern int KillUnixProcess(int processId, int signal);
+
+    [DllImport("/usr/lib/libproc.dylib", EntryPoint = "proc_listchildpids", SetLastError = true)]
+    private static extern int ListMacChildProcesses(int parentProcessId, [Out] int[]? buffer, int bufferSize);
 
     private static async Task WaitForExitAfterKillAsync(Process process)
     {

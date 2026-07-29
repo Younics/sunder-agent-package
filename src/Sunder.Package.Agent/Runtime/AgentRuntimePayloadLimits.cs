@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.HistorySearch;
+using Sunder.Package.Agent.Shared.PackageViews;
 
 namespace Sunder.Package.Agent.Runtime;
 
@@ -17,8 +19,8 @@ internal static class AgentRuntimePayloadLimits
     internal const int AttachmentDownloadChunkBytes = 2 * 1024 * 1024;
     internal const int MaximumRunMessageCharacters = 256 * 1024;
 
-    private const int MaximumProjectedTurnItems = 32;
-    private const int InitialProjectedTurnCharacterBudget = 512 * 1024;
+    internal const int MaximumProjectedTurnItems = 32;
+    internal const int InitialProjectedTurnCharacterBudget = 512 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     internal static int GetSerializedByteCount<T>(T value)
@@ -34,18 +36,23 @@ internal static class AgentRuntimePayloadLimits
 
     internal static AgentTranscriptPage FitTranscriptPage(
         AgentTranscriptPage page,
-        AgentTranscriptPageDirection direction)
+        AgentTranscriptPageDirection direction,
+        Guid? preferredItemId = null,
+        int maximumBytes = MaximumOperationResponseBytes)
     {
-        if (GetSerializedByteCount(page) <= MaximumOperationResponseBytes)
+        page = page with
+        {
+            Turns = page.Turns.Select(TranscriptTurnTransportProjection.ProjectToolHeaders).ToArray(),
+            Continuation = page.Continuation ?? ResolveContinuation(page.Turns, direction),
+        };
+        if (GetSerializedByteCount(page) <= maximumBytes)
         {
             return page;
         }
 
         var turns = page.Turns.ToList();
-        var wasReduced = false;
         while (turns.Count > 1)
         {
-            wasReduced = true;
             if (direction is AgentTranscriptPageDirection.Recent or AgentTranscriptPageDirection.Before)
             {
                 turns.RemoveAt(0);
@@ -55,8 +62,13 @@ internal static class AgentRuntimePayloadLimits
                 turns.RemoveAt(turns.Count - 1);
             }
 
-            var reduced = page with { Turns = turns.ToArray(), HasMore = true };
-            if (GetSerializedByteCount(reduced) <= MaximumOperationResponseBytes)
+            var reduced = page with
+            {
+                Turns = turns.ToArray(),
+                HasMore = true,
+                Continuation = ResolveContinuation(turns, direction),
+            };
+            if (GetSerializedByteCount(reduced) <= maximumBytes)
             {
                 return reduced;
             }
@@ -65,29 +77,94 @@ internal static class AgentRuntimePayloadLimits
         if (turns.Count == 1)
         {
             var characterBudget = InitialProjectedTurnCharacterBudget;
-            while (characterBudget > 0)
+            while (true)
             {
                 var projected = page with
                 {
-                    Turns = [ProjectTurn(turns[0], characterBudget)],
+                    Turns = [TranscriptTurnTransportProjection.Project(
+                        turns[0],
+                        characterBudget,
+                        MaximumProjectedTurnItems,
+                        preferredItemId)],
                     HasMore = true,
+                    Continuation = TranscriptPageCursor.FromTurn(turns[0]),
                 };
-                if (GetSerializedByteCount(projected) <= MaximumOperationResponseBytes)
+                if (GetSerializedByteCount(projected) <= maximumBytes)
                 {
                     return projected;
                 }
 
+                if (characterBudget == 0)
+                {
+                    break;
+                }
                 characterBudget /= 2;
             }
         }
 
-        var empty = page with { Turns = [], HasMore = page.HasMore || wasReduced || page.Turns.Count > 0 };
-        if (GetSerializedByteCount(empty) > MaximumOperationResponseBytes)
+        throw new InvalidOperationException(
+            "A cursor-bearing Agent transcript turn could not be projected below the Runtime response limit.");
+    }
+
+    internal static AgentTranscriptAroundTurnPage FitAroundTurnPage(
+        AgentTranscriptAroundTurnPage page,
+        Guid? preferredItemId = null)
+    {
+        page = page with
         {
-            throw new InvalidOperationException("Agent transcript metadata exceeds the Runtime response limit.");
+            Turns = page.Turns.Select(TranscriptTurnTransportProjection.ProjectToolHeaders).ToArray(),
+        };
+        if (GetSerializedByteCount(page) <= MaximumOperationResponseBytes)
+        {
+            return page;
         }
 
-        return empty;
+        var turns = page.Turns.ToList();
+        while (turns.Count > 1 && GetSerializedByteCount(page with { Turns = turns }) > MaximumOperationResponseBytes)
+        {
+            var anchorIndex = turns.FindIndex(turn => turn.TurnId == page.AnchorTurnId);
+            if (anchorIndex < 0)
+            {
+                break;
+            }
+            var olderDistance = anchorIndex;
+            var newerDistance = turns.Count - anchorIndex - 1;
+            if (newerDistance >= olderDistance && newerDistance > 0)
+            {
+                turns.RemoveAt(turns.Count - 1);
+                page = page with { HasNewer = true };
+            }
+            else if (olderDistance > 0)
+            {
+                turns.RemoveAt(0);
+                page = page with { HasOlder = true };
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        var reduced = page with { Turns = turns };
+        if (GetSerializedByteCount(reduced) <= MaximumOperationResponseBytes)
+        {
+            return reduced;
+        }
+        var anchor = turns.FirstOrDefault(turn => turn.TurnId == page.AnchorTurnId);
+        if (anchor is null)
+        {
+            throw new InvalidOperationException("Transcript anchor metadata exceeds the Runtime response limit.");
+        }
+        var projected = FitTranscriptPage(
+            new AgentTranscriptPage(page.Revision, [anchor], HasMore: true),
+            AgentTranscriptPageDirection.Turn,
+            preferredItemId);
+        return page with
+        {
+            Turns = projected.Turns,
+            HasOlder = true,
+            HasNewer = true,
+        };
     }
 
     internal static AgentRuntimeChange ProjectChange(AgentRuntimeChange change)
@@ -116,7 +193,65 @@ internal static class AgentRuntimePayloadLimits
             RunActivity = change.RunActivity is null
                 ? null
                 : change.RunActivity with { Text = Truncate(change.RunActivity.Text, 16 * 1024) },
+            Turn = change.Turn is null
+                ? null
+                : TranscriptTurnTransportProjection.ProjectToolHeaders(change.Turn),
+            TurnMutation = change.TurnMutation?.Turn is null
+                ? change.TurnMutation
+                : change.TurnMutation with
+                {
+                    Turn = TranscriptTurnTransportProjection.ProjectToolHeaders(change.TurnMutation.Turn),
+                },
         };
+
+    internal static AgentTranscriptToolDetailRecord FitToolDetail(
+        AgentTranscriptToolDetailRecord detail,
+        int maximumBytes = MaximumOperationResponseBytes)
+    {
+        if (GetSerializedByteCount(new AgentTranscriptToolDetailResponse(detail)) <= maximumBytes)
+        {
+            return detail;
+        }
+
+        detail = detail with
+        {
+            SourcesJson = null,
+            StructuredPayloadJson = null,
+            WasTransportTruncated = true,
+        };
+        if (GetSerializedByteCount(new AgentTranscriptToolDetailResponse(detail)) <= maximumBytes)
+        {
+            return detail;
+        }
+
+        detail = detail with { PresentationPayloadJson = null };
+        if (GetSerializedByteCount(new AgentTranscriptToolDetailResponse(detail)) <= maximumBytes)
+        {
+            return detail;
+        }
+
+        detail = detail with
+        {
+            OutputText = TruncateNullable(detail.OutputText, maximumBytes / 4),
+            ResultSummary = TruncateNullable(detail.ResultSummary, 2048),
+        };
+        if (GetSerializedByteCount(new AgentTranscriptToolDetailResponse(detail)) <= maximumBytes)
+        {
+            return detail;
+        }
+
+        detail = detail with
+        {
+            ArgumentsJson = null,
+            OutputText = TruncateNullable(detail.OutputText, 64 * 1024),
+        };
+        if (GetSerializedByteCount(new AgentTranscriptToolDetailResponse(detail)) <= maximumBytes)
+        {
+            return detail;
+        }
+
+        throw new InvalidOperationException("Tool detail metadata exceeds the Runtime response limit.");
+    }
 
     internal static bool FitsStreamEvent(AgentRuntimeChange change)
         => GetSerializedByteCount(change) <= MaximumStreamEventBytes;
@@ -131,83 +266,17 @@ internal static class AgentRuntimePayloadLimits
                 AgentRuntimeChangeKind.ResnapshotRequired,
                 RuntimeInstanceId: change.RuntimeInstanceId);
 
-    private static AgentTurnRecord ProjectTurn(AgentTurnRecord turn, int characterBudget)
+    private static TranscriptPageCursor? ResolveContinuation(
+        IReadOnlyList<AgentTurnRecord> turns,
+        AgentTranscriptPageDirection direction)
     {
-        var remaining = characterBudget;
-        var omittedItems = turn.Items.Count > MaximumProjectedTurnItems;
-        var projectedItems = new List<AgentTurnItemRecord>(Math.Min(
-            turn.Items.Count,
-            MaximumProjectedTurnItems));
-        foreach (var item in turn.Items
-                     .OrderBy(item => item.SequenceNumber)
-                     .Take(MaximumProjectedTurnItems))
-        {
-            var truncated = omittedItems || item.WasTruncated;
-            var text = TakeText(item.TextContent, ref remaining, ref truncated);
-            var callId = TakeText(item.CallId, ref remaining, ref truncated, 1024);
-            var toolId = TakeText(item.ToolId, ref remaining, ref truncated, 1024);
-            var arguments = TakeJson(item.ArgumentsJson, ref remaining, ref truncated);
-            var resultSummary = TakeText(item.ResultSummary, ref remaining, ref truncated);
-            var structuredPayload = TakeJson(item.StructuredPayloadJson, ref remaining, ref truncated);
-            var sources = TakeJson(item.SourcesJson, ref remaining, ref truncated);
-            var errorCode = TakeText(item.ErrorCode, ref remaining, ref truncated, 256);
-            var backendId = TakeText(item.BackendId, ref remaining, ref truncated, 512);
-            var presentationPayload = TakeJson(item.PresentationPayloadJson, ref remaining, ref truncated);
-            projectedItems.Add(item with
-            {
-                TextContent = text,
-                CallId = callId,
-                ToolId = toolId,
-                ArgumentsJson = arguments,
-                ResultSummary = resultSummary,
-                StructuredPayloadJson = structuredPayload,
-                SourcesJson = sources,
-                WasTruncated = truncated,
-                ErrorCode = errorCode,
-                BackendId = backendId,
-                PresentationPayloadJson = presentationPayload,
-            });
-        }
-
-        return turn with { Items = projectedItems };
-    }
-
-    private static string? TakeText(
-        string? value,
-        ref int remaining,
-        ref bool truncated,
-        int maximumCharacters = int.MaxValue)
-    {
-        if (value is null)
-        {
-            return null;
-        }
-
-        var take = Math.Min(value.Length, Math.Min(remaining, maximumCharacters));
-        remaining -= take;
-        if (take < value.Length)
-        {
-            truncated = true;
-        }
-
-        return take == value.Length ? value : value[..take];
-    }
-
-    private static string? TakeJson(string? value, ref int remaining, ref bool truncated)
-    {
-        if (value is null)
-        {
-            return null;
-        }
-
-        if (value.Length > remaining)
-        {
-            truncated = true;
-            return null;
-        }
-
-        remaining -= value.Length;
-        return value;
+        var continuationTurn = direction is AgentTranscriptPageDirection.Recent
+            or AgentTranscriptPageDirection.Before
+            ? turns.FirstOrDefault()
+            : turns.LastOrDefault();
+        return continuationTurn is null
+            ? null
+            : TranscriptPageCursor.FromTurn(continuationTurn);
     }
 
     private static string Truncate(string value, int maximumCharacters)

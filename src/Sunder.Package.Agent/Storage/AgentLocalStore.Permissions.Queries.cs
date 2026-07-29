@@ -22,7 +22,7 @@ public sealed partial class AgentLocalStore
     }
 
     private static AgentPendingPermissionRequestRecord ReadPendingPermissionRequest(SqliteDataReader reader)
-        => new(
+        => new AgentPendingPermissionRequestRecord(
             reader.GetString(0), Guid.Parse(reader.GetString(1)), Guid.Parse(reader.GetString(2)), reader.GetInt64(3),
             reader.IsDBNull(4) ? null : reader.GetString(4), Guid.Parse(reader.GetString(5)), reader.GetString(6),
             reader.GetString(7), reader.GetString(8), reader.GetString(9), reader.GetString(10),
@@ -42,5 +42,10 @@ public sealed partial class AgentLocalStore
             reader.IsDBNull(30) ? null : DateTimeOffset.Parse(reader.GetString(30)),
             reader.IsDBNull(31) ? null : DateTimeOffset.Parse(reader.GetString(31)),
             reader.IsDBNull(32) ? null : DateTimeOffset.Parse(reader.GetString(32)),
-            reader.IsDBNull(33) ? string.Empty : reader.GetString(33));
+            reader.IsDBNull(33) ? string.Empty : reader.GetString(33))
+        {
+            ToolExecutionId = reader.IsDBNull(34) ? null : Guid.Parse(reader.GetString(34)),
+            ResourceClaimSetVersion = reader.GetInt32(35),
+            ResourceClaims = DeserializeResourceClaims(reader.GetString(36)),
+        };
 }

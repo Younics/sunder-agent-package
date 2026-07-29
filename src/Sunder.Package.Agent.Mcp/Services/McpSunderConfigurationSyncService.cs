@@ -126,30 +126,39 @@ public sealed class McpSunderConfigurationSyncService(
         }
     }
 
-    private IEnumerable<AgentWorkspaceRecord> ListKnownWorkspaces()
+    private IReadOnlyList<AgentWorkspaceRecord> ListKnownWorkspaces()
     {
-        if (_extensionCatalog is null)
+        if (_extensionCatalog is not IPackageExtensionInvocationCatalog invocationCatalog)
         {
-            yield break;
+            return [];
         }
 
-        foreach (var runtimeCatalog in _extensionCatalog.GetExtensions(PackageExtensionPoints.RuntimeCatalogs))
+        var result = new List<AgentWorkspaceRecord>();
+        foreach (var reference in invocationCatalog.GetExtensionReferences(PackageExtensionPoints.RuntimeCatalogs))
         {
-            IReadOnlyList<AgentWorkspaceRecord> workspaces;
-            try
-            {
-                workspaces = runtimeCatalog.ListWorkspaces();
-            }
-            catch
+            if (!reference.TryAcquire(out var lease))
             {
                 continue;
             }
+            IReadOnlyList<AgentWorkspaceRecord> workspaces;
+            using (lease)
+                try
+                {
+                    workspaces = lease.Contribution.ListWorkspaces().ToArray();
+                    if (lease.RetirementToken.IsCancellationRequested)
+                    {
+                        continue;
+                    }
+                }
+                catch
+                {
+                    continue;
+                }
 
-            foreach (var workspace in workspaces)
-            {
-                yield return workspace;
-            }
+            result.AddRange(workspaces);
         }
+
+        return result;
     }
 
     private static IEnumerable<string> EnumerateWorkspaceConfigurationPaths(AgentWorkspaceRecord workspace)

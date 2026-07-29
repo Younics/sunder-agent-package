@@ -133,82 +133,82 @@
   ],
   "capabilities": {
     "sunder.package.agent": [
-      "background-services.v1", "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.v1", "logging.v1",
-      "notifications.v1", "packaging.v1", "role-local-workspace.v1", "runtime-operations.v1",
-      "sdk-baseline-1-1.v1", "settings-navigation.v1", "settings-views.v1", "shell-view.v1",
-      "stacks.contributions.v1", "stacks.v1", "storage.v1", "theming.v1", "views.v1"
+      "background-services.v1", "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.invocations.v1", "extensions.v1", "logging.v1",
+      "notifications.v1", "packaging.v1", "role-local-workspace.v1", "runtime-generations.v1",
+      "runtime-invocation-errors.v1", "runtime-operations.v1", "sdk-baseline-1-1.v1", "settings-navigation.v1", "settings-views.v1", "shell-view.v1",
+      "stacks.contributions.v1", "stacks.v1", "storage.key-migration.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "views.v1"
     ],
     "sunder.package.agent.builder": [
       "background-processes.v1", "contributions.v1", "core.v1", "extensions.changes.v1",
-      "extensions.v1", "logging.v1", "packaging.v1",
+      "extensions.invocations.v1", "extensions.v1", "logging.v1", "packaging.v1",
       "runtime-operations.v1", "sdk-baseline-1-1.v1", "shell-view.v1", "storage.v1", "theming.v1", "views.v1"
     ],
     "sunder.package.agent.execution.docker": [
-      "background-processes.v1", "contributions.v1", "core.v1", "extensions.changes.v1",
-      "extensions.v1", "logging.v1", "packaging.v1", "role-local-workspace.v1",
-      "runtime-operations.v1", "sdk-baseline-1-1.v1", "settings-views.v1", "settings.schema.v1",
-      "settings.v1", "stacks.contributions.v1", "stacks.v1", "storage.v1", "theming.v1"
+      "background-processes.v1", "background-services.v1", "contributions.v1", "core.v1", "extensions.changes.v1",
+      "extensions.invocations.v1", "extensions.v1", "logging.v1", "packaging.v1", "role-local-workspace.v1",
+      "runtime-invocation-errors.v1", "runtime-operations.v1", "sdk-baseline-1-1.v1", "settings-views.v1", "settings.schema.v1",
+      "settings.v1", "shell-view.v1", "stacks.contributions.v1", "stacks.v1", "storage.key-migration.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1"
     ],
     "sunder.package.agent.execution.local": [
-      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.v1", "logging.v1",
-      "packaging.v1", "runtime-operations.v1", "sdk-baseline-1-1.v1", "settings-views.v1",
-      "settings.schema.v1", "settings.v1", "storage.v1", "theming.v1"
+      "background-services.v1", "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.invocations.v1", "extensions.v1", "logging.v1",
+      "packaging.v1", "runtime-invocation-errors.v1", "runtime-operations.v1", "sdk-baseline-1-1.v1", "settings-views.v1",
+      "settings.schema.v1", "settings.v1", "shell-view.v1", "storage.key-migration.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1"
     ],
     "sunder.package.agent.mcp": [
-      "callbacks.v1", "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.v1",
+      "background-services.v1", "callbacks.v1", "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.invocations.v1", "extensions.v1",
       "logging.v1", "packaging.v1", "role-local-workspace.v1", "runtime-operations.v1",
-      "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1", "stacks.contributions.v1",
-      "stacks.v1", "storage.v1", "theming.v1"
+      "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1", "shell-view.v1",
+      "stacks.contributions.v1", "stacks.v1", "storage.key-migration.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1"
     ],
     "sunder.package.agent.memory.semantic": [
       "background-services.v1", "contributions.v1", "core.v1", "extensions.changes.v1",
-      "extensions.v1", "logging.v1", "packaging.v1", "role-local-workspace.v1",
-      "runtime-operations.v1", "sdk-baseline-1-1.v1", "settings.schema.v1", "settings.v1",
+      "extensions.invocations.v1", "extensions.v1", "logging.v1", "packaging.v1", "role-local-workspace.v1",
+      "runtime-generations.v1", "runtime-operations.v1", "sdk-baseline-1-1.v1", "settings.schema.v1", "settings.v1",
       "shell-view.v1", "storage.v1", "theming.v1", "views.v1"
     ],
     "sunder.package.agent.provider.anthropic": [
-      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.v1", "logging.v1",
+      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.invocations.v1", "extensions.v1", "logging.v1",
       "packaging.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1",
-      "settings.schema.v1", "settings.v1", "theming.v1"
+      "settings.schema.v1", "settings.v1", "shell-view.v1", "theming.v1", "view-navigation-preparation.v1"
     ],
     "sunder.package.agent.provider.gemini": [
-      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.v1", "logging.v1",
+      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.invocations.v1", "extensions.v1", "logging.v1",
       "packaging.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1",
-      "settings.schema.v1", "settings.v1", "theming.v1"
+      "settings.schema.v1", "settings.v1", "shell-view.v1", "theming.v1", "view-navigation-preparation.v1"
     ],
     "sunder.package.agent.provider.lmstudio": [
-      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.v1", "logging.v1",
-      "packaging.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1",
-      "settings.schema.v1", "settings.v1", "theming.v1"
+      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.invocations.v1", "extensions.v1", "logging.v1",
+      "packaging.v1", "runtime-invocation-errors.v1", "runtime-operations.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1",
+      "settings.schema.v1", "settings.v1", "shell-view.v1", "theming.v1", "view-navigation-preparation.v1"
     ],
     "sunder.package.agent.provider.openai": [
       "auth.v1", "callbacks.v1", "contributions.v1", "core.v1", "extensions.changes.v1",
-      "extensions.v1", "logging.v1", "packaging.v1", "runtime-operations.v1",
+      "extensions.invocations.v1", "extensions.v1", "logging.v1", "packaging.v1", "runtime-operations.v1",
       "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1", "settings.schema.v1",
-      "settings.v1", "theming.v1"
+      "settings.v1", "shell-view.v1", "theming.v1", "view-navigation-preparation.v1"
     ],
     "sunder.package.agent.skills": [
-      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.v1", "logging.v1",
+      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.invocations.v1", "extensions.v1", "logging.v1",
       "packaging.v1", "role-local-workspace.v1", "runtime-operations.v1",
-      "sdk-baseline-1-1.v1", "settings-views.v1", "stacks.contributions.v1", "stacks.v1",
-      "storage.v1", "theming.v1"
+      "sdk-baseline-1-1.v1", "settings-views.v1", "shell-view.v1", "stacks.contributions.v1", "stacks.v1",
+      "storage.v1", "theming.v1", "view-navigation-preparation.v1"
     ],
     "sunder.package.agent.subagents": [
-      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.v1", "logging.v1",
+      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.invocations.v1", "extensions.v1", "logging.v1",
       "packaging.v1", "role-local-workspace.v1",
       "runtime-operations.v1", "sdk-baseline-1-1.v1", "settings-navigation.v1", "shell-view.v1",
-      "stacks.contributions.v1", "stacks.v1", "storage.v1", "theming.v1", "views.v1"
+      "stacks.contributions.v1", "stacks.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "views.v1"
     ],
     "sunder.package.agent.tools.files": [
-      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.v1", "logging.v1",
-      "packaging.v1", "sdk-baseline-1-1.v1"
+      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.invocations.v1", "extensions.v1", "logging.v1",
+      "packaging.v1", "role-local-workspace.v1", "sdk-baseline-1-1.v1", "storage.v1"
     ],
     "sunder.package.agent.tools.shell": [
-      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.v1", "logging.v1",
+      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.invocations.v1", "extensions.v1", "logging.v1",
       "packaging.v1", "sdk-baseline-1-1.v1"
     ],
     "sunder.package.agent.tools.web": [
-      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.v1", "logging.v1",
+      "contributions.v1", "core.v1", "extensions.changes.v1", "extensions.invocations.v1", "extensions.v1", "logging.v1",
       "packaging.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings.schema.v1", "settings.v1"
     ]
   }

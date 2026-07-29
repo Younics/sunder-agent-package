@@ -22,12 +22,23 @@ internal sealed record LocalExecutionOperationRequest(
     LocalExecutionOperationKind Kind,
     string? TimeoutSeconds = null,
     IReadOnlyList<LocalShellDefinition>? Shells = null,
+    long? ExpectedShellCatalogRevision = null,
     AgentWorkspaceEditorContext? EditorContext = null,
     AgentEditorSaveRequest? EditorSaveRequest = null);
 
 internal sealed record LocalExecutionOperationResponse(
     string? TimeoutSeconds = null,
-    IReadOnlyList<LocalShellDefinition>? Shells = null,
+    IReadOnlyList<LocalShellDefinition>? DetectedShells = null,
+    IReadOnlyList<LocalShellDefinition>? CustomShells = null,
+    long? ShellCatalogRevision = null,
     IReadOnlyList<AgentEditorSection>? EditorSections = null,
     AgentEditorSaveResult? EditorSaveResult = null,
-    string? Message = null);
+    string? Message = null,
+    bool Success = true,
+    LocalExecutionOperationError? Error = null);
+
+internal sealed record LocalExecutionOperationError(
+    string Code,
+    string Message,
+    bool IsTransient = false,
+    string? CorrelationId = null);

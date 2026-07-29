@@ -11,7 +11,7 @@ internal sealed record AgentRunPlan(
     AgentSessionRecord Session,
     AgentProfileRecord Profile,
     AgentWorkspaceRecord Workspace,
-    IAgentChatProvider Provider,
+    AgentRunProviderSelection ProviderSelection,
     AgentProfileModelBindingRecord ChatBinding,
     AgentProviderRunCapabilities RunCapabilities,
     AgentModelVariantDescriptor? ModelVariant,
@@ -20,7 +20,12 @@ internal sealed record AgentRunPlan(
     IReadOnlyList<AgentStoredAttachment> Attachments,
     string UserMessage,
     Guid? RollbackAnchorTurnId,
-    bool ShouldGenerateSessionTitle);
+    bool ShouldGenerateSessionTitle) : IDisposable
+{
+    internal IAgentChatProvider Provider => ProviderSelection.Provider;
+
+    public void Dispose() => ProviderSelection.Dispose();
+}
 
 internal abstract record AgentRunPreparationResult;
 

@@ -314,7 +314,7 @@ public sealed class MemoryEvaluationTests
 
     private sealed class MemoryEvaluationHarness : IAsyncDisposable
     {
-        private readonly EvalExtensionCatalog _extensionCatalog;
+        private readonly RegressionTestExtensionCatalog _extensionCatalog;
         private readonly EvaluationRuntimeCatalog _runtimeCatalog;
         private readonly EvaluationPackageContext _packageContext;
         private readonly SemanticMemoryIndexingBackgroundService _indexingBackgroundService;
@@ -326,7 +326,7 @@ public sealed class MemoryEvaluationTests
         {
             SessionId = Guid.NewGuid();
             ProfileId = "profile-eval";
-            _extensionCatalog = new EvalExtensionCatalog();
+            _extensionCatalog = new RegressionTestExtensionCatalog();
             _runtimeCatalog = new EvaluationRuntimeCatalog(CreateProfile(enableEmbeddings), SessionId, ProfileId);
             _packageContext = new EvaluationPackageContext(
                 Path.Combine(Path.GetTempPath(), "sunder-memory-eval", Guid.NewGuid().ToString("N")));
@@ -461,32 +461,6 @@ public sealed class MemoryEvaluationTests
 
         private IReadOnlyList<AgentTurnRecord> BuildRecentLiveBuffer()
             => _turns.Count <= 8 ? _turns.ToArray() : _turns.TakeLast(8).ToArray();
-    }
-
-    private sealed class EvalExtensionCatalog : IPackageExtensionCatalog
-    {
-        private readonly Dictionary<string, List<object>> _extensions = new(StringComparer.OrdinalIgnoreCase);
-
-        public void AddExtension<TContract>(PackageExtensionPoint<TContract> extensionPoint, TContract extension)
-        {
-            if (!_extensions.TryGetValue(extensionPoint.Id, out var entries))
-            {
-                entries = [];
-                _extensions[extensionPoint.Id] = entries;
-            }
-
-            entries.Add(extension!);
-        }
-
-        public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
-            => !_extensions.TryGetValue(extensionPoint.Id, out var entries)
-                ? []
-                : entries.Cast<TContract>().ToArray();
-
-        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
-            => GetExtensions(extensionPoint)
-                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
-                .ToArray();
     }
 
     private sealed class EvaluationRuntimeCatalog(AgentProfileRecord profile, Guid sessionId, string profileId) : IAgentRuntimeCatalog
@@ -638,16 +612,41 @@ public sealed class MemoryEvaluationTests
 
     private sealed class EvaluationPackageKeyValueStore : IPackageKeyValueStore
     {
-        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.FromResult<string?>(null);
+        }
 
-        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            TestPackageStorageGuards.Value(value);
+            return Task.CompletedTask;
+        }
 
-        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.FromResult(false);
+        }
 
-        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.CompletedTask;
+        }
 
         public Task<IReadOnlyList<string>> ListKeysAsync(string? prefix = null, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<string>>([]);
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Prefix(prefix);
+            return Task.FromResult<IReadOnlyList<string>>([]);
+        }
     }
 
     private sealed class EvaluationPackageSettings : EmptyPackageSettings;

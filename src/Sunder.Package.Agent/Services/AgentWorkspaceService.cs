@@ -142,8 +142,11 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
 
     public void DeleteWorkspace(string workspaceId)
     {
-        _sessionService?.DeleteSessionsForWorkspace(workspaceId);
-        DeleteWorkspacePersistence(workspaceId);
+        var cleaners = _sessionService?.SnapshotSessionDataCleaners()
+            ?? AgentSessionService.SnapshotSessionDataCleaners(_extensionCatalog);
+        var deletedSessionIds = _store.DeleteWorkspaceWithSessions(workspaceId, cleaners);
+        WorkspacesChanged?.Invoke();
+        _sessionService?.CompleteSessionDeletion(deletedSessionIds);
     }
 
     internal void DeleteWorkspacePersistence(string workspaceId)
@@ -169,7 +172,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
             workspaceId,
             string.IsNullOrWhiteSpace(workspace.DisplayName) ? "Imported Workspace" : workspace.DisplayName.Trim(),
             string.IsNullOrWhiteSpace(workspace.Description) ? null : workspace.Description.Trim(),
-            existing?.CreatedAtUtc ?? (workspace.CreatedAtUtc == default ? now : workspace.CreatedAtUtc),
+            existing?.CreatedAtUtc ?? now,
             now);
 
         _store.SaveWorkspace(imported);
@@ -247,8 +250,12 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
             return;
         }
 
-        var migrators = _extensionCatalog.GetExtensions(PackageExtensionPoints.WorkspacePathMigrationContributors).ToArray();
-        if (migrators.Length == 0)
+        var invocationCatalog = AgentExtensionInvocation.Require(_extensionCatalog);
+        var migrators = AgentExtensionInvocation.Snapshot(
+            invocationCatalog,
+            PackageExtensionPoints.WorkspacePathMigrationContributors,
+            static contributor => contributor.ContributorId);
+        if (migrators.Count == 0)
         {
             return;
         }
@@ -272,18 +279,21 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                 }
 
                 var context = new AgentWorkspacePathMigrationContext(workspace, binding);
-                var completedMigrators = new List<IAgentWorkspacePathMigrationContributor>();
+                var completedMigrators = new List<AgentExtensionReference<
+                    IAgentWorkspacePathMigrationContributor,
+                    string>>();
                 var migrationItems = new List<AgentWorkspacePathMigrationItem>();
                 foreach (var migrator in migrators)
                 {
                     try
                     {
-                        if (!migrator.CanMigrate(context))
-                        {
-                            continue;
-                        }
-
-                        var items = (await migrator.GetLegacyWorkspacePathsAsync(context, cancellationToken))
+                        var items = (await AgentExtensionInvocation.InvokeAsync(
+                                migrator,
+                                cancellationToken,
+                                async (contributor, token) => contributor.CanMigrate(context)
+                                    ? await contributor.GetLegacyWorkspacePathsAsync(context, token).ConfigureAwait(false)
+                                    : [])
+                            .ConfigureAwait(false))
                             .Where(item => !string.IsNullOrWhiteSpace(item.HostPath))
                             .ToArray();
                         if (items.Length == 0)
@@ -310,7 +320,11 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                 {
                     try
                     {
-                        await migrator.CompleteWorkspacePathMigrationAsync(context, cancellationToken);
+                        await AgentExtensionInvocation.InvokeAsync(
+                            migrator,
+                            cancellationToken,
+                            (contributor, token) => new ValueTask(
+                                contributor.CompleteWorkspacePathMigrationAsync(context, token)));
                     }
                     catch
                     {

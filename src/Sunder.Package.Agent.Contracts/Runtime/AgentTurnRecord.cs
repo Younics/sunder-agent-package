@@ -35,4 +35,10 @@ public sealed record AgentTurnRecord(
     /// flag and advances <see cref="ContentRevision"/> even when no text changes.
     /// </summary>
     public bool IsStreaming { get; init; }
+
+    /// <summary>Gets the durable run that owns this turn, when the turn was written by a run.</summary>
+    public Guid? RunId { get; init; }
+
+    /// <summary>Gets the owning run revision used to scope provider call identifiers.</summary>
+    public long? RunRevision { get; init; }
 }

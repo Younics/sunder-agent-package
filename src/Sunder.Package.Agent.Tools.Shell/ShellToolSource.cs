@@ -11,6 +11,9 @@ namespace Sunder.Package.Agent.Tools.Shell;
 public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
     : IAgentToolSource, IAgentPermissionAwareToolSource, IAgentPermissionSurface, IAgentPromptContextContributor, IAgentToolPresentationResolver
 {
+    private readonly IPackageExtensionInvocationCatalog? _invocationCatalog =
+        extensionCatalog as IPackageExtensionInvocationCatalog;
+
     private static readonly AgentToolDescriptor Descriptor = new(
         "shell",
         "Shell Command",
@@ -68,29 +71,39 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
     {
         if (request.Workspace is null
             || request.ExecutionBinding is null
-            || !request.AvailableTools.Any(tool => IsShellToolId(tool.ToolId))
-            || ResolveTarget(request.ExecutionBinding) is not { } target)
+            || !request.AvailableTools.Any(tool => IsShellToolId(tool.ToolId)))
         {
             return null;
         }
+        if (!TryAcquireTarget(request.ExecutionTargetReference, request.ExecutionBinding, out var targetLease))
+        {
+            ThrowIfExactTargetUnavailable(request.ExecutionTargetReference);
+            return null;
+        }
 
-        var shell = await target.GetShellAsync(
-            new AgentExecutionTargetContext(
-                request.Session.SessionId,
-                request.Profile?.ProfileId,
-                request.Workspace,
-                request.ExecutionBinding),
-            cancellationToken);
-        return new AgentPromptContextContribution(
-        [
-            new AgentPromptContextBlock(
-                "Selected Executor Shell",
-                shell.Description,
-                Priority: 70,
-                SourceId: SourceId,
-                Provenance: AgentContextProvenance.Extension,
-                Trust: AgentContextTrust.Untrusted),
-        ]);
+        return await InvokeTargetAsync(
+            targetLease,
+            cancellationToken,
+            async (target, invocationToken) =>
+            {
+                var shell = await target.GetShellAsync(
+                    new AgentExecutionTargetContext(
+                        request.Session.SessionId,
+                        request.Profile?.ProfileId,
+                        request.Workspace,
+                        request.ExecutionBinding),
+                    invocationToken);
+                return new AgentPromptContextContribution(
+                [
+                    new AgentPromptContextBlock(
+                        "Selected Executor Shell",
+                        shell.Description,
+                        Priority: 70,
+                        SourceId: SourceId,
+                        Provenance: AgentContextProvenance.Extension,
+                        Trust: AgentContextTrust.Untrusted),
+                ]);
+            });
     }
 
     public async ValueTask<AgentToolReadiness?> GetReadinessAsync(
@@ -108,16 +121,25 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
             return new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "Shell tools require a selected workspace.");
         }
 
-        var target = ResolveTarget(context.ExecutionBinding);
-        if (target is null || context.ExecutionBinding is null)
+        if (context.ExecutionBinding is null
+            || !TryAcquireTarget(context.ExecutionTargetReference, context.ExecutionBinding, out var targetLease))
         {
+            ThrowIfExactTargetUnavailable(context.ExecutionTargetReference);
             return new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "The selected workspace is not bound to an installed execution target.");
         }
 
-        var readiness = await target.GetReadinessAsync(new AgentExecutionTargetContext(context.SessionId, context.Profile?.ProfileId, context.Workspace, context.ExecutionBinding), cancellationToken);
-        return readiness.Status == AgentExecutionTargetReadinessStatus.Ready && target.Descriptor.SupportsShell
-            ? new AgentToolReadiness(toolId, AgentToolReadinessStatus.Ready, "Workspace shell is ready.")
-            : new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, readiness.Message);
+        return await InvokeTargetAsync(
+            targetLease,
+            cancellationToken,
+            async (target, invocationToken) =>
+            {
+                var readiness = await target.GetReadinessAsync(
+                    new AgentExecutionTargetContext(context.SessionId, context.Profile?.ProfileId, context.Workspace, context.ExecutionBinding),
+                    invocationToken);
+                return readiness.Status == AgentExecutionTargetReadinessStatus.Ready && target.Descriptor.SupportsShell
+                    ? new AgentToolReadiness(toolId, AgentToolReadinessStatus.Ready, "Workspace shell is ready.")
+                    : new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, readiness.Message);
+            });
     }
 
     public async ValueTask<AgentToolResult> ExecuteAsync(
@@ -130,9 +152,10 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
             return Error(request.ToolId, "Shell tools require a selected workspace.", "shell-workspace-required");
         }
 
-        var target = ResolveTarget(context.ExecutionBinding);
-        if (target is null || context.ExecutionBinding is null)
+        if (context.ExecutionBinding is null
+            || !TryAcquireTarget(context.ExecutionTargetReference, context.ExecutionBinding, out var targetLease))
         {
+            ThrowIfExactTargetUnavailable(context.ExecutionTargetReference);
             return Error(request.ToolId, "The selected workspace is not bound to an installed execution target.", "shell-target-required");
         }
 
@@ -141,22 +164,31 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
             return Error(request.ToolId, error!, "shell-arguments-invalid");
         }
 
-        var result = await target.ExecuteShellAsync(
-            new AgentExecutionTargetContext(context.SessionId, context.ProfileId, context.Workspace, context.ExecutionBinding, context.AllowOutsideConfiguredScope),
-            new AgentShellCommandRequest(args.Command, args.WorkingDirectory, args.TimeoutSeconds),
-            cancellationToken);
+        return await InvokeTargetAsync(
+            targetLease,
+            cancellationToken,
+            async (target, invocationToken) =>
+            {
+                var result = await target.ExecuteShellAsync(
+                    new AgentExecutionTargetContext(context.SessionId, context.ProfileId, context.Workspace, context.ExecutionBinding, context.AllowOutsideConfiguredScope),
+                    new AgentShellCommandRequest(args.Command, args.WorkingDirectory, args.TimeoutSeconds),
+                    invocationToken);
 
-        var content = string.IsNullOrWhiteSpace(result.Output)
-            ? $"Command exited with code {result.ExitCode} and no output."
-            : result.Output;
-        return new AgentToolResult(
-            request.ToolId,
-            result.TimedOut ? "Shell command timed out" : $"Shell command exited with code {result.ExitCode}",
-            Content: content,
-            WasTruncated: result.WasTruncated,
-            IsError: result.ExitCode != 0,
-            ErrorCode: result.ExitCode == 0 ? null : result.TimedOut ? AgentToolResultErrorCodes.ShellTimeout : AgentToolResultErrorCodes.ShellNonZeroExit,
-            BackendId: $"{target.Descriptor.TargetKind}:{target.Descriptor.TargetId}");
+                var content = string.IsNullOrWhiteSpace(result.Output)
+                    ? $"Command exited with code {result.ExitCode} and no output."
+                    : result.Output;
+                return new AgentToolResult(
+                    request.ToolId,
+                    result.TimedOut ? "Shell command timed out" : $"Shell command exited with code {result.ExitCode}",
+                    Content: content,
+                    WasTruncated: result.WasTruncated,
+                    IsError: result.ExitCode != 0,
+                    ErrorCode: result.ExitCode == 0 ? null : result.TimedOut ? AgentToolResultErrorCodes.ShellTimeout : AgentToolResultErrorCodes.ShellNonZeroExit,
+                    BackendId: $"{target.Descriptor.TargetKind}:{target.Descriptor.TargetId}")
+                {
+                    RequiresPromptContextRefresh = true,
+                };
+            });
     }
 
     public ValueTask<AgentPermissionRequest?> BuildPermissionRequestAsync(
@@ -191,11 +223,105 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
             ]),
         ];
 
-    private IAgentExecutionTarget? ResolveTarget(AgentWorkspaceBindingRecord? binding)
-        => extensionCatalog.GetExtensions(PackageExtensionPoints.ExecutionTargets)
-            .FirstOrDefault(target => binding is not null
-                                      && (string.Equals(target.Descriptor.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
-                                          || string.Equals(target.Descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase)));
+    private bool TryAcquireTarget(
+        IPackageExtensionReference<IAgentExecutionTarget>? selectedReference,
+        AgentWorkspaceBindingRecord binding,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
+        out IPackageExtensionLease<IAgentExecutionTarget>? lease)
+    {
+        var reference = selectedReference ?? ResolveCompatibilityTargetReference(binding);
+        if (reference is null || !reference.TryAcquire(out lease))
+        {
+            lease = null;
+            return false;
+        }
+        if (lease.RetirementToken.IsCancellationRequested
+            || !IsBindingMatch(lease.Contribution.Descriptor, binding))
+        {
+            lease.Dispose();
+            lease = null;
+            return false;
+        }
+
+        return true;
+    }
+
+    private IPackageExtensionReference<IAgentExecutionTarget>? ResolveCompatibilityTargetReference(
+        AgentWorkspaceBindingRecord binding)
+    {
+        if (_invocationCatalog is not null)
+        {
+            foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.ExecutionTargets))
+            {
+                if (!reference.TryAcquire(out var lease))
+                {
+                    continue;
+                }
+                using (lease)
+                {
+                    if (!lease.RetirementToken.IsCancellationRequested
+                        && IsBindingMatch(lease.Contribution.Descriptor, binding))
+                    {
+                        return reference;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        var target = extensionCatalog.GetExtensions(PackageExtensionPoints.ExecutionTargets)
+            .FirstOrDefault(candidate => IsBindingMatch(candidate.Descriptor, binding));
+        return target is null ? null : new CompatibilityTargetReference(target);
+    }
+
+    private static bool IsBindingMatch(
+        AgentExecutionTargetDescriptor descriptor,
+        AgentWorkspaceBindingRecord binding)
+        => string.Equals(descriptor.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase);
+
+    private static async ValueTask<TResult> InvokeTargetAsync<TResult>(
+        IPackageExtensionLease<IAgentExecutionTarget> lease,
+        CancellationToken cancellationToken,
+        Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback)
+    {
+        using (lease)
+        {
+            var packageId = lease.PackageId;
+            var retirementToken = lease.RetirementToken;
+            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                retirementToken);
+            try
+            {
+                var result = await callback(lease.Contribution, invocation.Token).ConfigureAwait(false);
+                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    throw new InvalidOperationException(
+                        $"Execution-target package '{packageId}' became unavailable while the callback was running.");
+                }
+                return result;
+            }
+            catch (OperationCanceledException exception) when (
+                retirementToken.IsCancellationRequested
+                && !cancellationToken.IsCancellationRequested)
+            {
+                throw new InvalidOperationException(
+                    $"Execution-target package '{packageId}' became unavailable while the callback was running.",
+                    exception);
+            }
+        }
+    }
+
+    private static void ThrowIfExactTargetUnavailable(
+        IPackageExtensionReference<IAgentExecutionTarget>? selectedReference)
+    {
+        if (selectedReference is not null)
+        {
+            throw new InvalidOperationException("The selected execution-target package is unavailable.");
+        }
+    }
 
     private static bool IsShellToolId(string toolId)
         => string.Equals(toolId, Descriptor.ToolId, StringComparison.OrdinalIgnoreCase)
@@ -277,6 +403,48 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
 
     private sealed record ShellArgs(string Command, string? WorkingDirectory = null, int? TimeoutSeconds = null);
 
+    private sealed class CompatibilityTargetReference(IAgentExecutionTarget target)
+        : IPackageExtensionReference<IAgentExecutionTarget>
+    {
+        public bool TryAcquire(
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
+            out IPackageExtensionLease<IAgentExecutionTarget>? lease)
+        {
+            lease = new CompatibilityTargetLease(target);
+            return true;
+        }
+    }
+
+    private sealed class CompatibilityTargetLease(IAgentExecutionTarget target)
+        : IPackageExtensionLease<IAgentExecutionTarget>
+    {
+        private IAgentExecutionTarget? _target = target;
+
+        public string PackageId
+        {
+            get
+            {
+                ObjectDisposedException.ThrowIf(_target is null, this);
+                return "sunder.package.agent.tools.shell.compatibility";
+            }
+        }
+
+        public IAgentExecutionTarget Contribution
+            => Volatile.Read(ref _target)
+               ?? throw new ObjectDisposedException(nameof(CompatibilityTargetLease));
+
+        public CancellationToken RetirementToken
+        {
+            get
+            {
+                ObjectDisposedException.ThrowIf(_target is null, this);
+                return CancellationToken.None;
+            }
+        }
+
+        public void Dispose() => Interlocked.Exchange(ref _target, null);
+    }
+
     private const string ShellDescription = "Execute a non-interactive command in the selected workspace executor.";
 
     private const string ShellInstructions = """
@@ -289,5 +457,6 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
         - Use the workingDirectory parameter instead of changing directories inside the command when possible.
         - Quote paths that contain spaces.
         - Capture the command output and report relevant failures.
+        - Scoped AGENTS.md mutation preflight applies only to structured Files tools. Shell command paths cannot be inferred safely, so do not claim that shell mutations are instruction-enforced. Shell completion refreshes workspace-root and previously known scoped claims for the next provider cycle.
         """;
 }

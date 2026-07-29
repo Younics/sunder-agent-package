@@ -91,7 +91,7 @@ public sealed class ProcessExecutionHardeningTests : IDisposable
             CreateNoWindow = true,
         };
         startInfo.ArgumentList.Add("-c");
-        startInfo.ArgumentList.Add("(sleep 2; touch \"$1\") & echo started; wait");
+        startInfo.ArgumentList.Add("(sleep 2 & sleeper=$!; echo started; wait \"$sleeper\"; touch \"$1\") & wait");
         startInfo.ArgumentList.Add("sh");
         startInfo.ArgumentList.Add(marker);
 

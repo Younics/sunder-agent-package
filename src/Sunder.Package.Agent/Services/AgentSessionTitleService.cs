@@ -25,9 +25,25 @@ public sealed partial class AgentSessionTitleService(
     public bool ShouldGenerateTitleForFirstUserMessage(AgentSessionRecord session) =>
         IsAutoTitleCandidate(session) && _sessionService.ListTurns(session.SessionId).Count == 0;
 
+    internal bool ShouldGenerateTitleForAdmittedUserMessage(
+        AgentSessionRecord session,
+        Guid userTurnId)
+    {
+        if (!IsAutoTitleCandidate(session))
+        {
+            return false;
+        }
+
+        var turns = _sessionService.ListTurns(session.SessionId);
+        return turns.Count == 1
+               && turns[0].TurnId == userTurnId
+               && turns[0].Role == AgentMessageRole.User;
+    }
+
     public void ScheduleTitleFromFirstUserMessage(
         AgentSessionRecord session,
         AgentProfileRecord profile,
+        AgentRunProviderSelection providerSelection,
         string userMessage,
         Guid runId,
         long runRevision)
@@ -37,126 +53,139 @@ public sealed partial class AgentSessionTitleService(
             return;
         }
 
-        _backgroundWork?.TryQueue(cancellationToken => GenerateAndApplyTitleAsync(
-            session.SessionId,
-            profile,
-            userMessage,
-            runId,
-            runRevision,
-            cancellationToken));
+        var retainedSelection = providerSelection.TryRetain();
+        if (retainedSelection is null)
+        {
+            return;
+        }
+
+        if (_backgroundWork?.TryQueue(cancellationToken => GenerateAndApplyTitleAsync(
+                session.SessionId,
+                retainedSelection,
+                userMessage,
+                runId,
+                runRevision,
+                cancellationToken)) != true)
+        {
+            retainedSelection.Dispose();
+        }
     }
 
     private async Task GenerateAndApplyTitleAsync(
         Guid sessionId,
-        AgentProfileRecord profile,
+        AgentRunProviderSelection providerSelection,
         string userMessage,
         Guid runId,
         long runRevision,
         CancellationToken cancellationToken)
     {
-        var stopwatch = Stopwatch.StartNew();
-        try
+        using (providerSelection)
         {
-            var providerSelection = _providerResolver.ResolveChatProvider(profile);
-            var provider = providerSelection.Provider;
-            if (provider is null)
+            var stopwatch = Stopwatch.StartNew();
+            try
             {
-                return;
-            }
+                var modelId = await providerSelection.InvokeAsync(
+                    cancellationToken,
+                    ResolveUtilityModelIdAsync).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(modelId))
+                {
+                    return;
+                }
 
-            var modelId = await ResolveUtilityModelIdAsync(provider, cancellationToken).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(modelId))
-            {
-                return;
-            }
+                var readiness = await providerSelection.InvokeAsync(
+                    cancellationToken,
+                    static (provider, token) => provider.GetReadinessAsync(token)).ConfigureAwait(false);
+                if (readiness.Status != AgentProviderReadinessStatus.Ready)
+                {
+                    Log(
+                        PackageLogLevel.Debug,
+                        sessionId,
+                        runId,
+                        runRevision,
+                        "session.title.skipped",
+                        readiness.Message,
+                        stopwatch.ElapsedMilliseconds,
+                        new Dictionary<string, object?>(StringComparer.Ordinal)
+                        {
+                            ["provider.id"] = providerSelection.Descriptor!.ProviderId,
+                            ["model.id"] = modelId,
+                            ["provider.readiness_status"] = readiness.Status,
+                        });
+                    return;
+                }
 
-            var readiness = await provider.GetReadinessAsync(cancellationToken).ConfigureAwait(false);
-            if (readiness.Status != AgentProviderReadinessStatus.Ready)
-            {
+                var response = await providerSelection.InvokeAsync(
+                    cancellationToken,
+                    async (provider, invocationToken) =>
+                    {
+                        using var chatClient = await provider.CreateChatClientAsync(
+                            new AgentChatClientContext(
+                                providerSelection.Descriptor!.ProviderId,
+                                modelId,
+                                CorrelationAttributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                                {
+                                    ["session.id"] = sessionId,
+                                    ["run.id"] = runId,
+                                    ["run.revision"] = runRevision,
+                                    ["utility.task"] = "session-title",
+                                }),
+                            invocationToken).ConfigureAwait(false);
+                        return await chatClient.GetResponseAsync(
+                            [new ChatMessage(ChatRole.User, $"First user message:\n{TruncatePromptMessage(userMessage)}")],
+                            new ChatOptions
+                            {
+                                Instructions = TitleInstructions,
+                                MaxOutputTokens = 32,
+                                ModelId = modelId,
+                                ToolMode = ChatToolMode.None,
+                            },
+                            invocationToken).ConfigureAwait(false);
+                    }).ConfigureAwait(false);
+                var title = NormalizeGeneratedTitle(response.Text);
+                if (title is null || AgentSessionTitleDefaults.IsGeneratedDefaultTitle(title))
+                {
+                    return;
+                }
+
+                var current = _sessionService.GetSession(sessionId);
+                if (current is null || !IsAutoTitleCandidate(current))
+                {
+                    return;
+                }
+
+                _sessionService.UpdateSession(current with
+                {
+                    Title = title,
+                    UpdatedAtUtc = current.UpdatedAtUtc,
+                });
+
                 Log(
-                    PackageLogLevel.Debug,
+                    PackageLogLevel.Information,
                     sessionId,
                     runId,
                     runRevision,
-                    "session.title.skipped",
-                    readiness.Message,
+                    "session.title.generated",
+                    "Session title generated.",
                     stopwatch.ElapsedMilliseconds,
                     new Dictionary<string, object?>(StringComparer.Ordinal)
                     {
-                        ["provider.id"] = provider.Descriptor.ProviderId,
+                        ["provider.id"] = providerSelection.Descriptor!.ProviderId,
                         ["model.id"] = modelId,
-                        ["provider.readiness_status"] = readiness.Status,
+                        ["session.title.length"] = title.Length,
                     });
-                return;
             }
-
-            using var chatClient = await provider.CreateChatClientAsync(
-                new AgentChatClientContext(
-                    provider.Descriptor.ProviderId,
-                    modelId,
-                    CorrelationAttributes: new Dictionary<string, object?>(StringComparer.Ordinal)
-                    {
-                        ["session.id"] = sessionId,
-                        ["run.id"] = runId,
-                        ["run.revision"] = runRevision,
-                        ["utility.task"] = "session-title",
-                    }),
-                cancellationToken).ConfigureAwait(false);
-
-            var response = await chatClient.GetResponseAsync(
-                [new ChatMessage(ChatRole.User, $"First user message:\n{TruncatePromptMessage(userMessage)}")],
-                new ChatOptions
-                {
-                    Instructions = TitleInstructions,
-                    MaxOutputTokens = 32,
-                    ModelId = modelId,
-                    ToolMode = ChatToolMode.None,
-                },
-                cancellationToken).ConfigureAwait(false);
-            var title = NormalizeGeneratedTitle(response.Text);
-            if (title is null || AgentSessionTitleDefaults.IsGeneratedDefaultTitle(title))
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                return;
+                Log(
+                    PackageLogLevel.Warning,
+                    sessionId,
+                    runId,
+                    runRevision,
+                    "session.title.failed",
+                    ex.Message,
+                    stopwatch.ElapsedMilliseconds,
+                    exception: ex);
             }
-
-            var current = _sessionService.GetSession(sessionId);
-            if (current is null || !IsAutoTitleCandidate(current))
-            {
-                return;
-            }
-
-            _sessionService.UpdateSession(current with
-            {
-                Title = title,
-                UpdatedAtUtc = current.UpdatedAtUtc,
-            });
-
-            Log(
-                PackageLogLevel.Information,
-                sessionId,
-                runId,
-                runRevision,
-                "session.title.generated",
-                "Session title generated.",
-                stopwatch.ElapsedMilliseconds,
-                new Dictionary<string, object?>(StringComparer.Ordinal)
-                {
-                    ["provider.id"] = provider.Descriptor.ProviderId,
-                    ["model.id"] = modelId,
-                    ["session.title.length"] = title.Length,
-                });
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            Log(
-                PackageLogLevel.Warning,
-                sessionId,
-                runId,
-                runRevision,
-                "session.title.failed",
-                ex.Message,
-                stopwatch.ElapsedMilliseconds,
-                exception: ex);
         }
     }
 

@@ -9,7 +9,7 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
     internal const int MaxCategoryChars = 64;
     internal const int MaxMemoryContentChars = 4_096;
     private const string Columns =
-        "MemoryId, SessionId, Category, Content, EvidenceText, SourceTurnId, Importance, Confidence, IsPinned, State, SupersededByMemoryId, CreatedAtUtc, UpdatedAtUtc, LastAccessedAtUtc, AccessCount, Provenance";
+        "MemoryId, SessionId, Category, Content, EvidenceText, SourceTurnId, Importance, Confidence, IsPinned, State, SupersededByMemoryId, CreatedAtUtc, UpdatedAtUtc, LastAccessedAtUtc, AccessCount, Provenance, MemoryRevision, IsManual";
 
     private readonly string _databasePath = databasePath;
     private readonly EvidenceRepository _evidenceRepository = evidenceRepository;
@@ -133,7 +133,7 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
         var results = new List<StoredMemorySearchResult>();
         while (reader.Read())
         {
-            results.Add(new StoredMemorySearchResult(Read(reader), reader.GetDouble(16)));
+            results.Add(new StoredMemorySearchResult(Read(reader), reader.GetDouble(18)));
         }
 
         return results;
@@ -149,14 +149,24 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
     {
         ValidateMemoryText(request.Category, request.Content);
         using var connection = MemoryDatabase.OpenConnection(_databasePath);
+        using var transaction = MemoryDatabase.BeginImmediateTransaction(connection);
+        MemoryDatabase.ThrowIfSessionDeleted(connection, transaction, request.SessionId);
         var existing = targetMemoryId is { } id
-            ? Get(connection, id)
-            : Find(connection, request.SessionId, request.Category, request.NormalizedContent);
+            ? Get(connection, id, transaction)
+            : Find(connection, request.SessionId, request.Category, request.NormalizedContent, transaction);
+        if (existing is not null && existing.SessionId != request.SessionId)
+        {
+            throw new InvalidOperationException("A memory cannot be moved to another session.");
+        }
         var now = DateTimeOffset.UtcNow;
         var memory = existing is null
             ? new StoredMemoryRecord(Guid.NewGuid(), request.SessionId, request.Category, request.Content, request.EvidenceText,
                 request.SourceTurnId, request.Importance, request.Confidence, request.IsPinned, MemoryLocalStore.ActiveState,
                 null, now, now, null, 0, request.Provenance)
+            {
+                MemoryRevision = 1,
+                IsManual = true,
+            }
             : existing with
             {
                 Content = request.Content,
@@ -169,9 +179,10 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
                     ? request.Provenance
                     : existing.Provenance,
                 UpdatedAtUtc = now,
+                MemoryRevision = existing.MemoryRevision + 1,
+                IsManual = true,
             };
 
-        using var transaction = connection.BeginTransaction();
         Write(connection, transaction, memory, request.NormalizedContent, insert: existing is null);
         WriteSearch(connection, transaction, memory);
         _evidenceRepository.Insert(connection, transaction, memory.MemoryId, request.SessionId, request.SourceTurnId, request.EvidenceText, now);
@@ -187,33 +198,67 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
         }
 
         using var connection = MemoryDatabase.OpenConnection(_databasePath);
-        using var transaction = connection.BeginTransaction();
+        using var transaction = MemoryDatabase.BeginImmediateTransaction(connection);
         foreach (var memoryId in memoryIds.Distinct())
         {
+            Guid sessionId;
+            using (var select = connection.CreateCommand())
+            {
+                select.Transaction = transaction;
+                select.CommandText = "SELECT SessionId FROM SessionMemories WHERE MemoryId = $memoryId;";
+                select.Parameters.AddWithValue("$memoryId", memoryId.ToString());
+                var value = select.ExecuteScalar() as string;
+                if (value is null)
+                {
+                    continue;
+                }
+                sessionId = Guid.Parse(value);
+            }
+            MemoryDatabase.ThrowIfSessionDeleted(connection, transaction, sessionId);
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = "UPDATE SessionMemories SET LastAccessedAtUtc = $now, AccessCount = AccessCount + 1 WHERE MemoryId = $memoryId;";
             command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
             command.Parameters.AddWithValue("$memoryId", memoryId.ToString());
-            command.ExecuteNonQuery();
+            if (command.ExecuteNonQuery() != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Memory '{memoryId}' changed or was deleted before its recall could be recorded.");
+            }
         }
 
         transaction.Commit();
     }
 
     public StoredMemoryRecord SetPinned(Guid memoryId, bool isPinned, string? note)
-        => Mutate(memoryId, memory => memory with { IsPinned = isPinned, UpdatedAtUtc = DateTimeOffset.UtcNow },
+        => Mutate(memoryId, memory => memory with
+        {
+            IsPinned = isPinned,
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+            MemoryRevision = memory.MemoryRevision + 1,
+            IsManual = true,
+        },
             note ?? (isPinned ? "Pinned in memory inspector." : "Unpinned in memory inspector."));
 
     public StoredMemoryRecord Update(Guid memoryId, string category, string content, string? note)
     {
         ValidateMemoryText(category, content);
         using var connection = MemoryDatabase.OpenConnection(_databasePath);
-        var existing = GetRequired(connection, memoryId);
+        using var transaction = MemoryDatabase.BeginImmediateTransaction(connection);
+        var existing = GetRequired(connection, memoryId, transaction);
+        MemoryDatabase.ThrowIfSessionDeleted(connection, transaction, existing.SessionId);
         var normalized = Normalize(content);
-        EnsureUnique(connection, existing.SessionId, memoryId, category, normalized);
-        var updated = existing with { Category = category.Trim(), Content = content.Trim(), UpdatedAtUtc = DateTimeOffset.UtcNow };
-        CommitMutation(connection, updated, normalized, note ?? "Updated in memory inspector.");
+        EnsureUnique(connection, transaction, existing.SessionId, memoryId, category, normalized);
+        var updated = existing with
+        {
+            Category = category.Trim(),
+            Content = content.Trim(),
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+            MemoryRevision = existing.MemoryRevision + 1,
+            IsManual = true,
+        };
+        CommitMutation(connection, transaction, updated, normalized, note ?? "Updated in memory inspector.");
+        transaction.Commit();
         return updated;
     }
 
@@ -225,18 +270,22 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
                 ? memory.SupersededByMemoryId
                 : null,
             UpdatedAtUtc = DateTimeOffset.UtcNow,
+            MemoryRevision = memory.MemoryRevision + 1,
+            IsManual = true,
         }, note ?? $"State changed to '{state}'.");
 
     public MemoryCorrectionResult CreateCorrection(Guid sourceMemoryId, string category, string content, string? note)
     {
         ValidateMemoryText(category, content);
         using var connection = MemoryDatabase.OpenConnection(_databasePath);
-        var source = GetRequired(connection, sourceMemoryId);
+        using var transaction = MemoryDatabase.BeginImmediateTransaction(connection);
+        var source = GetRequired(connection, sourceMemoryId, transaction);
+        MemoryDatabase.ThrowIfSessionDeleted(connection, transaction, source.SessionId);
         var trimmedCategory = category.Trim();
         var trimmedContent = content.Trim();
         var normalized = Normalize(trimmedContent);
         var now = DateTimeOffset.UtcNow;
-        var existingTarget = Find(connection, source.SessionId, trimmedCategory, normalized);
+        var existingTarget = Find(connection, source.SessionId, trimmedCategory, normalized, transaction);
         if (existingTarget?.MemoryId == sourceMemoryId)
         {
             var corrected = source with
@@ -246,23 +295,31 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
                 State = MemoryLocalStore.ActiveState,
                 SupersededByMemoryId = null,
                 UpdatedAtUtc = now,
+                MemoryRevision = source.MemoryRevision + 1,
+                IsManual = true,
             };
-            CommitMutation(connection, corrected, normalized, note ?? "Corrected in memory inspector.");
+            CommitMutation(connection, transaction, corrected, normalized, note ?? "Corrected in memory inspector.");
+            transaction.Commit();
             return new MemoryCorrectionResult(corrected, corrected, false);
         }
 
         var target = existingTarget ?? new StoredMemoryRecord(
             Guid.NewGuid(), source.SessionId, trimmedCategory, trimmedContent, note ?? source.EvidenceText, source.SourceTurnId,
             Math.Max(source.Importance, 0.85f), Math.Max(source.Confidence, 0.9f), source.IsPinned,
-            MemoryLocalStore.ActiveState, null, now, now, null, 0, source.Provenance);
+            MemoryLocalStore.ActiveState, null, now, now, null, 0, source.Provenance)
+        {
+            MemoryRevision = 1,
+            IsManual = true,
+        };
         var updatedSource = source with
         {
             State = MemoryLocalStore.SupersededState,
             SupersededByMemoryId = target.MemoryId,
             UpdatedAtUtc = now,
+            MemoryRevision = source.MemoryRevision + 1,
+            IsManual = true,
         };
 
-        using var transaction = connection.BeginTransaction();
         if (existingTarget is null)
         {
             Write(connection, transaction, target, normalized, insert: true);
@@ -279,6 +336,8 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
                 IsPinned = existingTarget.IsPinned || source.IsPinned,
                 State = MemoryLocalStore.ActiveState,
                 UpdatedAtUtc = now,
+                MemoryRevision = existingTarget.MemoryRevision + 1,
+                IsManual = true,
             };
             Write(connection, transaction, target, Normalize(target.Content), insert: false);
             WriteSearch(connection, transaction, target);
@@ -327,18 +386,25 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
     private StoredMemoryRecord Mutate(Guid memoryId, Func<StoredMemoryRecord, StoredMemoryRecord> mutation, string note)
     {
         using var connection = MemoryDatabase.OpenConnection(_databasePath);
-        var updated = mutation(GetRequired(connection, memoryId));
-        CommitMutation(connection, updated, Normalize(updated.Content), note);
+        using var transaction = MemoryDatabase.BeginImmediateTransaction(connection);
+        var existing = GetRequired(connection, memoryId, transaction);
+        MemoryDatabase.ThrowIfSessionDeleted(connection, transaction, existing.SessionId);
+        var updated = mutation(existing);
+        CommitMutation(connection, transaction, updated, Normalize(updated.Content), note);
+        transaction.Commit();
         return updated;
     }
 
-    private void CommitMutation(SqliteConnection connection, StoredMemoryRecord memory, string normalized, string note)
+    private void CommitMutation(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        StoredMemoryRecord memory,
+        string normalized,
+        string note)
     {
-        using var transaction = connection.BeginTransaction();
         Write(connection, transaction, memory, normalized, insert: false);
         WriteSearch(connection, transaction, memory);
         _evidenceRepository.Insert(connection, transaction, memory.MemoryId, memory.SessionId, null, note, memory.UpdatedAtUtc);
-        transaction.Commit();
     }
 
     private IReadOnlyList<StoredMemoryRecord> Query(string sql, Action<SqliteCommand> bind)
@@ -357,21 +423,35 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
         return items;
     }
 
-    private static StoredMemoryRecord? Get(SqliteConnection connection, Guid memoryId)
+    private static StoredMemoryRecord? Get(
+        SqliteConnection connection,
+        Guid memoryId,
+        SqliteTransaction? transaction = null)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = $"SELECT {Columns} FROM SessionMemories WHERE MemoryId = $memoryId LIMIT 1;";
         command.Parameters.AddWithValue("$memoryId", memoryId.ToString());
         using var reader = command.ExecuteReader();
         return reader.Read() ? Read(reader) : null;
     }
 
-    private static StoredMemoryRecord GetRequired(SqliteConnection connection, Guid memoryId)
-        => Get(connection, memoryId) ?? throw new InvalidOperationException($"Memory '{memoryId}' was not found.");
+    private static StoredMemoryRecord GetRequired(
+        SqliteConnection connection,
+        Guid memoryId,
+        SqliteTransaction? transaction = null)
+        => Get(connection, memoryId, transaction)
+           ?? throw new InvalidOperationException($"Memory '{memoryId}' was not found.");
 
-    private static StoredMemoryRecord? Find(SqliteConnection connection, Guid sessionId, string category, string normalized)
+    private static StoredMemoryRecord? Find(
+        SqliteConnection connection,
+        Guid sessionId,
+        string category,
+        string normalized,
+        SqliteTransaction? transaction = null)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = $"SELECT {Columns} FROM SessionMemories WHERE SessionId = $sessionId AND Category = $category AND NormalizedContent = $normalized LIMIT 1;";
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
         command.Parameters.AddWithValue("$category", category);
@@ -380,9 +460,16 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
         return reader.Read() ? Read(reader) : null;
     }
 
-    private static void EnsureUnique(SqliteConnection connection, Guid sessionId, Guid memoryId, string category, string normalized)
+    private static void EnsureUnique(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid sessionId,
+        Guid memoryId,
+        string category,
+        string normalized)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT COUNT(*) FROM SessionMemories
             WHERE SessionId = $sessionId AND Category = $category AND NormalizedContent = $normalized AND MemoryId <> $memoryId;

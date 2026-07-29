@@ -5,7 +5,7 @@ using Sunder.Package.Agent.Shared.Threading;
 
 namespace Sunder.Package.Agent.Memory.Semantic.Services;
 
-public sealed class SemanticMemoryRetrievalBackend(
+public sealed partial class SemanticMemoryRetrievalBackend(
     MemoryLocalStore store,
     SemanticModelRuntimeResolver modelRuntimeResolver,
     MemorySemanticSettingsService settingsService)
@@ -20,26 +20,11 @@ public sealed class SemanticMemoryRetrievalBackend(
 
     internal int IndexLockCount => _indexLocks.Count;
 
-    public async Task IndexMemoryAsync(StoredMemoryRecord memory, string profileId, CancellationToken cancellationToken = default)
-    {
-        if (!await _settingsService.IsSemanticRetrievalEnabledAsync(cancellationToken))
-        {
-            return;
-        }
-
-        var resolved = await _modelRuntimeResolver.ResolveForProfileAsync(profileId, cancellationToken);
-        if (resolved is null)
-        {
-            return;
-        }
-
-        using (await _indexLocks.EnterAsync(BuildIndexKey(memory.SessionId, resolved), cancellationToken))
-        {
-            var existingEmbeddings = new Dictionary<Guid, StoredMemoryEmbeddingRecord>();
-            var preparedMemory = await PrepareEmbeddingMemoryAsync(memory, cancellationToken);
-            await EnsureEmbeddingsAsync(memory.SessionId, [preparedMemory], resolved, existingEmbeddings, allowLazyReindex: true, cancellationToken);
-        }
-    }
+    public Task IndexMemoryAsync(
+        StoredMemoryRecord memory,
+        string profileId,
+        CancellationToken cancellationToken = default)
+        => ReconcileSessionAsync(memory.SessionId, profileId, cancellationToken);
 
     public async Task<int> ReindexSessionAsync(
         Guid sessionId,
@@ -47,53 +32,202 @@ public sealed class SemanticMemoryRetrievalBackend(
         IReadOnlyList<StoredMemoryRecord> memories,
         CancellationToken cancellationToken = default)
     {
-        if (!await _settingsService.IsSemanticRetrievalEnabledAsync(cancellationToken))
+        if (!await IsWorkAllowedAsync(SemanticIndexingIntent.ExplicitReindex, cancellationToken).ConfigureAwait(false))
         {
             return 0;
         }
 
-        var resolved = await _modelRuntimeResolver.ResolveForProfileAsync(profileId, cancellationToken);
+        if (_store.HasSessionDeletionTombstone(sessionId))
+        {
+            _store.DeleteEmbeddings(sessionId);
+            return 0;
+        }
+
+        var resolved = await _modelRuntimeResolver.ResolveForProfileAsync(
+            profileId,
+            token => IsWorkAllowedAsync(SemanticIndexingIntent.ExplicitReindex, token),
+            cancellationToken).ConfigureAwait(false);
         if (resolved is null)
         {
             return 0;
         }
 
-        using (await _indexLocks.EnterAsync(BuildIndexKey(sessionId, resolved), cancellationToken))
+        using (await _indexLocks.EnterAsync(BuildIndexKey(sessionId), cancellationToken))
         {
-            var preparedMemories = await Task.WhenAll(
-                memories.Take(MemoryLocalStore.MaxRecallableMemoriesPerSession)
-                    .Select(memory => PrepareEmbeddingMemoryAsync(memory, cancellationToken)));
-            var generationId = _store.BeginEmbeddingGeneration(
+            return await ReindexResolvedSessionAsync(
+                sessionId,
+                profileId,
+                FilterRecallableMemories(sessionId, memories),
+                resolved,
+                SemanticIndexingIntent.ExplicitReindex,
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    internal async Task<SemanticMemoryReconciliationRequirement> GetReconciliationRequirementAsync(
+        Guid sessionId,
+        string profileId,
+        CancellationToken cancellationToken = default)
+    {
+        var memories = _store.ListMemories(sessionId, includeInactive: false);
+        var retainedMemoryIds = memories.Select(static memory => memory.MemoryId).ToHashSet();
+        var activeGenerations = _store.ListActiveEmbeddingGenerations(sessionId);
+        var hasRetractions = _store.HasEmbeddingRetractions(sessionId, retainedMemoryIds);
+
+        if (_store.HasSessionDeletionTombstone(sessionId) || memories.Count == 0)
+        {
+            return activeGenerations.Count == 0
+                ? SemanticMemoryReconciliationRequirement.None
+                : new(true, HasRetractions: true);
+        }
+
+        if (!await _settingsService.IsSemanticRetrievalEnabledAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return hasRetractions
+                ? new(true, HasRetractions: true)
+                : SemanticMemoryReconciliationRequirement.None;
+        }
+
+        if (await _settingsService.GetReindexModeAsync(cancellationToken).ConfigureAwait(false)
+            != SemanticReindexMode.Eager)
+        {
+            return hasRetractions
+                ? new(true, HasRetractions: true)
+                : SemanticMemoryReconciliationRequirement.None;
+        }
+
+        var resolved = await _modelRuntimeResolver
+            .ResolveConfigurationForProfileAsync(
+                profileId,
+                cancellationToken,
+                canInvokeProvider: token => IsWorkAllowedAsync(SemanticIndexingIntent.EagerReconciliation, token))
+            .ConfigureAwait(false);
+        if (resolved is null)
+        {
+            return hasRetractions
+                ? new(true, HasRetractions: true)
+                : SemanticMemoryReconciliationRequirement.None;
+        }
+
+        var selectedGeneration = _store.GetActiveEmbeddingGeneration(
+            sessionId,
+            resolved.ProviderId,
+            resolved.ModelId);
+        var requiresEmbeddingWork = !GenerationMatches(selectedGeneration, resolved);
+        if (!requiresEmbeddingWork)
+        {
+            var preparedMemories = await PrepareEmbeddingMemoriesAsync(memories, cancellationToken).ConfigureAwait(false);
+            var existingEmbeddings = _store.ListEmbeddings(sessionId, resolved.ProviderId, resolved.ModelId);
+            requiresEmbeddingWork = preparedMemories.Any(memory =>
+                !existingEmbeddings.TryGetValue(memory.Memory.MemoryId, out var embedding)
+                || !EmbeddingMatches(memory, embedding, resolved));
+        }
+
+        return hasRetractions || requiresEmbeddingWork
+            ? new(true, hasRetractions)
+            : SemanticMemoryReconciliationRequirement.None;
+    }
+
+    internal async Task<int> ReconcileSessionAsync(
+        Guid sessionId,
+        string profileId,
+        CancellationToken cancellationToken = default)
+    {
+        using (await _indexLocks.EnterAsync(BuildIndexKey(sessionId), cancellationToken))
+        {
+            if (_store.HasSessionDeletionTombstone(sessionId))
+            {
+                _store.DeleteEmbeddings(sessionId);
+                return 0;
+            }
+
+            var memories = _store.ListMemories(sessionId, includeInactive: false);
+            var retainedMemoryIds = memories.Select(static memory => memory.MemoryId).ToHashSet();
+            _store.PruneEmbeddingGenerations(sessionId, retainedMemoryIds);
+
+            if (memories.Count == 0)
+            {
+                _store.DeleteEmbeddings(sessionId);
+                return 0;
+            }
+
+            if (!await _settingsService.IsSemanticRetrievalEnabledAsync(cancellationToken).ConfigureAwait(false)
+                || await _settingsService.GetReindexModeAsync(cancellationToken).ConfigureAwait(false)
+                != SemanticReindexMode.Eager)
+            {
+                return 0;
+            }
+
+            var configured = await _modelRuntimeResolver
+                .ResolveConfigurationForProfileAsync(
+                    profileId,
+                    cancellationToken,
+                    canInvokeProvider: token => IsWorkAllowedAsync(SemanticIndexingIntent.EagerReconciliation, token))
+                .ConfigureAwait(false);
+            if (configured is null)
+            {
+                return 0;
+            }
+
+            var resolved = await ResolveReadyConfigurationAsync(
+                profileId,
+                configured,
+                SemanticIndexingIntent.EagerReconciliation,
+                cancellationToken).ConfigureAwait(false);
+            if (resolved is null)
+            {
+                return 0;
+            }
+
+            var selectedGeneration = _store.GetActiveEmbeddingGeneration(
                 sessionId,
                 resolved.ProviderId,
-                resolved.ModelId,
-                preparedMemories.Length);
-            try
+                resolved.ModelId);
+            if (!GenerationMatches(selectedGeneration, resolved))
             {
-                await GenerateEmbeddingsAsync(
+                return await ReindexResolvedSessionAsync(
                     sessionId,
-                    preparedMemories,
+                    profileId,
+                    memories,
                     resolved,
-                    embedding => _store.StageEmbedding(generationId, embedding),
-                    cancellationToken);
-                cancellationToken.ThrowIfCancellationRequested();
-                _store.CompleteEmbeddingGeneration(generationId);
-                return preparedMemories.Length;
+                    SemanticIndexingIntent.EagerReconciliation,
+                    cancellationToken).ConfigureAwait(false);
             }
-            catch
-            {
-                _store.AbortEmbeddingGeneration(generationId);
-                throw;
-            }
+
+            var preparedMemories = await PrepareEmbeddingMemoriesAsync(memories, cancellationToken).ConfigureAwait(false);
+            var existingEmbeddings = _store.ListEmbeddings(sessionId, resolved.ProviderId, resolved.ModelId)
+                .ToDictionary(static item => item.Key, static item => item.Value);
+            return await EnsureEmbeddingsAsync(
+                sessionId,
+                profileId,
+                preparedMemories,
+                resolved,
+                existingEmbeddings,
+                SemanticIndexingIntent.EagerReconciliation,
+                cancellationToken).ConfigureAwait(false);
         }
     }
 
     public SemanticMemoryEntryIndexState GetIndexState(
         StoredMemoryRecord memory,
         string providerId,
-        string modelId)
+        string modelId,
+        string? configurationFingerprint = null)
     {
-        var preparedMemory = PrepareEmbeddingMemoryForStatus(memory);
+        if (configurationFingerprint is not null)
+        {
+            var generation = _store.GetActiveEmbeddingGeneration(memory.SessionId, providerId, modelId);
+            if (generation is null
+                || !string.Equals(
+                    generation.ConfigurationFingerprint,
+                    configurationFingerprint,
+                    StringComparison.Ordinal))
+            {
+                return SemanticMemoryEntryIndexState.Stale;
+            }
+        }
+
+        var preparedMemory = PrepareEmbeddingMemory(memory, _settingsService.CachedMaxCanonicalTextChars);
         var embedding = _store.GetEmbedding(memory.MemoryId, providerId, modelId);
         if (embedding is null)
         {
@@ -101,8 +235,9 @@ public sealed class SemanticMemoryRetrievalBackend(
         }
 
         if (!string.Equals(embedding.ProviderId, providerId, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(embedding.ModelId, modelId, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(embedding.CanonicalTextHash, preparedMemory.CanonicalTextHash, StringComparison.Ordinal))
+            || !string.Equals(embedding.ModelId, modelId, StringComparison.Ordinal)
+            || !string.Equals(embedding.CanonicalTextHash, preparedMemory.CanonicalTextHash, StringComparison.Ordinal)
+            || embedding.MemoryRevision != memory.MemoryRevision)
         {
             return SemanticMemoryEntryIndexState.Stale;
         }
@@ -116,17 +251,17 @@ public sealed class SemanticMemoryRetrievalBackend(
         string query,
         CancellationToken cancellationToken = default)
     {
-        if (!await _settingsService.IsSemanticRetrievalEnabledAsync(cancellationToken))
+        if (!await _settingsService.IsSemanticRetrievalEnabledAsync(cancellationToken).ConfigureAwait(false)
+            || memories.Count == 0
+            || string.IsNullOrWhiteSpace(query))
         {
             return new Dictionary<Guid, float>();
         }
 
-        if (memories.Count == 0 || string.IsNullOrWhiteSpace(query))
-        {
-            return new Dictionary<Guid, float>();
-        }
-
-        var resolved = await _modelRuntimeResolver.ResolveForProfileAsync(profileId, cancellationToken);
+        var resolved = await _modelRuntimeResolver.ResolveForProfileAsync(
+            profileId,
+            token => IsWorkAllowedAsync(SemanticIndexingIntent.Recall, token),
+            cancellationToken).ConfigureAwait(false);
         if (resolved is null)
         {
             return new Dictionary<Guid, float>();
@@ -135,19 +270,61 @@ public sealed class SemanticMemoryRetrievalBackend(
         var sessionId = memories[0].SessionId;
         PreparedEmbeddingMemory[] preparedMemories;
         Dictionary<Guid, StoredMemoryEmbeddingRecord> existingEmbeddings;
-        using (await _indexLocks.EnterAsync(BuildIndexKey(sessionId, resolved), cancellationToken))
+        using (await _indexLocks.EnterAsync(BuildIndexKey(sessionId), cancellationToken))
         {
-            preparedMemories = await Task.WhenAll(
-                memories.Take(MemoryLocalStore.MaxRecallableMemoriesPerSession)
-                    .Select(memory => PrepareEmbeddingMemoryAsync(memory, cancellationToken)));
-            existingEmbeddings = _store.ListEmbeddings(sessionId, resolved.ProviderId, resolved.ModelId)
-                .ToDictionary(item => item.Key, item => item.Value);
+            var recallableMemories = FilterRecallableMemories(sessionId, memories);
+            preparedMemories = await PrepareEmbeddingMemoriesAsync(recallableMemories, cancellationToken).ConfigureAwait(false);
+            var selectedGeneration = _store.GetActiveEmbeddingGeneration(
+                sessionId,
+                resolved.ProviderId,
+                resolved.ModelId);
+            var reindexMode = await _settingsService.GetReindexModeAsync(cancellationToken).ConfigureAwait(false);
+            if (!GenerationMatches(selectedGeneration, resolved))
+            {
+                if (reindexMode == SemanticReindexMode.Never)
+                {
+                    return new Dictionary<Guid, float>();
+                }
 
-            await EnsureEmbeddingsAsync(sessionId, preparedMemories, resolved, existingEmbeddings, allowLazyReindex: false, cancellationToken);
+                await ReindexResolvedSessionAsync(
+                    sessionId,
+                    profileId,
+                    recallableMemories,
+                    resolved,
+                    SemanticIndexingIntent.Recall,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            existingEmbeddings = _store.ListEmbeddings(sessionId, resolved.ProviderId, resolved.ModelId)
+                .ToDictionary(static item => item.Key, static item => item.Value);
+            if (reindexMode != SemanticReindexMode.Never)
+            {
+                await EnsureEmbeddingsAsync(
+                    sessionId,
+                    profileId,
+                    preparedMemories,
+                    resolved,
+                    existingEmbeddings,
+                    SemanticIndexingIntent.Recall,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            if (!preparedMemories.Any(memory =>
+                    existingEmbeddings.TryGetValue(memory.Memory.MemoryId, out var embedding)
+                    && EmbeddingMatches(memory, embedding, resolved)))
+            {
+                return new Dictionary<Guid, float>();
+            }
         }
 
-        var queryEmbedding = await resolved.Provider.GenerateEmbeddingAsync(resolved.ModelId, query.Trim(), cancellationToken);
-        if (queryEmbedding is null || queryEmbedding.Values.Count == 0)
+        if (!await IsWorkAllowedAsync(SemanticIndexingIntent.Recall, cancellationToken).ConfigureAwait(false))
+        {
+            return new Dictionary<Guid, float>();
+        }
+        var queryEmbedding = await resolved.GenerateEmbeddingAsync(query.Trim(), cancellationToken)
+            .ConfigureAwait(false);
+        if (!await IsWorkAllowedAsync(SemanticIndexingIntent.Recall, cancellationToken).ConfigureAwait(false)
+            || !IsValidEmbeddingResult(queryEmbedding, resolved.ModelId, expectedDimensions: null))
         {
             return new Dictionary<Guid, float>();
         }
@@ -156,8 +333,8 @@ public sealed class SemanticMemoryRetrievalBackend(
         foreach (var preparedMemory in preparedMemories)
         {
             if (!existingEmbeddings.TryGetValue(preparedMemory.Memory.MemoryId, out var embedding)
-                || !string.Equals(embedding.CanonicalTextHash, preparedMemory.CanonicalTextHash, StringComparison.Ordinal)
-                || embedding.Values.Count != queryEmbedding.Values.Count)
+                || !EmbeddingMatches(preparedMemory, embedding, resolved)
+                || embedding.Values.Count != queryEmbedding!.Values.Count)
             {
                 continue;
             }
@@ -199,7 +376,7 @@ public sealed class SemanticMemoryRetrievalBackend(
             .GroupBy(result => result.Memory.MemoryId)
             .ToDictionary(group => group.Key, group => NormalizeTextSearchScore(group.Min(item => item.SearchRank)));
 
-        var semanticScores = await ScoreSemanticAsync(profileId, activeMemories, query, cancellationToken);
+        var semanticScores = await ScoreSemanticAsync(profileId, activeMemories, query, cancellationToken).ConfigureAwait(false);
         var semanticCandidateIds = semanticScores
             .OrderByDescending(item => item.Value)
             .Take(Math.Max(recallPlan.MaxEntryCount * 4, 12))
@@ -231,102 +408,68 @@ public sealed class SemanticMemoryRetrievalBackend(
         return new HybridRecallCandidateSet(candidates, lexicalScores, semanticScores);
     }
 
-    private async Task EnsureEmbeddingsAsync(
-        Guid sessionId,
-        IReadOnlyList<PreparedEmbeddingMemory> memories,
-        ResolvedEmbeddingProvider resolved,
-        IDictionary<Guid, StoredMemoryEmbeddingRecord> existingEmbeddings,
-        bool allowLazyReindex,
+    private async Task<PreparedEmbeddingMemory[]> PrepareEmbeddingMemoriesAsync(
+        IReadOnlyList<StoredMemoryRecord> memories,
         CancellationToken cancellationToken)
     {
-        var missingMemories = memories
-            .Where(memory => !existingEmbeddings.TryGetValue(memory.Memory.MemoryId, out var existing)
-                             || !string.Equals(existing.ProviderId, resolved.ProviderId, StringComparison.OrdinalIgnoreCase)
-                             || !string.Equals(existing.ModelId, resolved.ModelId, StringComparison.OrdinalIgnoreCase)
-                             || !string.Equals(existing.CanonicalTextHash, memory.CanonicalTextHash, StringComparison.Ordinal))
+        var maxLength = await _settingsService.GetMaxCanonicalTextCharsAsync(cancellationToken).ConfigureAwait(false);
+        return memories
+            .Take(MemoryLocalStore.MaxRecallableMemoriesPerSession)
+            .Select(memory => PrepareEmbeddingMemory(memory, maxLength))
             .ToArray();
-
-        if (!allowLazyReindex
-            && await _settingsService.GetReindexModeAsync(cancellationToken) == SemanticReindexMode.Never)
-        {
-            return;
-        }
-
-        await GenerateEmbeddingsAsync(
-            sessionId,
-            missingMemories,
-            resolved,
-            embedding =>
-            {
-                _store.UpsertEmbedding(embedding);
-                existingEmbeddings[embedding.MemoryId] = embedding;
-            },
-            cancellationToken);
     }
 
-    private async Task GenerateEmbeddingsAsync(
+    private static PreparedEmbeddingMemory PrepareEmbeddingMemory(StoredMemoryRecord memory, int maxLength)
+    {
+        var canonicalText = BuildCanonicalText(memory, maxLength);
+        return new PreparedEmbeddingMemory(memory, canonicalText, ComputeCanonicalTextHash(canonicalText))
+        {
+            MaxCanonicalTextChars = maxLength,
+        };
+    }
+
+    private static bool GenerationMatches(
+        StoredMemoryEmbeddingGenerationRecord? generation,
+        ResolvedEmbeddingProvider resolved)
+        => generation is not null
+           && string.Equals(generation.ProviderId, resolved.ProviderId, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(generation.ModelId, resolved.ModelId, StringComparison.Ordinal)
+           && string.Equals(
+               generation.ConfigurationFingerprint,
+               resolved.ConfigurationFingerprint,
+               StringComparison.Ordinal);
+
+    private static bool EmbeddingMatches(
+        PreparedEmbeddingMemory memory,
+        StoredMemoryEmbeddingRecord embedding,
+        ResolvedEmbeddingProvider resolved)
+        => string.Equals(embedding.ProviderId, resolved.ProviderId, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(embedding.ModelId, resolved.ModelId, StringComparison.Ordinal)
+           && string.Equals(embedding.CanonicalTextHash, memory.CanonicalTextHash, StringComparison.Ordinal)
+           && embedding.MemoryRevision == memory.Memory.MemoryRevision
+           && embedding.Dimensions is > 0 and <= MaxEmbeddingDimensions
+           && embedding.Values.Count == embedding.Dimensions
+           && embedding.Values.All(float.IsFinite);
+
+    private static bool IsValidEmbeddingResult(
+        AgentEmbeddingGenerationResult? result,
+        string expectedModelId,
+        int? expectedDimensions)
+        => result is not null
+           && string.Equals(result.ModelId, expectedModelId, StringComparison.Ordinal)
+           && result.Values.Count is > 0 and <= MaxEmbeddingDimensions
+           && (expectedDimensions is null || result.Values.Count == expectedDimensions)
+           && result.Values.All(float.IsFinite);
+
+    private static IReadOnlyList<StoredMemoryRecord> FilterRecallableMemories(
         Guid sessionId,
-        IReadOnlyList<PreparedEmbeddingMemory> memories,
-        ResolvedEmbeddingProvider resolved,
-        Action<StoredMemoryEmbeddingRecord> persist,
-        CancellationToken cancellationToken)
-    {
-        foreach (var batch in memories.Chunk(await _settingsService.GetEmbeddingBatchSizeAsync(cancellationToken)))
-        {
-            var embeddingResults = await resolved.Provider.GenerateEmbeddingsAsync(
-                resolved.ModelId,
-                batch.Select(item => item.CanonicalText).ToArray(),
-                cancellationToken);
-
-            for (var index = 0; index < batch.Length && index < embeddingResults.Count; index++)
-            {
-                var result = embeddingResults[index];
-                if (result is null
-                    || result.Values.Count == 0
-                    || result.Values.Count > MaxEmbeddingDimensions
-                    || result.Dimensions != result.Values.Count)
-                {
-                    continue;
-                }
-
-                var now = DateTimeOffset.UtcNow;
-                var existing = _store.GetEmbedding(batch[index].Memory.MemoryId, resolved.ProviderId, resolved.ModelId);
-                var embedding = new StoredMemoryEmbeddingRecord(
-                    batch[index].Memory.MemoryId,
-                    sessionId,
-                    resolved.ProviderId,
-                    resolved.ModelId,
-                    batch[index].CanonicalTextHash,
-                    result.Dimensions,
-                    result.Values,
-                    existing?.CreatedAtUtc ?? now,
-                    now);
-                persist(embedding);
-            }
-        }
-    }
-
-    private async Task<PreparedEmbeddingMemory> PrepareEmbeddingMemoryAsync(
-        StoredMemoryRecord memory,
-        CancellationToken cancellationToken)
-    {
-        var canonicalText = await BuildCanonicalTextAsync(memory, cancellationToken);
-        return new PreparedEmbeddingMemory(memory, canonicalText, ComputeCanonicalTextHash(canonicalText));
-    }
-
-    private PreparedEmbeddingMemory PrepareEmbeddingMemoryForStatus(StoredMemoryRecord memory)
-    {
-        var canonicalText = BuildCanonicalText(memory, _settingsService.CachedMaxCanonicalTextChars);
-        return new PreparedEmbeddingMemory(memory, canonicalText, ComputeCanonicalTextHash(canonicalText));
-    }
-
-    private async Task<string> BuildCanonicalTextAsync(
-        StoredMemoryRecord memory,
-        CancellationToken cancellationToken)
-    {
-        var maxLength = await _settingsService.GetMaxCanonicalTextCharsAsync(cancellationToken);
-        return BuildCanonicalText(memory, maxLength);
-    }
+        IReadOnlyList<StoredMemoryRecord> memories)
+        => memories
+            .Where(memory => memory.SessionId == sessionId
+                             && (string.Equals(memory.State, MemoryLocalStore.ActiveState, StringComparison.OrdinalIgnoreCase)
+                                 || string.Equals(memory.State, MemoryLocalStore.ContestedState, StringComparison.OrdinalIgnoreCase)))
+            .Take(MemoryLocalStore.MaxRecallableMemoriesPerSession)
+            .ToArray();
 
     private static string BuildCanonicalText(StoredMemoryRecord memory, int maxLength)
     {
@@ -351,8 +494,27 @@ public sealed class SemanticMemoryRetrievalBackend(
         return Convert.ToHexString(bytes);
     }
 
-    private static string BuildIndexKey(Guid sessionId, ResolvedEmbeddingProvider resolved)
-        => $"{sessionId:N}\0{resolved.ProviderId}\0{resolved.ModelId}";
+    private static string BuildSourceFingerprint(
+        IReadOnlyList<PreparedEmbeddingMemory> memories,
+        int maxCanonicalTextChars)
+    {
+        var builder = new StringBuilder("semantic-memory-generation-source-v1\n");
+        builder.Append(maxCanonicalTextChars).Append('\n');
+        foreach (var memory in memories.OrderBy(static item => item.Memory.MemoryId))
+        {
+            builder.Append(memory.Memory.MemoryId.ToString("N"))
+                .Append(':')
+                .Append(memory.Memory.MemoryRevision)
+                .Append(':')
+                .Append(memory.CanonicalTextHash)
+                .Append('\n');
+        }
+
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())))
+            .ToLowerInvariant();
+    }
+
+    private static string BuildIndexKey(Guid sessionId) => sessionId.ToString("N");
 
     private static float CalculateCosineSimilarity(IReadOnlyList<float> left, IReadOnlyList<float> right)
     {
@@ -386,10 +548,18 @@ public sealed class SemanticMemoryRetrievalBackend(
     }
 }
 
+internal sealed record SemanticMemoryReconciliationRequirement(bool ShouldQueue, bool HasRetractions)
+{
+    public static SemanticMemoryReconciliationRequirement None { get; } = new(false, false);
+}
+
 public sealed record PreparedEmbeddingMemory(
     StoredMemoryRecord Memory,
     string CanonicalText,
-    string CanonicalTextHash);
+    string CanonicalTextHash)
+{
+    public int MaxCanonicalTextChars { get; init; }
+}
 
 public enum SemanticMemoryEntryIndexState
 {

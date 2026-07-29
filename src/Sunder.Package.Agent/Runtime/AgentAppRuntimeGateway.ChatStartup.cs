@@ -7,8 +7,10 @@ internal sealed partial class AgentAppRuntimeGateway
         CancellationToken cancellationToken = default)
     {
         int generation;
+        bool hadActiveSnapshot;
         lock (_observationLock)
         {
+            hadActiveSnapshot = _activeChatSnapshotRequest is not null;
             generation = ++_chatSnapshotLoadGeneration;
             _pendingChatSnapshotRequest = null;
             _pendingChatSnapshot = null;
@@ -32,7 +34,7 @@ internal sealed partial class AgentAppRuntimeGateway
             }
             return snapshot;
         }
-        catch
+        catch (Exception exception)
         {
             var shouldResume = false;
             lock (_observationLock)
@@ -44,9 +46,17 @@ internal sealed partial class AgentAppRuntimeGateway
                     shouldResume = true;
                 }
             }
-            if (shouldResume)
+            if (shouldResume
+                && (hadActiveSnapshot
+                    || IsRuntimeAvailabilityFailure(exception, cancellationToken)))
             {
-                StartObservingChanges();
+                var startReason = ConnectionState switch
+                {
+                    AgentRuntimeConnectionState.Connected => ChangeObservationStartReason.HealthySnapshotHandoff,
+                    AgentRuntimeConnectionState.Connecting => ChangeObservationStartReason.Initial,
+                    _ => ChangeObservationStartReason.Recovery,
+                };
+                StartObservingChanges(startReason);
             }
             throw;
         }
@@ -74,7 +84,7 @@ internal sealed partial class AgentAppRuntimeGateway
 
         if (shouldResume)
         {
-            StartObservingChanges();
+            StartObservingChanges(ChangeObservationStartReason.HealthySnapshotHandoff);
         }
     }
 

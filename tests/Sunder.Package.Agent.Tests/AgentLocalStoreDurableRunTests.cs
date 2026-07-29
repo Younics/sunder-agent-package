@@ -40,6 +40,16 @@ public sealed class AgentLocalStoreDurableRunTests
                 (9L, "turn-run-ownership"),
                 (10L, "remove-dormant-continuity-and-permission-schema"),
                 (11L, "durable-run-budgets"),
+                (12L, "tool-execution-ledger"),
+                (13L, "durable-lifecycle-outbox"),
+                (14L, "durable-user-turn-admission"),
+                (15L, "anchored-session-context"),
+                (16L, "tool-execution-provenance"),
+                (17L, "lifecycle-payload-erasure-and-replay-watermarks"),
+                (18L, "runtime-generation-ownership"),
+                (19L, "lifecycle-durability-hardening"),
+                (20L, "durable-resource-claims"),
+                (21L, "legacy-tool-execution-identities"),
             ],
             migrations.Select(static migration => (migration.Version, migration.Name)));
         Assert.All(migrations, migration => Assert.Matches("^[0-9a-f]{64}$", migration.Checksum));
@@ -291,6 +301,7 @@ public sealed class AgentLocalStoreDurableRunTests
         }
 
         var recovered = new AgentLocalStore(scope.Context);
+        recovered.RecoverRuntimeState();
 
         Assert.Equal(AgentDurableRunStatus.Interrupted, recovered.GetRun(run.Key.RunId)?.Status);
         var checkpoint = recovered.GetLatestCheckpoint(session.SessionId);
@@ -318,6 +329,7 @@ public sealed class AgentLocalStoreDurableRunTests
         Assert.True(turn.IsStreaming);
 
         var recovered = new AgentLocalStore(scope.Context);
+        recovered.RecoverRuntimeState();
 
         var recoveredTurn = Assert.IsType<AgentTurnRecord>(recovered.GetTurn(turn.TurnId));
         Assert.False(recoveredTurn.IsStreaming);
@@ -681,22 +693,35 @@ internal sealed class DurableRunTestFileStore(string rootPath) : TestPackageFile
 
 internal sealed class DurableRunTestKeyValueStore : IPackageKeyValueStore
 {
-    private readonly ConcurrentDictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _values = new(StringComparer.Ordinal);
 
     public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
-        => Task.FromResult(_values.GetValueOrDefault(key));
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        TestPackageStorageGuards.Key(key);
+        return Task.FromResult(_values.GetValueOrDefault(key));
+    }
 
     public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        TestPackageStorageGuards.Key(key);
+        TestPackageStorageGuards.Value(value);
         _values[key] = value;
         return Task.CompletedTask;
     }
 
     public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default)
-        => Task.FromResult(_values.ContainsKey(key));
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        TestPackageStorageGuards.Key(key);
+        return Task.FromResult(_values.ContainsKey(key));
+    }
 
     public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        TestPackageStorageGuards.Key(key);
         _values.TryRemove(key, out _);
         return Task.CompletedTask;
     }
@@ -704,10 +729,15 @@ internal sealed class DurableRunTestKeyValueStore : IPackageKeyValueStore
     public Task<IReadOnlyList<string>> ListKeysAsync(
         string? prefix = null,
         CancellationToken cancellationToken = default)
-        => Task.FromResult<IReadOnlyList<string>>(
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        TestPackageStorageGuards.Prefix(prefix);
+        return Task.FromResult<IReadOnlyList<string>>(
             _values.Keys
-                .Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .Where(key => prefix is null || key.StartsWith(prefix, StringComparison.Ordinal))
+                .Order(StringComparer.Ordinal)
                 .ToArray());
+    }
 }
 
 internal sealed class DurableRunTestSettings : EmptyPackageSettings;

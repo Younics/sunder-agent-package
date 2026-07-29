@@ -1,3 +1,5 @@
+using Sunder.Package.Agent.Contracts.Models;
+
 namespace Sunder.Package.Agent.Tools.Files;
 
 internal enum FilePatchOperationKind
@@ -20,10 +22,15 @@ internal sealed record FilePatchPlan(IReadOnlyList<PlannedFilePatchOperation> Op
 internal sealed record PlannedFilePatchOperation(
     FilePatchOperationKind Kind,
     string Path,
+    int ResourceIndex,
     string? OriginalContent,
     string? NextContent,
     string? ExpectedContentHash,
-    FileDiffPayloadFile PresentationFile);
+    string ResourceReference,
+    FileDiffPayloadFile PresentationFile)
+{
+    public AgentResolvedResource? PostMutationResource { get; set; }
+}
 
 internal sealed record FileDiffPresentationPayload(string Schema, IReadOnlyList<FileDiffPayloadFile> Files);
 
@@ -36,7 +43,15 @@ internal sealed record FileDiffPayloadFile(
 
 internal sealed record FileDiffPayloadLine(string Kind, int? LineNumber, string Text);
 
-internal sealed record FilePatchCompensationResult(int RestoredCount, IReadOnlyList<string> Failures)
+internal sealed record FilePatchCompensationResult(
+    IReadOnlyList<string> RestoredPaths,
+    IReadOnlyList<FilePatchCompensationFailure> Failures)
 {
+    public int RestoredCount => RestoredPaths.Count;
+
     public bool FullyRestored => Failures.Count == 0;
 }
+
+internal sealed record FilePatchCompensationFailure(string Path, string Failure);
+
+internal sealed record FilePatchCompensationProbeFailure(string Path, string Failure);

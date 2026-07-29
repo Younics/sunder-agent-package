@@ -3,8 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Sunder.Package.Agent.Subagents.PackageViews"
-             xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
-             xmlns:md="clr-namespace:LiveMarkdown.Avalonia;assembly=LiveMarkdown.Avalonia"
+              xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
              x:Class="Sunder.Package.Agent.Subagents.PackageViews.SubsessionsView"
              x:DataType="vm:SubsessionsViewModel"
              mc:Ignorable="d">
@@ -15,7 +14,7 @@
       </ResourceDictionary.MergedDictionaries>
 
       <DataTemplate x:Key="SubsessionToolDetailsTemplate"
-                    x:DataType="vm:SubsessionToolInvocationRowViewModel">
+                    x:DataType="shared:TranscriptToolDetailViewModel">
         <Border Classes="tool-output-card"
                 Margin="28,10,0,0"
                 ClipToBounds="True"
@@ -23,6 +22,12 @@
           <StackPanel Spacing="12"
                       Margin="16"
                       MinWidth="0">
+            <Border Classes="tool-ambiguous-warning"
+                    IsVisible="{Binding HasAmbiguousWarning}">
+              <TextBlock Text="{Binding AmbiguousWarningText}"
+                         TextWrapping="Wrap"
+                         Foreground="{DynamicResource Sunder.Brush.Warning}" />
+            </Border>
             <TextBlock Text="{Binding OutputText}"
                        FontFamily="Menlo,Consolas,monospace"
                        FontSize="13"
@@ -37,10 +42,18 @@
               <ItemsControl ItemsSource="{Binding ToolDiffFiles}"
                             MinWidth="0" />
             </StackPanel>
-            <md:MarkdownRenderer MarkdownBuilder="{Binding DetailMarkdownBuilder}"
-                                 MinWidth="0"
-                                 HorizontalAlignment="Stretch"
-                                 IsVisible="{Binding ShowMarkdownDetails}" />
+            <shared:StreamingMarkdownPresenter MarkdownBuilder="{Binding DetailMarkdownBuilder}"
+                                               MinWidth="0"
+                                               HorizontalAlignment="Stretch"
+                                               IsVisible="{Binding ShowMarkdownDetails}"
+                                               GeometryChanged="TranscriptMarkdown_OnRendered"
+                                               Rendered="TranscriptMarkdown_OnRendered" />
+            <Border Classes="tool-ambiguous-warning"
+                    IsVisible="{Binding WasTransportTruncated}">
+              <TextBlock Text="{Binding TransportTruncatedText}"
+                         TextWrapping="Wrap"
+                         Foreground="{DynamicResource Sunder.Brush.Warning}" />
+            </Border>
           </StackPanel>
         </Border>
       </DataTemplate>
@@ -191,6 +204,7 @@
             ColumnSpacing="16"
             Margin="0,0,0,22"
             MinWidth="0"
+            IsVisible="{Binding IsLayoutVisible}"
             HorizontalAlignment="Stretch">
         <Border Classes="message-avatar"
                 VerticalAlignment="Top">
@@ -203,6 +217,13 @@
                    Text="{Binding ThinkingText}"
                    VerticalAlignment="Center" />
       </Grid>
+    </DataTemplate>
+
+    <DataTemplate x:DataType="vm:SubsessionTranscriptTailSentinelRowViewModel">
+      <Border Height="1"
+              MinHeight="1"
+              MaxHeight="1"
+              IsHitTestVisible="False" />
     </DataTemplate>
 
     <DataTemplate x:DataType="vm:SubsessionTextTranscriptRowViewModel">
@@ -219,26 +240,38 @@
             <TextBlock Classes="avatar-glyph"
                        Text="{Binding RoleGlyph}" />
           </Border>
-          <Border Grid.Column="1"
-                  MinWidth="0"
-                  Classes="message-bubble">
-            <shared:StreamingMarkdownPresenter MarkdownBuilder="{Binding MarkdownBuilder}"
-                                               MinWidth="0"
-                                               HorizontalAlignment="Stretch"
-                                               Rendered="TranscriptMarkdown_OnRendered" />
-          </Border>
+          <Grid Grid.Column="1"
+                MinWidth="0">
+            <Border MinWidth="0"
+                    Classes="message-bubble">
+              <shared:StreamingMarkdownPresenter MarkdownBuilder="{Binding MarkdownBuilder}"
+                                                 MinWidth="0"
+                                                 HorizontalAlignment="Stretch"
+                                                 GeometryChanged="TranscriptMarkdown_OnRendered"
+                                                 Rendered="TranscriptMarkdown_OnRendered" />
+            </Border>
+            <Border Classes="navigation-highlight-overlay"
+                    Classes.fading="{Binding IsNavigationTargetFading}"
+                    IsVisible="{Binding IsNavigationTargetHighlighted}" />
+          </Grid>
         </Grid>
         <Grid ColumnDefinitions="*"
               MinWidth="0"
               HorizontalAlignment="Stretch"
               IsVisible="{Binding IsUser}">
-          <Border Classes="message-bubble user"
-                  MinWidth="0">
-            <shared:StreamingMarkdownPresenter MarkdownBuilder="{Binding MarkdownBuilder}"
-                                               MinWidth="0"
-                                               HorizontalAlignment="Stretch"
-                                               Rendered="TranscriptMarkdown_OnRendered" />
-          </Border>
+          <Grid MinWidth="0">
+            <Border Classes="message-bubble user"
+                    MinWidth="0">
+              <shared:StreamingMarkdownPresenter MarkdownBuilder="{Binding MarkdownBuilder}"
+                                                 MinWidth="0"
+                                                 HorizontalAlignment="Stretch"
+                                                 GeometryChanged="TranscriptMarkdown_OnRendered"
+                                                 Rendered="TranscriptMarkdown_OnRendered" />
+            </Border>
+            <Border Classes="navigation-highlight-overlay"
+                    Classes.fading="{Binding IsNavigationTargetFading}"
+                    IsVisible="{Binding IsNavigationTargetHighlighted}" />
+          </Grid>
         </Grid>
       </Grid>
     </DataTemplate>
@@ -250,15 +283,21 @@
             MinWidth="0"
             HorizontalAlignment="Stretch">
         <Border Classes="timeline-spine"
+                Classes.navigation-target="{Binding IsNavigationTargetHighlighted}"
                 Margin="0,-22,0,-6" />
         <StackPanel Grid.Column="1"
                     MinWidth="0"
                     HorizontalAlignment="Stretch">
-          <Button Classes="tool-step-header"
-                  MinWidth="0"
-                  Click="ToolStepHeader_OnClick">
-            <Grid RowDefinitions="Auto,Auto"
-                  ColumnDefinitions="Auto,*,Auto"
+          <Grid MinWidth="0">
+            <Button Classes="tool-step-header"
+                    shared:TranscriptRowPresenter.IsExactAnchorTarget="True"
+                     MinWidth="0"
+                     Click="OnToolStepHeaderClick"
+                     IsEnabled="{Binding HasDetails}"
+                     AutomationProperties.Name="{Binding ToolLabel}"
+                     AutomationProperties.HelpText="{Binding HeaderAccessibilityText}">
+              <Grid RowDefinitions="Auto,Auto"
+                  ColumnDefinitions="Auto,*,Auto,Auto"
                   RowSpacing="3"
                   ColumnSpacing="8"
                   MinWidth="0"
@@ -278,10 +317,14 @@
                          Text="{Binding ToolLabel}"
                          MinWidth="0"
                          VerticalAlignment="Center" />
-              <TextBlock Grid.Row="0"
-                         Grid.Column="2"
-                         Classes="tool-chevron"
-                         Text="{Binding ExpandGlyph}" />
+               <TextBlock Grid.Row="0"
+                          Grid.Column="2"
+                          Classes="tool-status"
+                          Text="{Binding StatusText}" />
+               <TextBlock Grid.Row="0"
+                          Grid.Column="3"
+                          Classes="tool-chevron"
+                          Text="{Binding ExpandGlyph}" />
               <TextBlock Grid.Row="1"
                            Grid.Column="1"
                            Classes="tool-command"
@@ -292,8 +335,12 @@
                           TextTrimming="CharacterEllipsis"
                           Margin="0,-1,8,0"
                           IsVisible="{Binding HasHeaderDetail}" />
-            </Grid>
-          </Button>
+              </Grid>
+            </Button>
+            <Border Classes="navigation-highlight-overlay"
+                    Classes.fading="{Binding IsNavigationTargetFading}"
+                    IsVisible="{Binding IsNavigationTargetHighlighted}" />
+          </Grid>
 
           <ItemsControl ItemsSource="{Binding ChildSessionLinks}"
                         IsVisible="{Binding HasChildSessionLinks}"
@@ -329,11 +376,16 @@
             </ItemsControl.ItemTemplate>
           </ItemsControl>
 
-          <ContentControl Content="{Binding ExpandedDetails}"
-                          ContentTemplate="{StaticResource SubsessionToolDetailsTemplate}"
-                          MinWidth="0"
-                          HorizontalAlignment="Stretch"
-                          HorizontalContentAlignment="Stretch" />
+          <TextBlock Classes="tool-detail-load-error"
+                     Text="{Binding DetailLoadFailureText}"
+                     IsVisible="{Binding IsDetailLoadFailed}" />
+          <TextBlock Height="0"
+                     Opacity="0"
+                     IsHitTestVisible="False"
+                     Text="{Binding ExpansionAnnouncement}"
+                     AutomationProperties.LiveSetting="Polite" />
+          <shared:TranscriptToolDetailHost MinWidth="0"
+                                           HorizontalAlignment="Stretch" />
         </StackPanel>
       </Grid>
     </DataTemplate>
@@ -418,22 +470,42 @@
           </Border>
 
           <Grid Grid.Row="1">
+            <shared:TranscriptToolPreparationPortal x:Name="ToolDetailPreparationPortal"
+                                                    Width="1"
+                                                    Height="1"
+                                                    HorizontalAlignment="Left"
+                                                    VerticalAlignment="Top"
+                                                    ClipToBounds="True"
+                                                    Opacity="0"
+                                                    IsHitTestVisible="False" />
             <ScrollViewer x:Name="TranscriptScrollViewer"
-                          Classes="transcript-scroll">
+                           Classes="transcript-scroll"
+                           HorizontalScrollBarVisibility="Disabled"
+                           VerticalScrollBarVisibility="Auto">
               <Border x:Name="TranscriptScrollContent"
-                      Classes="transcript-content"
-                      Width="{Binding Viewport.Width, ElementName=TranscriptScrollViewer}">
-                <ItemsControl x:Name="TranscriptItemsControl"
-                              Classes="transcript-items"
-                              ItemsSource="{Binding Messages}">
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="vm:SubsessionTranscriptRowViewModel">
-                      <shared:TranscriptRowPresenter Classes="transcript-row-anchor"
-                                                     AnchorKey="{Binding AnchorKey}"
-                                                     Content="{Binding}" />
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                      Classes="transcript-content">
+                <shared:TranscriptScrollAnchorHost x:Name="TranscriptAnchorHost">
+                  <ItemsRepeater x:Name="TranscriptItemsControl"
+                                 Classes="transcript-items"
+                                 ItemsSource="{Binding TranscriptItems}">
+                    <ItemsRepeater.Layout>
+                      <StackLayout />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                      <DataTemplate x:DataType="vm:SubsessionTranscriptRowViewModel">
+                        <shared:TranscriptRowPresenter Classes="transcript-row-anchor"
+                                                       Classes.navigation-target="{Binding IsNavigationTargetHighlighted}"
+                                                       AnchorKey="{Binding AnchorKey}"
+                                                       AnchorRole="{Binding AnchorRole}"
+                                                       AutomationProperties.HelpText="{Binding NavigationHighlightHelpText}"
+                                                       IsRepeaterHosted="True"
+                                                       IsHitTestVisible="{Binding IsRowHitTestVisible}"
+                                                       MinHeight="{Binding MinimumLayoutHeight}"
+                                                       Content="{Binding}" />
+                      </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                  </ItemsRepeater>
+                </shared:TranscriptScrollAnchorHost>
               </Border>
             </ScrollViewer>
             <TextBlock Text="Loading older messages..."

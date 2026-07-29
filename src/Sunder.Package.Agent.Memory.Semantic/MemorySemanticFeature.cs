@@ -8,7 +8,11 @@ namespace Sunder.Package.Agent.Memory.Semantic;
 public sealed class MemorySemanticFeature(
     MemoryLocalStore store,
     SemanticMemoryRecallService recallService,
-    SemanticMemoryPromotionService promotionService) : IAgentProfileCapabilityConsumer, IAgentPromptContextContributor, IAgentLifecycleObserver, IAgentSessionDataCleaner
+    SemanticMemoryPromotionService promotionService) :
+    IAgentProfileCapabilityConsumer,
+    IAgentPromptContextContributor,
+    IAgentDurableLifecycleObserver,
+    IAgentSessionDataCleaner
 {
     private readonly MemoryLocalStore _store = store;
     private readonly SemanticMemoryRecallService _recallService = recallService;
@@ -56,7 +60,10 @@ public sealed class MemorySemanticFeature(
                 request.Turn,
                 request.Turns,
                 request.RecentLiveBufferTurns,
-                ToMemoryRecallPlan(request.ContextPlan)),
+                ToMemoryRecallPlan(request.ContextPlan))
+            {
+                MemoryConsistencyBarrier = request.MemoryConsistencyBarrier,
+            },
             cancellationToken);
         if (recallResult is null || recallResult.Entries.Count == 0)
         {
@@ -75,6 +82,13 @@ public sealed class MemorySemanticFeature(
         ]);
     }
 
+    public async ValueTask HandleDurableLifecycleEventAsync(
+        AgentDurableLifecycleEventEnvelope lifecycleEvent,
+        CancellationToken cancellationToken = default)
+    {
+        await _promotionService.ProcessDurableLifecycleEventAsync(lifecycleEvent, cancellationToken);
+    }
+
     public async ValueTask HandleLifecycleEventAsync(
         AgentLifecycleEvent lifecycleEvent,
         CancellationToken cancellationToken = default)
@@ -82,8 +96,7 @@ public sealed class MemorySemanticFeature(
         await _promotionService.PromoteDurableMemoriesAsync(lifecycleEvent, cancellationToken);
     }
 
-    public void DeleteSessionData(Guid sessionId)
-        => _store.DeleteSessionData(sessionId);
+    public void DeleteSessionData(Guid sessionId) => _store.DeleteSessionData(sessionId);
 
     private static AgentMemoryRecallPlan ToMemoryRecallPlan(AgentPromptContextPlan plan)
         => Enum.TryParse<AgentMemoryRecallIntent>(plan.Intent, ignoreCase: true, out var intent)

@@ -7,6 +7,12 @@ namespace Sunder.Package.Agent.Storage;
 public sealed partial class AgentLocalStore
 {
     private const long InitialRunEpoch = 1;
+    private const string DurableRunColumns =
+        "RunId, SessionId, RunRevision, Epoch, Status, ProfileId, UserMessage, "
+        + "StartedAtUtc, UpdatedAtUtc, FinishedAtUtc, SuspensionKind, "
+        + "ContinuationToken, SuspensionDataJson, ProviderCycleCount, "
+        + "ToolCallCount, SubmittedContextTokenCount, UserTurnId, WorkspaceId, "
+        + "AdmissionKind, RollbackAnchorTurnId, RequestFingerprint, ExecutionStartedAtUtc";
 
     internal AgentDurableRunRecord ReserveRun(
         Guid sessionId,
@@ -16,6 +22,7 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
 
         EnsureSessionExists(connection, transaction, sessionId);
         var runRevision = GetNextRunRevision(connection, transaction, sessionId);
@@ -77,14 +84,7 @@ public sealed partial class AgentLocalStore
         connection.Open();
 
         using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT RunId, SessionId, RunRevision, Epoch, Status, ProfileId, UserMessage,
-                   StartedAtUtc, UpdatedAtUtc, FinishedAtUtc, SuspensionKind,
-                   ContinuationToken, SuspensionDataJson, ProviderCycleCount,
-                   ToolCallCount, SubmittedContextTokenCount
-            FROM AgentRuns
-            WHERE RunId = $runId;
-            """;
+        command.CommandText = $"SELECT {DurableRunColumns} FROM AgentRuns WHERE RunId = $runId;";
         command.Parameters.AddWithValue("$runId", runId.ToString());
 
         using var reader = command.ExecuteReader();
@@ -96,11 +96,8 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT RunId, SessionId, RunRevision, Epoch, Status, ProfileId, UserMessage,
-                   StartedAtUtc, UpdatedAtUtc, FinishedAtUtc, SuspensionKind,
-                   ContinuationToken, SuspensionDataJson, ProviderCycleCount,
-                   ToolCallCount, SubmittedContextTokenCount
+        command.CommandText = $"""
+            SELECT {DurableRunColumns}
             FROM AgentRuns
             WHERE SessionId = $sessionId
             ORDER BY RunRevision DESC
@@ -126,6 +123,7 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
@@ -165,11 +163,12 @@ public sealed partial class AgentLocalStore
         return run.BudgetState;
     }
 
-    private void RecoverUnownedActiveRuns()
+    internal void RecoverUnownedActiveRuns()
     {
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         var now = DateTimeOffset.UtcNow;
         const string summary =
             "The prior process ended while this run was active; the run was interrupted during startup recovery.";
@@ -181,25 +180,17 @@ public sealed partial class AgentLocalStore
             select.CommandText = """
                 SELECT RunId, SessionId, RunRevision
                 FROM AgentRuns
-                WHERE Status IN ('Preparing', 'Running')
-                  AND FinishedAtUtc IS NULL
-                  AND SuspensionKind IS NULL
-                  AND ContinuationToken IS NULL
+                WHERE FinishedAtUtc IS NULL
+                  AND (Status = 'Running'
+                       OR (Status = 'Preparing' AND UserTurnId IS NULL))
                   AND NOT EXISTS (
                       SELECT 1
-                      FROM AgentPendingPermissionRequests permission
-                      WHERE permission.RunId = AgentRuns.RunId
-                        AND permission.SessionId = AgentRuns.SessionId
-                        AND permission.RunRevision = AgentRuns.RunRevision
-                        AND permission.Status IN ('Pending', 'Claimed'))
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM AgentParentContinuationWork work
-                      WHERE work.ParentRunId = AgentRuns.RunId
-                        AND work.ParentSessionId = AgentRuns.SessionId
-                        AND work.ParentRunRevision = AgentRuns.RunRevision
-                        AND work.Status = 'Dispatching'
-                        AND work.ExecutionStartedAtUtc IS NULL);
+                      FROM AgentParentContinuationWork continuation
+                      WHERE continuation.ParentRunId = AgentRuns.RunId
+                        AND continuation.ParentSessionId = AgentRuns.SessionId
+                        AND continuation.ParentRunRevision = AgentRuns.RunRevision
+                        AND continuation.Status = 'Dispatching'
+                        AND continuation.ExecutionStartedAtUtc IS NULL);
                 """;
             using var reader = select.ExecuteReader();
             while (reader.Read())
@@ -224,8 +215,17 @@ public sealed partial class AgentLocalStore
                 WHERE RunId = $runId
                   AND SessionId = $sessionId
                   AND RunRevision = $runRevision
-                  AND Status IN ('Preparing', 'Running')
-                  AND FinishedAtUtc IS NULL;
+                   AND (Status = 'Running'
+                         OR (Status = 'Preparing' AND UserTurnId IS NULL))
+                   AND NOT EXISTS (
+                       SELECT 1
+                       FROM AgentParentContinuationWork continuation
+                       WHERE continuation.ParentRunId = AgentRuns.RunId
+                         AND continuation.ParentSessionId = AgentRuns.SessionId
+                         AND continuation.ParentRunRevision = AgentRuns.RunRevision
+                         AND continuation.Status = 'Dispatching'
+                         AND continuation.ExecutionStartedAtUtc IS NULL)
+                   AND FinishedAtUtc IS NULL;
                 """;
             command.Parameters.AddWithValue("$updatedAtUtc", now.ToString("O"));
             command.Parameters.AddWithValue("$runId", key.RunId.ToString());
@@ -251,6 +251,13 @@ public sealed partial class AgentLocalStore
                 now);
             InsertCheckpoint(connection, transaction, checkpoint);
             TouchSessionForCheckpoint(connection, transaction, checkpoint);
+            EnqueueRunLifecycleEvent(
+                connection,
+                transaction,
+                AgentLifecycleEventKind.RunInterrupted,
+                $"run:{key.RunId:N}:{key.RunRevision}:terminal:Interrupted",
+                key,
+                checkpoint: checkpoint);
         }
 
         transaction.Commit();
@@ -265,6 +272,7 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         var result = TryTransitionRun(
             connection,
             transaction,
@@ -282,7 +290,7 @@ public sealed partial class AgentLocalStore
         return result;
     }
 
-    private static AgentRunTransitionResult? TryTransitionRun(
+    private AgentRunTransitionResult? TryTransitionRun(
         SqliteConnection connection,
         SqliteTransaction transaction,
         AgentDurableRunKey key,
@@ -292,6 +300,11 @@ public sealed partial class AgentLocalStore
     {
         var now = DateTimeOffset.UtcNow;
         var isTerminal = IsFinishedRunStatus(status);
+        if (status == AgentRunStatus.Completed
+            && HasOpenToolExecutions(connection, transaction, key))
+        {
+            return null;
+        }
 
         using (var command = connection.CreateCommand())
         {
@@ -339,6 +352,9 @@ public sealed partial class AgentLocalStore
         var completedStreamingTurns = isTerminal
             ? CompleteStreamingTextTurns(connection, transaction, key, now)
             : [];
+        var toolResultTurns = isTerminal && status != AgentRunStatus.Completed
+            ? TerminalizeOpenToolExecutions(connection, transaction, key, status, now)
+            : [];
 
         var checkpoint = new AgentRunCheckpointRecord(
             Guid.NewGuid(),
@@ -351,9 +367,20 @@ public sealed partial class AgentLocalStore
         TouchSessionForCheckpoint(connection, transaction, checkpoint);
         var run = GetRun(connection, transaction, key.RunId)
             ?? throw new InvalidOperationException("The transitioned durable run could not be reloaded.");
+        if (TryMapTerminalLifecycleKind(status, out var lifecycleKind))
+        {
+            EnqueueRunLifecycleEvent(
+                connection,
+                transaction,
+                lifecycleKind,
+                $"run:{key.RunId:N}:{key.RunRevision}:terminal:{status}",
+                key,
+                checkpoint: checkpoint);
+        }
         return new AgentRunTransitionResult(run, checkpoint)
         {
             CompletedStreamingTurns = completedStreamingTurns,
+            ToolResultTurns = toolResultTurns,
         };
     }
 
@@ -366,6 +393,7 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
 
         var result = SuspendRun(
             connection,
@@ -406,6 +434,7 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
         var now = DateTimeOffset.UtcNow;
 
         using (var command = connection.CreateCommand())
@@ -485,6 +514,7 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
+        EnsureRuntimeGenerationCurrent(connection, transaction);
 
         var run = GetRun(connection, transaction, key.RunId);
         if (run is null
@@ -690,14 +720,7 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = """
-            SELECT RunId, SessionId, RunRevision, Epoch, Status, ProfileId, UserMessage,
-                   StartedAtUtc, UpdatedAtUtc, FinishedAtUtc, SuspensionKind,
-                   ContinuationToken, SuspensionDataJson, ProviderCycleCount,
-                   ToolCallCount, SubmittedContextTokenCount
-            FROM AgentRuns
-            WHERE RunId = $runId;
-            """;
+        command.CommandText = $"SELECT {DurableRunColumns} FROM AgentRuns WHERE RunId = $runId;";
         command.Parameters.AddWithValue("$runId", runId.ToString());
         using var reader = command.ExecuteReader();
         return reader.Read() ? ReadRun(reader) : null;
@@ -762,6 +785,14 @@ public sealed partial class AgentLocalStore
             reader.IsDBNull(11) ? null : reader.GetString(11),
             reader.GetInt64(13),
             reader.GetInt64(14),
-            reader.GetInt64(15));
+            reader.GetInt64(15),
+            reader.IsDBNull(16) ? null : Guid.Parse(reader.GetString(16)),
+            reader.IsDBNull(17) ? null : reader.GetString(17),
+            reader.IsDBNull(18)
+                ? null
+                : Enum.Parse<AgentRunAdmissionKind>(reader.GetString(18), ignoreCase: false),
+            reader.IsDBNull(19) ? null : Guid.Parse(reader.GetString(19)),
+            reader.IsDBNull(20) ? null : reader.GetString(20),
+            reader.IsDBNull(21) ? null : DateTimeOffset.Parse(reader.GetString(21)));
     }
 }

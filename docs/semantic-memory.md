@@ -10,7 +10,7 @@ The first-party feature implements and registers four public contracts:
 | --- | --- |
 | `ProfileCapabilityConsumers` | Declares that semantic retrieval consumes the profile's `model.embedding` binding. |
 | `PromptContextContributors` | Recalls relevant memories as lower-trust reference context. |
-| `LifecycleObservers` | Extracts durable candidates from lifecycle events. |
+| `DurableLifecycleObservers` | Atomically deduplicates lifecycle envelopes, extracts direct-user candidates, and applies rollback/deletion tombstones. |
 | `SessionDataCleaners` | Removes all package-owned memory/index data for a deleted session. |
 
 It also runs a bounded background indexer and exposes package-specific Runtime operations/App presentation for its inspector. Those implementation types are not contracts for third-party memory packages.
@@ -57,7 +57,15 @@ Recall can combine:
 
 Embedding retrieval is additive. When semantic retrieval is disabled, no embedding binding exists, a provider is absent/not ready, or indexing fails, lexical/full-text recall remains available.
 
-The selected embedding provider comes from the profile's `model.embedding` binding. `IAgentEmbeddingProvider.GenerateEmbeddingsAsync` must preserve input order and dimensions. The background worker bounds its queue, deduplicates work, records status/failures, and keeps existing active generations intact when cancellation or failure occurs.
+The selected embedding provider comes from the profile's `model.embedding` binding. `IAgentEmbeddingProvider.GenerateEmbeddingsAsync` must preserve input order and dimensions. Provider ids are canonicalized without regard to case, while model ids remain provider-defined and case-sensitive. Provider and Runtime catalog calls use activation-scoped invocation leases so package retirement cancels in-flight work and prevents later callbacks.
+
+The reindex policy is explicit:
+
+- `Lazy` generates missing or stale embeddings only during recall.
+- `Eager` also lets the background monitor generate missing or stale embeddings.
+- `Never` leaves generation to explicit reindex requests.
+
+All three modes still apply local embedding retractions and session deletion. Explicit reindex bypasses the stale-reindex policy, but not the global semantic-enabled setting. The background worker bounds and deduplicates its queue, records status/failures, keeps complete generations active until replacement succeeds, and resumes matching source-fenced staging generations after retry or restart.
 
 ## Trust And Provenance
 
@@ -78,7 +86,7 @@ The rendered first-party recall block explicitly tells the model not to follow r
 
 Use public Agent contracts rather than referencing `MemoryLocalStore` or other first-party implementation types:
 
-1. Observe direct user events through `IAgentLifecycleObserver`.
+1. Observe direct user, rollback, and deletion events through `IAgentDurableLifecycleObserver`.
 2. Store package-owned durable records through `IPackageContext.Storage`.
 3. Queue bounded indexing through `IPackageBackgroundService` when needed.
 4. Declare embedding consumption with `IAgentProfileCapabilityConsumer` if applicable.
@@ -95,13 +103,16 @@ Do not register a competing `RuntimeCatalogs` contribution. Consume the base `IA
 - Do not send content to an embedding provider until the user has configured that provider/model for the profile.
 - Store provider credentials only in the provider package's secret store.
 - Deleting a session must remove memories, evidence, embeddings, queued index state, and inspector projections owned by the memory package.
+- Core SQLite tables and the FTS5 index both use secure deletion. Destructive lifecycle receipts persist pending physical maintenance with the logical deletion; only a successful WAL checkpoint and vacuum marks it complete, so exact or `ContentErased` redelivery safely retries interrupted erasure.
+- A `ContentErased` envelope is an ordered no-op receipt, not permission to retain or reconstruct deleted source content.
 - Inspector/edit operations must preserve provenance and make contested/pinned state visible.
 
 ## Failure Semantics
 
-- Prompt contribution and lifecycle observer exceptions, except cancellation, are isolated by the base Agent.
+- Prompt contribution failures are isolated by the base Agent. Durable lifecycle failures are retried and can become poison ordering barriers without changing source run state.
 - A failed optional recall returns no context rather than failing chat.
 - Indexing failures are reflected in worker diagnostics and may be retried; they do not invalidate lexical memory.
+- Semantic Memory fails closed when the bundled SQLite runtime is older than 3.42.0 or lacks FTS5 secure-delete support.
 - Corrupt or incompatible package-local schema should fail the memory package clearly rather than editing the base Agent database.
 - Do not swallow cancellation as a successful promotion or index completion.
 

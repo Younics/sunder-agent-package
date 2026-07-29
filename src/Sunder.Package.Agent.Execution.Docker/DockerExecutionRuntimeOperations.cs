@@ -38,4 +38,12 @@ internal sealed record DockerExecutionOperationResponse(
     IReadOnlyList<AgentEditorSection>? EditorSections = null,
     AgentEditorSaveResult? EditorSaveResult = null,
     bool Success = true,
-    string? Message = null);
+    string? Message = null,
+    long? CatalogRevision = null,
+    DockerExecutionOperationError? Error = null);
+
+internal sealed record DockerExecutionOperationError(
+    string Code,
+    string Message,
+    bool IsTransient,
+    string CorrelationId);

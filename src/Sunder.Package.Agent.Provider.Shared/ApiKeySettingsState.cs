@@ -153,7 +153,12 @@ internal sealed partial class ApiKeySettingsState : ObservableObject, IDisposabl
 
     internal async Task RefreshCredentialStatusAsync(CancellationToken cancellationToken = default)
     {
-        HasStoredCredential = await _credentials.HasCredentialAsync(cancellationToken);
+        ApplyCredentialStatus(await _credentials.HasCredentialAsync(cancellationToken));
+    }
+
+    internal void ApplyCredentialStatus(bool hasStoredCredential)
+    {
+        HasStoredCredential = hasStoredCredential;
         var status = _resolveStatus(HasStoredCredential);
         CredentialStatusLabel = status.Label;
         CredentialStatusDetail = status.Detail;

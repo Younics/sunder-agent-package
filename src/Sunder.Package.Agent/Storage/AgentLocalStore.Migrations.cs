@@ -189,6 +189,296 @@ public sealed partial class AgentLocalStore
             ALTER TABLE AgentRuns ADD COLUMN ToolCallCount INTEGER NOT NULL DEFAULT 0;
             ALTER TABLE AgentRuns ADD COLUMN SubmittedContextTokenCount INTEGER NOT NULL DEFAULT 0;
             """),
+        SqlMigration(
+            12,
+            "tool-execution-ledger",
+            """
+            CREATE TABLE AgentToolExecutions (
+                ExecutionId TEXT PRIMARY KEY,
+                SessionId TEXT NOT NULL,
+                RunId TEXT NOT NULL,
+                RunRevision INTEGER NOT NULL,
+                CallId TEXT NOT NULL CHECK (trim(CallId) <> '' AND length(CallId) <= 512),
+                ToolId TEXT NOT NULL CHECK (trim(ToolId) <> '' AND length(ToolId) <= 512),
+                InvocationFingerprint TEXT NOT NULL CHECK (length(InvocationFingerprint) = 64),
+                IsReadOnly INTEGER NOT NULL CHECK (IsReadOnly IN (0, 1)),
+                Status TEXT NOT NULL CHECK (Status IN ('Prepared', 'Started', 'Completed', 'Failed', 'Ambiguous')),
+                PreparedAtUtc TEXT NOT NULL,
+                StartedAtUtc TEXT NULL,
+                FinishedAtUtc TEXT NULL,
+                UpdatedAtUtc TEXT NOT NULL,
+                OutcomeCode TEXT NULL CHECK (OutcomeCode IS NULL OR length(OutcomeCode) <= 128),
+                OutcomeSummary TEXT NULL CHECK (OutcomeSummary IS NULL OR length(OutcomeSummary) <= 2048),
+                UNIQUE (RunId, RunRevision, CallId)
+            );
+
+            ALTER TABLE AgentTurnItems ADD COLUMN ToolExecutionId TEXT NULL;
+            ALTER TABLE AgentPendingPermissionRequests ADD COLUMN ToolExecutionId TEXT NULL;
+
+            CREATE INDEX IX_AgentToolExecutions_SessionRun
+                ON AgentToolExecutions (SessionId, RunRevision, PreparedAtUtc);
+            CREATE INDEX IX_AgentToolExecutions_OpenRun
+                ON AgentToolExecutions (RunId, RunRevision, Status)
+                WHERE Status IN ('Prepared', 'Started');
+            CREATE INDEX IX_AgentTurnItems_ToolExecutionId
+                ON AgentTurnItems (ToolExecutionId);
+            CREATE UNIQUE INDEX UX_AgentTurnItems_ToolExecutionCall
+                ON AgentTurnItems (ToolExecutionId)
+                WHERE ToolExecutionId IS NOT NULL AND Kind = 'ToolCall';
+            CREATE UNIQUE INDEX UX_AgentTurnItems_ToolExecutionResult
+                ON AgentTurnItems (ToolExecutionId)
+                WHERE ToolExecutionId IS NOT NULL AND Kind = 'ToolResult';
+            CREATE UNIQUE INDEX UX_AgentPendingPermissionRequests_ToolExecutionId
+                ON AgentPendingPermissionRequests (ToolExecutionId)
+                WHERE ToolExecutionId IS NOT NULL;
+            """),
+        SqlMigration(
+            13,
+            "durable-lifecycle-outbox",
+            """
+            CREATE TABLE AgentLifecycleOutbox (
+                Sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                EventId TEXT NOT NULL UNIQUE CHECK (trim(EventId) <> '' AND length(EventId) <= 80),
+                SourceKey TEXT NOT NULL UNIQUE CHECK (trim(SourceKey) <> '' AND length(SourceKey) <= 1024),
+                EventType TEXT NOT NULL CHECK (EventType IN (
+                    'UserTurnAdded', 'AssistantTurnCompleted', 'ToolResultRecorded',
+                    'RunInterrupted', 'RunStopped', 'RunFailed', 'TranscriptRolledBack',
+                    'SessionDeleted', 'WorkspaceDeleted')),
+                OrderingKey TEXT NOT NULL CHECK (trim(OrderingKey) <> '' AND length(OrderingKey) <= 1024),
+                WorkspaceId TEXT NULL CHECK (WorkspaceId IS NULL OR length(WorkspaceId) <= 512),
+                SessionId TEXT NULL,
+                PayloadJson TEXT NOT NULL CHECK (length(PayloadJson) <= 262144),
+                PayloadHash TEXT NOT NULL CHECK (length(PayloadHash) = 64),
+                CreatedAtUtc TEXT NOT NULL
+            );
+
+            CREATE TRIGGER TR_AgentLifecycleOutbox_ImmutableUpdate
+            BEFORE UPDATE ON AgentLifecycleOutbox
+            BEGIN
+                SELECT RAISE(ABORT, 'Agent lifecycle outbox events are immutable');
+            END;
+
+            CREATE TRIGGER TR_AgentLifecycleOutbox_ImmutableDelete
+            BEFORE DELETE ON AgentLifecycleOutbox
+            BEGIN
+                SELECT RAISE(ABORT, 'Agent lifecycle outbox events are immutable');
+            END;
+
+            CREATE TABLE AgentLifecycleSubscriptions (
+                SubscriptionId TEXT PRIMARY KEY CHECK (trim(SubscriptionId) <> '' AND length(SubscriptionId) <= 80),
+                PackageId TEXT NOT NULL CHECK (trim(PackageId) <> '' AND length(PackageId) <= 256),
+                ObserverId TEXT NOT NULL CHECK (trim(ObserverId) <> '' AND length(ObserverId) <= 512),
+                ContractKind TEXT NOT NULL CHECK (ContractKind IN ('Durable', 'Compatibility')),
+                DisplayName TEXT NOT NULL CHECK (length(DisplayName) <= 512),
+                CreatedAtUtc TEXT NOT NULL,
+                LastSeenAtUtc TEXT NOT NULL,
+                UNIQUE (PackageId, ObserverId, ContractKind)
+            );
+
+            CREATE TABLE AgentLifecycleDeliveries (
+                SubscriptionId TEXT NOT NULL,
+                EventSequence INTEGER NOT NULL,
+                Status TEXT NOT NULL CHECK (Status IN ('Pending', 'InFlight', 'Delivered', 'Poison')),
+                AttemptCount INTEGER NOT NULL DEFAULT 0 CHECK (AttemptCount >= 0),
+                NextAttemptAtUtc TEXT NOT NULL,
+                LeaseToken TEXT NULL,
+                LeaseExpiresAtUtc TEXT NULL,
+                LastAttemptAtUtc TEXT NULL,
+                DeliveredAtUtc TEXT NULL,
+                PoisonedAtUtc TEXT NULL,
+                LastError TEXT NULL CHECK (LastError IS NULL OR length(LastError) <= 2048),
+                PRIMARY KEY (SubscriptionId, EventSequence)
+            );
+
+            CREATE INDEX IX_AgentLifecycleDeliveries_Dispatch
+                ON AgentLifecycleDeliveries (SubscriptionId, Status, EventSequence, NextAttemptAtUtc);
+            CREATE INDEX IX_AgentLifecycleDeliveries_LeaseRecovery
+                ON AgentLifecycleDeliveries (Status, LeaseExpiresAtUtc)
+                WHERE Status = 'InFlight';
+            CREATE INDEX IX_AgentLifecycleOutbox_Ordering
+                ON AgentLifecycleOutbox (OrderingKey, Sequence);
+
+            ALTER TABLE AgentRuns ADD COLUMN MemoryConsistencyBarrierEventId TEXT NULL;
+            ALTER TABLE AgentRuns ADD COLUMN MemoryConsistencyBarrierPayloadHash TEXT NULL;
+            """),
+        SqlMigration(
+            14,
+            "durable-user-turn-admission",
+            """
+            ALTER TABLE AgentRuns ADD COLUMN UserTurnId TEXT NULL;
+            ALTER TABLE AgentRuns ADD COLUMN WorkspaceId TEXT NULL;
+            ALTER TABLE AgentRuns ADD COLUMN AdmissionKind TEXT NULL
+                CHECK (AdmissionKind IS NULL OR AdmissionKind IN ('Normal', 'Rollback'));
+            ALTER TABLE AgentRuns ADD COLUMN RollbackAnchorTurnId TEXT NULL;
+            ALTER TABLE AgentRuns ADD COLUMN RequestFingerprint TEXT NULL
+                CHECK (RequestFingerprint IS NULL OR length(RequestFingerprint) = 64);
+            ALTER TABLE AgentRuns ADD COLUMN ExecutionStartedAtUtc TEXT NULL;
+
+            CREATE UNIQUE INDEX UX_AgentRuns_UserTurnId
+                ON AgentRuns (UserTurnId)
+                WHERE UserTurnId IS NOT NULL;
+
+            CREATE INDEX IX_AgentRuns_PreparingDispatch
+                ON AgentRuns (Status, StartedAtUtc, SessionId, RunRevision)
+                WHERE Status = 'Preparing'
+                  AND FinishedAtUtc IS NULL
+                  AND UserTurnId IS NOT NULL;
+            """),
+        SqlMigration(
+            15,
+            "anchored-session-context",
+            """
+            ALTER TABLE AgentSessions ADD COLUMN TranscriptEpoch INTEGER NOT NULL DEFAULT 1
+                CHECK (TranscriptEpoch >= 1);
+            ALTER TABLE AgentSessions ADD COLUMN ActiveContextCheckpointId TEXT NULL;
+            ALTER TABLE AgentSessions ADD COLUMN ActiveContextGeneration INTEGER NOT NULL DEFAULT 0
+                CHECK (ActiveContextGeneration >= 0);
+
+            ALTER TABLE AgentSessionContextCheckpoints ADD COLUMN CheckpointKind TEXT NOT NULL DEFAULT 'Legacy'
+                CHECK (CheckpointKind IN ('Legacy', 'Deterministic', 'ModelRefined'));
+            ALTER TABLE AgentSessionContextCheckpoints ADD COLUMN TranscriptEpoch INTEGER NOT NULL DEFAULT 0
+                CHECK (TranscriptEpoch >= 0);
+            ALTER TABLE AgentSessionContextCheckpoints ADD COLUMN CoveredThroughCreatedAtUtc TEXT NULL;
+            ALTER TABLE AgentSessionContextCheckpoints ADD COLUMN CoveredThroughContentRevision INTEGER NULL;
+            ALTER TABLE AgentSessionContextCheckpoints ADD COLUMN SourceRunId TEXT NULL;
+            ALTER TABLE AgentSessionContextCheckpoints ADD COLUMN SourceRunRevision INTEGER NULL;
+            ALTER TABLE AgentSessionContextCheckpoints ADD COLUMN SourceRunEpoch INTEGER NULL;
+            ALTER TABLE AgentSessionContextCheckpoints ADD COLUMN Generation INTEGER NOT NULL DEFAULT 0
+                CHECK (Generation >= 0);
+            ALTER TABLE AgentSessionContextCheckpoints ADD COLUMN PreviousContextCheckpointId TEXT NULL;
+            ALTER TABLE AgentSessionContextCheckpoints ADD COLUMN GeneratorVersion TEXT NULL;
+            ALTER TABLE AgentSessionContextCheckpoints ADD COLUMN ProviderId TEXT NULL;
+            ALTER TABLE AgentSessionContextCheckpoints ADD COLUMN ModelId TEXT NULL;
+
+            CREATE INDEX IX_AgentSessionContextCheckpoints_SessionGeneration
+                ON AgentSessionContextCheckpoints (SessionId, Generation DESC);
+            CREATE INDEX IX_AgentSessionContextCheckpoints_SessionAnchor
+                ON AgentSessionContextCheckpoints (
+                    SessionId,
+                    TranscriptEpoch,
+                    CoveredThroughCreatedAtUtc,
+                    LastOmittedTurnId);
+            """),
+        SqlMigration(
+            16,
+            "tool-execution-provenance",
+            """
+            ALTER TABLE AgentToolExecutions ADD COLUMN OwnerPackageId TEXT NULL
+                CHECK (OwnerPackageId IS NULL OR (trim(OwnerPackageId) <> '' AND length(OwnerPackageId) <= 256));
+            ALTER TABLE AgentToolExecutions ADD COLUMN ToolSchemaId TEXT NULL
+                CHECK (ToolSchemaId IS NULL OR (trim(ToolSchemaId) <> '' AND length(ToolSchemaId) <= 512));
+            ALTER TABLE AgentToolExecutions ADD COLUMN ToolSchemaVersion TEXT NULL
+                CHECK (ToolSchemaVersion IS NULL OR (trim(ToolSchemaVersion) <> '' AND length(ToolSchemaVersion) <= 128));
+            """),
+        SqlMigration(
+            17,
+            "lifecycle-payload-erasure-and-replay-watermarks",
+            """
+            ALTER TABLE AgentLifecycleOutbox ADD COLUMN PayloadState TEXT NOT NULL DEFAULT 'Available'
+                CHECK (PayloadState IN ('Available', 'Erased'));
+            ALTER TABLE AgentLifecycleOutbox ADD COLUMN OriginalPayloadHash TEXT NULL
+                CHECK (OriginalPayloadHash IS NULL OR length(OriginalPayloadHash) = 64);
+            ALTER TABLE AgentLifecycleOutbox ADD COLUMN PayloadErasedAtUtc TEXT NULL;
+
+            ALTER TABLE AgentLifecycleSubscriptions ADD COLUMN ReplayStartSequence INTEGER NOT NULL DEFAULT 1
+                CHECK (ReplayStartSequence >= 1);
+            ALTER TABLE AgentLifecycleSubscriptions ADD COLUMN ReconciledThroughSequence INTEGER NOT NULL DEFAULT 0
+                CHECK (ReconciledThroughSequence >= 0);
+
+            DROP TRIGGER TR_AgentLifecycleOutbox_ImmutableUpdate;
+            CREATE TRIGGER TR_AgentLifecycleOutbox_ImmutableUpdate
+            BEFORE UPDATE ON AgentLifecycleOutbox
+            WHEN NOT (
+                OLD.PayloadState = 'Available'
+                AND OLD.OriginalPayloadHash IS NULL
+                AND OLD.PayloadErasedAtUtc IS NULL
+                AND NEW.PayloadState = 'Erased'
+                AND NEW.OriginalPayloadHash = OLD.PayloadHash
+                AND NEW.PayloadErasedAtUtc IS NOT NULL
+                AND NEW.PayloadJson = '{"contentErased":true}'
+                AND length(NEW.PayloadHash) = 64
+                AND NEW.Sequence = OLD.Sequence
+                AND NEW.EventId = OLD.EventId
+                AND NEW.SourceKey = OLD.SourceKey
+                AND NEW.EventType = OLD.EventType
+                AND NEW.OrderingKey = OLD.OrderingKey
+                AND NEW.WorkspaceId IS OLD.WorkspaceId
+                AND NEW.SessionId IS OLD.SessionId
+                AND NEW.CreatedAtUtc = OLD.CreatedAtUtc
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'Agent lifecycle outbox events are immutable except for content erasure');
+            END;
+
+            UPDATE AgentLifecycleSubscriptions
+            SET ReplayStartSequence = COALESCE(
+                    (
+                        SELECT MIN(delivery.EventSequence)
+                        FROM AgentLifecycleDeliveries delivery
+                        WHERE delivery.SubscriptionId = AgentLifecycleSubscriptions.SubscriptionId
+                    ),
+                    COALESCE((SELECT MAX(Sequence) + 1 FROM AgentLifecycleOutbox), 1)),
+                ReconciledThroughSequence = COALESCE((SELECT MAX(Sequence) FROM AgentLifecycleOutbox), 0);
+
+            UPDATE AgentLifecycleDeliveries
+            SET LastError = 'legacy_observer_failure (redacted)'
+            WHERE LastError IS NOT NULL;
+
+            CREATE INDEX IX_AgentLifecycleOutbox_Replay
+                ON AgentLifecycleOutbox (PayloadState, Sequence);
+            """),
+        SqlMigration(
+            18,
+            "runtime-generation-ownership",
+            """
+            CREATE TABLE AgentRuntimeGenerations (
+                Epoch TEXT PRIMARY KEY,
+                RuntimeSessionGeneration INTEGER NOT NULL CHECK (RuntimeSessionGeneration >= 1),
+                ProcessId INTEGER NOT NULL CHECK (ProcessId > 0),
+                ProcessStartedAtUtc TEXT NOT NULL,
+                Status TEXT NOT NULL CHECK (Status IN ('Committed', 'Stopped', 'Dead', 'Expired')),
+                CreatedAtUtc TEXT NOT NULL,
+                CommittedAtUtc TEXT NOT NULL,
+                LastHeartbeatAtUtc TEXT NOT NULL,
+                LeaseExpiresAtUtc TEXT NOT NULL,
+                StoppedAtUtc TEXT NULL
+            );
+
+            CREATE TABLE AgentRuntimeGenerationState (
+                SingletonId INTEGER PRIMARY KEY CHECK (SingletonId = 1),
+                CurrentEpoch TEXT NULL
+            );
+
+            INSERT INTO AgentRuntimeGenerationState (SingletonId, CurrentEpoch)
+            VALUES (1, NULL);
+            """),
+        new(
+            19,
+            "lifecycle-durability-hardening",
+            LifecycleDurabilityHardeningSql,
+            ApplyLifecycleDurabilityHardening),
+        SqlMigration(
+            20,
+            "durable-resource-claims",
+            """
+            ALTER TABLE AgentPendingPermissionRequests
+                ADD COLUMN ResourceClaimSetVersion INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE AgentPendingPermissionRequests
+                ADD COLUMN ResourceClaimsJson TEXT NOT NULL DEFAULT '[]';
+            ALTER TABLE AgentToolExecutions
+                ADD COLUMN ExecutionTargetOwnerPackageId TEXT NULL
+                CHECK (ExecutionTargetOwnerPackageId IS NULL OR (trim(ExecutionTargetOwnerPackageId) <> '' AND length(ExecutionTargetOwnerPackageId) <= 256));
+
+            UPDATE AgentPendingPermissionRequests
+            SET ResourceClaimSetVersion = -1
+            WHERE ResourceReference LIKE 'local-resource-v3:%'
+               OR ResourceReference LIKE 'docker-resource-v3:%';
+            """),
+        new(
+            21,
+            "legacy-tool-execution-identities",
+            LegacyToolExecutionIdentityBackfillV21,
+            ApplyLegacyToolExecutionIdentityBackfill),
     ];
 
     private void ApplySchemaMigrations()
@@ -253,6 +543,7 @@ public sealed partial class AgentLocalStore
             throw new ArgumentOutOfRangeException(nameof(targetVersion));
         }
 
+        EnableSecureDelete(connection);
         BootstrapAndValidateSchemaMigrationLedger(connection);
         foreach (var migration in SchemaMigrations.Where(item => item.Version <= targetVersion))
         {

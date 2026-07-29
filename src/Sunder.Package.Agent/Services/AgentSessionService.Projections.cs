@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
+using Sunder.Package.Agent.Runtime;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -17,12 +18,22 @@ public sealed partial class AgentSessionService
     public IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit)
         => _store.ListRecentTurns(sessionId, limit);
 
+    internal IReadOnlyList<AgentTurnRecord> ListRecentTranscriptHeaders(Guid sessionId, int limit)
+        => _store.ListRecentTranscriptHeaders(sessionId, limit);
+
     public IReadOnlyList<AgentTurnRecord> ListTurnsBefore(
         Guid sessionId,
         DateTimeOffset beforeCreatedAtUtc,
         Guid beforeTurnId,
         int limit)
         => _store.ListTurnsBefore(sessionId, beforeCreatedAtUtc, beforeTurnId, limit);
+
+    internal IReadOnlyList<AgentTurnRecord> ListTranscriptHeadersBefore(
+        Guid sessionId,
+        DateTimeOffset beforeCreatedAtUtc,
+        Guid beforeTurnId,
+        int limit)
+        => _store.ListTranscriptHeadersBefore(sessionId, beforeCreatedAtUtc, beforeTurnId, limit);
 
     public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(
         Guid sessionId,
@@ -31,7 +42,38 @@ public sealed partial class AgentSessionService
         int limit)
         => _store.ListTurnsAfter(sessionId, afterCreatedAtUtc, afterTurnId, limit);
 
+    internal IReadOnlyList<AgentTurnRecord> ListTranscriptHeadersAfter(
+        Guid sessionId,
+        DateTimeOffset afterCreatedAtUtc,
+        Guid afterTurnId,
+        int limit)
+        => _store.ListTranscriptHeadersAfter(sessionId, afterCreatedAtUtc, afterTurnId, limit);
+
     public AgentTurnRecord? GetTurn(Guid turnId) => _store.GetTurn(turnId);
+
+    internal AgentTurnRecord? GetTranscriptHeader(Guid turnId) => _store.GetTranscriptHeader(turnId);
+
+    IReadOnlyList<AgentTurnRecord> IAgentTranscriptHeaderGateway.ListRecentTranscriptHeaders(
+        Guid sessionId,
+        int limit)
+        => ListRecentTranscriptHeaders(sessionId, limit);
+
+    IReadOnlyList<AgentTurnRecord> IAgentTranscriptHeaderGateway.ListTranscriptHeadersBefore(
+        Guid sessionId,
+        DateTimeOffset beforeCreatedAtUtc,
+        Guid beforeTurnId,
+        int limit)
+        => ListTranscriptHeadersBefore(sessionId, beforeCreatedAtUtc, beforeTurnId, limit);
+
+    IReadOnlyList<AgentTurnRecord> IAgentTranscriptHeaderGateway.ListTranscriptHeadersAfter(
+        Guid sessionId,
+        DateTimeOffset afterCreatedAtUtc,
+        Guid afterTurnId,
+        int limit)
+        => ListTranscriptHeadersAfter(sessionId, afterCreatedAtUtc, afterTurnId, limit);
+
+    AgentTurnRecord? IAgentTranscriptHeaderGateway.GetTranscriptHeader(Guid turnId)
+        => GetTranscriptHeader(turnId);
 
     public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId)
         => _store.GetLatestCheckpoint(sessionId);
@@ -62,6 +104,28 @@ public sealed partial class AgentSessionService
 
     public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId)
         => _store.GetLatestSessionContextCheckpoint(sessionId);
+
+    internal AgentAnchoredSessionContextCheckpoint? GetActiveAnchoredSessionContextCheckpoint(Guid sessionId)
+        => _store.GetActiveAnchoredSessionContextCheckpoint(sessionId);
+
+    internal AgentSessionContinuitySnapshot? ReadSessionContinuitySnapshot(
+        Guid sessionId,
+        Guid sourceRunId,
+        long sourceRunRevision)
+        => _store.ReadSessionContinuitySnapshot(sessionId, sourceRunId, sourceRunRevision);
+
+    internal AgentAnchoredSessionContextCheckpoint? TrySaveAnchoredSessionContextCheckpoint(
+        AgentSessionContextCheckpointSaveRequest request)
+    {
+        var checkpoint = _store.TrySaveAnchoredSessionContextCheckpoint(request);
+        if (checkpoint is not null)
+        {
+            NotifySessionChanged(request.SessionId);
+        }
+        return checkpoint;
+    }
+
+    internal long GetTranscriptEpoch(Guid sessionId) => _store.GetTranscriptEpoch(sessionId);
 
     public long GetNextRunRevision(Guid sessionId) => _store.GetNextRunRevision(sessionId);
 }

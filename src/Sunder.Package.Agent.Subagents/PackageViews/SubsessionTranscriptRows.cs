@@ -1,8 +1,6 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
 using LiveMarkdown.Avalonia;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
@@ -10,15 +8,49 @@ using Sunder.Sdk.Avalonia.Theming;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
 
-public abstract class SubsessionTranscriptRowViewModel(Guid rowId, DateTimeOffset createdAtUtc, object anchorKey)
+public abstract partial class SubsessionTranscriptRowViewModel(Guid rowId, DateTimeOffset createdAtUtc, object anchorKey)
     : ObservableObject,
         ITranscriptAnchorItem
 {
     public Guid RowId { get; } = rowId;
-
     public DateTimeOffset CreatedAtUtc { get; } = createdAtUtc;
-
     public object AnchorKey { get; } = anchorKey;
+    internal virtual TranscriptAnchorItemRole AnchorRole => TranscriptAnchorItemRole.Transient;
+    TranscriptAnchorItemRole ITranscriptAnchorItem.AnchorRole => AnchorRole;
+    public virtual bool IsLayoutVisible => true;
+    public virtual bool IsRowHitTestVisible => true;
+    public virtual double MinimumLayoutHeight => 0;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NavigationHighlightHelpText))]
+    private bool _isNavigationTargetHighlighted;
+
+    [ObservableProperty]
+    private bool _isNavigationTargetFading;
+
+    public string? NavigationHighlightHelpText => IsNavigationTargetHighlighted
+        ? "Search result target"
+        : null;
+
+    internal void PrimeNavigationHighlight()
+    {
+        IsNavigationTargetFading = false;
+        IsNavigationTargetHighlighted = true;
+    }
+
+    internal void FadeNavigationHighlight()
+    {
+        if (IsNavigationTargetHighlighted)
+        {
+            IsNavigationTargetFading = true;
+        }
+    }
+
+    internal void ClearNavigationHighlight()
+    {
+        IsNavigationTargetHighlighted = false;
+        IsNavigationTargetFading = false;
+    }
 }
 
 public sealed class SubsessionTextTranscriptRowViewModel : SubsessionTranscriptRowViewModel
@@ -37,17 +69,11 @@ public sealed class SubsessionTextTranscriptRowViewModel : SubsessionTranscriptR
     }
 
     public AgentMessageRole Role { get; }
-
     public string RoleLabel { get; }
-
     public string RoleGlyph { get; }
-
     public bool IsUser => Role == AgentMessageRole.User;
-
     public bool IsNotUser => !IsUser;
-
     public bool IsAssistant => Role == AgentMessageRole.Assistant;
-
     public bool HasContent => !string.IsNullOrWhiteSpace(Content);
 
     public string Content
@@ -69,7 +95,6 @@ public sealed class SubsessionTextTranscriptRowViewModel : SubsessionTranscriptR
         {
             return;
         }
-
         Content = content;
         if (content.StartsWith(previousContent, StringComparison.Ordinal))
         {
@@ -84,7 +109,6 @@ public sealed class SubsessionTextTranscriptRowViewModel : SubsessionTranscriptR
             MarkdownBuilder.Clear();
             MarkdownBuilder.Append(content);
         }
-
         OnPropertyChanged(nameof(HasContent));
     }
 
@@ -95,7 +119,7 @@ public sealed class SubsessionTextTranscriptRowViewModel : SubsessionTranscriptR
             AgentMessageRole.Assistant => "A",
             AgentMessageRole.System => "S",
             AgentMessageRole.Tool => "T",
-            _ => "?"
+            _ => "?",
         };
 }
 
@@ -103,23 +127,54 @@ public sealed partial class SubsessionActivityTranscriptRowViewModel : Subsessio
 {
     private readonly IActivityTicker _ticker;
     private string _activityTextBase;
+    private bool _isTickerSubscribed;
     private int _tick = 3;
 
-    internal SubsessionActivityTranscriptRowViewModel(
-        IActivityTicker ticker,
-        string activityTextBase = "Thinking")
+    internal SubsessionActivityTranscriptRowViewModel(IActivityTicker ticker, string activityTextBase = "Thinking")
         : base(Guid.Empty, DateTimeOffset.UtcNow, TranscriptRowAnchorKey.Activity())
     {
         _ticker = ticker;
         _activityTextBase = string.IsNullOrWhiteSpace(activityTextBase) ? "Processing" : activityTextBase.Trim();
         _thinkingText = FormatThinkingText(_activityTextBase, _tick);
-        _ticker.Tick += OnTick;
     }
 
     public string RoleGlyph => "A";
+    internal override TranscriptAnchorItemRole AnchorRole => TranscriptAnchorItemRole.Persistent;
+    public override bool IsLayoutVisible => IsVisible;
+    public override bool IsRowHitTestVisible => IsVisible;
+    public override double MinimumLayoutHeight => IsVisible ? 0 : 1;
 
     [ObservableProperty]
     private string _thinkingText = "Thinking...";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsLayoutVisible))]
+    [NotifyPropertyChangedFor(nameof(IsRowHitTestVisible))]
+    [NotifyPropertyChangedFor(nameof(MinimumLayoutHeight))]
+    private bool _isVisible;
+
+    partial void OnIsVisibleChanged(bool value)
+    {
+        if (value == _isTickerSubscribed)
+        {
+            return;
+        }
+        if (value)
+        {
+            _ticker.Tick += OnTick;
+        }
+        else
+        {
+            _ticker.Tick -= OnTick;
+        }
+        _isTickerSubscribed = value;
+    }
+
+    public void SetPresentation(string activityTextBase, bool isVisible)
+    {
+        SetActivityTextBase(activityTextBase);
+        IsVisible = isVisible;
+    }
 
     public void SetActivityTextBase(string activityTextBase)
     {
@@ -128,7 +183,6 @@ public sealed partial class SubsessionActivityTranscriptRowViewModel : Subsessio
         {
             return;
         }
-
         _activityTextBase = normalized;
         ThinkingText = FormatThinkingText(_activityTextBase, _tick);
     }
@@ -144,203 +198,192 @@ public sealed partial class SubsessionActivityTranscriptRowViewModel : Subsessio
 
     public void Dispose()
     {
-        _ticker.Tick -= OnTick;
+        if (_isTickerSubscribed)
+        {
+            _ticker.Tick -= OnTick;
+            _isTickerSubscribed = false;
+        }
     }
 }
 
-public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTranscriptRowViewModel
+public sealed class SubsessionTranscriptTailSentinelRowViewModel : SubsessionTranscriptRowViewModel
 {
-    private readonly AgentTurnRecord _turn;
-    private readonly string _toolId;
-    private readonly string _argumentsJson;
-    private readonly TranscriptToolPresentationService _presentationService;
+    internal SubsessionTranscriptTailSentinelRowViewModel()
+        : base(Guid.Empty, DateTimeOffset.MinValue, TranscriptRowAnchorKey.TailSentinel())
+    {
+    }
+
+    internal override TranscriptAnchorItemRole AnchorRole => TranscriptAnchorItemRole.TailSentinel;
+    public override bool IsRowHitTestVisible => false;
+}
+
+public sealed class SubsessionToolInvocationRowViewModel : SubsessionTranscriptRowViewModel,
+    ITranscriptToolExpansionOwner,
+    IDisposable
+{
     private readonly Func<AgentTurnRecord, AgentTurnItemRecord, IReadOnlyList<SubsessionChildSessionLinkViewModel>>? _childSessionLinksResolver;
+    private readonly TranscriptToolDetailState _detailState;
+    private AgentTurnRecord _turn;
     private AgentTurnItemRecord _currentItem;
+    private TranscriptToolProjection _projection;
     private Guid? _resultTurnId;
-    private string _toolLabel = string.Empty;
-    private string _headerDetailText = string.Empty;
-    private string _statusIconText = string.Empty;
-    private string _outputText = string.Empty;
-    private ToolDiffViewModel? _toolDiff;
+    private bool _disposed;
 
     internal SubsessionToolInvocationRowViewModel(
         AgentTurnRecord turn,
         AgentTurnItemRecord item,
+        TranscriptToolProjection projection,
         TranscriptToolPresentationService presentationService,
+        Func<AgentTranscriptToolDetailRequest, CancellationToken, Task<AgentTranscriptToolDetailRecord?>> loadDetail,
         Func<AgentTurnRecord, AgentTurnItemRecord, IReadOnlyList<SubsessionChildSessionLinkViewModel>>? childSessionLinksResolver = null)
-        : base(turn.TurnId, turn.CreatedAtUtc, TranscriptRowAnchorKey.Tool(turn, item))
+        : base(turn.TurnId, turn.CreatedAtUtc, projection.AnchorKey)
     {
         _turn = turn;
-        _toolId = item.ToolId ?? "unknown_tool";
-        _argumentsJson = item.ArgumentsJson ?? "{}";
-        _presentationService = presentationService;
-        _childSessionLinksResolver = childSessionLinksResolver;
         _currentItem = item;
+        _projection = projection;
+        _childSessionLinksResolver = childSessionLinksResolver;
         _resultTurnId = item.Kind == AgentTurnItemKind.ToolResult ? turn.TurnId : null;
-        ToolLabel = HumanizeToolName(_toolId);
-        StatusText = item.Kind == AgentTurnItemKind.ToolResult
-            ? (item.IsError ? "Failed" : "Completed")
-            : "Running";
-        StatusIconText = ResolveStatusIcon(StatusText);
-        _isExpanded = item.Kind == AgentTurnItemKind.ToolResult && item.IsError;
-        StateBrush = ResolveStateBrush(StatusText);
-        StateSoftBrush = ResolveStateSoftBrush(StatusText);
-        ApplyPresentationDetails(item);
+        _detailState = new TranscriptToolDetailState(projection, loadDetail, presentationService.Resolve);
+        _detailState.Changed += OnDetailStateChanged;
+        _detailState.Invalidated += OnDetailVisualInvalidated;
+        ApplyHeaderProjection();
+        RefreshChildSessionLink();
+        TranscriptToolDiagnostics.HeaderViewModelCreated();
     }
 
-    [ObservableProperty]
-    private string _summaryText = string.Empty;
-
-    [ObservableProperty]
-    private string _statusText = string.Empty;
-
-    [ObservableProperty]
-    private bool _isExpanded;
-
-    [ObservableProperty]
-    private ObservableStringBuilder _detailMarkdownBuilder = new();
-
-    [ObservableProperty]
-    private IBrush? _stateBrush;
-
-    [ObservableProperty]
-    private IBrush? _stateSoftBrush;
-
-    public bool ShowDetails => IsExpanded && HasDetails;
-
-    public SubsessionToolInvocationRowViewModel? ExpandedDetails => ShowDetails ? this : null;
-
-    public string ExpandGlyph => IsExpanded ? "▴" : "▾";
-
-    public string ToolLabel
-    {
-        get => _toolLabel;
-        private set => SetProperty(ref _toolLabel, value);
-    }
-
-    public string HeaderDetailText
-    {
-        get => _headerDetailText;
-        private set
-        {
-            if (SetProperty(ref _headerDetailText, value))
-            {
-                OnPropertyChanged(nameof(HasHeaderDetail));
-            }
-        }
-    }
-
-    public string StatusIconText
-    {
-        get => _statusIconText;
-        private set => SetProperty(ref _statusIconText, value);
-    }
-
-    public string OutputText
-    {
-        get => _outputText;
-        private set
-        {
-            if (SetProperty(ref _outputText, value))
-            {
-                OnPropertyChanged(nameof(HasOutput));
-            }
-        }
-    }
-
-    public bool HasDetails => HasMarkdownDetails || HasOutput || HasToolDiff;
-
+    public string ToolLabel => _projection.ToolLabel;
+    public string StatusText => _projection.StatusText;
+    public string StatusIconText => _projection.StatusIconText;
+    public string HeaderDetailText => FirstNonBlank(_projection.ErrorSummary, _projection.HeaderHint) ?? string.Empty;
+    public string SummaryText => string.IsNullOrWhiteSpace(HeaderDetailText) ? ToolLabel : $"{ToolLabel} {HeaderDetailText}";
     public bool HasHeaderDetail => !string.IsNullOrWhiteSpace(HeaderDetailText);
-
-    public bool HasOutput => !string.IsNullOrWhiteSpace(OutputText);
-
-    public bool HasMarkdownDetails => DetailMarkdownBuilder.Length > 0;
-
-    public bool ShowMarkdownDetails => HasMarkdownDetails && (ToolDiff?.ShowMarkdownDetails ?? true);
-
-    internal ToolDiffViewModel? ToolDiff
+    public bool HasDetails => _projection.HasDetails;
+    public long DetailRevision => _projection.DetailRevision;
+    public Guid SessionId => _projection.SessionId;
+    internal TranscriptToolExpansionState ExpansionState => _detailState.State;
+    public bool IsExpanded
     {
-        get => _toolDiff;
-        private set
+        get => _detailState.IsExpanded;
+        set
         {
-            if (SetProperty(ref _toolDiff, value))
+            if (!value)
             {
-                OnPropertyChanged(nameof(HasToolDiff));
-                OnPropertyChanged(nameof(ToolDiffFiles));
-                OnPropertyChanged(nameof(ToolDiffSectionTitle));
-                OnPropertyChanged(nameof(ShowMarkdownDetails));
-                NotifyDetailAvailabilityChanged();
+                CollapseDetails();
             }
         }
     }
-
-    public bool HasToolDiff => ToolDiff?.HasFiles == true;
-
-    internal IReadOnlyList<ToolDiffFileViewModel> ToolDiffFiles => ToolDiff?.Files ?? [];
-
-    public string ToolDiffSectionTitle => ToolDiff?.SectionTitle ?? string.Empty;
-
+    public bool IsPreparing => _detailState.IsPreparing;
+    public bool IsDetailLoadFailed => ExpansionState == TranscriptToolExpansionState.DetailLoadFailed;
+    internal TranscriptToolDetailViewModel? ExpandedDetails => IsExpanded ? _detailState.Details : null;
+    public bool HasMaterializedDetails => _detailState.Details is not null;
+    public string DetailLoadFailureText => _detailState.FailureText;
+    public string ExpandGlyph => IsExpanded ? "▴" : IsPreparing ? "…" : "▾";
+    public string ExpansionAnnouncement => ExpansionState switch
+    {
+        TranscriptToolExpansionState.Preparing => $"Preparing {ToolLabel} details.",
+        TranscriptToolExpansionState.Expanded => $"{ToolLabel} details expanded.",
+        TranscriptToolExpansionState.DetailLoadFailed => $"{ToolLabel} details failed to load. {DetailLoadFailureText}",
+        _ => $"{ToolLabel} details collapsed.",
+    };
+    public string HeaderAccessibilityText => string.Join(
+        ". ",
+        new[] { ToolLabel, StatusText, HeaderDetailText, ExpansionAnnouncement }
+            .Where(value => !string.IsNullOrWhiteSpace(value)));
+    public IBrush? StateBrush { get; private set; }
+    public IBrush? StateSoftBrush { get; private set; }
+    public bool IsAmbiguous => string.Equals(StatusText, "Ambiguous", StringComparison.OrdinalIgnoreCase);
     public Guid? ResultTurnId => _resultTurnId;
-
     public ObservableCollection<SubsessionChildSessionLinkViewModel> ChildSessionLinks { get; } = [];
-
     public bool HasChildSessionLinks => ChildSessionLinks.Count > 0;
 
-    partial void OnIsExpandedChanged(bool value)
+    internal TranscriptToolExpansionRequest? BeginExpansion() => _detailState.BeginExpansion();
+    internal Task<AgentTranscriptToolDetailRecord?> LoadDetailsAsync(
+        TranscriptToolExpansionRequest request,
+        CancellationToken cancellationToken)
+        => _detailState.LoadAsync(request, cancellationToken);
+    internal bool IsCurrentExpansion(TranscriptToolExpansionRequest request) => _detailState.IsCurrent(request);
+    internal bool TryMaterializeDetails(
+        TranscriptToolExpansionRequest request,
+        AgentTranscriptToolDetailRecord? detail,
+        out TranscriptToolDetailViewModel? details)
+        => _detailState.TryMaterialize(request, detail, out details);
+    internal bool CommitExpansion(TranscriptToolExpansionRequest request) => _detailState.CommitExpanded(request);
+    internal void FailExpansion(TranscriptToolExpansionRequest request, Exception exception) => _detailState.Fail(request, exception);
+    internal void CollapseDetails() => _detailState.Collapse();
+
+    event Action? ITranscriptToolExpansionOwner.DetailVisualInvalidated
     {
-        OnPropertyChanged(nameof(ShowDetails));
-        OnPropertyChanged(nameof(ExpandedDetails));
-        OnPropertyChanged(nameof(ExpandGlyph));
+        add => DetailVisualInvalidated += value;
+        remove => DetailVisualInvalidated -= value;
     }
 
-    [RelayCommand]
-    private void ToggleExpanded()
-        => IsExpanded = !IsExpanded;
+    private event Action? DetailVisualInvalidated;
 
-    public void ApplyResult(AgentTurnRecord turn, AgentTurnItemRecord item)
+    void ITranscriptToolExpansionOwner.OnDetailVisualInvalidated() => CollapseDetails();
+
+    private void OnDetailVisualInvalidated() => DetailVisualInvalidated?.Invoke();
+
+    internal void ApplyResult(
+        AgentTurnRecord turn,
+        AgentTurnItemRecord item,
+        TranscriptToolProjection projection)
     {
         _resultTurnId = turn.TurnId;
-        StatusText = item.IsError ? "Failed" : "Completed";
-        StatusIconText = ResolveStatusIcon(StatusText);
+        _currentItem = item;
+        UpdateProjection(projection);
+        OnPropertyChanged(nameof(ResultTurnId));
+        RefreshChildSessionLink();
+    }
+
+    internal void UpdateProjection(
+        AgentTurnRecord turn,
+        AgentTurnItemRecord item,
+        TranscriptToolProjection projection)
+    {
+        _turn = turn;
+        _currentItem = item;
+        UpdateProjection(projection);
+        RefreshChildSessionLink();
+    }
+
+    private void UpdateProjection(TranscriptToolProjection projection)
+    {
+        _projection = projection;
+        _detailState.UpdateProjection(projection);
+        ApplyHeaderProjection();
+    }
+
+    private void ApplyHeaderProjection()
+    {
         StateBrush = ResolveStateBrush(StatusText);
         StateSoftBrush = ResolveStateSoftBrush(StatusText);
-        if (item.IsError)
-        {
-            IsExpanded = true;
-        }
-
-        ApplyPresentationDetails(item);
-    }
-
-    private void ApplyPresentationDetails(AgentTurnItemRecord item)
-    {
-        _currentItem = string.IsNullOrWhiteSpace(item.ArgumentsJson) && !string.IsNullOrWhiteSpace(_argumentsJson)
-            ? item with { ArgumentsJson = _argumentsJson }
-            : item;
-        var presentation = _presentationService.Resolve(_currentItem);
-        ToolDiff = ToolDiffViewModel.TryCreate(
-            _toolId,
-            _currentItem.ArgumentsJson ?? _argumentsJson,
-            item.ResultSummary,
-            item.TextContent,
-            item.IsError,
-            item.PresentationPayloadJson);
-        HeaderDetailText = ToolDiff?.HeaderText ?? presentation.HeaderText?.Trim() ?? string.Empty;
-        SummaryText = string.IsNullOrWhiteSpace(HeaderDetailText) ? ToolLabel : $"{ToolLabel} {HeaderDetailText}";
-        DetailMarkdownBuilder.Clear();
-        DetailMarkdownBuilder.Append(presentation.DetailMarkdown?.Trim() ?? string.Empty);
-        OutputText = presentation.OutputText?.Trim() ?? string.Empty;
-        RefreshChildSessionLink();
-        OnPropertyChanged(nameof(HasMarkdownDetails));
-        OnPropertyChanged(nameof(ShowMarkdownDetails));
-        NotifyDetailAvailabilityChanged();
-    }
-
-    private void NotifyDetailAvailabilityChanged()
-    {
+        OnPropertyChanged(nameof(ToolLabel));
+        OnPropertyChanged(nameof(StatusText));
+        OnPropertyChanged(nameof(StatusIconText));
+        OnPropertyChanged(nameof(HeaderDetailText));
+        OnPropertyChanged(nameof(SummaryText));
+        OnPropertyChanged(nameof(HasHeaderDetail));
         OnPropertyChanged(nameof(HasDetails));
-        OnPropertyChanged(nameof(ShowDetails));
+        OnPropertyChanged(nameof(DetailRevision));
+        OnPropertyChanged(nameof(SessionId));
+        OnPropertyChanged(nameof(StateBrush));
+        OnPropertyChanged(nameof(StateSoftBrush));
+        OnPropertyChanged(nameof(IsAmbiguous));
+        OnPropertyChanged(nameof(HeaderAccessibilityText));
+    }
+
+    private void OnDetailStateChanged()
+    {
+        OnPropertyChanged(nameof(ExpansionState));
+        OnPropertyChanged(nameof(IsExpanded));
+        OnPropertyChanged(nameof(IsPreparing));
+        OnPropertyChanged(nameof(IsDetailLoadFailed));
         OnPropertyChanged(nameof(ExpandedDetails));
+        OnPropertyChanged(nameof(HasMaterializedDetails));
+        OnPropertyChanged(nameof(DetailLoadFailureText));
+        OnPropertyChanged(nameof(ExpandGlyph));
+        OnPropertyChanged(nameof(ExpansionAnnouncement));
+        OnPropertyChanged(nameof(HeaderAccessibilityText));
     }
 
     public void RefreshChildSessionLink()
@@ -354,7 +397,6 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
                 ChildSessionLinks.RemoveAt(index);
             }
         }
-
         for (var index = 0; index < links.Count; index++)
         {
             var link = links[index];
@@ -364,7 +406,6 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
                 ChildSessionLinks.Insert(index, link);
                 continue;
             }
-
             var existing = ChildSessionLinks[existingIndex];
             existing.Update(link.Title, link.Subtitle, ParseLinkStatus(link.StatusText));
             if (existingIndex != index)
@@ -372,7 +413,6 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
                 ChildSessionLinks.Move(existingIndex, index);
             }
         }
-
         OnPropertyChanged(nameof(HasChildSessionLinks));
     }
 
@@ -385,7 +425,6 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
                 return index;
             }
         }
-
         return -1;
     }
 
@@ -396,44 +435,42 @@ public sealed partial class SubsessionToolInvocationRowViewModel : SubsessionTra
                 ? status
                 : AgentRunStatus.Idle;
 
-    private static string HumanizeToolName(string toolId)
-    {
-        var parts = toolId.Split(['_', '-', '.'], StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 0)
-        {
-            return "Tool";
-        }
-
-        return string.Join(" ", parts.Select(part => CultureInfo.InvariantCulture.TextInfo.ToTitleCase(part.ToLowerInvariant())));
-    }
-
-    private static string ResolveStatusIcon(string statusText)
-        => string.Equals(statusText, "Completed", StringComparison.OrdinalIgnoreCase)
-            ? "✓"
-            : string.Equals(statusText, "Running", StringComparison.OrdinalIgnoreCase)
-                ? "i"
-                : "!";
+    private static string? FirstNonBlank(params string?[] values)
+        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
 
     private static IBrush? ResolveStateBrush(string statusText)
-    {
-        var resourceKey = string.Equals(statusText, "Completed", StringComparison.OrdinalIgnoreCase)
-            ? SunderThemeKeys.SuccessBrush
-            : string.Equals(statusText, "Running", StringComparison.OrdinalIgnoreCase)
-                ? SunderThemeKeys.AccentBrush
-                : SunderThemeKeys.DangerBrush;
-
-        return SubagentThemeBrushes.Resolve(resourceKey);
-    }
+        => SubagentThemeBrushes.Resolve(statusText switch
+        {
+            "Completed" => SunderThemeKeys.SuccessBrush,
+            "Started" or "Running" => SunderThemeKeys.AccentBrush,
+            "Ambiguous" => SunderThemeKeys.WarningBrush,
+            "Prepared" => SunderThemeKeys.ForegroundMutedBrush,
+            _ => SunderThemeKeys.DangerBrush,
+        });
 
     private static IBrush? ResolveStateSoftBrush(string statusText)
-    {
-        var resourceKey = string.Equals(statusText, "Completed", StringComparison.OrdinalIgnoreCase)
-            ? SunderThemeKeys.SuccessSoftBrush
-            : string.Equals(statusText, "Running", StringComparison.OrdinalIgnoreCase)
-                ? SunderThemeKeys.InfoSoftBrush
-                : SunderThemeKeys.DangerSoftBrush;
+        => SubagentThemeBrushes.Resolve(statusText switch
+        {
+            "Completed" => SunderThemeKeys.SuccessSoftBrush,
+            "Started" or "Running" => SunderThemeKeys.InfoSoftBrush,
+            "Ambiguous" => SunderThemeKeys.WarningSoftBrush,
+            "Prepared" => SunderThemeKeys.SurfacePopoverBrush,
+            _ => SunderThemeKeys.DangerSoftBrush,
+        });
 
-        return SubagentThemeBrushes.Resolve(resourceKey);
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        _disposed = true;
+        _detailState.Changed -= OnDetailStateChanged;
+        _detailState.Invalidated -= OnDetailVisualInvalidated;
+        _detailState.Dispose();
+        DetailVisualInvalidated = null;
+        ChildSessionLinks.Clear();
+        TranscriptToolDiagnostics.HeaderViewModelDestroyed();
     }
 }
 
@@ -491,35 +528,21 @@ public sealed partial class SubsessionChildSessionLinkViewModel : ObservableObje
             AgentRunStatus.Running => "i",
             _ => "!",
         };
-        StateBrush = ResolveStateBrush(status);
-        StateSoftBrush = ResolveStateSoftBrush(status);
-    }
-
-    private static IBrush? ResolveStateBrush(AgentRunStatus status)
-    {
-        var resourceKey = status switch
+        StateBrush = SubagentThemeBrushes.Resolve(status switch
         {
             AgentRunStatus.Completed => SunderThemeKeys.SuccessBrush,
             AgentRunStatus.Running => SunderThemeKeys.AccentBrush,
             AgentRunStatus.Failed => SunderThemeKeys.DangerBrush,
             AgentRunStatus.Interrupted or AgentRunStatus.Stopped => SunderThemeKeys.WarningBrush,
             _ => SunderThemeKeys.ForegroundMutedBrush,
-        };
-
-        return SubagentThemeBrushes.Resolve(resourceKey);
-    }
-
-    private static IBrush? ResolveStateSoftBrush(AgentRunStatus status)
-    {
-        var resourceKey = status switch
+        });
+        StateSoftBrush = SubagentThemeBrushes.Resolve(status switch
         {
             AgentRunStatus.Completed => SunderThemeKeys.SuccessSoftBrush,
             AgentRunStatus.Running => SunderThemeKeys.InfoSoftBrush,
             AgentRunStatus.Failed => SunderThemeKeys.DangerSoftBrush,
             AgentRunStatus.Interrupted or AgentRunStatus.Stopped => SunderThemeKeys.WarningSoftBrush,
             _ => SunderThemeKeys.SurfacePopoverBrush,
-        };
-
-        return SubagentThemeBrushes.Resolve(resourceKey);
+        });
     }
 }

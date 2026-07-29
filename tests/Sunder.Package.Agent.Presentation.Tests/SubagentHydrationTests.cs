@@ -48,6 +48,36 @@ public sealed class SubagentHydrationTests
         Assert.True(viewModel.IsDirty);
     }
 
+    [AvaloniaFact]
+    public async Task BackRetiresNonCooperativeHydrationWithoutWaitingForProvider()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var extensions = new RegressionTestExtensionCatalog();
+        var provider = new DelayedChatProvider();
+        extensions.AddExtension(PackageExtensionPoints.ChatProviders, provider);
+        var service = new SubagentService(new SubagentStore(scope.Context));
+        var subagent = service.CreateSubagent("Subagent");
+        service.SaveSubagent(
+            subagent.SubagentId,
+            subagent.DisplayName,
+            "Required description",
+            subagent.Instructions,
+            provider.Descriptor.ProviderId,
+            "model",
+            []);
+        using var viewModel = new SubagentsViewModel(service, extensions);
+
+        var initialization = viewModel.InitializeAsync();
+        await provider.LoadStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
+        viewModel.BackToSubagentListCommand.Execute(null);
+
+        await initialization.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Null(viewModel.SelectedSubagent);
+        Assert.False(viewModel.IsHydrating);
+        Assert.False(viewModel.IsBusy);
+        provider.Models.TrySetResult([new AgentModelDescriptor("model", "Model", 16_000, 2_000)]);
+    }
+
     private sealed class DelayedChatProvider : IAgentChatProvider
     {
         public AgentProviderDescriptor Descriptor { get; } = new(

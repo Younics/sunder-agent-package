@@ -1,3 +1,6 @@
+using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Sdk.Abstractions;
+
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
@@ -15,4 +18,8 @@ public sealed record AgentToolSourceContext(
     Guid? SessionId,
     AgentProfileRecord? Profile,
     AgentWorkspaceRecord? Workspace = null,
-    AgentWorkspaceBindingRecord? ExecutionBinding = null);
+    AgentWorkspaceBindingRecord? ExecutionBinding = null)
+{
+    /// <summary>Gets an opaque reference to the exact execution-target activation selected for this discovery callback.</summary>
+    public IPackageExtensionReference<IAgentExecutionTarget>? ExecutionTargetReference { get; init; }
+}

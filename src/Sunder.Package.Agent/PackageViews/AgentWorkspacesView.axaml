@@ -184,6 +184,18 @@
       <Setter Property="Padding" Value="16" />
     </Style>
 
+    <Style Selector="Border.editor-card.editor-error-card">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Warning}" />
+      <Setter Property="MinHeight" Value="112" />
+    </Style>
+
+    <Style Selector="TextBlock.editor-error-diagnostic">
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
     <Style Selector="Border.editor-empty-state">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Code}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
@@ -462,7 +474,7 @@
                             Click="OnAddWorkspaceDocumentClick" />
                     <TextBlock Grid.Row="1"
                                Classes="field-help"
-                               Text="Explicit docs are global read-only context. Auto docs are discovered from each workspace path under .sunder/docs." />
+                                 Text="Explicit documents are global read-only reference context. With first-party Files and a compatible target, exact AGENTS.md instructions are loaded within configured roots. Only structured Files mutations fail closed on missing or unacknowledged policy; shell commands refresh known context but are not path-enforced." />
                   </Grid>
 
                   <Border Classes="path-list"
@@ -506,7 +518,7 @@
                   <Border Classes="editor-empty-state"
                           IsVisible="{Binding !HasWorkspaceDocuments}">
                     <TextBlock Classes="field-help"
-                               Text="No explicit workspace docs. Add docs here or place markdown/text files under each workspace path's .sunder/docs folder." />
+                                 Text="No explicit global reference documents. Add selected markdown or text files here. Scoped AGENTS.md needs no document entry, but requires first-party Files plus a compatible Local/Docker target and accepts no partial or oversized policy." />
                   </Border>
                 </StackPanel>
 
@@ -614,19 +626,21 @@
                 <ItemsControl ItemsSource="{Binding EditorSections}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:AgentEditorSectionViewModel">
-                      <Border Classes="editor-card"
-                              Margin="0,0,0,12">
-                        <StackPanel Spacing="12">
-                          <StackPanel Spacing="4">
-                            <TextBlock Text="{Binding Title}"
-                                       FontWeight="SemiBold"
-                                       Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                            <TextBlock Text="{Binding Description}"
-                                       Classes="workspace-caption"
-                                       IsVisible="{Binding HasDescription}" />
-                          </StackPanel>
+                      <Grid>
+                        <Border Classes="editor-card"
+                                Margin="0,0,0,12"
+                                IsVisible="{Binding IsContent}">
+                          <StackPanel Spacing="12">
+                            <StackPanel Spacing="4">
+                              <TextBlock Text="{Binding Title}"
+                                         FontWeight="SemiBold"
+                                         Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+                              <TextBlock Text="{Binding Description}"
+                                         Classes="workspace-caption"
+                                         IsVisible="{Binding HasDescription}" />
+                            </StackPanel>
 
-                          <ItemsControl ItemsSource="{Binding Fields}">
+                            <ItemsControl ItemsSource="{Binding Fields}">
                             <ItemsControl.DataTemplates>
                               <DataTemplate DataType="vm:AgentEditorTextFieldViewModel"
                                             x:DataType="vm:AgentEditorTextFieldViewModel">
@@ -798,9 +812,41 @@
                                 </StackPanel>
                               </DataTemplate>
                             </ItemsControl.DataTemplates>
-                          </ItemsControl>
-                        </StackPanel>
-                      </Border>
+                            </ItemsControl>
+                          </StackPanel>
+                        </Border>
+
+                        <Border Classes="editor-card editor-error-card"
+                                Margin="0,0,0,12"
+                                IsVisible="{Binding IsError}">
+                          <Grid ColumnDefinitions="*,Auto"
+                                RowDefinitions="Auto,Auto,Auto"
+                                ColumnSpacing="16"
+                                RowSpacing="7">
+                            <TextBlock Grid.Row="0"
+                                       Grid.Column="0"
+                                       Text="{Binding Title}"
+                                       FontWeight="SemiBold"
+                                       Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+                            <TextBlock Grid.Row="1"
+                                       Grid.Column="0"
+                                       Text="{Binding ErrorMessage}"
+                                       Classes="workspace-caption" />
+                            <TextBlock Grid.Row="2"
+                                       Grid.Column="0"
+                                       Text="{Binding DiagnosticText}"
+                                       Classes="editor-error-diagnostic" />
+                            <Button Grid.Row="0"
+                                    Grid.RowSpan="3"
+                                    Grid.Column="1"
+                                    Classes="secondary-action compact-action warning-action"
+                                    Content="{Binding RetryLabel}"
+                                    Command="{Binding RetryCommand}"
+                                    MinWidth="78"
+                                    VerticalAlignment="Center" />
+                          </Grid>
+                        </Border>
+                      </Grid>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>

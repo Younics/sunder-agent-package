@@ -105,6 +105,7 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
             while (true)
             {
                 var promptMessages = await _promptPreparationPipeline.BuildProviderMessagesAsync(
+                    host,
                     preparation,
                     context,
                     runCancellationToken);
@@ -158,6 +159,7 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
                     host,
                     context,
                     preparation,
+                    toolCycle.RequiresPromptContextRefresh,
                     runCancellationToken);
                 providerSession.Options.Instructions = preparation.SystemInstructions;
             }

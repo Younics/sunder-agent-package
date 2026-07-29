@@ -21,7 +21,7 @@ public sealed class AgentExecutionTargetWarmupService(
             return AgentExecutionTargetWarmupResult.Skipped("Workspace is not bound to an execution target.");
         }
 
-        var target = executionTargetService.ResolveTarget(binding);
+        var target = executionTargetService.ResolveTargetReference(binding);
         if (target is null)
         {
             return AgentExecutionTargetWarmupResult.Failed("The selected workspace is not bound to an installed execution target.");
@@ -29,12 +29,19 @@ public sealed class AgentExecutionTargetWarmupService(
 
         try
         {
-            var readiness = await target.GetReadinessAsync(
-                new AgentExecutionTargetContext(null, null, workspace, binding),
-                cancellationToken);
+            var readiness = await AgentExtensionInvocation.InvokeAsync(
+                target,
+                cancellationToken,
+                (instance, token) => instance.GetReadinessAsync(
+                    new AgentExecutionTargetContext(null, null, workspace, binding),
+                    token));
             return readiness.Status == AgentExecutionTargetReadinessStatus.Ready
                 ? AgentExecutionTargetWarmupResult.Ready(readiness.Message)
                 : AgentExecutionTargetWarmupResult.Failed(readiness.Message);
+        }
+        catch (AgentPackageUnavailableException ex)
+        {
+            return AgentExecutionTargetWarmupResult.Failed(ex.Message);
         }
         catch (OperationCanceledException)
         {

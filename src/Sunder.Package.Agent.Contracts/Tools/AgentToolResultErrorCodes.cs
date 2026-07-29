@@ -5,6 +5,8 @@ namespace Sunder.Package.Agent.Contracts.Models;
 /// </summary>
 public static class AgentToolResultErrorCodes
 {
+    /// <summary>The invocation's transient outside-scope authority is unavailable and requires a new approval.</summary>
+    public const string PermissionReapprovalRequired = "permission-reapproval-required";
     /// <summary>Signals that a child agent run suspended for approval and the parent must wait rather than treat the tool as complete.</summary>
     public const string ChildWaitingForApproval = "child-waiting-for-approval";
 
@@ -19,4 +21,7 @@ public static class AgentToolResultErrorCodes
 
     /// <summary>Indicates that the host isolated an unexpected tool exception or non-caller cancellation as an error result.</summary>
     public const string ToolExecutionException = "tool-execution-exception";
+
+    /// <summary>Indicates that the exact package activation selected for a tool callback retired before the callback completed.</summary>
+    public const string PackageUnavailable = "package-unavailable";
 }

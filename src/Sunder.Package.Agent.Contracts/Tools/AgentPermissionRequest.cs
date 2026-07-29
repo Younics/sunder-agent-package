@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
@@ -31,4 +33,17 @@ public sealed record AgentPermissionRequest(
     string? BindingId = null,
     string? ResourceDisplayName = null,
     string? ResourceReference = null,
-    bool IsMutation = false);
+    bool IsMutation = false)
+{
+    /// <summary>Gets every structured durable resource claim covered by this operation.</summary>
+    public IReadOnlyList<AgentResourceClaim> ResourceClaims { get; init; } = [];
+
+    /// <summary>Gets transient process-local authority references for immediate execution.</summary>
+    /// <remarks>These values are deliberately excluded from JSON snapshots and durable permission state.</remarks>
+    [JsonIgnore]
+    public IReadOnlyList<string> ResourceCapabilities { get; init; } = [];
+
+    /// <summary>Gets every immutable canonical resource identity covered by this operation.</summary>
+    /// <remarks>Multi-resource operations should prefer <see cref="ResourceClaims"/>. This list remains for compatibility.</remarks>
+    public IReadOnlyList<string> ResourceReferences { get; init; } = [];
+}

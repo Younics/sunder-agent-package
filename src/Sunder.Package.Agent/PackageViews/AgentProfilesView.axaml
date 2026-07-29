@@ -203,9 +203,21 @@
 
   <Border Classes="profile-shell">
     <Grid x:Name="ProfileAdaptiveLayout"
+          RowDefinitions="Auto,*"
           ColumnDefinitions="360,*"
           ColumnSpacing="4">
+      <Border x:Name="ProfileRuntimeNoticeBanner"
+              Grid.Row="0"
+              Grid.ColumnSpan="2"
+              Classes="profile-status-message"
+              Margin="18,18,18,12"
+              IsVisible="{Binding HasRuntimeNotice}">
+        <TextBlock Classes="profile-status-message"
+                   Text="{Binding RuntimeNoticeText}" />
+      </Border>
+
       <Border x:Name="ProfileListPane"
+              Grid.Row="1"
               Classes="profile-pane profile-list-pane"
               IsVisible="{Binding ShowListPane}">
         <Grid RowDefinitions="Auto,*">
@@ -263,6 +275,7 @@
       </Border>
 
       <Border x:Name="ProfileEditorPane"
+              Grid.Row="1"
               Grid.Column="1"
               Classes="profile-pane"
               IsVisible="{Binding ShowEditorPane}">

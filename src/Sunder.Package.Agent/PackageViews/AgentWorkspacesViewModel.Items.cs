@@ -27,9 +27,11 @@ public sealed partial class AgentWorkspacesViewModel
             WorkspacePaths.Count,
             now,
             now));
+        item.PropertyChanged += OnWorkspacePathPropertyChanged;
         WorkspacePaths.Add(item);
         SelectedWorkspacePath = item;
         NotifyWorkspacePathCollectionChanged();
+        OnWorkspaceEditorChanged();
     }
 
     public void AddWorkspaceDocument(string filePath)
@@ -53,9 +55,11 @@ public sealed partial class AgentWorkspacesViewModel
             WorkspaceDocuments.Count,
             now,
             now));
+        item.PropertyChanged += OnWorkspaceDocumentPropertyChanged;
         WorkspaceDocuments.Add(item);
         SelectedWorkspaceDocument = item;
         NotifyWorkspaceDocumentCollectionChanged();
+        OnWorkspaceEditorChanged();
     }
 
     [RelayCommand(CanExecute = nameof(CanSetSelectedWorkspacePathAsDefault))]
@@ -118,6 +122,7 @@ public sealed partial class AgentWorkspacesViewModel
         }
 
         var wasDefault = path.IsDefault;
+        path.PropertyChanged -= OnWorkspacePathPropertyChanged;
         WorkspacePaths.Remove(path);
         if (wasDefault && WorkspacePaths.Count > 0)
         {
@@ -130,6 +135,7 @@ public sealed partial class AgentWorkspacesViewModel
         }
 
         NotifyWorkspacePathCollectionChanged();
+        OnWorkspaceEditorChanged();
     }
 
     [RelayCommand]
@@ -165,6 +171,7 @@ public sealed partial class AgentWorkspacesViewModel
             return;
         }
 
+        document.PropertyChanged -= OnWorkspaceDocumentPropertyChanged;
         WorkspaceDocuments.Remove(document);
         if (ReferenceEquals(SelectedWorkspaceDocument, document))
         {
@@ -172,6 +179,7 @@ public sealed partial class AgentWorkspacesViewModel
         }
 
         NotifyWorkspaceDocumentCollectionChanged();
+        OnWorkspaceEditorChanged();
     }
 
     private bool CanSetSelectedWorkspacePathAsDefault() => SelectedWorkspacePath is not null;

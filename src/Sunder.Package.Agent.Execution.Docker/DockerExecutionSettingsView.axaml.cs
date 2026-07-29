@@ -29,7 +29,8 @@ public partial class DockerExecutionSettingsView : UserControl, IDisposable
     private async void OnChooseDockerCliClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         var topLevel = TopLevel.GetTopLevel(this);
-        if (topLevel?.StorageProvider is null || DataContext is not DockerExecutionSettingsViewModel viewModel)
+        if (topLevel?.StorageProvider is null
+            || DataContext is not DockerExecutionSettingsViewModel { CanMutate: true } viewModel)
         {
             return;
         }

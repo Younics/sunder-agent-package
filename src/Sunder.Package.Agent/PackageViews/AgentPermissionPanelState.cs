@@ -44,7 +44,7 @@ internal sealed class AgentPermissionPanelState(
 
     public static string DescribeUnrestrictedMode(bool value)
         => value
-            ? "Unrestricted Mode is enabled for this session. Ask-style approvals are auto-approved, but hard constraints still apply."
+            ? "Unrestricted Mode is enabled for this session. Ask-style approvals are auto-approved, but hard constraints still apply: Docker Files access remains exact-resource bound, and shell commands do not gain scoped-instruction enforcement."
             : "Unrestricted Mode is disabled for this session.";
 
     public void Reload()

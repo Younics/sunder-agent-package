@@ -602,7 +602,9 @@ public sealed class McpServerStackContributorTests
             [new AgentWorkspacePathRecord("path-1", workspaceId, hostPath, IsDefault: true, SortOrder: 0, now, now)]);
     }
 
-    private sealed class TestExtensionCatalog(params IAgentRuntimeCatalog[] runtimeCatalogs) : IPackageExtensionCatalog
+    private sealed class TestExtensionCatalog(params IAgentRuntimeCatalog[] runtimeCatalogs) :
+        IPackageExtensionCatalog,
+        IPackageExtensionInvocationCatalog
     {
         public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
             => typeof(TContract) == typeof(IAgentRuntimeCatalog)
@@ -613,6 +615,53 @@ public sealed class McpServerStackContributorTests
             => GetExtensions(extensionPoint)
                 .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
                 .ToArray();
+
+        public IReadOnlyList<IPackageExtensionReference<TContract>> GetExtensionReferences<TContract>(
+            PackageExtensionPoint<TContract> extensionPoint)
+            => GetExtensions(extensionPoint)
+                .Select(extension => (IPackageExtensionReference<TContract>)new TestReference<TContract>(extension))
+                .ToArray();
+
+        private sealed class TestReference<TContract>(TContract contribution)
+            : IPackageExtensionReference<TContract>
+        {
+            public bool TryAcquire(
+                [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
+                out IPackageExtensionLease<TContract>? lease)
+            {
+                lease = new TestLease<TContract>(contribution);
+                return true;
+            }
+        }
+
+        private sealed class TestLease<TContract>(TContract contribution) : IPackageExtensionLease<TContract>
+        {
+            private object? _contribution = contribution;
+
+            public string PackageId
+            {
+                get
+                {
+                    ObjectDisposedException.ThrowIf(_contribution is null, this);
+                    return "test.package";
+                }
+            }
+
+            public TContract Contribution
+                => (TContract)(Volatile.Read(ref _contribution)
+                    ?? throw new ObjectDisposedException(nameof(TestLease<TContract>)));
+
+            public CancellationToken RetirementToken
+            {
+                get
+                {
+                    ObjectDisposedException.ThrowIf(_contribution is null, this);
+                    return CancellationToken.None;
+                }
+            }
+
+            public void Dispose() => Interlocked.Exchange(ref _contribution, null);
+        }
     }
 
     private sealed class TestRuntimeCatalog(IReadOnlyList<AgentWorkspaceRecord> workspaces) : IAgentRuntimeCatalog
@@ -704,16 +753,24 @@ public sealed class McpServerStackContributorTests
 
     private sealed class TestKeyValueStore : IPackageKeyValueStore
     {
-        private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
 
         public int SetCallCount { get; private set; }
 
         public int? FailAfterMutationOnSetCall { get; set; }
 
-        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(_values.GetValueOrDefault(key));
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.FromResult(_values.GetValueOrDefault(key));
+        }
 
         public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            TestPackageStorageGuards.Value(value);
             SetCallCount++;
             _values[key] = value;
             if (FailAfterMutationOnSetCall == SetCallCount)
@@ -725,33 +782,54 @@ public sealed class McpServerStackContributorTests
             return Task.CompletedTask;
         }
 
-        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(_values.ContainsKey(key));
+        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
+            return Task.FromResult(_values.ContainsKey(key));
+        }
 
         public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Key(key);
             _values.Remove(key);
             return Task.CompletedTask;
         }
 
         public Task<IReadOnlyList<string>> ListKeysAsync(string? prefix = null, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<string>>(_values.Keys.Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray());
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestPackageStorageGuards.Prefix(prefix);
+            return Task.FromResult<IReadOnlyList<string>>(_values.Keys
+                .Where(key => prefix is null || key.StartsWith(prefix, StringComparison.Ordinal))
+                .Order(StringComparer.Ordinal)
+                .ToArray());
+        }
     }
 
     private sealed class TestSettings : EmptyPackageSettings;
 
     private sealed class TestSecrets : InMemoryPackageSecrets
     {
-        private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
 
-        public string? GetSecret(string key) => _values.GetValueOrDefault(key);
+        public string? GetSecret(string key)
+        {
+            TestPackageStorageGuards.Key(key);
+            return _values.GetValueOrDefault(key);
+        }
 
         public void SetSecret(string key, string value)
         {
+            TestPackageStorageGuards.Key(key);
+            TestPackageStorageGuards.Value(value);
             _values[key] = value;
         }
 
         public void DeleteSecret(string key)
         {
+            TestPackageStorageGuards.Key(key);
             _values.Remove(key);
         }
     }

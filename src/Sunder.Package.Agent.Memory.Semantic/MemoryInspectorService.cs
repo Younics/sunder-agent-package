@@ -13,7 +13,7 @@ public sealed class MemoryInspectorService(
     SemanticMemoryIndexingBackgroundService indexingBackgroundService,
     SemanticModelRuntimeResolver modelRuntimeResolver,
     SemanticMemoryMetricsService metricsService
-) : IMemoryInspectorGateway
+) : IMemoryInspectorGateway, IDisposable
 {
     private readonly MemoryLocalStore _store = store;
     private readonly SemanticMemoryRetrievalBackend _retrievalBackend = retrievalBackend;
@@ -21,23 +21,32 @@ public sealed class MemoryInspectorService(
         indexingBackgroundService;
     private readonly SemanticModelRuntimeResolver _modelRuntimeResolver = modelRuntimeResolver;
     private readonly SemanticMemoryMetricsService _metricsService = metricsService;
+    private readonly object _sessionChangedSync = new();
+    private Action<Guid>? _sessionChanged;
+    private IDisposable? _sessionChangedSubscription;
+    private bool _disposed;
 
     public event Action<Guid>? SessionChanged
     {
         add
         {
-            var catalog = _modelRuntimeResolver.RuntimeCatalog;
-            if (catalog is not null)
+            lock (_sessionChangedSync)
             {
-                catalog.SessionChanged += value;
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                _sessionChanged += value;
+                _sessionChangedSubscription ??= _modelRuntimeResolver.SubscribeToSessionChanges(OnRuntimeSessionChanged);
             }
         }
         remove
         {
-            var catalog = _modelRuntimeResolver.RuntimeCatalog;
-            if (catalog is not null)
+            lock (_sessionChangedSync)
             {
-                catalog.SessionChanged -= value;
+                _sessionChanged -= value;
+                if (_sessionChanged is null)
+                {
+                    _sessionChangedSubscription?.Dispose();
+                    _sessionChangedSubscription = null;
+                }
             }
         }
     }
@@ -48,14 +57,20 @@ public sealed class MemoryInspectorService(
         remove => _indexingBackgroundService.StatusChanged -= value;
     }
 
-    public IReadOnlyList<AgentSessionRecord> ListSessions() =>
-        _modelRuntimeResolver.RuntimeCatalog?.ListSessions() ?? [];
+    public IReadOnlyList<AgentSessionRecord> ListSessions()
+        => _modelRuntimeResolver.InvokeRuntimeCatalog(
+            static catalog => catalog.ListSessions().ToArray(),
+            Array.Empty<AgentSessionRecord>());
 
-    public AgentSessionContextCheckpointRecord? GetSessionContextCheckpoint(Guid sessionId) =>
-        _modelRuntimeResolver.RuntimeCatalog?.GetLatestSessionContextCheckpoint(sessionId);
+    public AgentSessionContextCheckpointRecord? GetSessionContextCheckpoint(Guid sessionId)
+        => _modelRuntimeResolver.InvokeRuntimeCatalog(
+            catalog => catalog.GetLatestSessionContextCheckpoint(sessionId),
+            fallback: null as AgentSessionContextCheckpointRecord);
 
-    public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) =>
-        _modelRuntimeResolver.RuntimeCatalog?.GetWorkingSummary(sessionId);
+    public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId)
+        => _modelRuntimeResolver.InvokeRuntimeCatalog(
+            catalog => catalog.GetWorkingSummary(sessionId),
+            fallback: null as AgentWorkingSummaryRecord);
 
     public IReadOnlyList<StoredMemoryRecord> ListMemories(
         Guid sessionId,
@@ -163,7 +178,8 @@ public sealed class MemoryInspectorService(
         var indexState = _retrievalBackend.GetIndexState(
             memory,
             context.ProviderId,
-            context.ModelId
+            context.ModelId,
+            context.ConfigurationFingerprint
         );
         var label = indexState switch
         {
@@ -222,16 +238,20 @@ public sealed class MemoryInspectorService(
         CancellationToken cancellationToken = default
     )
     {
-        var session = _modelRuntimeResolver.RuntimeCatalog?.GetSession(sessionId);
-        if (session is null)
+        var sessionProfile = _modelRuntimeResolver.InvokeRuntimeCatalog(
+            catalog => catalog.GetSession(sessionId) is null
+                ? new SessionProfileResolution(false, null)
+                : new SessionProfileResolution(
+                    true,
+                    string.IsNullOrWhiteSpace(profileId)
+                        ? catalog.GetSessionProfile(sessionId)?.ProfileId
+                        : catalog.GetProfile(profileId)?.ProfileId),
+            new SessionProfileResolution(false, null));
+        if (!sessionProfile.SessionExists)
         {
             return new SemanticMemoryReindexResult("Session not found.", IndexedMemoryCount: 0);
         }
-
-        var profile = string.IsNullOrWhiteSpace(profileId)
-            ? _modelRuntimeResolver.RuntimeCatalog?.GetSessionProfile(sessionId)
-            : _modelRuntimeResolver.RuntimeCatalog?.GetProfile(profileId);
-        if (profile is null)
+        if (sessionProfile.ProfileId is null)
         {
             return new SemanticMemoryReindexResult("Agent not found.", IndexedMemoryCount: 0);
         }
@@ -239,7 +259,7 @@ public sealed class MemoryInspectorService(
         var activeMemories = _store.ListMemories(sessionId, includeInactive: false);
         var indexedCount = await _retrievalBackend.ReindexSessionAsync(
             sessionId,
-            profile.ProfileId,
+            sessionProfile.ProfileId,
             activeMemories,
             cancellationToken
         );
@@ -281,14 +301,45 @@ public sealed class MemoryInspectorService(
 
     public SemanticMemoryMetricsSnapshot GetMetricsSnapshot() => _metricsService.GetSnapshot();
 
+    public void Dispose()
+    {
+        lock (_sessionChangedSync)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            _sessionChanged = null;
+            _sessionChangedSubscription?.Dispose();
+            _sessionChangedSubscription = null;
+        }
+        GC.SuppressFinalize(this);
+    }
+
     private void QueueMutationReindex(StoredMemoryRecord memory)
     {
-        var profile = _modelRuntimeResolver.RuntimeCatalog?.GetSessionProfile(memory.SessionId);
-        if (profile is not null)
+        var profileId = _modelRuntimeResolver.InvokeRuntimeCatalog(
+            catalog => catalog.GetSessionProfile(memory.SessionId)?.ProfileId,
+            fallback: null as string);
+        if (profileId is not null)
         {
-            _indexingBackgroundService.QueueSessionReindex(memory.SessionId, profile.ProfileId);
+            _indexingBackgroundService.QueueSessionReconciliation(memory.SessionId, profileId);
         }
     }
+
+    private void OnRuntimeSessionChanged(Guid sessionId)
+    {
+        Action<Guid>? handlers;
+        lock (_sessionChangedSync)
+        {
+            handlers = _sessionChanged;
+        }
+        handlers?.Invoke(sessionId);
+    }
+
+    private sealed record SessionProfileResolution(bool SessionExists, string? ProfileId);
 
 }
 

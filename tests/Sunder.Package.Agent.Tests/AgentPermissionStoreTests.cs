@@ -28,6 +28,7 @@ public sealed class AgentPermissionStoreTests
         }
 
         var store = new AgentLocalStore(scope.Context);
+        store.RecoverRuntimeState();
 
         using var verificationConnection = OpenDatabase(store.DatabasePath);
         using var verificationCommand = verificationConnection.CreateCommand();
@@ -285,6 +286,7 @@ public sealed class AgentPermissionStoreTests
         Assert.True(store.TryClaimPendingPermissionRequest(session.SessionId, "request-1").IsClaimed);
 
         var recovered = new AgentLocalStore(scope.Context);
+        recovered.RecoverRuntimeState();
 
         var request = recovered.GetPermissionRequest(session.SessionId, "request-1");
         Assert.Equal(AgentPendingPermissionStatus.Claimed, request?.Status);
@@ -364,6 +366,7 @@ public sealed class AgentPermissionStoreTests
             store.TryClaimPendingPermissionRequest(session.SessionId, "request-1").Outcome);
 
         var recovered = new AgentLocalStore(scope.Context);
+        recovered.RecoverRuntimeState();
 
         var request = recovered.GetPermissionRequest(session.SessionId, "request-1");
         Assert.Equal(AgentPendingPermissionStatus.Failed, request?.Status);
@@ -396,12 +399,119 @@ public sealed class AgentPermissionStoreTests
         }
 
         var migrated = new AgentLocalStore(scope.Context);
+        migrated.RecoverRuntimeState();
 
         Assert.Equal(
             AgentPendingPermissionStatus.Expired,
             migrated.GetPermissionRequest(session.SessionId, "request-1")?.Status);
         Assert.Equal(AgentDurableRunStatus.Interrupted, migrated.GetRun(run.Key.RunId)?.Status);
         Assert.Equal(AgentRunStatus.Interrupted, migrated.GetLatestCheckpoint(session.SessionId)?.Status);
+    }
+
+    [Theory]
+    [InlineData("local-resource-v3:legacy")]
+    [InlineData("docker-resource-v3:legacy")]
+    [InlineData("local-resource-authority-v4:transient")]
+    public void PendingPermissionPersistence_RejectsLegacyOrTransientAuthority(string reference)
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var request = CreateRequest(Guid.NewGuid(), Guid.NewGuid(), 1) with
+        {
+            ResourceReference = reference,
+        };
+
+        Assert.Throws<InvalidOperationException>(() => store.SavePendingPermissionRequest(request));
+    }
+
+    [Fact]
+    public void PendingPermissionPersistence_RoundTripsCompleteDurableClaimSet()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var sessionId = Guid.NewGuid();
+        var claim = new AgentResourceClaim(
+            1,
+            "local-host-resource-claim-v1",
+            "/workspace/file.txt",
+            "/workspace",
+            new string('b', 64),
+            true,
+            "RegularFile",
+            "target-identity",
+            false,
+            true,
+            "files.read",
+            "workspace",
+            "workspace-generation",
+            "binding",
+            "binding-generation",
+            "call-1",
+            0,
+            "sunder.package.agent.tools.files",
+            "sunder.package.agent.execution.local");
+        var request = CreateRequest(sessionId, Guid.NewGuid(), 1) with
+        {
+            ResourceReference = "local-host-resource-claim-v1:stable",
+            ResourceClaims = [claim],
+        };
+
+        store.SavePendingPermissionRequest(request);
+        var persisted = Assert.IsType<AgentPendingPermissionRequestRecord>(
+            store.GetPermissionRequest(sessionId, request.RequestId));
+
+        Assert.Equal(1, persisted.ResourceClaimSetVersion);
+        Assert.Equal([claim], persisted.ResourceClaims);
+    }
+
+    [Fact]
+    public void ToolLedger_RoundTripsExactOwnersAndReconstructsTerminalResult()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var workspace = new AgentWorkspaceService(store).CreateWorkspace("Authority ledger");
+        var session = store.CreateSession("Session", workspaceId: workspace.WorkspaceId);
+        var run = store.ReserveRun(session.SessionId, "profile", "message");
+        var running = Assert.IsType<AgentRunTransitionResult>(store.TryTransitionRun(
+            run.Key,
+            run.Epoch,
+            AgentRunStatus.Running,
+            "Running."));
+        var fingerprint = AgentToolInvocationFingerprint.Create("mutate", "{}");
+        var prepared = Assert.Single(store.TryPrepareToolExecutions(
+            run.Key,
+            running.Run.Epoch,
+            [new AgentToolExecutionPreparation(
+                new AgentToolCallRequest("call-1", "mutate", "{}"),
+                IsReadOnly: false,
+                InvocationFingerprint: fingerprint,
+                OwnerPackageId: "sunder.package.agent.tools.files",
+                ToolSchemaId: "files.mutate",
+                ToolSchemaVersion: "1",
+                ExecutionTargetOwnerPackageId: "sunder.package.agent.execution.local")])!);
+        Assert.NotNull(store.TryStartToolExecution(
+            run.Key,
+            running.Run.Epoch,
+            prepared.Execution.ExecutionId,
+            fingerprint));
+        Assert.NotNull(store.TryCompleteToolExecution(
+            run.Key,
+            running.Run.Epoch,
+            prepared.Execution.ExecutionId,
+            AgentToolExecutionStatus.Completed,
+            new AgentToolResult("mutate", "Mutation completed.", Content: "done"),
+            "tool-completed"));
+
+        var restarted = new AgentLocalStore(scope.Context);
+        var execution = Assert.IsType<AgentToolExecutionRecord>(
+            restarted.GetToolExecution(prepared.Execution.ExecutionId));
+        var result = Assert.IsType<AgentToolResult>(
+            restarted.GetToolExecutionResult(prepared.Execution.ExecutionId));
+
+        Assert.Equal("sunder.package.agent.tools.files", execution.OwnerPackageId);
+        Assert.Equal("sunder.package.agent.execution.local", execution.ExecutionTargetOwnerPackageId);
+        Assert.Equal("done", result.Content);
+        Assert.True(result.RequiresPromptContextRefresh);
     }
 
     private static AgentPendingPermissionRequestRecord CreateRequest(

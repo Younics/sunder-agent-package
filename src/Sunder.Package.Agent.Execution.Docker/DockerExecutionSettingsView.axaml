@@ -5,8 +5,31 @@
              x:DataType="vm:DockerExecutionSettingsViewModel">
   <ScrollViewer HorizontalScrollBarVisibility="Disabled">
     <StackPanel Margin="0,0,0,8"
-                Spacing="16">
-      <Border Classes="card-surface">
+                 Spacing="16">
+      <Border Classes="card-surface"
+              IsVisible="{Binding IsLoading}">
+        <TextBlock Text="Loading Docker images and execution settings..."
+                   TextWrapping="Wrap" />
+      </Border>
+
+      <Border Classes="card-surface"
+              IsVisible="{Binding IsError}">
+        <StackPanel Spacing="8">
+          <TextBlock Classes="section-title"
+                     Text="Docker settings could not be loaded" />
+          <TextBlock Classes="caption"
+                     Text="{Binding StatusText}"
+                     TextWrapping="Wrap" />
+          <Button Classes="secondary-action"
+                  Content="Retry"
+                  HorizontalAlignment="Left"
+                  Command="{Binding RetryInitializationCommand}" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card-surface"
+              IsVisible="{Binding IsReady}"
+              IsEnabled="{Binding CanMutate}">
         <StackPanel Spacing="12">
           <StackPanel Spacing="6">
             <TextBlock Classes="section-title"
@@ -91,13 +114,15 @@
         </StackPanel>
       </Border>
 
-      <Border Classes="card-surface">
+      <Border Classes="card-surface"
+              IsVisible="{Binding IsReady}"
+              IsEnabled="{Binding CanMutate}">
         <StackPanel Spacing="12">
           <StackPanel Spacing="6">
             <TextBlock Classes="section-title"
                        Text="Execution" />
             <TextBlock Classes="caption"
-                       Text="Default timeout used by Docker shell, process, and file commands."
+                       Text="Default timeout used by Docker shell and process commands."
                        TextWrapping="Wrap" />
           </StackPanel>
           <TextBox Text="{Binding TimeoutSeconds, Mode=TwoWay}"
@@ -132,6 +157,11 @@
           </WrapPanel>
         </StackPanel>
       </Border>
+
+      <TextBlock Classes="caption"
+                 Text="{Binding StatusText}"
+                 TextWrapping="Wrap"
+                 IsVisible="{Binding IsReady}" />
     </StackPanel>
   </ScrollViewer>
 </UserControl>

@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Skills.Services;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Storage;
 using System.Text.Json;
 using Xunit;
 
@@ -591,25 +592,38 @@ public sealed class SkillImportReplacementTests
     private sealed class TestFileStore : IPackageFileStore
     {
         public Task<byte[]?> ReadAsync(string relativePath, CancellationToken cancellationToken = default)
-            => Task.FromResult<byte[]?>(null);
+        {
+            ValidatePath(relativePath);
+            return Task.FromResult<byte[]?>(null);
+        }
         public Task WriteAsync(string relativePath, ReadOnlyMemory<byte> contents, CancellationToken cancellationToken = default)
-            => Task.CompletedTask;
+        {
+            ValidatePath(relativePath);
+            if (!PackageStorageValidation.IsValidFileLength(contents.Length)) throw new ArgumentException("Invalid test file length.", nameof(contents));
+            return Task.CompletedTask;
+        }
         public Task DeleteAsync(string relativePath, CancellationToken cancellationToken = default)
-            => Task.CompletedTask;
+        {
+            ValidatePath(relativePath);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class TestKeyValueStore : IPackageKeyValueStore
     {
-        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) { ValidateKey(key); return Task.FromResult<string?>(null); }
 
-        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default) { ValidateKey(key); ValidateValue(value); return Task.CompletedTask; }
 
-        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default) { ValidateKey(key); return Task.FromResult(false); }
 
-        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default) { ValidateKey(key); return Task.CompletedTask; }
 
         public Task<IReadOnlyList<string>> ListKeysAsync(string? prefix = null, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<string>>([]);
+        {
+            ValidatePrefix(prefix);
+            return Task.FromResult<IReadOnlyList<string>>([]);
+        }
     }
 
     private sealed class TestSettings : IPackageSettings
@@ -626,14 +640,34 @@ public sealed class SkillImportReplacementTests
 
     private sealed class TestSecrets : IPackageSecrets
     {
-        public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
-        public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default) { ValidateKey(key); return Task.FromResult<string?>(null); }
+        public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default) { ValidateKey(key); ValidateValue(value); return Task.CompletedTask; }
+        public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default) { ValidateKey(key); return Task.CompletedTask; }
     }
 
     private sealed class TestWorkspace(string rootPath) : IPackageRoleLocalWorkspace
     {
         public string WorkspaceRootPath { get; } = rootPath;
         public string GetLocalPath(string relativePath) => Path.Combine(WorkspaceRootPath, relativePath);
+    }
+
+    private static void ValidateKey(string? key)
+    {
+        if (!PackageStorageValidation.IsValidKey(key)) throw new ArgumentException("Invalid test storage key.", nameof(key));
+    }
+
+    private static void ValidatePrefix(string? prefix)
+    {
+        if (prefix is not null && prefix.Length != 0 && !PackageStorageValidation.IsValidKey(prefix)) throw new ArgumentException("Invalid test storage prefix.", nameof(prefix));
+    }
+
+    private static void ValidateValue(string? value)
+    {
+        if (!PackageStorageValidation.IsValidValue(value)) throw new ArgumentException("Invalid test storage value.", nameof(value));
+    }
+
+    private static void ValidatePath(string? path)
+    {
+        if (!PackageStorageValidation.IsValidRelativePath(path)) throw new ArgumentException("Invalid test storage path.", nameof(path));
     }
 }

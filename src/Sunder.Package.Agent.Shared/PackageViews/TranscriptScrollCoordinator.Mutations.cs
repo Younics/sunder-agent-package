@@ -1,3 +1,5 @@
+using Avalonia.Controls;
+
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
 internal sealed partial class TranscriptScrollCoordinator
@@ -8,15 +10,17 @@ internal sealed partial class TranscriptScrollCoordinator
         {
             return;
         }
-
-        if (_anchorHost is not null && IsFollowingTail)
+        if (_activeViewportMutation is
+            {
+                Kind: TranscriptViewportMutationKind.ToolExpansion
+                    or TranscriptViewportMutationKind.StructuralLayout,
+            } explicitMutation
+            && IsCurrentViewportMutation(explicitMutation))
         {
-            _anchorHost.SetFollowingTail(true);
-            _pendingAnchor = null;
             return;
         }
 
-        _pendingAnchor ??= CaptureScrollAnchor(ScrollAnchorMode.LiveTranscriptMutation);
+        BeginViewportMutationTransaction(TranscriptViewportMutationKind.LiveTranscript);
     }
 
     public void BeginTranscriptReplacementMutation()
@@ -27,52 +31,101 @@ internal sealed partial class TranscriptScrollCoordinator
         }
 
         InvalidatePendingScrollOperations();
-        if (_anchorHost is not null && IsFollowingTail)
-        {
-            PrepareToFollowTail();
-            return;
-        }
-
-        _pendingAnchor = CaptureScrollAnchor(ScrollAnchorMode.LiveTranscriptMutation);
+        BeginViewportMutationTransaction(TranscriptViewportMutationKind.TranscriptReplacement);
     }
 
-    public void BeginViewportMutation()
+    public void BeginViewportMutation(
+        TranscriptViewportMutationKind kind = TranscriptViewportMutationKind.ToolExpansion,
+        object? preferredAnchorKey = null,
+        Control? scope = null,
+        bool? isExpanding = null)
     {
         if (_disposed)
         {
             return;
         }
 
-        if (_anchorHost is not null && IsFollowingTail)
+        BeginViewportMutationTransaction(
+            kind,
+            preferredAnchorKey,
+            scope,
+            isExpanding);
+    }
+
+    public long BeginViewportMutationPreparation(
+        TranscriptViewportMutationKind kind,
+        object preferredAnchorKey,
+        Control scope,
+        bool? isExpanding = null)
+    {
+        if (_disposed)
         {
-            _anchorHost.SetFollowingTail(true);
-            _pendingAnchor = null;
-            return;
+            return 0;
         }
 
-        _pendingAnchor ??= CaptureScrollAnchor(ScrollAnchorMode.ViewportMutation);
+        return BeginViewportMutationTransaction(
+                kind,
+                preferredAnchorKey,
+                scope,
+                isExpanding,
+                startWatchdog: false)?
+            .Generation ?? 0;
+    }
+
+    public bool CommitViewportMutationPreparation(long generation, Action mutation)
+    {
+        ArgumentNullException.ThrowIfNull(mutation);
+        if (_activeViewportMutation is not { } transaction
+            || transaction.Generation != generation
+            || !IsCurrentViewportMutation(transaction))
+        {
+            return false;
+        }
+
+        try
+        {
+            mutation();
+        }
+        finally
+        {
+            if (IsCurrentViewportMutation(transaction))
+            {
+                StartViewportMutationWatchdog(transaction);
+                OnViewportContentChanged();
+            }
+        }
+        return true;
+    }
+
+    public void CancelViewportMutationPreparation(long generation)
+    {
+        if (_activeViewportMutation is { } transaction
+            && transaction.Generation == generation
+            && IsCurrentViewportMutation(transaction))
+        {
+            TerminalizeViewportMutation(transaction, TranscriptViewportMutationStatus.Superseded);
+        }
     }
 
     public void OnViewportContentChanged()
     {
         UpdateJumpToLatestVisibility();
-        if (_anchorHost is not null && IsFollowingTail && !_hasNewerRows())
+        if (TryCompleteSynchronousToolCollapse())
         {
-            PinToBottom();
             return;
         }
-
-        if (_pendingAnchor is not null)
-        {
-            QueueRestoreScrollAnchor();
-        }
+        SignalViewportMutation(ViewportMutationSignalCause.ContentChanged);
     }
 
     public void DiscardPendingTranscriptMutation()
     {
-        if (_pendingAnchor?.Mode == ScrollAnchorMode.LiveTranscriptMutation)
+        if (_activeViewportMutation is
+            {
+                Kind: TranscriptViewportMutationKind.LiveTranscript
+                    or TranscriptViewportMutationKind.TranscriptReplacement,
+            } active)
         {
-            _pendingAnchor = null;
+            TerminalizeViewportMutation(active, TranscriptViewportMutationStatus.Superseded);
         }
     }
 
@@ -89,22 +142,16 @@ internal sealed partial class TranscriptScrollCoordinator
             _forceScrollToBottomOnNextTranscriptChanged = false;
             if (_forceScrollToBottomInteractionRevision == _interactionRevision)
             {
-                _pendingAnchor = null;
+                ClearPendingAnchor();
                 QueueScrollToBottom(force: true);
                 return;
             }
         }
 
+        SignalViewportMutation(ViewportMutationSignalCause.ContentChanged);
         if (_pendingAnchor is not null)
         {
             QueueRestoreScrollAnchor();
-            return;
-        }
-
-        if (_anchorHost is not null && IsFollowingTail && !_hasNewerRows())
-        {
-            PinToBottom();
-            UpdateJumpToLatestVisibility();
             return;
         }
 
@@ -113,14 +160,9 @@ internal sealed partial class TranscriptScrollCoordinator
             return;
         }
 
-        if (IsFollowingTail && QueueLoadNewerRowsIfAtBottom(requireActualBottom: true))
+        if (IsFollowingTail)
         {
-            return;
-        }
-
-        if (IsFollowingTail && !_hasNewerRows())
-        {
-            QueueScrollToBottom();
+            QueueLoadNewerRowsIfAtBottom(requireActualBottom: true);
         }
     }
 
@@ -130,6 +172,6 @@ internal sealed partial class TranscriptScrollCoordinator
         _forceScrollToBottomOnNextTranscriptChanged = true;
         _forceScrollToBottomInteractionRevision = _interactionRevision;
         PrepareToFollowTail();
-        _pendingAnchor = null;
+        ClearPendingAnchor();
     }
 }

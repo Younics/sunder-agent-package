@@ -7,11 +7,17 @@ internal readonly record struct TranscriptRowAnchorKey(string Value)
     public static TranscriptRowAnchorKey Text(Guid turnId) => new($"text:{turnId:N}");
 
     public static TranscriptRowAnchorKey Tool(AgentTurnRecord turn, AgentTurnItemRecord item)
-        => !string.IsNullOrWhiteSpace(item.CallId)
-            ? new TranscriptRowAnchorKey($"tool:{item.CallId}")
+        => item.ToolExecutionId is { } toolExecutionId
+            ? new TranscriptRowAnchorKey($"tool-execution:{toolExecutionId:N}")
+            : turn.RunId is { } runId
+              && turn.RunRevision is { } runRevision
+              && !string.IsNullOrWhiteSpace(item.CallId)
+            ? new TranscriptRowAnchorKey($"tool:{runId:N}:{runRevision}:{item.CallId}")
             : new TranscriptRowAnchorKey($"tool:{turn.TurnId:N}:{item.ItemId:N}");
 
     public static TranscriptRowAnchorKey Activity() => new("activity");
+
+    public static TranscriptRowAnchorKey TailSentinel() => new("$transcript-tail-sentinel");
 
     public override string ToString() => Value;
 }
