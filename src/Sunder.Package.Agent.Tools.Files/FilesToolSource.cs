@@ -110,7 +110,10 @@ public sealed class FilesToolSource
                 }
 
                 var readiness = await target.GetReadinessAsync(
-                    new AgentExecutionTargetContext(context.SessionId, context.Profile?.ProfileId, context.Workspace, context.ExecutionBinding),
+                    new AgentExecutionTargetContext(context.SessionId, context.Profile?.ProfileId, context.Workspace, context.ExecutionBinding)
+                    {
+                        ExpectedConfigurationGeneration = context.ExecutionTargetConfigurationGeneration,
+                    },
                     invocationToken);
                 return readiness.Status == AgentExecutionTargetReadinessStatus.Ready && target.Descriptor.SupportsFiles
                     ? new AgentToolReadiness(
@@ -156,6 +159,7 @@ public sealed class FilesToolSource
                     ApprovedResourceClaims = context.ApprovedResourceClaims,
                     ApprovedResourceCapabilities = context.ApprovedResourceCapabilities,
                     ResourceOperation = context.ResourceOperation,
+                    ExpectedConfigurationGeneration = context.ExecutionTargetConfigurationGeneration,
                 };
                 try
                 {
@@ -361,6 +365,7 @@ public sealed class FilesToolSource
                     ApprovedResourceClaims = context.ApprovedResourceClaims,
                     ApprovedResourceCapabilities = context.ApprovedResourceCapabilities,
                     ResourceOperation = context.ResourceOperation,
+                    ExpectedConfigurationGeneration = context.ExecutionTargetConfigurationGeneration,
                 };
                 if (target is IAgentResourceAuthorityExecutionTarget authorityTarget)
                 {
@@ -583,6 +588,7 @@ public sealed class FilesToolSource
                 ApprovedResourceClaims = context.ApprovedResourceClaims,
                 ApprovedResourceCapabilities = context.ApprovedResourceCapabilities,
                 ResourceOperation = context.ResourceOperation,
+                ExpectedConfigurationGeneration = context.ExecutionTargetConfigurationGeneration,
             };
             var resources = new List<AgentResolvedResource>();
             foreach (var path in operations.Select(operation => operation.Path).Distinct(StringComparer.Ordinal))

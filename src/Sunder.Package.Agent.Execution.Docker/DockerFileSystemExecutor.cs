@@ -91,6 +91,7 @@ internal sealed class DockerFileSystemExecutor
                 AgentPermissionBoundaryIds.ConfiguredScope,
                 resourceBinding.Exists)
             {
+                ScopeClassificationBasis = AgentPermissionScopeClassificationBasis.VerifiedTargetMapping,
                 ResourceClaim = claim,
                 DeleteCanonicalReference = reference,
                 DeleteResourceClaim = claim,

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -14,6 +15,7 @@ public sealed class AgentAttachmentService : IAgentSessionDataCleaner, IAgentAtt
     public const int MaxTextAttachmentCharacters = 512 * 1024;
 
     private const int SniffByteCount = 4096;
+    private const int MaxDisplayFileNameCharacters = 180;
     private readonly string _attachmentRootPath;
 
     private static readonly IReadOnlyDictionary<string, string> ExtensionMediaTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -373,14 +375,53 @@ public sealed class AgentAttachmentService : IAgentSessionDataCleaner, IAgentAtt
 
     private static string NormalizeFileName(string fileName)
     {
-        var safeName = Path.GetFileName(string.IsNullOrWhiteSpace(fileName) ? "attachment" : fileName.Trim());
-        foreach (var invalidChar in Path.GetInvalidFileNameChars())
+        var rawName = string.IsNullOrWhiteSpace(fileName) ? "attachment" : fileName.Trim();
+        var safeName = Path.GetFileName(rawName.Replace('\\', '/'));
+        var invalidCharacters = Path.GetInvalidFileNameChars().ToHashSet();
+        var builder = new StringBuilder(safeName.Length);
+        foreach (var rune in safeName.EnumerateRunes())
         {
-            safeName = safeName.Replace(invalidChar, '_');
+            var category = Rune.GetUnicodeCategory(rune);
+            var isInvalidFileNameCharacter = rune.Value <= char.MaxValue
+                                             && invalidCharacters.Contains((char)rune.Value);
+            builder.Append(category is UnicodeCategory.Control
+                or UnicodeCategory.Format
+                or UnicodeCategory.LineSeparator
+                or UnicodeCategory.ParagraphSeparator
+                or UnicodeCategory.Surrogate
+                || isInvalidFileNameCharacter
+                    ? '_'
+                    : rune.ToString());
         }
 
-        return string.IsNullOrWhiteSpace(safeName) ? "attachment" : safeName;
+        safeName = builder.ToString();
+        return string.IsNullOrWhiteSpace(safeName)
+            ? "attachment"
+            : TruncateDisplayFileName(safeName);
     }
+
+    private static string TruncateDisplayFileName(string fileName)
+    {
+        var runes = fileName.EnumerateRunes().ToArray();
+        if (runes.Length <= MaxDisplayFileNameCharacters)
+        {
+            return fileName;
+        }
+
+        var extension = Path.GetExtension(fileName);
+        var extensionRunes = extension.EnumerateRunes().ToArray();
+        if (extensionRunes.Length is > 0 and < MaxDisplayFileNameCharacters)
+        {
+            var stemRunes = Path.GetFileNameWithoutExtension(fileName).EnumerateRunes().ToArray();
+            return string.Concat(stemRunes.Take(MaxDisplayFileNameCharacters - extensionRunes.Length))
+                   + extension;
+        }
+
+        return string.Concat(runes.Take(MaxDisplayFileNameCharacters));
+    }
+
+    internal static string NormalizeDisplayFileName(string? fileName)
+        => NormalizeFileName(fileName ?? "attachment");
 
     private static string ResolveMediaType(string fileName, string? declaredMediaType, ReadOnlySpan<byte> bytes)
     {
@@ -464,9 +505,29 @@ public sealed class AgentAttachmentService : IAgentSessionDataCleaner, IAgentAtt
     }
 
     private static string NormalizeMediaType(string? mediaType)
-        => string.IsNullOrWhiteSpace(mediaType)
-            ? "application/octet-stream"
-            : mediaType.Split(';', 2)[0].Trim().ToLowerInvariant();
+    {
+        if (string.IsNullOrWhiteSpace(mediaType))
+        {
+            return "application/octet-stream";
+        }
+
+        var normalized = mediaType.Split(';', 2)[0].Trim().ToLowerInvariant();
+        var slash = normalized.IndexOf('/');
+        return normalized.Length <= 127
+               && slash > 0
+               && slash < normalized.Length - 1
+               && slash == normalized.LastIndexOf('/')
+               && normalized.Where((_, index) => index != slash).All(IsMediaTypeTokenCharacter)
+            ? normalized
+            : "application/octet-stream";
+    }
+
+    internal static string NormalizeDisplayMediaType(string? mediaType)
+        => NormalizeMediaType(mediaType);
+
+    private static bool IsMediaTypeTokenCharacter(char character)
+        => char.IsAsciiLetterOrDigit(character)
+           || character is '!' or '#' or '$' or '&' or '^' or '_' or '.' or '+' or '-';
 
     private static bool IsMeaningfulMediaType(string mediaType)
         => !string.IsNullOrWhiteSpace(mediaType)

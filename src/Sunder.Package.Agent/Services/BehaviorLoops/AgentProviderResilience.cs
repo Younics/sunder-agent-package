@@ -18,7 +18,9 @@ internal static class AgentProviderResilience
         TimeSpan.FromSeconds(7),
     ];
 
-    public static ResiliencePipeline CreatePipeline(Action<AgentProviderRetryNotification> onRetry)
+    public static ResiliencePipeline CreatePipeline(
+        Action<AgentProviderRetryNotification> onRetry,
+        Func<bool> canRetry)
         => new ResiliencePipelineBuilder()
             .AddRetry(new RetryStrategyOptions
             {
@@ -26,7 +28,8 @@ internal static class AgentProviderResilience
                 DelayGenerator = args => ValueTask.FromResult<TimeSpan?>(GetDelay(args.AttemptNumber)),
                 ShouldHandle = args => ValueTask.FromResult(
                     args.Outcome.Exception is { } exception
-                    && IsTransient(exception, args.Context.CancellationToken)),
+                    && IsTransient(exception, args.Context.CancellationToken)
+                    && canRetry()),
                 OnRetry = args
                     =>
                     {
@@ -53,6 +56,11 @@ internal static class AgentProviderResilience
 
         if (exception is AgentChatProviderException providerException)
         {
+            if (providerException.FailureKind == AgentChatProviderFailureKind.ContextWindowExceeded)
+            {
+                return false;
+            }
+
             if (IsNonRetryableProviderErrorCode(providerException.ErrorCode))
             {
                 return false;

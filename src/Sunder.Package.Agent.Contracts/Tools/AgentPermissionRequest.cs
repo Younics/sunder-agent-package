@@ -35,6 +35,9 @@ public sealed record AgentPermissionRequest(
     string? ResourceReference = null,
     bool IsMutation = false)
 {
+    /// <summary>Gets how the execution target established the resource boundary.</summary>
+    public AgentPermissionScopeClassificationBasis ScopeClassificationBasis { get; init; }
+
     /// <summary>Gets every structured durable resource claim covered by this operation.</summary>
     public IReadOnlyList<AgentResourceClaim> ResourceClaims { get; init; } = [];
 

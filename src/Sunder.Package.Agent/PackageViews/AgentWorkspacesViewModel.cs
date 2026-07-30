@@ -36,6 +36,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private readonly Dictionary<string, AgentWorkspaceDraftState> _workspaceDrafts =
         new(StringComparer.OrdinalIgnoreCase);
     private bool _suppressDraftTracking;
+    private bool _suppressWorkspaceRefresh;
     private bool _initializationRefreshPending;
     private bool _isInitialized;
     private bool _disposed;
@@ -315,8 +316,17 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     {
         try
         {
+            AgentWorkspaceRecord workspace;
+            _suppressWorkspaceRefresh = true;
+            try
+            {
+                workspace = _workspaceService.CreateWorkspace("New Workspace");
+            }
+            finally
+            {
+                _suppressWorkspaceRefresh = false;
+            }
             var intentRevision = _listDetail.ShowNewDetail();
-            var workspace = _workspaceService.CreateWorkspace("New Workspace");
             _listDetail.Reconcile(_workspaceService.ListWorkspaces());
             _listDetail.TryShowCreatedDetail(workspace.WorkspaceId, intentRevision);
             DiscardPendingWorkspaceRefresh();
@@ -340,7 +350,15 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         {
             var shouldClearSelection = IsCompactLayout;
             var workspaceId = SelectedWorkspace.WorkspaceId;
-            _workspaceService.DeleteWorkspace(workspaceId);
+            _suppressWorkspaceRefresh = true;
+            try
+            {
+                _workspaceService.DeleteWorkspace(workspaceId);
+            }
+            finally
+            {
+                _suppressWorkspaceRefresh = false;
+            }
             _workspaceDrafts.Remove(workspaceId);
             DiscardPendingWorkspaceRefresh();
 
@@ -391,7 +409,13 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     }
 
     private void OnWorkspacesChanged()
-        => RunOnUiThread(() =>
+    {
+        if (_suppressWorkspaceRefresh)
+        {
+            return;
+        }
+
+        RunOnUiThread(() =>
         {
             if (!_disposed && _isInitialized)
             {
@@ -402,6 +426,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
                 _initializationRefreshPending = true;
             }
         });
+    }
 
     private void OnRuntimeConnectionStateChanged(AgentRuntimeConnectionState state)
         => RunOnUiThread(() =>

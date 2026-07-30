@@ -1,5 +1,7 @@
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Unicode;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -157,6 +159,7 @@ internal static class AgentSessionContinuitySummaryBuilder
 
     internal static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
+        Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
         PropertyNameCaseInsensitive = true,
     };
 
@@ -266,9 +269,10 @@ internal static class AgentSessionContinuitySummaryBuilder
         AppendSection(builder, "Next Action", document.NextAction);
         AppendSection(builder, "Relevant Files", document.RelevantFiles);
         var summary = builder.ToString().Trim();
+        const string truncationMarker = "\n[truncated]";
         return summary.Length <= MaxSummaryChars
             ? summary
-            : summary[..MaxSummaryChars].TrimEnd() + "\n[truncated]";
+            : summary[..(MaxSummaryChars - truncationMarker.Length)].TrimEnd() + truncationMarker;
     }
 
     internal static string RenderTurnData(AgentTurnRecord turn)

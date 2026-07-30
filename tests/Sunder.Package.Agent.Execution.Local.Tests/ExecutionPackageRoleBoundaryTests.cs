@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Execution.Docker;
 using Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.Tests;
@@ -127,6 +128,97 @@ public sealed class ExecutionPackageRoleBoundaryTests
     }
 
     [Fact]
+    public async Task LocalExecutionTarget_RejectsStaleWorkspaceConfigurationGeneration()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var configService = new LocalExecutionWorkspaceConfigService(scope.Context);
+        using var target = new LocalExecutionTarget(
+            scope.Context,
+            configService,
+            new LocalShellCatalogService(scope.Context));
+        var workspace = new AgentWorkspaceRecord(
+            "workspace",
+            "Workspace",
+            null,
+            default,
+            default,
+            [new AgentWorkspacePathRecord("path", "workspace", scope.RootPath, true, 0, default, default)]);
+        var binding = new AgentWorkspaceBindingRecord(
+            "binding",
+            workspace.WorkspaceId,
+            PackageExtensionPoints.ExecutionTargets.Id,
+            "local",
+            "primary-execution-target",
+            true,
+            0,
+            default,
+            default);
+        var context = new AgentExecutionTargetContext(null, null, workspace, binding);
+        await configService.SaveConfigAsync(
+            binding.BindingId,
+            new LocalExecutionWorkspaceConfig("sh", [Path.Combine(scope.RootPath, "first-bin")]));
+        var generation = await target.GetConfigurationGenerationAsync(context);
+
+        await configService.SaveConfigAsync(
+            binding.BindingId,
+            new LocalExecutionWorkspaceConfig("sh", [Path.Combine(scope.RootPath, "second-bin")]));
+
+        var staleContext = context with { ExpectedConfigurationGeneration = generation };
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await target.GetExecutionScopeAsync(staleContext));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await target.AddPathEntryAsync(staleContext, Path.Combine(scope.RootPath, "rejected-bin")));
+        Assert.DoesNotContain(
+            Path.Combine(scope.RootPath, "rejected-bin"),
+            (await configService.GetConfigAsync(binding.BindingId)).PathEntries ?? []);
+    }
+
+    [Fact]
+    public async Task LocalExecutionTarget_RejectsStaleCustomShellDefinitionGeneration()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var firstShell = Path.Combine(scope.RootPath, "first-shell");
+        var secondShell = Path.Combine(scope.RootPath, "second-shell");
+        File.WriteAllText(firstShell, string.Empty);
+        File.WriteAllText(secondShell, string.Empty);
+        var shellCatalog = new LocalShellCatalogService(scope.Context);
+        await shellCatalog.SaveCustomShellsAsync(
+            [new LocalShellDefinition("custom", "Custom", firstShell, AgentShellSyntaxKinds.PosixSh, false)],
+            expectedRevision: 0);
+        var configService = new LocalExecutionWorkspaceConfigService(scope.Context);
+        using var target = new LocalExecutionTarget(scope.Context, configService, shellCatalog);
+        var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, default, default);
+        var binding = new AgentWorkspaceBindingRecord(
+            "binding",
+            workspace.WorkspaceId,
+            PackageExtensionPoints.ExecutionTargets.Id,
+            "local",
+            "primary-execution-target",
+            true,
+            0,
+            default,
+            default);
+        var context = new AgentExecutionTargetContext(null, null, workspace, binding);
+        await configService.SaveConfigAsync(
+            binding.BindingId,
+            new LocalExecutionWorkspaceConfig("custom", []));
+        var generation = await target.GetConfigurationGenerationAsync(context);
+
+        await shellCatalog.SaveCustomShellsAsync(
+            [new LocalShellDefinition("custom", "Custom", secondShell, AgentShellSyntaxKinds.PosixSh, false)],
+            expectedRevision: 1);
+
+        var staleContext = context with { ExpectedConfigurationGeneration = generation };
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await target.GetShellAsync(staleContext));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await target.AddPathEntryAsync(staleContext, "/rejected"));
+        Assert.DoesNotContain(
+            "/rejected",
+            (await configService.GetConfigAsync(binding.BindingId)).PathEntries ?? []);
+    }
+
+    [Fact]
     public async Task DockerRuntimeOperation_RejectsUnselectedCliPath()
     {
         using var scope = RegressionTestPackageScope.Create();
@@ -146,10 +238,111 @@ public sealed class ExecutionPackageRoleBoundaryTests
         Assert.Contains("absolute executable path", response.Error?.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task DockerExecutionTarget_RejectsStaleWorkspaceConfigurationGeneration()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var runner = new DockerCliRunner(scope.Context);
+        var catalog = new DockerImageCatalogService(scope.Context, runner);
+        var configService = new DockerExecutionWorkspaceConfigService(scope.Context, catalog);
+        using var lifecycle = new DockerContainerLifecycleService();
+        var target = new DockerExecutionTarget(scope.Context, configService, lifecycle, catalog, runner);
+        var workspace = new AgentWorkspaceRecord(
+            "workspace",
+            "Workspace",
+            null,
+            default,
+            default,
+            [new AgentWorkspacePathRecord("path", "workspace", scope.RootPath, true, 0, default, default)]);
+        var binding = new AgentWorkspaceBindingRecord(
+            "binding",
+            workspace.WorkspaceId,
+            PackageExtensionPoints.ExecutionTargets.Id,
+            "docker",
+            "primary-execution-target",
+            true,
+            0,
+            default,
+            default);
+        var context = new AgentExecutionTargetContext(null, null, workspace, binding);
+        await configService.SaveConfigAsync(
+            binding.BindingId,
+            new DockerExecutionWorkspaceConfig("repository/image:latest", null, "/bin/sh", ["/first"]));
+        var generation = await target.GetConfigurationGenerationAsync(context);
+
+        await configService.SaveConfigAsync(
+            binding.BindingId,
+            new DockerExecutionWorkspaceConfig("repository/image:latest", null, "/bin/sh", ["/second"]));
+
+        var staleContext = context with { ExpectedConfigurationGeneration = generation };
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await target.GetShellAsync(staleContext));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await target.AddPathEntryAsync(staleContext, "/rejected"));
+        Assert.DoesNotContain(
+            "/rejected",
+            (await configService.GetConfigAsync(binding.BindingId)).PathEntries ?? []);
+    }
+
+    [Fact]
+    public async Task DockerExecutionTarget_RejectsStaleCliPathGeneration()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var firstCli = Path.Combine(scope.RootPath, "first-docker");
+        var secondCli = Path.Combine(scope.RootPath, "second-docker");
+        File.WriteAllText(firstCli, string.Empty);
+        File.WriteAllText(secondCli, string.Empty);
+        var settings = new MutablePackageSettings();
+        await settings.SetValueAsync(DockerCli.ExecutablePathConfigurationKey, firstCli);
+        var context = new SettingsOverridePackageContext(scope.Context, settings);
+        var runner = new DockerCliRunner(context);
+        var catalog = new DockerImageCatalogService(context, runner);
+        var configService = new DockerExecutionWorkspaceConfigService(context, catalog);
+        using var lifecycle = new DockerContainerLifecycleService();
+        var target = new DockerExecutionTarget(context, configService, lifecycle, catalog, runner);
+        var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, default, default);
+        var binding = new AgentWorkspaceBindingRecord(
+            "binding",
+            workspace.WorkspaceId,
+            PackageExtensionPoints.ExecutionTargets.Id,
+            "docker",
+            "primary-execution-target",
+            true,
+            0,
+            default,
+            default);
+        var targetContext = new AgentExecutionTargetContext(null, null, workspace, binding);
+        await configService.SaveConfigAsync(
+            binding.BindingId,
+            new DockerExecutionWorkspaceConfig("repository/image:latest", null));
+        var generation = await target.GetConfigurationGenerationAsync(targetContext);
+
+        var missingIdentity = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await target.GetExecutionScopeAsync(targetContext with
+            {
+                ExpectedConfigurationGeneration = generation,
+            }));
+        Assert.Contains("image identity is not available", missingIdentity.Message, StringComparison.OrdinalIgnoreCase);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await target.AddPathEntryAsync(
+                targetContext with { ExpectedConfigurationGeneration = generation },
+                "/rejected-before-readiness"));
+        Assert.DoesNotContain(
+            "/rejected-before-readiness",
+            (await configService.GetConfigAsync(binding.BindingId)).PathEntries ?? []);
+
+        await settings.SetValueAsync(DockerCli.ExecutablePathConfigurationKey, secondCli);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await target.GetShellAsync(targetContext with
+            {
+                ExpectedConfigurationGeneration = generation,
+            }));
+    }
+
     [Theory]
     [InlineData(null, "docker.image-reference.required")]
     [InlineData("repository/image", "docker.image-reference.unpinned")]
-    [InlineData("repository/image:latest", "docker.image-reference.latest")]
     [InlineData("repository/image@sha256:abc", "docker.image-reference.invalid-digest")]
     public async Task DockerRuntimeOperation_ReturnsTypedPinnedReferenceValidation(
         string? imageReference,
@@ -170,6 +363,26 @@ public sealed class ExecutionPackageRoleBoundaryTests
         Assert.Equal(expectedCode, response.Error?.Code);
         Assert.NotNull(response.Error?.CorrelationId);
         Assert.Null(await scope.Context.Storage.State.GetValueAsync(DockerImageCatalogService.ImagesKey));
+    }
+
+    [Fact]
+    public async Task DockerRuntimeOperation_AcceptsExplicitLatestTag()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var runner = new DockerCliRunner(scope.Context);
+        var catalog = new DockerImageCatalogService(scope.Context, runner);
+        var config = new DockerExecutionWorkspaceConfigService(scope.Context, catalog);
+        var editor = new DockerExecutionWorkspaceEditorContributor(config, catalog);
+        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog, editor);
+
+        var response = await handler.HandleAsync(new DockerExecutionOperationRequest(
+            DockerExecutionOperationKind.AddImage,
+            ImageReference: "repository/image:latest"));
+
+        Assert.True(response.Success);
+        var image = Assert.Single(response.Images!);
+        Assert.Equal("repository/image:latest", image.ImageReference);
+        Assert.Equal(DockerImageStatus.NotPulled, image.Status);
     }
 
     [Fact]
@@ -397,5 +610,46 @@ public sealed class ExecutionPackageRoleBoundaryTests
             => _snapshots.Where(snapshot => groupKey is null || string.Equals(snapshot.GroupKey, groupKey, StringComparison.Ordinal)).ToArray();
 
         public bool Cancel(Guid processId) => false;
+    }
+
+    private sealed class SettingsOverridePackageContext(
+        IPackageContext inner,
+        IPackageSettings settings) : IPackageContext
+    {
+        public string PackageId => inner.PackageId;
+        public string Version => inner.Version;
+        public string ContentRootPath => inner.ContentRootPath;
+        public IPackageStorageContext Storage => inner.Storage;
+        public IPackageSettings Settings => settings;
+        public IPackageSecrets Secrets => inner.Secrets;
+        public Sunder.Sdk.Logging.IPackageLogging Logging => inner.Logging;
+    }
+
+    private sealed class MutablePackageSettings : IPackageSettings
+    {
+        private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
+
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(_values.GetValueOrDefault(key));
+        }
+
+        public Task<string?> GetStoredValueAsync(string key, CancellationToken cancellationToken = default)
+            => GetValueAsync(key, cancellationToken);
+
+        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _values[key] = value;
+            return Task.CompletedTask;
+        }
+
+        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _values.Remove(key);
+            return Task.CompletedTask;
+        }
     }
 }

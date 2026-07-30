@@ -205,10 +205,11 @@ public sealed class AgentPermissionStoreTests
             command.Parameters.AddWithValue("$secondCreatedAtUtc", "2026-01-01T00:00:01.0000000+00:00");
             command.ExecuteNonQuery();
         }
-        var request = Assert.IsType<AgentPendingPermissionRequestRecord>(
+        var suspension = Assert.IsType<AgentPermissionSuspensionPersistenceResult>(
             store.SavePendingPermissionRequestAndSuspendRun(
                 CreateRequest(session.SessionId, run.Key.RunId, run.Key.RunRevision),
                 running.Run.Epoch));
+        var request = suspension.Request;
 
         AgentCheckpointPersistenceResult finalization;
         switch (terminalPath)

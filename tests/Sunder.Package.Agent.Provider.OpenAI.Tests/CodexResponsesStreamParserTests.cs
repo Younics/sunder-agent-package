@@ -214,6 +214,51 @@ public sealed class CodexResponsesStreamParserTests
         });
 
         Assert.Contains("max_output_tokens", exception.Content, StringComparison.Ordinal);
+        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
+    }
+
+    [Theory]
+    [InlineData(
+        "context_length_exceeded",
+        "Your input exceeds the context window of this model.",
+        AgentChatProviderFailureKind.ContextWindowExceeded)]
+    [InlineData("insufficient_quota", "You exceeded your current quota.", AgentChatProviderFailureKind.Unknown)]
+    [InlineData("invalid_request_error", "Generic bad request.", AgentChatProviderFailureKind.Unknown)]
+    [InlineData("invalid_request_error", "max_output_tokens is too large.", AgentChatProviderFailureKind.Unknown)]
+    public async Task ParseAsync_FailedResponseClassifiesOnlyContextWindowOverflow(
+        string code,
+        string message,
+        AgentChatProviderFailureKind expectedKind)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = "response.failed",
+            response = new
+            {
+                id = "resp-1",
+                status = "failed",
+                error = new { code, message },
+            },
+        });
+        using var response = CreateSseResponse($"data: {payload}\n\n");
+
+        var exception = await Assert.ThrowsAsync<AgentChatProviderException>(() => ReadUpdatesAsync(response));
+
+        Assert.Equal(expectedKind, exception.FailureKind);
+    }
+
+    [Fact]
+    public async Task ParseAsync_FailedResponseIgnoresContextPhrasesOutsideErrorFields()
+    {
+        using var response = CreateSseResponse("""
+            event: response.failed
+            data: {"type":"response.failed","response":{"id":"resp-1","status":"failed","error":{"code":"backend_error","message":"backend failed"},"output":[{"type":"message","content":"context_length_exceeded was mentioned by the user"}]}}
+
+            """);
+
+        var exception = await Assert.ThrowsAsync<AgentChatProviderException>(() => ReadUpdatesAsync(response));
+
+        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
     }
 
     [Fact]

@@ -268,7 +268,7 @@ internal sealed class DockerExecutionRuntimeOperationHandler(
             return DockerImageCatalogService.NormalizeImageReference(imageReference);
         }
         catch (DockerExecutionDomainException exception) when (
-            exception.Code is "docker.image-reference.unpinned" or "docker.image-reference.latest")
+            exception.Code == "docker.image-reference.unpinned")
         {
             return DockerImageCatalogService.NormalizeLegacyImageReference(imageReference);
         }

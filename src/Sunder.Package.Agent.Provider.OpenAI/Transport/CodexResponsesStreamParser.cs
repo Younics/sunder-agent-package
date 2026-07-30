@@ -172,21 +172,24 @@ internal static class CodexResponsesStreamParser
                             "openai-stream-failed",
                             BuildTerminalMessage("OpenAI response failed.", root),
                             partialTextCharacters,
-                            emittedToolCalls);
+                            emittedToolCalls,
+                            failureKind: ClassifyFailure(root));
 
                     case "response.incomplete":
                         throw CreateTerminalException(
                             "openai-stream-incomplete",
                             BuildTerminalMessage("OpenAI response was incomplete.", root),
                             partialTextCharacters,
-                            emittedToolCalls);
+                            emittedToolCalls,
+                            failureKind: ClassifyFailure(root));
 
                     case "error":
                         throw CreateTerminalException(
                             "openai-stream-error",
                             BuildTerminalMessage("OpenAI stream ended with an error event.", root),
                             partialTextCharacters,
-                            emittedToolCalls);
+                            emittedToolCalls,
+                            failureKind: ClassifyFailure(root));
                     default:
                         if (!IsKnownInformationalEvent(eventType))
                         {
@@ -244,12 +247,35 @@ internal static class CodexResponsesStreamParser
         string message,
         int partialTextCharacters,
         int emittedToolCalls,
-        Exception? innerException = null)
+        Exception? innerException = null,
+        AgentChatProviderFailureKind failureKind = AgentChatProviderFailureKind.Unknown)
         => new(
             errorCode,
             $"### OpenAI stream did not complete\n\n{message}\n\nPartial output diagnostics: {partialTextCharacters} text characters and {emittedToolCalls} tool calls were emitted before termination.",
             errorCode,
-            innerException);
+            innerException)
+        {
+            FailureKind = failureKind,
+        };
+
+    private static AgentChatProviderFailureKind ClassifyFailure(JsonElement root)
+    {
+        var diagnostic = string.Join(
+            ": ",
+            new[]
+            {
+                TryGetNestedString(root, "response", "error", "code"),
+                TryGetNestedString(root, "response", "error", "message"),
+                TryGetNestedString(root, "error", "code"),
+                TryGetNestedString(root, "error", "message"),
+                TryGetNestedString(root, "response", "incomplete_details", "reason"),
+                TryGetString(root, "code"),
+                TryGetString(root, "message"),
+            }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        return ProviderContextWindowFailureClassifier.IsOpenAi(diagnostic)
+            ? AgentChatProviderFailureKind.ContextWindowExceeded
+            : AgentChatProviderFailureKind.Unknown;
+    }
 
     private static bool IsReasoningSummaryDeltaEvent(string? eventType)
         => !string.IsNullOrWhiteSpace(eventType)

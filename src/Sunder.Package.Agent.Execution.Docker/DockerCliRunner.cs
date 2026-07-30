@@ -9,7 +9,19 @@ public class DockerCliRunner(IPackageContext packageContext)
     private const int MaxOutputLength = 51200;
     private const int EndpointResolutionTimeoutSeconds = 30;
     private readonly SemaphoreSlim _endpointGate = new(1, 1);
+    private readonly AsyncLocal<string?> _executionExecutablePath = new();
     private string? _pinnedEndpoint;
+
+    internal IDisposable UseExecutablePath(string executablePath)
+    {
+        var previous = _executionExecutablePath.Value;
+        _executionExecutablePath.Value = executablePath;
+        return new ExecutablePathScope(_executionExecutablePath, previous);
+    }
+
+    internal virtual Task<DockerCliResolution> ResolveExecutableAsync(
+        CancellationToken cancellationToken = default)
+        => DockerCli.ResolveExecutableAsync(packageContext, cancellationToken);
 
     public async Task<DockerCliRunResult> RunAsync(
         IReadOnlyList<string> args,
@@ -82,11 +94,16 @@ public class DockerCliRunner(IPackageContext packageContext)
         ProcessStartInfo startInfo;
         try
         {
-            startInfo = await DockerCli.CreateStartInfoAsync(
-                packageContext,
-                args,
-                redirectStandardInput: standardInput is not null,
-                cancellationToken);
+            startInfo = _executionExecutablePath.Value is { } executablePath
+                ? DockerCli.CreateStartInfo(
+                    executablePath,
+                    args,
+                    redirectStandardInput: standardInput is not null)
+                : await DockerCli.CreateStartInfoAsync(
+                    packageContext,
+                    args,
+                    redirectStandardInput: standardInput is not null,
+                    cancellationToken);
         }
         catch (Exception ex)
         {
@@ -113,6 +130,22 @@ public class DockerCliRunner(IPackageContext packageContext)
         => exception.Message.Contains("filename or extension is too long", StringComparison.OrdinalIgnoreCase)
             ? "the generated command line was too long. File content should be streamed through stdin instead of passed as a Docker CLI argument."
             : exception.Message;
+
+    private sealed class ExecutablePathScope(
+        AsyncLocal<string?> executablePath,
+        string? previous) : IDisposable
+    {
+        private AsyncLocal<string?>? _executablePath = executablePath;
+
+        public void Dispose()
+        {
+            var current = Interlocked.Exchange(ref _executablePath, null);
+            if (current is not null)
+            {
+                current.Value = previous;
+            }
+        }
+    }
 }
 
 public sealed record DockerCliRunResult(int ExitCode, string Output, bool TimedOut, bool WasTruncated);

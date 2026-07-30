@@ -68,6 +68,29 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
     }
 
     [Fact]
+    public async Task ConcurrentSchemaMigrationAndCatalogMutation_DoNotLoseImage()
+    {
+        var context = new CountingPackageContext(_root);
+        await context.State.SetValueAsync(
+            DockerImageCatalogService.ImagesKey,
+            "{\"schemaVersion\":2,\"revision\":4,\"images\":[{\"imageReference\":\"existing/image:latest\",\"status\":4,\"lastPulledAtUtc\":null,\"lastMessage\":\"legacy\"}]}");
+        context.State.BlockNextGet(DockerImageCatalogService.ImagesKey);
+        var migration = new DockerPackageStorageMigration(context);
+
+        var migrationTask = migration.EnsureAsync();
+        await context.State.BlockedGetEntered.WaitAsync(TimeSpan.FromSeconds(10));
+        var addTask = new DockerImageCatalogService(context).AddImageAsync("added/image:1.0");
+        context.State.ReleaseBlockedGet();
+        await Task.WhenAll(migrationTask, addTask);
+
+        Assert.Equal(
+            ["added/image:1.0", "existing/image:latest"],
+            (await new DockerImageCatalogService(context).ListImagesAsync())
+                .Select(image => image.ImageReference)
+                .ToArray());
+    }
+
+    [Fact]
     public async Task DeleteDuringRefresh_DoesNotResurrectImageFromStaleCompletion()
     {
         var context = new CountingPackageContext(_root);
@@ -262,8 +285,8 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
     }
 
     [Theory]
-    [InlineData("{\"schemaVersion\":2,\"revision\":1,\"images\":[],\"retentionPolicy\":\"keep\"}")]
-    [InlineData("{\"schemaVersion\":2,\"revision\":1,\"images\":[{\"imageReference\":\"known/image:1.0\",\"status\":0,\"lastPulledAtUtc\":null,\"lastMessage\":null,\"sourceDigest\":\"keep\"}]}")]
+    [InlineData("{\"schemaVersion\":3,\"revision\":1,\"images\":[],\"retentionPolicy\":\"keep\"}")]
+    [InlineData("{\"schemaVersion\":3,\"revision\":1,\"images\":[{\"imageReference\":\"known/image:1.0\",\"status\":0,\"lastPulledAtUtc\":null,\"lastMessage\":null,\"sourceDigest\":\"keep\"}]}")]
     public async Task CurrentCatalog_UnknownRootOrImageDataBlocksMutationWithoutDroppingMetadata(string json)
     {
         var context = new CountingPackageContext(_root);
@@ -297,7 +320,7 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
     }
 
     [Fact]
-    public async Task SemanticMigration_PreservesFloatingReferencesAndMovesAuthoritativeSettingsIdempotently()
+    public async Task SemanticMigration_AcceptsLegacyExplicitLatestAndMovesAuthoritativeSettingsIdempotently()
     {
         var context = new CountingPackageContext(_root);
         const string bindingId = "legacy-binding";
@@ -318,9 +341,9 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
         var config = await new DockerExecutionWorkspaceConfigService(context, catalog)
             .GetConfigAsync(bindingId);
 
-        Assert.Equal(DockerImageStatus.NeedsAttention, image.Status);
+        Assert.Equal(DockerImageStatus.NotPulled, image.Status);
         Assert.Equal("legacy/image:latest", image.ImageReference);
-        Assert.True(config.ImageReferenceNeedsAttention);
+        Assert.False(config.ImageReferenceNeedsAttention);
         Assert.Equal("legacy/image:latest", config.ImageReference);
         Assert.Equal("123", await context.SettingsStore.GetStoredValueAsync(DockerExecutionConfiguration.TimeoutKey));
         Assert.Equal(cliPath, await context.SettingsStore.GetStoredValueAsync(DockerCli.ExecutablePathConfigurationKey));
@@ -331,6 +354,39 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
         await new DockerPackageStorageMigration(context).EnsureAsync();
 
         Assert.Equal(writesAfterMigration, context.State.WriteCount);
+    }
+
+    [Fact]
+    public async Task Schema2Migration_ReleasesLatestButKeepsTaglessReferencesNeedsAttention()
+    {
+        var context = new CountingPackageContext(_root);
+        const string bindingId = "schema-2-binding";
+        var workspaceKey = DockerExecutionWorkspaceConfigService.BuildKey(bindingId);
+        await context.State.SetValueAsync(
+            DockerImageCatalogService.ImagesKey,
+            "{\"schemaVersion\":2,\"revision\":7,\"images\":[{\"imageReference\":\"legacy/image:latest\",\"status\":4,\"lastPulledAtUtc\":null,\"lastMessage\":\"legacy latest\"},{\"imageReference\":\"legacy/tagless\",\"status\":4,\"lastPulledAtUtc\":null,\"lastMessage\":\"legacy tagless\"}]}");
+        await context.State.SetValueAsync(
+            workspaceKey,
+            "{\"schemaVersion\":2,\"imageReference\":\"legacy/image:latest\",\"imageReferenceNeedsAttention\":true,\"containerName\":\"schema-2\",\"shellPath\":\"/bin/sh\",\"pathEntries\":[]}");
+
+        var catalog = new DockerImageCatalogService(context);
+        var images = await catalog.ListImagesAsync();
+        var config = await new DockerExecutionWorkspaceConfigService(context, catalog)
+            .GetConfigAsync(bindingId);
+        var persisted = JsonSerializer.Deserialize<DockerImageCatalogState>(
+            (await context.State.GetValueAsync(DockerImageCatalogService.ImagesKey))!,
+            CatalogJsonOptions)!;
+
+        Assert.Equal(3, persisted.SchemaVersion);
+        Assert.Equal(8, persisted.Revision);
+        Assert.Equal(
+            DockerImageStatus.NotPulled,
+            images.Single(image => image.ImageReference == "legacy/image:latest").Status);
+        Assert.Equal(
+            DockerImageStatus.NeedsAttention,
+            images.Single(image => image.ImageReference == "legacy/tagless").Status);
+        Assert.False(config.ImageReferenceNeedsAttention);
+        Assert.Equal("legacy/image:latest", config.ImageReference);
     }
 
     [Fact]
@@ -474,16 +530,28 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
     {
         private readonly ConcurrentDictionary<string, string> _values = new(StringComparer.Ordinal);
         private Action<string?>? _afterNextGet;
+        private string? _blockedGetKey;
+        private readonly TaskCompletionSource _blockedGetEntered = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseBlockedGet = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         private int _writeCount;
 
         internal int WriteCount => Volatile.Read(ref _writeCount);
 
         internal Exception? ListFailure { get; set; }
 
+        internal Task BlockedGetEntered => _blockedGetEntered.Task;
+
         internal void ResetWriteCount() => Interlocked.Exchange(ref _writeCount, 0);
 
         internal void RunAfterNextGet(Action<string?> callback)
             => Interlocked.Exchange(ref _afterNextGet, callback);
+
+        internal void BlockNextGet(string key)
+            => Interlocked.Exchange(ref _blockedGetKey, key);
+
+        internal void ReleaseBlockedGet() => _releaseBlockedGet.TrySetResult();
 
         internal void ReplaceValue(string key, string value)
         {
@@ -491,12 +559,19 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
             Interlocked.Increment(ref _writeCount);
         }
 
-        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
+        public async Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var value = _values.GetValueOrDefault(key);
             Interlocked.Exchange(ref _afterNextGet, null)?.Invoke(value);
-            return Task.FromResult(value);
+            var blockedKey = Volatile.Read(ref _blockedGetKey);
+            if (string.Equals(blockedKey, key, StringComparison.Ordinal)
+                && Interlocked.CompareExchange(ref _blockedGetKey, null, blockedKey) == blockedKey)
+            {
+                _blockedGetEntered.TrySetResult();
+                await _releaseBlockedGet.Task.WaitAsync(cancellationToken);
+            }
+            return value;
         }
 
         public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)

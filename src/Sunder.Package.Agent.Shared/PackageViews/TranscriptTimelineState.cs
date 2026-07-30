@@ -606,24 +606,6 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
         OnPropertyChanged(nameof(ViewportAnchor));
     }
 
-    private void PreserveViewportAnchor(object? protectedAnchorKey)
-    {
-        protectedAnchorKey = ResolvePageProtectedAnchorKey(protectedAnchorKey);
-        if (protectedAnchorKey is null)
-        {
-            return;
-        }
-
-        SetViewportAnchor(_viewportAnchor is { } anchor
-            ? anchor with { AnchorKey = protectedAnchorKey }
-            : new TranscriptViewportAnchorData(protectedAnchorKey, 0, 0));
-    }
-
-    private static object? ResolvePageProtectedAnchorKey(object? protectedAnchorKey)
-        => protectedAnchorKey is TranscriptPageAnchorAuthority authority
-            ? authority.ResolveCurrentAnchorKey()
-            : protectedAnchorKey;
-
     public void SelectRow(TRow? row)
     {
         var key = row is null ? null : _projector.GetAnchorKey(row);

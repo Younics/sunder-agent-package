@@ -822,14 +822,14 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task QueueUserMessageAsync_RetriesTransientStreamFailureAndReplacesPartialAssistantTurn()
+    public async Task QueueUserMessageAsync_DoesNotRetryTransientStreamFailureAfterPartialOutput()
     {
         var provider = new ScriptedProvider(
             (_, requestIndex) =>
                 requestIndex switch
                 {
                     1 => [Delta("partial answer"), TransientStreamError()],
-                    2 => [Complete("final answer")],
+                    2 => [Complete("This retry must not run.")],
                     _ => throw new Xunit.Sdk.XunitException(
                         $"Unexpected provider request {requestIndex}."
                     ),
@@ -845,17 +845,13 @@ public sealed class AgentRunCoordinatorTests
             runtime.CurrentWorkspaceId
         );
 
-        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
-        Assert.Equal(2, provider.Requests.Count);
-        Assert.DoesNotContain(
-            provider.Requests[1].Turns,
-            turn => RenderTurnText(turn).Contains("partial answer", StringComparison.Ordinal)
-        );
+        Assert.Equal(AgentRunStatus.Interrupted, checkpoint.Status);
+        Assert.Single(provider.Requests);
         var assistantTurn = Assert.Single(
             runtime.SessionService.ListTurns(sessionId),
             turn => turn.Role == AgentMessageRole.Assistant
         );
-        Assert.Equal("final answer", RenderTurnText(assistantTurn));
+        Assert.Contains("Provider connection interrupted", RenderTurnText(assistantTurn), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -888,6 +884,75 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task QueueUserMessageAsync_ContextOverflowBeforeOutputCompactsAndRetriesOnce()
+    {
+        var provider = new ScriptedProvider(
+            (request, requestIndex) => requestIndex == 1
+                ? ContextWindowError()
+                : Complete("continued after compaction"));
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        for (var index = 0; index < 40; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant,
+                $"overflow-history-{index:00}");
+        }
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Continue after provider overflow.",
+            runtime.CurrentWorkspaceId);
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(2, provider.Requests.Count);
+        Assert.True(provider.Requests[1].Turns.Count < provider.Requests[0].Turns.Count);
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_SecondContextOverflowIsTerminal()
+    {
+        var provider = new ScriptedProvider((_, _) => ContextWindowError());
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        for (var index = 0; index < 40; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant,
+                $"overflow-history-{index:00}");
+        }
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Fail only after one recovery.",
+            runtime.CurrentWorkspaceId);
+
+        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
+        Assert.Equal(2, provider.Requests.Count);
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_ContextOverflowAfterOutputDoesNotReplay()
+    {
+        var provider = new ScriptedProvider((_, _) => [Delta("partial output"), ContextWindowError()]);
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Do not replay partial output.",
+            runtime.CurrentWorkspaceId);
+
+        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
+        Assert.Single(provider.Requests);
+    }
+
+    [Fact]
     public async Task QueueUserMessageAsync_ProviderRetryBudgetExhaustionPersistsFailure()
     {
         var provider = new ScriptedProvider(
@@ -896,7 +961,7 @@ public sealed class AgentRunCoordinatorTests
                 : [Complete("This retry must not run.")]);
         using var runtime = AgentTestRuntime.CreateWithBudget(
             provider,
-            new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 1, 10, 100_000));
+            new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 1, 10));
         var sessionId = await runtime.CreateSessionAsync("noop");
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -929,7 +994,7 @@ public sealed class AgentRunCoordinatorTests
         var tool = new TestTool(toolId);
         using var runtime = AgentTestRuntime.CreateWithBudget(
             provider,
-            new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 10, 1, 100_000),
+            new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 10, 1),
             tool);
         var sessionId = await runtime.CreateSessionAsync(toolId);
 
@@ -946,23 +1011,22 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task QueueUserMessageAsync_ContextBudgetExhaustionPersistsFailureBeforeProviderExecution()
+    public async Task QueueUserMessageAsync_LargeEstimatedContextDoesNotExhaustCumulativeRunBudget()
     {
-        var provider = new ScriptedProvider((_, _) => Complete("This request must not run."));
+        var provider = new ScriptedProvider((_, _) => Complete("The request completed."));
         using var runtime = AgentTestRuntime.CreateWithBudget(
             provider,
-            new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 10, 10, 1));
+            new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 10, 10));
         var sessionId = await runtime.CreateSessionAsync("noop");
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
             runtime.CurrentProfileId,
-            "This message necessarily exceeds a one-token cumulative context budget.",
+            new string('x', 100_000),
             runtime.CurrentWorkspaceId);
 
-        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
-        Assert.Contains("cumulative context budget", checkpoint.Summary, StringComparison.Ordinal);
-        Assert.Empty(provider.Requests);
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Single(provider.Requests);
     }
 
     [Fact]
@@ -971,7 +1035,7 @@ public sealed class AgentRunCoordinatorTests
         var provider = new ScriptedProvider((_, _) => Complete("This request must not run."));
         using var runtime = AgentTestRuntime.CreateWithBudget(
             provider,
-            new AgentRunBudgetLimits(TimeSpan.FromTicks(1), 10, 10, 100_000));
+            new AgentRunBudgetLimits(TimeSpan.FromTicks(1), 10, 10));
         var sessionId = await runtime.CreateSessionAsync("noop");
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -1076,7 +1140,7 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task QueueUserMessageAsync_RetriesTransientStreamFailureAfterToolResult()
+    public async Task QueueUserMessageAsync_RetriesPreOutputTransientFailureAfterToolResult()
     {
         const string toolId = "fetch_page";
 
@@ -1085,7 +1149,7 @@ public sealed class AgentRunCoordinatorTests
                 requestIndex switch
                 {
                     1 => [ToolRequest("call-1", toolId, "{\"url\":\"https://example.com\"}")],
-                    2 => [Delta("partial summary"), TransientStreamError()],
+                    2 => [TransientStreamError()],
                     3 => [AssertAndComplete(request, toolId, "call-1")],
                     _ => throw new Xunit.Sdk.XunitException(
                         $"Unexpected provider request {requestIndex}."
@@ -1114,10 +1178,6 @@ public sealed class AgentRunCoordinatorTests
                     && item.CallId == "call-1"
                 )
         );
-        Assert.DoesNotContain(
-            provider.Requests[2].Turns,
-            turn => RenderTurnText(turn).Contains("partial summary", StringComparison.Ordinal)
-        );
     }
 
     [Fact]
@@ -1131,7 +1191,8 @@ public sealed class AgentRunCoordinatorTests
                     Assert.Single(request.Turns, turn => turn.Role == AgentMessageRole.User)
                 );
                 Assert.Contains("Review this.", userText);
-                Assert.Contains("Attached file: notes.md", userText);
+                Assert.Contains("Attached file metadata (untrusted JSON)", userText);
+                Assert.Contains("\"fileName\":\"notes.md\"", userText);
                 Assert.Contains("hello from file", userText);
                 return Complete("done");
             }
@@ -2315,16 +2376,20 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task QueueUserMessageAsync_KeepsEntireActiveExchangeWhenWorkingSummaryBoundsOlderHistory()
+    public async Task QueueUserMessageAsync_CompactsActiveExchangeAndRetainsLatestToolPair()
     {
         const string toolId = "fetch_page";
         const string currentUserMessage = "Current request: fetch the current page.";
         const int toolLoopCount = 10;
+        var sawCompactedActiveRun = false;
 
         var provider = new ScriptedProvider(
             (request, requestIndex) =>
             {
-                AssertActiveExchange(request, requestIndex, currentUserMessage);
+                sawCompactedActiveRun |= AssertActiveRunContext(
+                    request,
+                    requestIndex,
+                    currentUserMessage);
 
                 if (requestIndex == 1)
                 {
@@ -2365,6 +2430,7 @@ public sealed class AgentRunCoordinatorTests
 
         Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
         Assert.Equal(toolLoopCount + 1, provider.Requests.Count);
+        Assert.True(sawCompactedActiveRun);
     }
 
     [Fact]
@@ -2592,6 +2658,243 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
+    public async Task QueueUserMessageAsync_CompactionEvictsHistoricalBinaryFromProviderContext()
+    {
+        const string toolId = "inspect";
+        const int attachmentSize = 2_350_000;
+        AgentTestRuntime? observedRuntime = null;
+        Guid sessionId = default;
+        Guid attachmentTurnId = default;
+
+        var provider = new ScriptedProvider(
+            (request, requestIndex) =>
+            {
+                if (requestIndex == 1)
+                {
+                    var contextCheckpoint = Assert.IsType<AgentSessionContextCheckpointRecord>(
+                        observedRuntime!.SessionService.GetLatestSessionContextCheckpoint(sessionId));
+                    var turns = observedRuntime.SessionService.ListTurns(sessionId);
+                    Assert.Contains(
+                        attachmentTurnId,
+                        turns.Skip(contextCheckpoint.OmittedTurnCount).Select(turn => turn.TurnId));
+                    return ToolRequest("call-1", toolId, "{}");
+                }
+
+                return requestIndex == 2
+                    ? AssertAndComplete(request, toolId, "call-1")
+                    : throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}.");
+            },
+            supportsImageInput: true);
+        using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
+        observedRuntime = runtime;
+        sessionId = await runtime.CreateSessionAsync(toolId);
+        for (var index = 0; index < 24; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant,
+                $"old-{index:00}");
+        }
+
+        var content = new byte[attachmentSize];
+        byte[] pngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        pngSignature.CopyTo(content, 0);
+        var storedAttachment = await runtime.AttachmentService.StoreAttachmentAsync(
+            sessionId,
+            new AgentAttachmentUploadRequest("historical.png", "image/png", content));
+        var attachmentTurn = runtime.SessionService.AppendUserTurn(
+            sessionId,
+            AgentMessageRole.User,
+            "Historical image marker.",
+            [storedAttachment]);
+        attachmentTurnId = attachmentTurn.TurnId;
+        for (var index = 0; index < 5; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                index % 2 == 0 ? AgentMessageRole.Assistant : AgentMessageRole.User,
+                $"recent-{index:00}");
+        }
+
+        var durableTurnBefore = JsonSerializer.Serialize(runtime.SessionService.GetTurn(attachmentTurnId));
+        var durableBytesBefore = await runtime.AttachmentService.ReadAttachmentBytesAsync(storedAttachment.Metadata);
+        var activities = new List<AgentRunActivityUpdate>();
+        runtime.SessionService.RunActivityChanged += (changedSessionId, activity) =>
+        {
+            if (changedSessionId == sessionId)
+            {
+                activities.Add(activity);
+            }
+        };
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Use the tool, then answer.",
+            runtime.CurrentWorkspaceId);
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(2, provider.Requests.Count);
+        Assert.Equal([0L, 0L], provider.DataContentBytesByRequest);
+        Assert.Equal(
+            durableTurnBefore,
+            JsonSerializer.Serialize(runtime.SessionService.GetTurn(attachmentTurnId)));
+        Assert.Equal(
+            durableBytesBefore,
+            await runtime.AttachmentService.ReadAttachmentBytesAsync(storedAttachment.Metadata));
+        var completedActivityIndex = activities.FindIndex(activity =>
+            activity.Text == "Session compaction completed");
+        var thinkingActivityIndex = activities.FindLastIndex(activity =>
+            activity.Kind == AgentRunActivityKind.Thinking && activity.Text == "Thinking");
+        Assert.True(completedActivityIndex >= 0);
+        Assert.True(thinkingActivityIndex > completedActivityIndex);
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_PayloadPressureEvictsHistoricalBinaryInShortSession()
+    {
+        const int historicalSize = 20 * 1024 * 1024;
+        const int currentSize = 6 * 1024 * 1024;
+        var provider = new ScriptedProvider((_, _) => Complete("done"), supportsImageInput: true);
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        var historicalBytes = new byte[historicalSize];
+        byte[] pngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        pngSignature.CopyTo(historicalBytes, 0);
+        var historicalAttachment = await runtime.AttachmentService.StoreAttachmentAsync(
+            sessionId,
+            new AgentAttachmentUploadRequest("historical.png", "image/png", historicalBytes));
+        var historicalTurn = runtime.SessionService.AppendUserTurn(
+            sessionId,
+            AgentMessageRole.User,
+            "Historical image.",
+            [historicalAttachment]);
+        var durableHistoricalTurn = JsonSerializer.Serialize(
+            runtime.SessionService.GetTurn(historicalTurn.TurnId));
+        var currentBytes = new byte[currentSize];
+        pngSignature.CopyTo(currentBytes, 0);
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Inspect only the current image.",
+            runtime.CurrentWorkspaceId,
+            [new AgentAttachmentUploadRequest("current.png", "image/png", currentBytes)]);
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal([(long)currentSize], provider.DataContentBytesByRequest);
+        Assert.Equal(
+            1,
+            Assert.IsType<AgentSessionContextCheckpointRecord>(
+                runtime.SessionService.GetLatestSessionContextCheckpoint(sessionId)).OmittedTurnCount);
+        Assert.Equal(
+            durableHistoricalTurn,
+            JsonSerializer.Serialize(runtime.SessionService.GetTurn(historicalTurn.TurnId)));
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_OversizedActivePayloadFailsWithoutCompactingHistory()
+    {
+        const int currentSize = 25 * 1024 * 1024;
+        var provider = new ScriptedProvider(
+            (_, _) => Complete("Provider must not run."),
+            supportsImageInput: true);
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        byte[] pngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        var historicalAttachment = await runtime.AttachmentService.StoreAttachmentAsync(
+            sessionId,
+            new AgentAttachmentUploadRequest("historical.png", "image/png", pngSignature));
+        runtime.SessionService.AppendUserTurn(
+            sessionId,
+            AgentMessageRole.User,
+            "Historical image.",
+            [historicalAttachment]);
+        for (var index = 0; index < 5; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant,
+                $"recent-{index:00}");
+        }
+        var currentBytes = new byte[currentSize];
+        pngSignature.CopyTo(currentBytes, 0);
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Inspect this image.",
+            runtime.CurrentWorkspaceId,
+            [new AgentAttachmentUploadRequest("current.png", "image/png", currentBytes)]);
+
+        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
+        Assert.Empty(provider.Requests);
+        Assert.Null(runtime.SessionService.GetLatestSessionContextCheckpoint(sessionId));
+    }
+
+    [Fact]
+    public async Task QueueUserMessageAsync_RedactsHistoricalTextAttachmentBeforeContextContributors()
+    {
+        const string attachmentBody = "historical attachment body must not be reflected";
+        var provider = new ScriptedProvider(
+            (request, requestIndex) =>
+            {
+                Assert.Equal(1, requestIndex);
+                var renderedRequest = (request.SystemInstructions ?? string.Empty)
+                                      + "\n"
+                                      + string.Join("\n", request.Turns.Select(RenderTurnText));
+                Assert.Contains("projected-turn-reflection", renderedRequest, StringComparison.Ordinal);
+                Assert.Contains("Historical attachment omitted from AI context", renderedRequest, StringComparison.Ordinal);
+                Assert.DoesNotContain(attachmentBody, renderedRequest, StringComparison.Ordinal);
+                return Complete("done");
+            });
+        using var runtime = AgentTestRuntime.Create(provider);
+        runtime.ExtensionCatalog.AddExtension(
+            PackageExtensionPoints.PromptContextContributors,
+            new ProjectedTurnReflectionContributor(),
+            "example.projected-turn-reflection");
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        for (var index = 0; index < 24; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant,
+                $"old-{index:00}");
+        }
+
+        var storedAttachment = await runtime.AttachmentService.StoreAttachmentAsync(
+            sessionId,
+            new AgentAttachmentUploadRequest(
+                "historical.txt",
+                "text/plain",
+                Encoding.UTF8.GetBytes(attachmentBody)));
+        var attachmentTurn = runtime.SessionService.AppendUserTurn(
+            sessionId,
+            AgentMessageRole.User,
+            "Historical text marker.",
+            [storedAttachment]);
+        for (var index = 0; index < 5; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                index % 2 == 0 ? AgentMessageRole.Assistant : AgentMessageRole.User,
+                $"recent-{index:00}");
+        }
+        var durableTurnBefore = JsonSerializer.Serialize(runtime.SessionService.GetTurn(attachmentTurn.TurnId));
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Which project rule applies?",
+            runtime.CurrentWorkspaceId);
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(
+            durableTurnBefore,
+            JsonSerializer.Serialize(runtime.SessionService.GetTurn(attachmentTurn.TurnId)));
+    }
+
+    [Fact]
     public async Task QueueUserMessageAsync_OrchestratedLoopUsesCoreSessionProjection()
     {
         const string toolId = "fetch_page";
@@ -2716,13 +3019,17 @@ public sealed class AgentRunCoordinatorTests
         const string toolId = "read_file";
         const int toolCallCount = 50;
         const string userMessage = "Inspect many files before answering.";
+        var sawCompactedActiveRun = false;
 
         var provider = new ScriptedProvider(
             (request, requestIndex) =>
             {
                 if (requestIndex <= toolCallCount)
                 {
-                    AssertActiveExchange(request, requestIndex, userMessage);
+                    sawCompactedActiveRun |= AssertActiveRunContext(
+                        request,
+                        requestIndex,
+                        userMessage);
                     return ToolRequest(
                         $"call-{requestIndex}",
                         toolId,
@@ -2752,6 +3059,7 @@ public sealed class AgentRunCoordinatorTests
         Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
         Assert.Equal(toolCallCount, tool.ExecutionCount);
         Assert.Equal(toolCallCount + 1, provider.Requests.Count);
+        Assert.True(sawCompactedActiveRun);
     }
 
     [Fact]
@@ -3086,6 +3394,16 @@ public sealed class AgentRunCoordinatorTests
             toolSource
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
+        var observedPendingRequest = false;
+        runtime.SessionService.SessionChanged += changedSessionId =>
+        {
+            if (changedSessionId == sessionId
+                && runtime.PermissionService.ListPendingRequests(sessionId).Count == 1
+                && runtime.SessionService.GetLatestCheckpoint(sessionId)?.Status == AgentRunStatus.WaitingForApproval)
+            {
+                observedPendingRequest = true;
+            }
+        };
 
         var waitingCheckpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
@@ -3095,6 +3413,7 @@ public sealed class AgentRunCoordinatorTests
         );
 
         Assert.Equal(AgentRunStatus.WaitingForApproval, waitingCheckpoint.Status);
+        Assert.True(observedPendingRequest);
         var pending = Assert.Single(runtime.PermissionService.ListPendingRequests(sessionId));
         var preparedExecution = Assert.IsType<AgentToolExecutionRecord>(
             runtime.Store.GetToolExecution(pending.ToolExecutionId!.Value));
@@ -3128,6 +3447,96 @@ public sealed class AgentRunCoordinatorTests
                 && turn.Kind == AgentTurnKind.Message
                 && RenderTurnText(turn).Contains("Used the tool result", StringComparison.Ordinal)
         );
+    }
+
+    [Fact]
+    public async Task SessionChanged_CanApproveNewPendingRequestBeforeQueueCallReturns()
+    {
+        const string toolId = "approval_tool";
+        var provider = new ScriptedProvider((request, requestIndex) => requestIndex switch
+        {
+            1 => ToolRequest("call-1", toolId, "{\"path\":\"~\"}"),
+            2 => AssertAndComplete(request, toolId, "call-1"),
+            _ => throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}."),
+        });
+        using var runtime = AgentTestRuntime.Create(provider);
+        var toolSource = new PermissionedToolSource(toolId);
+        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, toolSource);
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        Task<AgentRunCheckpointRecord?>? approvalTask = null;
+        var approvalStarted = 0;
+        var activeRunWasCleared = false;
+        runtime.SessionService.SessionChanged += changedSessionId =>
+        {
+            var pending = changedSessionId == sessionId
+                ? runtime.PermissionService.ListPendingRequests(sessionId).SingleOrDefault()
+                : null;
+            if (pending is not null
+                && Interlocked.CompareExchange(ref approvalStarted, 1, 0) == 0)
+            {
+                activeRunWasCleared = runtime.ActiveRunRegistry.GetCurrent(
+                    sessionId,
+                    pending.RunId,
+                    pending.RunRevision) is null;
+                approvalTask = runtime.RunCoordinator.ApprovePendingPermissionAsync(
+                    sessionId,
+                    pending.RequestId);
+            }
+        };
+
+        var waitingCheckpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Use the approval tool.",
+            runtime.CurrentWorkspaceId);
+        var completedCheckpoint = await Assert.IsType<Task<AgentRunCheckpointRecord?>>(approvalTask);
+
+        Assert.Equal(AgentRunStatus.WaitingForApproval, waitingCheckpoint.Status);
+        Assert.True(activeRunWasCleared);
+        Assert.Equal(AgentRunStatus.Completed, completedCheckpoint?.Status);
+        Assert.Empty(runtime.PermissionService.ListPendingRequests(sessionId));
+        Assert.Equal(1, toolSource.ExecutionCount);
+    }
+
+    [Fact]
+    public async Task ApprovePendingPermission_RespectsNewConfiguredDeny()
+    {
+        const string toolId = "approval_tool";
+        var provider = new ScriptedProvider((_, requestIndex) => requestIndex switch
+        {
+            1 => ToolRequest("call-1", toolId, "{}"),
+            _ => throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}."),
+        });
+        using var runtime = AgentTestRuntime.Create(provider);
+        var toolSource = new PermissionedToolSource(toolId);
+        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, toolSource);
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        var waiting = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Use the approval tool.",
+            runtime.CurrentWorkspaceId);
+        var pending = Assert.Single(runtime.PermissionService.ListPendingRequests(sessionId));
+        runtime.PermissionService.SaveOverride(
+            pending.ActionId,
+            pending.BoundaryId,
+            AgentPermissionDecision.Deny);
+
+        var denied = await runtime.RunCoordinator.ApprovePendingPermissionAsync(
+            sessionId,
+            pending.RequestId);
+
+        Assert.Equal(AgentRunStatus.WaitingForApproval, waiting.Status);
+        Assert.Equal(AgentRunStatus.Stopped, denied?.Status);
+        Assert.Empty(runtime.PermissionService.ListPendingRequests(sessionId));
+        Assert.Equal(0, toolSource.ExecutionCount);
+        Assert.Contains(
+            runtime.SessionService.ListTurns(sessionId).SelectMany(static turn => turn.Items),
+            item => item.Kind == AgentTurnItemKind.ToolResult
+                    && item.CallId == pending.CallId
+                    && item.ErrorCode == "permission-denied");
     }
 
     [Fact]
@@ -3413,7 +3822,7 @@ public sealed class AgentRunCoordinatorTests
                     $"Provider request {requestIndex} must be rejected by the cumulative budget."));
         using var runtime = AgentTestRuntime.CreateWithBudget(
             provider,
-            new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 1, 10, 100_000));
+            new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 1, 10));
         var toolSource = new PermissionedToolSource(toolId);
         runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, toolSource);
         runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, toolSource);
@@ -3486,16 +3895,16 @@ public sealed class AgentRunCoordinatorTests
             {
                 var systemInstructions = request.SystemInstructions ?? string.Empty;
                 Assert.DoesNotContain("parent-old-000", systemInstructions, StringComparison.Ordinal);
-                Assert.Contains(
-                    request.Turns,
-                    turn => turn.Role == AgentMessageRole.User
-                            && RenderTurnText(turn).Contains("Supplementary user-role context follows as JSON", StringComparison.Ordinal)
-                            && RenderTurnText(turn).Contains("parent-old-000", StringComparison.Ordinal));
+                Assert.True(
+                    request.Turns.Any(turn => turn.Role == AgentMessageRole.User
+                                              && RenderTurnText(turn).Contains("Supplementary user-role context follows as JSON", StringComparison.Ordinal)
+                                              && RenderTurnText(turn).Contains("parent-old-000", StringComparison.Ordinal)),
+                    "The parent continuation request did not include projected supplementary context.");
                 Assert.DoesNotContain(request.Turns, turn => RenderTurnText(turn) == "parent-old-000");
-                Assert.Contains(
-                    request.Turns,
-                    turn => turn.Kind == AgentTurnKind.ToolResult
-                            && turn.Items.Any(item => item.CallId == "task-call"));
+                Assert.True(
+                    request.Turns.Any(turn => turn.Kind == AgentTurnKind.ToolResult
+                                              && turn.Items.Any(item => item.CallId == "task-call")),
+                    "The parent continuation request did not include the completed child tool result.");
                 return Complete("parent resumed");
             }
         );
@@ -3555,7 +3964,9 @@ public sealed class AgentRunCoordinatorTests
             CancellationToken.None);
 
         Assert.NotNull(resumedCheckpoint);
-        Assert.Equal(AgentRunStatus.Completed, resumedCheckpoint!.Status);
+        Assert.True(
+            resumedCheckpoint!.Status == AgentRunStatus.Completed,
+            resumedCheckpoint.Summary);
         Assert.Contains(runtime.SessionService.ListTurns(parentSessionId), turn => turn.TurnId == parentUserTurn.TurnId);
     }
 
@@ -3887,7 +4298,125 @@ public sealed class AgentRunCoordinatorTests
         );
 
         Assert.Equal(AgentPermissionDecision.Allow, evaluation.Decision);
+        Assert.Equal(AgentPermissionDecision.Ask, evaluation.BaseDecision);
+        Assert.Equal(AgentPermissionDecisionSource.UnrestrictedMode, evaluation.Source);
+        Assert.Equal(parentSessionId, evaluation.SourceSessionId);
         Assert.Contains("inherited Unrestricted Mode", evaluation.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WorkspaceExecutionContext_RejectsStalePathSnapshot()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")));
+        await runtime.CreateSessionAsync("noop");
+        var snapshot = Assert.IsType<AgentWorkspaceRecord>(
+            runtime.WorkspaceService.GetWorkspace(runtime.CurrentWorkspaceId));
+        Assert.True(runtime.ToolService.IsCurrentWorkspaceExecutionContext(
+            snapshot,
+            executionBinding: null));
+        var workspacePath = Path.Combine(runtime.RootPath, "workspace");
+        Directory.CreateDirectory(workspacePath);
+
+        runtime.WorkspaceService.SaveWorkspacePaths(
+            runtime.CurrentWorkspaceId,
+            [
+                new AgentWorkspacePathRecord(
+                    Guid.NewGuid().ToString("N"),
+                    runtime.CurrentWorkspaceId,
+                    workspacePath,
+                    IsDefault: true,
+                    SortOrder: 0,
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow),
+            ]);
+
+        Assert.False(runtime.ToolService.IsCurrentWorkspaceExecutionContext(
+            snapshot,
+            executionBinding: null));
+    }
+
+    [Fact]
+    public async Task ToolExecution_RechecksWorkspaceAfterAwaitedReadiness()
+    {
+        const string toolId = "blocking_readiness";
+        var tool = new BlockingReadinessTool(toolId);
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            tool);
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        var workspace = Assert.IsType<AgentWorkspaceRecord>(
+            runtime.WorkspaceService.GetWorkspace(runtime.CurrentWorkspaceId));
+
+        var execution = runtime.ToolService.ExecuteAsync(
+            toolId,
+            "{}",
+            sessionId,
+            runtime.CurrentProfileId,
+            workspace);
+        await tool.ReadinessEntered.WaitAsync(TimeSpan.FromSeconds(10));
+        var workspacePath = Path.Combine(runtime.RootPath, "changed-workspace");
+        Directory.CreateDirectory(workspacePath);
+        runtime.WorkspaceService.SaveWorkspacePaths(
+            runtime.CurrentWorkspaceId,
+            [
+                new AgentWorkspacePathRecord(
+                    Guid.NewGuid().ToString("N"),
+                    runtime.CurrentWorkspaceId,
+                    workspacePath,
+                    IsDefault: true,
+                    SortOrder: 0,
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow),
+            ]);
+        tool.ReleaseReadiness();
+
+        var result = await execution;
+
+        Assert.True(result.IsError);
+        Assert.Equal(AgentToolSecurityErrorCodes.PermissionContextChanged, result.ErrorCode);
+        Assert.Equal(0, tool.ExecutionCount);
+    }
+
+    [Fact]
+    public async Task ToolDispatch_StartsAtomicallyBeforeConcurrentWorkspaceMutation()
+    {
+        const string toolId = "workspace_dispatch_fence";
+        var tool = new WorkspaceDispatchFenceTool(toolId);
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("done")),
+            tool);
+        var sessionId = await runtime.CreateSessionAsync(toolId);
+        var workspace = Assert.IsType<AgentWorkspaceRecord>(
+            runtime.WorkspaceService.GetWorkspace(runtime.CurrentWorkspaceId));
+        var changedPath = Path.Combine(runtime.RootPath, "changed-workspace");
+        Directory.CreateDirectory(changedPath);
+        tool.ConfigureMutation(() => runtime.WorkspaceService.SaveWorkspacePaths(
+            runtime.CurrentWorkspaceId,
+            [
+                new AgentWorkspacePathRecord(
+                    Guid.NewGuid().ToString("N"),
+                    runtime.CurrentWorkspaceId,
+                    changedPath,
+                    IsDefault: true,
+                    SortOrder: 0,
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow),
+            ]));
+
+        var result = await runtime.ToolService.ExecuteAsync(
+            toolId,
+            "{}",
+            sessionId,
+            runtime.CurrentProfileId,
+            workspace);
+        await Assert.IsType<Task>(tool.MutationTask);
+
+        Assert.False(result.IsError, result.Summary);
+        Assert.Equal(1, tool.ExecutionCount);
+        Assert.False(runtime.ToolService.IsCurrentWorkspaceExecutionContext(
+            workspace,
+            executionBinding: null));
     }
 
     [Fact]
@@ -3980,6 +4509,9 @@ public sealed class AgentRunCoordinatorTests
         );
 
         Assert.Equal(AgentPermissionDecision.Allow, evaluation.Decision);
+        Assert.Equal(AgentPermissionDecision.Ask, evaluation.BaseDecision);
+        Assert.Equal(AgentPermissionDecisionSource.SessionApproval, evaluation.Source);
+        Assert.Equal(parentSessionId, evaluation.SourceSessionId);
         Assert.Contains("session-scoped approval", evaluation.Reason, StringComparison.Ordinal);
     }
 
@@ -5410,7 +5942,7 @@ public sealed class AgentRunCoordinatorTests
             true,
             DateTimeOffset.UtcNow,
             ExecutionFingerprint: new string('a', 64));
-        Assert.NotNull(runtime.PermissionService.SavePendingRequestAndSuspendRun(request, lease));
+        Assert.NotNull(runtime.SessionService.SavePendingPermissionRequestAndSuspendRun(request, lease));
         var mutations = new List<AgentTurnMutation>();
         runtime.SessionService.TurnMutated += mutation =>
         {
@@ -12540,7 +13072,8 @@ public sealed class AgentRunCoordinatorTests
     private sealed record AgentProviderResponse(
         string Content,
         bool IsError = false,
-        string? ErrorCode = null
+        string? ErrorCode = null,
+        AgentChatProviderFailureKind FailureKind = AgentChatProviderFailureKind.Unknown
     );
 
     private static AgentProviderStreamEvent AssertAndComplete(
@@ -12748,7 +13281,7 @@ public sealed class AgentRunCoordinatorTests
         return Complete("Used the tool result with projected context.");
     }
 
-    private static void AssertActiveExchange(
+    private static bool AssertActiveRunContext(
         AgentProviderRequest request,
         int requestIndex,
         string currentUserMessage
@@ -12766,14 +13299,21 @@ public sealed class AgentRunCoordinatorTests
 
         Assert.True(
             activeStartIndex >= 0,
-            "The current run's user turn should always remain in the provider request."
-        );
+            "The exact active user turn must remain in the provider request after compaction.");
+        AssertNoUnpairedToolItems(request);
+        var requestItems = request.Turns.SelectMany(turn => turn.Items).ToArray();
+        if (requestIndex > 1)
+        {
+            var latestCallId = $"call-{requestIndex - 1}";
+            Assert.Contains(
+                requestItems,
+                item => item.Kind == AgentTurnItemKind.ToolCall && item.CallId == latestCallId);
+            Assert.Contains(
+                requestItems,
+                item => item.Kind == AgentTurnItemKind.ToolResult && item.CallId == latestCallId);
+        }
 
-        var activeTurns = request.Turns.Skip(activeStartIndex).ToArray();
-        var expectedActiveTurnCount = 1 + ((requestIndex - 1) * 2);
-
-        Assert.Equal(expectedActiveTurnCount, activeTurns.Length);
-        Assert.Equal(currentUserMessage, RenderTurnText(activeTurns[0]));
+        return requestIndex > 2 && requestItems.All(item => item.CallId != "call-1");
     }
 
     private static AgentProviderStreamEvent AssertToolAvailableAndRequest(
@@ -12832,6 +13372,15 @@ public sealed class AgentRunCoordinatorTests
                 "The provider rejected the request.",
                 IsError: true,
                 ErrorCode: "invalid-request"));
+
+    private static AgentProviderStreamEvent ContextWindowError() =>
+        new(
+            AgentProviderStreamEventType.Error,
+            Response: new AgentProviderResponse(
+                "The selected model rejected the request because its context window was exceeded.",
+                IsError: true,
+                ErrorCode: "test-context-window-exceeded",
+                FailureKind: AgentChatProviderFailureKind.ContextWindowExceeded));
 
     private static bool RequestContainsUserText(AgentProviderRequest request, string text) =>
         request.Turns.Any(turn =>
@@ -13386,6 +13935,7 @@ public sealed class AgentRunCoordinatorTests
             AgentActiveRunRegistry activeRunRegistry,
             AgentRunCoordinator runCoordinator,
             AgentMemoryCoordinator memoryCoordinator,
+            AgentToolService toolService,
             AgentSessionService sessionService,
             AgentWorkspaceService workspaceService,
             AgentPermissionService permissionService,
@@ -13402,6 +13952,7 @@ public sealed class AgentRunCoordinatorTests
             ActiveRunRegistry = activeRunRegistry;
             RunCoordinator = runCoordinator;
             MemoryCoordinator = memoryCoordinator;
+            ToolService = toolService;
             SessionService = sessionService;
             WorkspaceService = workspaceService;
             PermissionService = permissionService;
@@ -13419,6 +13970,8 @@ public sealed class AgentRunCoordinatorTests
         public AgentActiveRunRegistry ActiveRunRegistry { get; }
 
         public AgentMemoryCoordinator MemoryCoordinator { get; }
+
+        public AgentToolService ToolService { get; }
 
         public AgentSessionService SessionService { get; }
 
@@ -13658,6 +14211,7 @@ public sealed class AgentRunCoordinatorTests
                 activeRunRegistry,
                 runCoordinator,
                 memoryCoordinator,
+                toolService,
                 sessionService,
                 workspaceService,
                 permissionService,
@@ -13732,6 +14286,7 @@ public sealed class AgentRunCoordinatorTests
             IReadOnlyList<AgentProviderStreamEvent>
         > _handler;
         private readonly bool _supportsMultipleToolCalls;
+        private readonly bool _supportsImageInput;
         private readonly IReadOnlyList<AgentModelDescriptor> _models;
         private readonly AgentProviderReadinessStatus _readinessStatus;
         private readonly string _readinessMessage;
@@ -13751,7 +14306,8 @@ public sealed class AgentRunCoordinatorTests
             string? packageId = "test.package",
             string? utilityModelId = null,
             Func<CancellationToken, ValueTask<AgentProviderReadiness>>? readinessHandler = null,
-            Func<CancellationToken, ValueTask>? beforeExecutionHandler = null
+            Func<CancellationToken, ValueTask>? beforeExecutionHandler = null,
+            bool supportsImageInput = false
         )
             : this(
                 (request, requestIndex) => [handler(request, requestIndex)],
@@ -13762,7 +14318,8 @@ public sealed class AgentRunCoordinatorTests
                 packageId,
                 utilityModelId,
                 readinessHandler,
-                beforeExecutionHandler
+                beforeExecutionHandler,
+                supportsImageInput
             )
         { }
 
@@ -13775,11 +14332,13 @@ public sealed class AgentRunCoordinatorTests
             string? packageId = "test.package",
             string? utilityModelId = null,
             Func<CancellationToken, ValueTask<AgentProviderReadiness>>? readinessHandler = null,
-            Func<CancellationToken, ValueTask>? beforeExecutionHandler = null
+            Func<CancellationToken, ValueTask>? beforeExecutionHandler = null,
+            bool supportsImageInput = false
         )
         {
             _handler = handler;
             _supportsMultipleToolCalls = supportsMultipleToolCalls;
+            _supportsImageInput = supportsImageInput;
             _models =
                 models
                 ??
@@ -13815,6 +14374,8 @@ public sealed class AgentRunCoordinatorTests
 
         public List<ChatOptions> RequestOptions { get; } = [];
 
+        public List<long> DataContentBytesByRequest { get; } = [];
+
         public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(
             CancellationToken cancellationToken = default
         ) => ValueTask.FromResult(_models);
@@ -13844,7 +14405,8 @@ public sealed class AgentRunCoordinatorTests
                     SupportsNativeToolCalling: true,
                     SupportsStreamingToolCalls: true,
                     SupportsMultipleToolCalls: _supportsMultipleToolCalls,
-                    Summary: "Test provider supports native tool calling."
+                    Summary: "Test provider supports native tool calling.",
+                    SupportsImageInput: _supportsImageInput
                 )
             );
 
@@ -13922,12 +14484,18 @@ public sealed class AgentRunCoordinatorTests
             )
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var request = BuildProviderRequest(_context, messages, options);
+                var requestMessages = messages.ToArray();
+                var dataContentBytes = requestMessages
+                    .SelectMany(message => message.Contents)
+                    .OfType<DataContent>()
+                    .Sum(content => (long)content.Data.Length);
+                var request = BuildProviderRequest(_context, requestMessages, options);
                 var capturedRequest = CloneRequest(request);
                 int requestIndex;
                 lock (_provider.Requests)
                 {
                     _provider.Requests.Add(capturedRequest);
+                    _provider.DataContentBytesByRequest.Add(dataContentBytes);
                     if (options is not null)
                     {
                         _provider.RequestOptions.Add(options);
@@ -14016,7 +14584,10 @@ public sealed class AgentRunCoordinatorTests
                                 streamEvent.Response.ErrorCode ?? "Provider response failed.",
                                 streamEvent.Response.Content,
                                 streamEvent.Response.ErrorCode
-                            );
+                            )
+                            {
+                                FailureKind = streamEvent.Response.FailureKind,
+                            };
                     }
                 }
 
@@ -14502,6 +15073,100 @@ public sealed class AgentRunCoordinatorTests
         }
 
         public void Release() => _release.TrySetResult();
+    }
+
+    private sealed class BlockingReadinessTool(string toolId) : IAgentTool
+    {
+        private readonly TaskCompletionSource _readinessEntered = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseReadiness = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _executionCount;
+
+        public Task ReadinessEntered => _readinessEntered.Task;
+
+        public int ExecutionCount => Volatile.Read(ref _executionCount);
+
+        public AgentToolDescriptor Descriptor { get; } = new(
+            toolId,
+            "Blocking Readiness Tool",
+            "Blocks readiness until the workspace changes.",
+            IsReadOnly: true,
+            ArgumentsJsonSchema: "{\"type\":\"object\"}");
+
+        public async ValueTask<AgentToolReadiness> GetReadinessAsync(
+            CancellationToken cancellationToken = default)
+        {
+            _readinessEntered.TrySetResult();
+            await _releaseReadiness.Task.WaitAsync(cancellationToken);
+            return new AgentToolReadiness(
+                Descriptor.ToolId,
+                AgentToolReadinessStatus.Ready,
+                "Ready.");
+        }
+
+        public ValueTask<AgentToolResult> ExecuteAsync(
+            AgentToolExecutionContext context,
+            AgentToolRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _executionCount);
+            return ValueTask.FromResult(new AgentToolResult(
+                request.ToolId,
+                "Executed.",
+                Content: "Executed."));
+        }
+
+        public void ReleaseReadiness() => _releaseReadiness.TrySetResult();
+    }
+
+    private sealed class WorkspaceDispatchFenceTool(string toolId) : IAgentTool
+    {
+        private Action? _mutation;
+        private int _executionCount;
+
+        public Task? MutationTask { get; private set; }
+
+        public int ExecutionCount => Volatile.Read(ref _executionCount);
+
+        public AgentToolDescriptor Descriptor { get; } = new(
+            toolId,
+            "Workspace Dispatch Fence Tool",
+            "Verifies that workspace mutation cannot overtake tool dispatch.",
+            IsReadOnly: true,
+            ArgumentsJsonSchema: "{\"type\":\"object\"}");
+
+        public void ConfigureMutation(Action mutation) => _mutation = mutation;
+
+        public ValueTask<AgentToolReadiness> GetReadinessAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentToolReadiness(
+                Descriptor.ToolId,
+                AgentToolReadinessStatus.Ready,
+                "Ready."));
+
+        public ValueTask<AgentToolResult> ExecuteAsync(
+            AgentToolExecutionContext context,
+            AgentToolRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            var mutation = _mutation
+                ?? throw new InvalidOperationException("The workspace mutation was not configured.");
+            var mutationAttempted = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            MutationTask = Task.Run(() =>
+            {
+                mutationAttempted.TrySetResult();
+                mutation();
+            }, cancellationToken);
+            mutationAttempted.Task.GetAwaiter().GetResult();
+            Assert.False(MutationTask.IsCompleted);
+            Interlocked.Increment(ref _executionCount);
+            return ValueTask.FromResult(new AgentToolResult(
+                request.ToolId,
+                "Executed.",
+                Content: "Executed."));
+        }
     }
 
     private sealed class ConcurrentToolExecutionTracker
@@ -15400,6 +16065,25 @@ public sealed class AgentRunCoordinatorTests
 
             private void ThrowIfDisposed()
                 => ObjectDisposedException.ThrowIf(Volatile.Read(ref _contribution) is null, this);
+        }
+    }
+
+    private sealed class ProjectedTurnReflectionContributor : IAgentPromptContextContributor
+    {
+        public string ContributorId => "projected-turn-reflection";
+
+        public string DisplayName => "Projected turn reflection";
+
+        public ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
+            AgentPromptContextRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var reflectedText = string.Join(
+                "\n",
+                request.Turns.SelectMany(turn => turn.Items).Select(item => item.TextContent));
+            return ValueTask.FromResult<AgentPromptContextContribution?>(new AgentPromptContextContribution(
+                [new AgentPromptContextBlock("projected-turn-reflection", reflectedText)]));
         }
     }
 

@@ -57,13 +57,21 @@ public sealed partial class AgentWorkspacesViewModel
             }
 
             AgentExecutionTargetWarmupResult? warmupResult = null;
-            _workspaceService.SaveWorkspaceAggregate(
-                snapshot.Workspace.WorkspaceId,
-                snapshot.DisplayName,
-                snapshot.Description,
-                snapshot.Paths,
-                snapshot.Documents,
-                snapshot.ExecutionTargetId);
+            _suppressWorkspaceRefresh = true;
+            try
+            {
+                _workspaceService.SaveWorkspaceAggregate(
+                    snapshot.Workspace.WorkspaceId,
+                    snapshot.DisplayName,
+                    snapshot.Description,
+                    snapshot.Paths,
+                    snapshot.Documents,
+                    snapshot.ExecutionTargetId);
+            }
+            finally
+            {
+                _suppressWorkspaceRefresh = false;
+            }
             if (snapshot.ExecutionTargetId is not null)
             {
                 var warmupWorkspace = _workspaceService.GetWorkspace(snapshot.Workspace.WorkspaceId)

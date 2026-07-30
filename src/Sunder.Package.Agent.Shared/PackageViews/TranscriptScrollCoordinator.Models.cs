@@ -10,14 +10,47 @@ internal enum TranscriptViewportMutationKind
     TranscriptReplacement,
 }
 
-internal sealed class TranscriptPageAnchorAuthority(
-    object? capturedAnchorKey,
-    Func<object?> resolveCurrentAnchorKey)
+internal readonly record struct TranscriptPageAnchorResolution(
+    bool PreserveAnchor,
+    object? AnchorKey)
 {
-    public object? CapturedAnchorKey { get; } = capturedAnchorKey;
+    public static TranscriptPageAnchorResolution Preserve(object? anchorKey)
+        => new(true, anchorKey);
 
-    public object? ResolveCurrentAnchorKey()
-        => resolveCurrentAnchorKey() ?? CapturedAnchorKey;
+    public static TranscriptPageAnchorResolution Relinquish()
+        => new(false, null);
+}
+
+internal sealed class TranscriptPageAnchorAuthority
+{
+    private readonly Func<TranscriptPageAnchorResolution> _resolveCurrentAnchor;
+
+    public TranscriptPageAnchorAuthority(
+        object? capturedAnchorKey,
+        Func<object?> resolveCurrentAnchorKey)
+        : this(
+            capturedAnchorKey,
+            () => TranscriptPageAnchorResolution.Preserve(resolveCurrentAnchorKey()))
+    {
+    }
+
+    public TranscriptPageAnchorAuthority(
+        object? capturedAnchorKey,
+        Func<TranscriptPageAnchorResolution> resolveCurrentAnchor)
+    {
+        CapturedAnchorKey = capturedAnchorKey;
+        _resolveCurrentAnchor = resolveCurrentAnchor;
+    }
+
+    public object? CapturedAnchorKey { get; }
+
+    public TranscriptPageAnchorResolution ResolveCurrentAnchor()
+    {
+        var current = _resolveCurrentAnchor();
+        return current.PreserveAnchor && current.AnchorKey is null
+            ? current with { AnchorKey = CapturedAnchorKey }
+            : current;
+    }
 }
 
 internal enum TranscriptViewportMutationMode

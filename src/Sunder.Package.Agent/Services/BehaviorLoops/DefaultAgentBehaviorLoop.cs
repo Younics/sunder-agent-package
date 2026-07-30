@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
@@ -10,6 +11,7 @@ namespace Sunder.Package.Agent.Services.BehaviorLoops;
 public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
 {
     public const string LoopId = AgentBehaviorLoopIds.Default;
+    private const int MaxRequestCompactionPasses = 3;
 
     private readonly AgentPromptPreparationPipeline _promptPreparationPipeline;
     private readonly AgentProviderCycleRunner _providerCycleRunner;
@@ -101,24 +103,91 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
                 preparation,
                 runCancellationToken);
             var progressGuard = new AgentRunProgressGuard();
+            var contextWindowRecoveryAttempted = false;
 
             while (true)
             {
-                var promptMessages = await _promptPreparationPipeline.BuildProviderMessagesAsync(
+                var materializedRequest = await BuildAdmittedProviderRequestAsync(
                     host,
+                    context,
                     preparation,
-                    context,
-                    runCancellationToken);
-                var providerCycle = await _providerCycleRunner.RunCycleAsync(
-                    host,
-                    context,
                     providerSession,
-                    promptMessages,
-                    assistantTurnState,
-                    loopStopwatch,
-                    runCancellationToken,
-                    budgetTracker,
-                    preparation.PromptOverheadTokens);
+                    runCancellationToken);
+                await AcknowledgeProviderContextAsync(
+                    host,
+                    materializedRequest.ReceiptBlocks,
+                    runCancellationToken);
+                AgentProviderCycleResult providerCycle;
+                try
+                {
+                    providerCycle = await _providerCycleRunner.RunCycleAsync(
+                        host,
+                        context,
+                        providerSession,
+                        materializedRequest.Messages,
+                        assistantTurnState,
+                        loopStopwatch,
+                        runCancellationToken,
+                        budgetTracker,
+                        materializedRequest.Assessment.Estimate.EstimatedInputTokens);
+                }
+                catch (AgentProviderContextWindowException ex)
+                {
+                    if (!contextWindowRecoveryAttempted && !ex.HasContentBearingOutput)
+                    {
+                        contextWindowRecoveryAttempted = true;
+                        host.LogEvent(
+                            PackageLogLevel.Information,
+                            "provider.context_window.recovery.started",
+                            "Provider context overflow occurred before output; forcing session compaction.",
+                            loopStopwatch.ElapsedMilliseconds,
+                            new Dictionary<string, object?>(StringComparer.Ordinal)
+                            {
+                                ["prompt.estimated_tokens.before"] = ex.EstimatedInputTokens,
+                            });
+                        var limits = AgentProviderRequestLimits.Resolve(context.RunCapabilities);
+                        var recoveryTarget = Math.Max(1_024L, ex.EstimatedInputTokens / 2);
+                        var requestedReduction = Math.Max(
+                            1L,
+                            limits.ProactiveInputLimitTokens - recoveryTarget);
+                        var changed = await _promptPreparationPipeline.CompactForRequestPressureAsync(
+                            host,
+                            context,
+                            preparation,
+                            (int)Math.Min(int.MaxValue, requestedReduction),
+                            requireHistoricalAttachmentEviction: false,
+                            runCancellationToken);
+                        providerSession.Options.Instructions = preparation.SystemInstructions;
+                        if (changed)
+                        {
+                            host.LogEvent(
+                                PackageLogLevel.Information,
+                                "provider.context_window.recovery.succeeded",
+                                "Session context was compacted; retrying the provider once.",
+                                loopStopwatch.ElapsedMilliseconds);
+                            continue;
+                        }
+                    }
+
+                    host.LogEvent(
+                        PackageLogLevel.Warning,
+                        "provider.context_window.recovery.exhausted",
+                        ex.HasContentBearingOutput
+                            ? "Provider context overflow occurred after output began; automatic replay was skipped."
+                            : "Provider context overflow could not be reduced safely.",
+                        loopStopwatch.ElapsedMilliseconds,
+                        new Dictionary<string, object?>(StringComparer.Ordinal)
+                        {
+                            ["provider.output_started"] = ex.HasContentBearingOutput,
+                            ["provider.recovery_attempted"] = contextWindowRecoveryAttempted,
+                        });
+                    return await _terminalHandler.HandleProviderFailureAsync(
+                        host,
+                        context,
+                        assistantTurnState,
+                        ex.ProviderException,
+                        loopStopwatch.ElapsedMilliseconds);
+                }
 
                 if (providerCycle.TerminalResult is not null)
                 {
@@ -258,7 +327,154 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
                 ex,
                 loopStopwatch.ElapsedMilliseconds);
         }
+        finally
+        {
+            if (host is IAgentPromptContextAcknowledgmentRuntime acknowledgmentRuntime)
+            {
+                acknowledgmentRuntime.DiscardPromptContextAcknowledgment();
+            }
+        }
     }
+
+    private async Task<AdmittedProviderRequest> BuildAdmittedProviderRequestAsync(
+        IAgentBehaviorLoopRuntime host,
+        AgentBehaviorLoopContext context,
+        AgentPromptPreparation preparation,
+        AgentProviderSession providerSession,
+        CancellationToken cancellationToken)
+    {
+        for (var pass = 0; ; pass++)
+        {
+            var providerMessages = await _promptPreparationPipeline.BuildProviderMessagesAsync(
+                host,
+                preparation,
+                context,
+                cancellationToken);
+            var assessment = AgentProviderRequestBudget.Assess(
+                providerMessages.Messages,
+                preparation.SystemInstructions,
+                preparation.AvailableTools,
+                context.RunCapabilities);
+            var requireHistoricalAttachmentEviction = ShouldEvictHistoricalAttachments(
+                providerMessages.Messages,
+                context,
+                preparation,
+                assessment);
+            if (!assessment.NeedsCompaction)
+            {
+                return new AdmittedProviderRequest(
+                    providerMessages.Messages,
+                    providerMessages.ReceiptBlocks,
+                    assessment);
+            }
+
+            if (!assessment.FitsPayloadLimit && !requireHistoricalAttachmentEviction)
+            {
+                throw CreatePromptTooLargeException(assessment);
+            }
+
+            if (pass >= MaxRequestCompactionPasses - 1)
+            {
+                if (assessment.FitsHardLimit)
+                {
+                    return new AdmittedProviderRequest(
+                        providerMessages.Messages,
+                        providerMessages.ReceiptBlocks,
+                        assessment);
+                }
+
+                throw CreatePromptTooLargeException(assessment);
+            }
+
+            await _promptPreparationPipeline.CompactForRequestPressureAsync(
+                host,
+                context,
+                preparation,
+                assessment.TargetReductionTokens,
+                requireHistoricalAttachmentEviction,
+                cancellationToken);
+            providerSession.Options.Instructions = preparation.SystemInstructions;
+        }
+    }
+
+    private static bool ShouldEvictHistoricalAttachments(
+        IReadOnlyList<ChatMessage> messages,
+        AgentBehaviorLoopContext context,
+        AgentPromptPreparation preparation,
+        AgentProviderRequestAssessment assessment)
+    {
+        if (assessment.FitsPayloadLimit || preparation.Projection.ContextCheckpoint is not null)
+        {
+            return false;
+        }
+
+        var activeMessageId = context.UserTurnId.ToString("N");
+        var foundHistoricalMedia = false;
+        var withoutHistoricalMedia = messages
+            .Select(message =>
+            {
+                if (string.Equals(message.MessageId, activeMessageId, StringComparison.Ordinal))
+                {
+                    return message;
+                }
+
+                var contents = message.Contents
+                    .Select(content =>
+                    {
+                        if (content is not DataContent)
+                        {
+                            return content;
+                        }
+
+                        foundHistoricalMedia = true;
+                        return (AIContent)new TextContent(
+                            "[Historical attachment omitted from AI context after session compaction.]");
+                    })
+                    .ToArray();
+                return new ChatMessage(message.Role, contents) { MessageId = message.MessageId };
+            })
+            .ToArray();
+        return foundHistoricalMedia
+               && AgentProviderRequestBudget.Assess(
+                       withoutHistoricalMedia,
+                       preparation.SystemInstructions,
+                       preparation.AvailableTools,
+                       context.RunCapabilities)
+                   .FitsPayloadLimit;
+    }
+
+    private static async Task AcknowledgeProviderContextAsync(
+        IAgentBehaviorLoopRuntime host,
+        IReadOnlyList<AgentPromptContextReceiptBlock> receiptBlocks,
+        CancellationToken cancellationToken)
+    {
+        if (receiptBlocks.Count == 0)
+        {
+            return;
+        }
+
+        if (host is not IAgentPromptContextAcknowledgmentRuntime acknowledgmentRuntime)
+        {
+            throw new InvalidOperationException(
+                "The behavior runtime cannot acknowledge required scoped instruction prompt context.");
+        }
+
+        await acknowledgmentRuntime.AcknowledgePromptContextAsync(
+            receiptBlocks,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static AgentPromptTooLargeException CreatePromptTooLargeException(
+        AgentProviderRequestAssessment assessment)
+        => !assessment.FitsPayloadLimit
+            ? new AgentPromptTooLargeException(
+                "The current attachment payload is too large for one provider request after session compaction. "
+                + $"The estimated serialized payload is {assessment.Estimate.EstimatedPayloadBytes:N0} bytes and the request limit is "
+                + $"{AgentProviderRequestBudget.MaxSerializedPayloadBytes:N0} bytes. Use smaller or fewer current attachments.")
+            : new AgentPromptTooLargeException(
+                "The current request cannot fit within the selected model's context window after session compaction. "
+                + $"The estimated input is {assessment.Estimate.EstimatedInputTokens:N0} tokens and the available input budget is "
+                + $"{assessment.Limits.HardInputLimitTokens:N0} tokens. Use smaller or fewer current attachments, reduce required instructions, or select a model with a larger context window.");
 
     private async Task<AgentBehaviorLoopResult> FailBudgetAsync(
         IAgentBehaviorLoopRuntime host,
@@ -286,3 +502,8 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
         return result;
     }
 }
+
+internal sealed record AdmittedProviderRequest(
+    IReadOnlyList<ChatMessage> Messages,
+    IReadOnlyList<AgentPromptContextReceiptBlock> ReceiptBlocks,
+    AgentProviderRequestAssessment Assessment);

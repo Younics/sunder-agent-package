@@ -37,9 +37,17 @@ internal static class DockerCli
             throw new InvalidOperationException(resolution.FailureMessage);
         }
 
+        return CreateStartInfo(resolution.ExecutablePath, args, redirectStandardInput);
+    }
+
+    internal static ProcessStartInfo CreateStartInfo(
+        string executablePath,
+        IReadOnlyList<string> args,
+        bool redirectStandardInput)
+    {
         var startInfo = new ProcessStartInfo
         {
-            FileName = resolution.ExecutablePath,
+            FileName = executablePath,
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -56,7 +64,7 @@ internal static class DockerCli
             startInfo.ArgumentList.Add(arg);
         }
 
-        AugmentPath(startInfo, resolution.ExecutablePath);
+        AugmentPath(startInfo, executablePath);
         return startInfo;
     }
 

@@ -51,4 +51,9 @@ public sealed record AgentToolExecutionContext(
 
     /// <summary>Gets an opaque reference to the exact execution-target activation selected when this tool was advertised.</summary>
     public IPackageExtensionReference<IAgentExecutionTarget>? ExecutionTargetReference { get; init; }
+
+    /// <summary>Gets the target-owned configuration generation captured for permission planning and execution.</summary>
+    /// <remarks>Target-backed tools must propagate this value to <see cref="AgentExecutionTargetContext.ExpectedConfigurationGeneration"/>.</remarks>
+    [JsonIgnore]
+    public string? ExecutionTargetConfigurationGeneration { get; init; }
 }

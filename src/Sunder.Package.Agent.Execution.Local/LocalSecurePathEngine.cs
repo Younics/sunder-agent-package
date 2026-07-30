@@ -81,11 +81,6 @@ internal static class LocalSecurePathEngine
         CancellationToken cancellationToken = default,
         LocalResourceReference? resourceReferences = null)
     {
-        var insideConfiguredScope = HostSecurePathEngine.SelectConfiguredRoot(config.WorkspacePaths, fullPath) is not null;
-        if (!insideConfiguredScope && !allowOutsideConfiguredScope)
-        {
-            throw new InvalidOperationException($"Path '{requestedPath}' is outside the configured workspace paths.");
-        }
         var capabilities = authorizationContext?.ApprovedResourceCapabilities
                            ?? approvedResourceReferences
                            ?? [];
@@ -95,55 +90,89 @@ internal static class LocalSecurePathEngine
             throw new InvalidOperationException(
                 $"Local file operations support at most {MaxApprovedResourceReferences} approved resource leases.");
         }
-        if (authorizationContext is null)
-        {
-            return insideConfiguredScope
-                ? null
-                : throw new InvalidOperationException(
-                    $"Path '{requestedPath}' is outside configured scope without an exact approved Local resource capability.");
-        }
-
-        var claim = FindClaim(authorizationContext, fullPath);
-        if (claim is null)
-        {
-            if (insideConfiguredScope && authorizationContext.ApprovedResourceClaims.Count == 0)
-            {
-                return null;
-            }
-            throw new LocalResourceReapprovalRequiredException(requestedPath);
-        }
-        var operation = authorizationContext.ResourceOperation
-            ?? throw new LocalResourceReapprovalRequiredException(requestedPath);
-        var exactOperation = operation with { ResourceIndex = claim.ResourceIndex };
-        var exactContext = authorizationContext with { ResourceOperation = exactOperation };
         LocalSecureApprovalLease? authority = null;
-        if (!insideConfiguredScope)
+        var redeemedOutsideAuthority = false;
+        try
         {
-            foreach (var reference in capabilities)
+            var claim = authorizationContext is null
+                ? null
+                : FindClaim(authorizationContext, fullPath);
+            if (claim is not null && claim.ConfiguredRoot is null)
             {
-                if (resourceReferences?.TryRedeem(
-                        reference,
-                        claim,
-                        exactOperation,
-                        out authority) == true)
+                var claimedOperation = authorizationContext!.ResourceOperation
+                    ?? throw new LocalResourceReapprovalRequiredException(requestedPath);
+                var claimedExactOperation = claimedOperation with { ResourceIndex = claim.ResourceIndex };
+                foreach (var reference in capabilities)
                 {
-                    break;
+                    if (resourceReferences?.TryRedeem(
+                            reference,
+                            claim,
+                            claimedExactOperation,
+                            out authority) == true)
+                    {
+                        redeemedOutsideAuthority = true;
+                        break;
+                    }
                 }
             }
             if (authority is null)
             {
+                authority = HostSecurePathEngine.Capture(
+                    config.WorkspacePaths,
+                    fullPath,
+                    cancellationToken: cancellationToken,
+                    allowMissingSuffix: true);
+            }
+
+            var scope = HostSecurePathEngine.ClassifyConfiguredRoot(
+                config.WorkspacePaths,
+                authority,
+                cancellationToken: cancellationToken);
+            if (scope.Classification != LocalConfiguredScopeClassification.Configured
+                && !authority.Binding.Exists
+                && HostSecurePathEngine.GetRelativeSegments(
+                    authority.Binding.AnchorPath,
+                    authority.Binding.FullPath).Count > 1)
+            {
                 throw new LocalResourceReapprovalRequiredException(requestedPath);
             }
-        }
-        else
-        {
-            authority = HostSecurePathEngine.Capture(config.WorkspacePaths, fullPath);
-        }
-        try
-        {
-            var configuredRoot = HostSecurePathEngine.SelectConfiguredRoot(
-                config.WorkspacePaths,
-                fullPath);
+            var insideConfiguredScope = scope.Classification == LocalConfiguredScopeClassification.Configured;
+            if (!insideConfiguredScope && !allowOutsideConfiguredScope)
+            {
+                throw new InvalidOperationException($"Path '{requestedPath}' is outside the configured workspace paths.");
+            }
+            if (authorizationContext is null)
+            {
+                if (!insideConfiguredScope)
+                {
+                    throw new InvalidOperationException(
+                        $"Path '{requestedPath}' is outside configured scope without an exact approved Local resource capability.");
+                }
+                return HasLexicalConfiguredRoot(config, fullPath)
+                    ? null
+                    : Detach(ref authority);
+            }
+            if (claim is null)
+            {
+                if (insideConfiguredScope && authorizationContext.ApprovedResourceClaims.Count == 0)
+                {
+                    return HasLexicalConfiguredRoot(config, fullPath)
+                        ? null
+                        : Detach(ref authority);
+                }
+                throw new LocalResourceReapprovalRequiredException(requestedPath);
+            }
+            if (scope.Classification == LocalConfiguredScopeClassification.Unknown
+                || !insideConfiguredScope && !redeemedOutsideAuthority)
+            {
+                throw new LocalResourceReapprovalRequiredException(requestedPath);
+            }
+
+            var operation = authorizationContext.ResourceOperation
+                ?? throw new LocalResourceReapprovalRequiredException(requestedPath);
+            var exactOperation = operation with { ResourceIndex = claim.ResourceIndex };
+            var exactContext = authorizationContext with { ResourceOperation = exactOperation };
+            var configuredRoot = scope.ConfiguredRoot;
             if (!insideConfiguredScope
                 && string.Equals(exactOperation.ActionId, "files.mutate", StringComparison.Ordinal))
             {
@@ -168,12 +197,11 @@ internal static class LocalSecurePathEngine
                         claim.CaseSensitivePath),
                 authority,
                 exactContext);
-            return authority;
+            return Detach(ref authority);
         }
-        catch
+        finally
         {
-            authority.Dispose();
-            throw;
+            authority?.Dispose();
         }
     }
 
@@ -190,7 +218,20 @@ internal static class LocalSecurePathEngine
             using var current = HostSecurePathEngine.Capture(
                 config.WorkspacePaths,
                 fullPath,
+                cancellationToken: cancellationToken,
+                allowMissingSuffix: false);
+            var currentScope = HostSecurePathEngine.ClassifyConfiguredRoot(
+                config.WorkspacePaths,
+                current,
                 cancellationToken: cancellationToken);
+            if (currentScope.Classification == LocalConfiguredScopeClassification.Unknown
+                || !ConfiguredRootsEqual(
+                    configuredRoot,
+                    currentScope.ConfiguredRoot,
+                    claim.CaseSensitivePath))
+            {
+                throw new LocalSecureApprovalChangedException(fullPath);
+            }
             HostResourceClaim.Validate(
                 claim,
                 LocalResourceResolver.ClaimNamespace,
@@ -236,22 +277,31 @@ internal static class LocalSecurePathEngine
                 return false;
             }
 
-            var configuredRoot = HostSecurePathEngine.SelectConfiguredRoot(
-                config.WorkspacePaths,
-                claim.LogicalPath);
-            if ((configuredRoot is null) != (claim.ConfiguredRoot is null)
-                || configuredRoot is not null
-                   && !string.Equals(
-                       LocalResourceResolver.NormalizeClaimPath(configuredRoot, claim.CaseSensitivePath),
-                       claim.ConfiguredRoot,
-                       claim.CaseSensitivePath || !OperatingSystem.IsWindows()
-                           ? StringComparison.Ordinal
-                           : StringComparison.OrdinalIgnoreCase))
+            LocalConfiguredRootResolution scope;
+            try
+            {
+                using var authority = HostSecurePathEngine.Capture(
+                    config.WorkspacePaths,
+                    claim.LogicalPath,
+                    allowMissingSuffix: claim.ConfiguredRoot is not null);
+                scope = HostSecurePathEngine.ClassifyConfiguredRoot(
+                    config.WorkspacePaths,
+                    authority);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return false;
+            }
+            if (scope.Classification == LocalConfiguredScopeClassification.Unknown
+                || !ConfiguredRootsEqual(
+                    scope.ConfiguredRoot,
+                    claim.ConfiguredRoot,
+                    claim.CaseSensitivePath))
             {
                 return false;
             }
 
-            if (configuredRoot is null
+            if (scope.ConfiguredRoot is null
                 && !context.ApprovedResourceCapabilities.Any(reference =>
                     resourceReferences.IsCurrent(reference, claim, exactOperation)))
             {
@@ -259,6 +309,36 @@ internal static class LocalSecurePathEngine
             }
         }
         return true;
+    }
+
+    private static bool ConfiguredRootsEqual(
+        string? left,
+        string? right,
+        bool caseSensitivePath)
+    {
+        if (left is null || right is null)
+        {
+            return left is null && right is null;
+        }
+        return string.Equals(
+            LocalResourceResolver.NormalizeClaimPath(left, caseSensitivePath),
+            LocalResourceResolver.NormalizeClaimPath(right, caseSensitivePath),
+            caseSensitivePath || !OperatingSystem.IsWindows()
+                ? StringComparison.Ordinal
+                : StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasLexicalConfiguredRoot(
+        LocalExecutionRuntimeConfig config,
+        string fullPath)
+        => HostSecurePathEngine.SelectConfiguredRoot(config.WorkspacePaths, fullPath) is not null;
+
+    private static LocalSecureApprovalLease Detach(ref LocalSecureApprovalLease? authority)
+    {
+        var detached = authority
+            ?? throw new InvalidOperationException("Local resource authority was not captured.");
+        authority = null;
+        return detached;
     }
 
     private static AgentResourceClaim? FindClaim(

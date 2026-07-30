@@ -133,6 +133,50 @@ public sealed class TranscriptPresentationStateTests
     }
 
     [Fact]
+    public async Task Timeline_TailCatchUpRelinquishesOldAnchorAndAdvancesRetainedCursor()
+    {
+        using var timeline = CreateTimeline(initialLimit: 60, pageSize: 30, visibleLimit: 60);
+        var sessionId = Guid.NewGuid();
+        var turns = CreateTurns(sessionId, 0, 120);
+        var oldAnchor = CorePresentation.TranscriptRowAnchorKey.Text(turns[5].TurnId);
+        var initial = timeline.BeginAnchoredInitialLoad(sessionId);
+        Assert.True(timeline.TryCompleteAnchoredInitialLoad(
+            initial,
+            turns[..60],
+            hasOlderRows: false,
+            hasNewerRows: true,
+            oldAnchor));
+        var requestedAfter = new List<Guid>();
+        var pageIndex = 0;
+        var authority = new CorePresentation.TranscriptPageAnchorAuthority(
+            oldAnchor,
+            CorePresentation.TranscriptPageAnchorResolution.Relinquish);
+
+        async Task<bool> LoadNextPageAsync()
+            => await timeline.LoadNewerAsync(
+                (_, _, afterTurnId, _, _) =>
+                {
+                    requestedAfter.Add(afterTurnId);
+                    var page = pageIndex++ == 0
+                        ? new CorePresentation.TranscriptTurnPage(turns[60..90], true)
+                        : new CorePresentation.TranscriptTurnPage(turns[90..120], false);
+                    return Task.FromResult(page);
+                },
+                authority);
+
+        Assert.True(await LoadNextPageAsync());
+        Assert.True(await LoadNextPageAsync());
+
+        Assert.Equal([turns[59].TurnId, turns[89].TurnId], requestedAfter);
+        Assert.Equal(60, timeline.Projector.Rows.Count);
+        Assert.DoesNotContain(timeline.Projector.Rows, row => Equals(row.AnchorKey, oldAnchor));
+        Assert.Contains(
+            timeline.Projector.Rows,
+            row => Equals(row.AnchorKey, CorePresentation.TranscriptRowAnchorKey.Text(turns[^1].TurnId)));
+        Assert.False(timeline.HasNewerRows);
+    }
+
+    [Fact]
     public void Timeline_InitialLoadSelectsLatestPageAndRejectsStaleSessionCompletion()
     {
         using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
@@ -377,7 +421,10 @@ public sealed class TranscriptPresentationStateTests
         using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
         var sessionId = Guid.NewGuid();
         var load = timeline.BeginInitialLoad(sessionId);
-        Assert.True(timeline.TryCompleteInitialLoad(load, CreateTurns(sessionId, 0, 10)));
+        Assert.True(timeline.TryCompleteInitialLoad(
+            load,
+            CreateTurns(sessionId, 6, 4),
+            hasOlderRows: true));
         var anchor = timeline.Projector.Rows.Single(row => row.Content == "message-8").AnchorKey;
 
         var loaded = await timeline.LoadOlderAsync(
@@ -414,6 +461,33 @@ public sealed class TranscriptPresentationStateTests
             Assert.Equal(continuation.TurnId, turnId);
             return Task.FromResult(new CorePresentation.TranscriptTurnPage([], HasMore: false));
         }));
+    }
+
+    [Fact]
+    public async Task Timeline_OlderRowsWithNonadvancingContinuationStopBeforeMutation()
+    {
+        using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
+        var sessionId = Guid.NewGuid();
+        var initialTurns = CreateTurns(sessionId, 0, 4);
+        var unchangedContinuation = CorePresentation.TranscriptPageCursor.FromTurn(initialTurns[0]);
+        var initial = timeline.BeginInitialLoad(sessionId);
+        Assert.True(timeline.TryCompleteInitialLoad(
+            initial,
+            initialTurns,
+            hasOlderRows: true,
+            olderContinuation: unchangedContinuation));
+        var olderTurn = CreateTurns(sessionId, -1, 1).Single();
+
+        Assert.False(await timeline.LoadOlderAsync((_, _, _, _, _) => Task.FromResult(
+            new CorePresentation.TranscriptTurnPage(
+                [olderTurn],
+                HasMore: true,
+                Continuation: unchangedContinuation))));
+
+        Assert.True(timeline.HasOlderRows);
+        Assert.DoesNotContain(
+            timeline.Projector.Rows,
+            row => Equals(row.AnchorKey, CorePresentation.TranscriptRowAnchorKey.Text(olderTurn.TurnId)));
     }
 
     [Fact]
@@ -477,7 +551,10 @@ public sealed class TranscriptPresentationStateTests
         using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
         var sessionId = Guid.NewGuid();
         var load = timeline.BeginInitialLoad(sessionId);
-        Assert.True(timeline.TryCompleteInitialLoad(load, CreateTurns(sessionId, 0, 10)));
+        Assert.True(timeline.TryCompleteInitialLoad(
+            load,
+            CreateTurns(sessionId, 6, 4),
+            hasOlderRows: true));
         var pageStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releasePage = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var mutationOrigins = new List<bool>();
@@ -1404,6 +1481,105 @@ public sealed class TranscriptPresentationStateTests
         Assert.False(await timeline.LoadNewerAsync((_, _, _, _, _) => Task.FromResult(
             new CorePresentation.TranscriptTurnPage(repeatedPage, true))));
         Assert.True(timeline.HasNewerRows);
+    }
+
+    [Fact]
+    public async Task Timeline_NewerRowsWithNonadvancingContinuationStopPaging()
+    {
+        using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
+        var sessionId = Guid.NewGuid();
+        var initialTurns = CreateTurns(sessionId, 0, 4);
+        var initialLoad = timeline.BeginInitialLoad(sessionId);
+        Assert.True(timeline.TryCompleteInitialLoad(initialLoad, initialTurns));
+        Assert.True(timeline.DetachFromLatest());
+        var newerTurn = CreateTurns(sessionId, 4, 1).Single();
+        Assert.Equal(
+            CorePresentation.TranscriptLiveTurnResult.Buffered,
+            timeline.ApplyLiveTurn(newerTurn));
+        var unchangedContinuation = CorePresentation.TranscriptPageCursor.FromTurn(initialTurns[^1]);
+        var loadCount = 0;
+
+        var loaded = await timeline.LoadNewerAsync((_, _, _, _, _) =>
+        {
+            loadCount++;
+            return Task.FromResult(new CorePresentation.TranscriptTurnPage(
+                    [newerTurn],
+                    HasMore: true,
+                    Continuation: unchangedContinuation));
+        });
+
+        Assert.False(loaded);
+        Assert.Equal(1, loadCount);
+        Assert.True(timeline.HasNewerRows);
+        Assert.DoesNotContain(
+            timeline.Projector.Rows,
+            row => Equals(row.AnchorKey, CorePresentation.TranscriptRowAnchorKey.Text(newerTurn.TurnId)));
+    }
+
+    [Fact]
+    public async Task Timeline_EmptyNewerPageWithAdvancingContinuationContinuesPaging()
+    {
+        using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
+        var sessionId = Guid.NewGuid();
+        var initialTurns = CreateTurns(sessionId, 0, 4);
+        var initialLoad = timeline.BeginAnchoredInitialLoad(sessionId);
+        Assert.True(timeline.TryCompleteAnchoredInitialLoad(
+            initialLoad,
+            initialTurns,
+            hasOlderRows: false,
+            hasNewerRows: true,
+            targetAnchorKey: CorePresentation.TranscriptRowAnchorKey.Text(initialTurns[0].TurnId)));
+        var continuation = CorePresentation.TranscriptPageCursor.FromTurn(
+            CreateTurns(sessionId, 4, 1).Single());
+
+        Assert.True(await timeline.LoadNewerAsync((_, _, _, _, _) => Task.FromResult(
+            new CorePresentation.TranscriptTurnPage(
+                [],
+                HasMore: true,
+                Continuation: continuation))));
+        Assert.True(timeline.HasNewerRows);
+        Assert.True(await timeline.LoadNewerAsync((_, createdAtUtc, turnId, _, _) =>
+        {
+            Assert.Equal(continuation.CreatedAtUtc, createdAtUtc);
+            Assert.Equal(continuation.TurnId, turnId);
+            return Task.FromResult(new CorePresentation.TranscriptTurnPage([], HasMore: false));
+        }));
+        Assert.False(timeline.HasNewerRows);
+    }
+
+    [Fact]
+    public async Task Timeline_ReentrantReplacementStopsStaleNewerPageStateWrites()
+    {
+        using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
+        var sessionId = Guid.NewGuid();
+        var initialTurns = CreateTurns(sessionId, 0, 4);
+        var initialLoad = timeline.BeginInitialLoad(sessionId);
+        Assert.True(timeline.TryCompleteInitialLoad(initialLoad, initialTurns));
+        Assert.True(timeline.DetachFromLatest());
+        var newerTurn = CreateTurns(sessionId, 4, 1).Single();
+        Assert.Equal(
+            CorePresentation.TranscriptLiveTurnResult.Buffered,
+            timeline.ApplyLiveTurn(newerTurn));
+        CorePresentation.TranscriptLoadTicket? replacement = null;
+        timeline.TurnProjected += (_, _, _) =>
+            replacement ??= timeline.BeginInitialLoad(sessionId, forceReplacement: true);
+
+        Assert.False(await timeline.LoadNewerAsync((_, _, _, _, _) => Task.FromResult(
+            new CorePresentation.TranscriptTurnPage([newerTurn], HasMore: true))));
+
+        Assert.NotNull(replacement);
+        Assert.True(timeline.IsInitialLoading);
+        Assert.True(timeline.TryCompleteInitialLoad(replacement.Value, initialTurns));
+        Assert.False(timeline.IsFollowingLatest);
+        Assert.Equal(
+            CorePresentation.TranscriptLiveTurnResult.Buffered,
+            timeline.ApplyLiveTurn(newerTurn));
+        await timeline.LoadNewerAsync((_, createdAtUtc, turnId, _, _) =>
+        {
+            Assert.Equal(initialTurns[^1].CreatedAtUtc, createdAtUtc);
+            Assert.Equal(initialTurns[^1].TurnId, turnId);
+            return Task.FromResult(new CorePresentation.TranscriptTurnPage([], HasMore: false));
+        });
     }
 
     [Fact]

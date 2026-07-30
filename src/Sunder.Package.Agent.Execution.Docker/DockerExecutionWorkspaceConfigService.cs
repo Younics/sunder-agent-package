@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -18,9 +20,11 @@ public sealed class DockerExecutionWorkspaceConfigService : IAgentWorkspacePathM
         PropertyNameCaseInsensitive = true,
     };
     private static readonly char[] AliasSeparators = [' ', '.', '_'];
+    private static readonly ConditionalWeakTable<IPackageKeyValueStore, ConcurrentDictionary<string, SemaphoreSlim>> MutationGates = new();
     private readonly IPackageContext _packageContext;
     private readonly DockerImageCatalogService _imageCatalogService;
     private readonly DockerPackageStorageMigration _storageMigration;
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _mutationGates;
 
     public DockerExecutionWorkspaceConfigService(
         IPackageContext packageContext,
@@ -40,6 +44,9 @@ public sealed class DockerExecutionWorkspaceConfigService : IAgentWorkspacePathM
         _packageContext = packageContext;
         _imageCatalogService = imageCatalogService;
         _storageMigration = storageMigration;
+        _mutationGates = MutationGates.GetValue(
+            packageContext.Storage.State,
+            static _ => new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal));
     }
 
     public string ContributorId => "sunder.package.agent.execution.docker.workspace-path-migration";
@@ -87,11 +94,68 @@ public sealed class DockerExecutionWorkspaceConfigService : IAgentWorkspacePathM
         CancellationToken cancellationToken = default)
     {
         await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
-        var normalized = Normalize(bindingId, config);
-        await _packageContext.Storage.State.SetValueAsync(
+        var gate = _mutationGates.GetOrAdd(bindingId, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await SaveConfigCoreAsync(bindingId, config, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    internal async Task UpdateConfigAsync(
+        string bindingId,
+        Func<DockerExecutionWorkspaceConfig, CancellationToken, ValueTask<DockerExecutionWorkspaceConfig>> update,
+        CancellationToken cancellationToken)
+    {
+        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
+        var gate = _mutationGates.GetOrAdd(bindingId, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var current = await GetConfigAsync(bindingId, cancellationToken).ConfigureAwait(false);
+            var updated = await update(current, cancellationToken).ConfigureAwait(false);
+            await SaveConfigCoreAsync(bindingId, updated, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private Task SaveConfigCoreAsync(
+        string bindingId,
+        DockerExecutionWorkspaceConfig config,
+        CancellationToken cancellationToken)
+        => _packageContext.Storage.State.SetValueAsync(
             BuildKey(bindingId),
-            JsonSerializer.Serialize(normalized, JsonOptions),
-            cancellationToken).ConfigureAwait(false);
+            JsonSerializer.Serialize(Normalize(bindingId, config), JsonOptions),
+            cancellationToken);
+
+    internal async Task<DockerExecutionConfigurationSnapshot> GetConfigurationSnapshotAsync(
+        string bindingId,
+        CancellationToken cancellationToken,
+        DockerExecutionWorkspaceConfig? workspaceConfig = null)
+    {
+        var config = workspaceConfig
+                     ?? await GetConfigAsync(bindingId, cancellationToken);
+        return new DockerExecutionConfigurationSnapshot(
+            config,
+            await DockerExecutionConfiguration.ResolveDefaultTimeoutSecondsAsync(
+                _packageContext,
+                cancellationToken));
+    }
+
+    internal string CreateGeneration(string bindingId, DockerExecutionConfigurationSnapshot snapshot)
+    {
+        var json = JsonSerializer.Serialize(
+            snapshot with { WorkspaceConfig = Normalize(bindingId, snapshot.WorkspaceConfig) },
+            JsonOptions);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("docker-execution-config-v1\n" + json)))
+            .ToLowerInvariant();
     }
 
     internal DockerExecutionRuntimeConfig BuildRuntimeConfig(

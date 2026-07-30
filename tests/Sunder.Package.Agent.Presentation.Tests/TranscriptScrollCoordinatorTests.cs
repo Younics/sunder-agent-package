@@ -1310,6 +1310,7 @@ public sealed class TranscriptScrollCoordinatorTests
         var hasNewerRows = true;
         var isFollowingLatest = false;
         var loadCount = 0;
+        TranscriptPageAnchorAuthority? pageAuthority = null;
         var content = new Border { Height = 1400 };
         var scrollViewer = new ScrollViewer { Content = content };
         var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
@@ -1321,8 +1322,9 @@ public sealed class TranscriptScrollCoordinatorTests
             canLoadOlderRows: () => false,
             loadOlderRowsAsync: (_, _) => Task.FromResult(false),
             canLoadNewerRows: () => hasNewerRows,
-            loadNewerRowsAsync: async (_, cancellationToken) =>
+            loadNewerRowsAsync: async (protectedAnchor, cancellationToken) =>
             {
+                pageAuthority = Assert.IsType<TranscriptPageAnchorAuthority>(protectedAnchor);
                 loadCount++;
                 if (loadCount == 1)
                 {
@@ -1356,6 +1358,8 @@ public sealed class TranscriptScrollCoordinatorTests
             "_loadNewerResumeInteractionRevision",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(coordinator)!;
         Assert.Equal(interactionRevision, resumeRevision);
+        Assert.NotNull(pageAuthority);
+        Assert.False(pageAuthority.ResolveCurrentAnchor().PreserveAnchor);
         releaseFirstLoad.TrySetResult();
         await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -2400,21 +2404,65 @@ public sealed class TranscriptScrollCoordinatorTests
             .GetValue(coordinator)!);
     }
 
+    [AvaloniaFact]
+    public async Task LiveMutationWhilePageIsBlocked_RearmsSupersededPagingEdge()
+    {
+        var loadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseLoad = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var coordinator = new TranscriptScrollCoordinator(
+            new ScrollViewer(),
+            canLoadOlderRows: () => true,
+            loadOlderRowsAsync: async (_, _) =>
+            {
+                loadStarted.TrySetResult();
+                await releaseLoad.Task;
+                return true;
+            },
+            canLoadNewerRows: () => false,
+            loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+            hasNewerRows: () => false);
+        Assert.True(coordinator.QueueLoadOlderRows());
+        await loadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        coordinator.BeginTranscriptMutation();
+        coordinator.OnTranscriptChanged();
+        releaseLoad.TrySetResult();
+        await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var field = typeof(TranscriptScrollCoordinator).GetField(
+            "_isOlderEdgeArmed",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        Assert.True((bool)field.GetValue(coordinator)!);
+    }
+
     [Fact]
-    public void ReplacementMutation_RearmsSupersededPagingEdges()
+    public void ViewportOrInteractionMutation_RearmsSupersededPagingEdges()
     {
         Assert.True(TranscriptScrollCoordinator.ShouldRearmPagingEdge(
             loaded: true,
             queuedInteractionRevision: 10,
-            currentInteractionRevision: 11));
+            currentInteractionRevision: 11,
+            queuedAuthorityRevision: 20,
+            currentAuthorityRevision: 20));
         Assert.True(TranscriptScrollCoordinator.ShouldRearmPagingEdge(
             loaded: false,
             queuedInteractionRevision: 10,
-            currentInteractionRevision: 10));
+            currentInteractionRevision: 10,
+            queuedAuthorityRevision: 20,
+            currentAuthorityRevision: 20));
+        Assert.True(TranscriptScrollCoordinator.ShouldRearmPagingEdge(
+            loaded: true,
+            queuedInteractionRevision: 10,
+            currentInteractionRevision: 10,
+            queuedAuthorityRevision: 20,
+            currentAuthorityRevision: 21));
         Assert.False(TranscriptScrollCoordinator.ShouldRearmPagingEdge(
             loaded: true,
             queuedInteractionRevision: 10,
-            currentInteractionRevision: 10));
+            currentInteractionRevision: 10,
+            queuedAuthorityRevision: 20,
+            currentAuthorityRevision: 20));
     }
 
     private static TranscriptScrollCoordinator CreateCoordinator(

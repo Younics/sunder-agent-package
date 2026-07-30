@@ -1,4 +1,40 @@
 #nullable enable
+Sunder.Package.Agent.Contracts.Models.AgentChatProviderException.FailureKind.get -> Sunder.Package.Agent.Contracts.Models.AgentChatProviderFailureKind
+Sunder.Package.Agent.Contracts.Models.AgentChatProviderException.FailureKind.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentChatProviderFailureKind
+Sunder.Package.Agent.Contracts.Models.AgentChatProviderFailureKind.ContextWindowExceeded = 1 -> Sunder.Package.Agent.Contracts.Models.AgentChatProviderFailureKind
+Sunder.Package.Agent.Contracts.Models.AgentChatProviderFailureKind.Unknown = 0 -> Sunder.Package.Agent.Contracts.Models.AgentChatProviderFailureKind
+Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionTarget.GetConfigurationGenerationAsync(Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
+Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext.ExpectedConfigurationGeneration.get -> string?
+Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext.ExpectedConfigurationGeneration.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentToolExecutionContext.ExecutionTargetConfigurationGeneration.get -> string?
+Sunder.Package.Agent.Contracts.Models.AgentToolExecutionContext.ExecutionTargetConfigurationGeneration.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentToolSourceContext.ExecutionTargetConfigurationGeneration.get -> string?
+Sunder.Package.Agent.Contracts.Models.AgentToolSourceContext.ExecutionTargetConfigurationGeneration.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentPermissionDecisionSource
+Sunder.Package.Agent.Contracts.Models.AgentPermissionDecisionSource.ConfiguredOverride = 1 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionDecisionSource
+Sunder.Package.Agent.Contracts.Models.AgentPermissionDecisionSource.PackageDefault = 0 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionDecisionSource
+Sunder.Package.Agent.Contracts.Models.AgentPermissionDecisionSource.SessionApproval = 2 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionDecisionSource
+Sunder.Package.Agent.Contracts.Models.AgentPermissionDecisionSource.UnknownBoundary = 4 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionDecisionSource
+Sunder.Package.Agent.Contracts.Models.AgentPermissionDecisionSource.UnrestrictedMode = 3 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionDecisionSource
+Sunder.Package.Agent.Contracts.Models.AgentPermissionEvaluation.BaseDecision.get -> Sunder.Package.Agent.Contracts.Models.AgentPermissionDecision
+Sunder.Package.Agent.Contracts.Models.AgentPermissionEvaluation.BaseDecision.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentPermissionEvaluation.Source.get -> Sunder.Package.Agent.Contracts.Models.AgentPermissionDecisionSource
+Sunder.Package.Agent.Contracts.Models.AgentPermissionEvaluation.Source.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentPermissionEvaluation.SourceSessionId.get -> System.Guid?
+Sunder.Package.Agent.Contracts.Models.AgentPermissionEvaluation.SourceSessionId.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest.ScopeClassificationBasis.get -> Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis
+Sunder.Package.Agent.Contracts.Models.AgentPermissionRequest.ScopeClassificationBasis.init -> void
+Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis
+Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis.LexicalAndOpenedIdentity = 2 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis
+Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis.LexicalExclusion = 6 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis
+Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis.Mixed = 5 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis
+Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis.OpenedAncestorIdentity = 1 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis
+Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis.Unresolved = 4 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis
+Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis.Unspecified = 0 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis
+Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis.VerifiedTargetMapping = 3 -> Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis
+Sunder.Package.Agent.Contracts.Models.AgentResolvedResource.ScopeClassificationBasis.get -> Sunder.Package.Agent.Contracts.Models.AgentPermissionScopeClassificationBasis
+Sunder.Package.Agent.Contracts.Models.AgentResolvedResource.ScopeClassificationBasis.init -> void
 const Sunder.Package.Agent.Contracts.Models.AgentFileSearchErrorCodes.InvalidRequest = "file-search-invalid" -> string!
 const Sunder.Package.Agent.Contracts.Models.AgentFileSearchErrorCodes.OutsideConfiguredScope = "file-search-outside-scope" -> string!
 const Sunder.Package.Agent.Contracts.Models.AgentFileSearchErrorCodes.PathNotFound = "file-search-path-not-found" -> string!

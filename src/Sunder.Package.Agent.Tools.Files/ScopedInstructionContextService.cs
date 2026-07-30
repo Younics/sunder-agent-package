@@ -211,7 +211,8 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
                 context.SessionId.Value,
                 context.ProfileId,
                 context.Workspace!,
-                context.ExecutionBinding!);
+                context.ExecutionBinding!,
+                context.ExecutionTargetConfigurationGeneration);
             var recoveryState = PrepareRecoveryState(
                 loaded.State,
                 context.SessionId.Value,
@@ -340,7 +341,8 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
             context.SessionId.Value,
             context.ProfileId,
             context.Workspace!,
-            context.ExecutionBinding!);
+            context.ExecutionBinding!,
+            context.ExecutionTargetConfigurationGeneration);
         var recoveryState = PrepareRecoveryState(
             loaded.State,
             context.SessionId.Value,
@@ -411,8 +413,12 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         Guid sessionId,
         string? profileId,
         AgentWorkspaceRecord workspace,
-        AgentWorkspaceBindingRecord binding)
-        => new(sessionId, profileId, workspace, binding, AllowOutsideConfiguredScope: false);
+        AgentWorkspaceBindingRecord binding,
+        string? expectedConfigurationGeneration = null)
+        => new(sessionId, profileId, workspace, binding, AllowOutsideConfiguredScope: false)
+        {
+            ExpectedConfigurationGeneration = expectedConfigurationGeneration,
+        };
 
     private static ScopedInstructionClaimState CreateState(
         Guid sessionId,

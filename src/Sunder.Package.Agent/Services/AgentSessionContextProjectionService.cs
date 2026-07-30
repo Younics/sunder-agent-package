@@ -1,6 +1,7 @@
 using System.Text;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
+using Sunder.Package.Agent.Services.BehaviorLoops;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -8,14 +9,14 @@ public sealed class AgentSessionContextProjectionService
 {
     public const int DefaultHistoricalTailTurnCount = 16;
 
-    private const int DefaultContextWindowTokens = 128_000;
-    private const int DefaultOutputReserveTokens = 8_192;
-    private const int SystemPromptReserveTokens = 4_096;
-    private const int MinimumPromptBudgetTokens = 4_096;
+    private const string CompactionRunningActivity = "Running session compaction";
+    private const string CompactionCompletedActivity = "Session compaction completed";
+    private const string CompactionInterruptedActivity = "Session compaction interrupted";
+    private const int ActiveRunTailHighWaterTurnCount = 24;
+    private const int ActiveRunTailTargetTurnCount = 16;
     private const int MaxSummaryTurnChars = 520;
     private const int MaxCompactedToolResultChars = 2_000;
     private const int MaxCompactedHistoricalTextChars = 1_200;
-    private const int MaxCompactedActiveTextChars = 4_000;
 
     private readonly AgentSessionService _sessionService;
     private readonly IAgentSessionContinuityModelRefiner? _modelRefiner;
@@ -75,7 +76,8 @@ public sealed class AgentSessionContextProjectionService
         Guid sourceRunId,
         long sourceRunRevision,
         int promptOverheadTokens,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int minimumOmittedTurnCount = 0)
     {
         var snapshot = _sessionService.ReadSessionContinuitySnapshot(
             sessionId,
@@ -83,17 +85,19 @@ public sealed class AgentSessionContextProjectionService
             sourceRunRevision);
         if (snapshot is null || snapshot.Turns.Count == 0)
         {
-            return new AgentSessionPromptProjection([], SummaryUpdated: false, OmittedHistoricalTurnCount: 0);
+            throw new AgentRunTranscriptWriteRejectedException();
         }
 
         var turns = OrderTurns(snapshot.Turns);
+        EnsureActiveUserTurn(turns, activeUserTurnId, snapshot.SourceRun, snapshot.SourceUserTurnId);
         var promptBudgetTokens = EstimatePromptBudgetTokens(runCapabilities, promptOverheadTokens);
         var activeCheckpoint = snapshot.ActiveCheckpoint;
         var boundary = SelectOmittedPrefixCount(
             turns,
             activeUserTurnId,
             promptBudgetTokens,
-            activeCheckpoint);
+            activeCheckpoint,
+            minimumOmittedTurnCount);
         if (boundary == 0)
         {
             return BuildProjectionForBoundary(
@@ -141,13 +145,15 @@ public sealed class AgentSessionContextProjectionService
                 modelId: null));
         if (deterministic is null)
         {
-            return BuildSafeFallbackProjection(
-                turns,
+            return BuildFreshSafeProjection(
+                sessionId,
+                sourceRunId,
+                sourceRunRevision,
                 activeUserTurnId,
-                promptBudgetTokens,
-                activeCheckpoint);
+                promptBudgetTokens);
         }
 
+        ReportCompactionActivity(sessionId, sourceRunRevision, CompactionRunningActivity);
         var selectedCheckpoint = deterministic;
         if (_modelRefiner is not null)
         {
@@ -163,6 +169,7 @@ public sealed class AgentSessionContextProjectionService
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                ReportCompactionActivity(sessionId, sourceRunRevision, CompactionInterruptedActivity);
                 throw;
             }
             catch
@@ -196,11 +203,13 @@ public sealed class AgentSessionContextProjectionService
                     var current = _sessionService.GetActiveAnchoredSessionContextCheckpoint(sessionId);
                     if (!IsExactCheckpointForBoundary(current, turns, boundary))
                     {
-                        return BuildSafeFallbackProjection(
-                            turns,
+                        ReportCompactionActivity(sessionId, sourceRunRevision, CompactionInterruptedActivity);
+                        return BuildFreshSafeProjection(
+                            sessionId,
+                            sourceRunId,
+                            sourceRunRevision,
                             activeUserTurnId,
-                            promptBudgetTokens,
-                            current);
+                            promptBudgetTokens);
                     }
                     selectedCheckpoint = current!;
                 }
@@ -214,11 +223,17 @@ public sealed class AgentSessionContextProjectionService
         if (latestSnapshot is not null)
         {
             var latestTurns = OrderTurns(latestSnapshot.Turns);
+            EnsureActiveUserTurn(
+                latestTurns,
+                activeUserTurnId,
+                latestSnapshot.SourceRun,
+                latestSnapshot.SourceUserTurnId);
             var latestCheckpoint = latestSnapshot.ActiveCheckpoint;
             var latestBoundary = latestCheckpoint?.Record.OmittedTurnCount ?? 0;
             if (IsExactCheckpointForBoundary(latestCheckpoint, latestTurns, latestBoundary)
-                && latestBoundary <= FindTurnIndex(latestTurns, activeUserTurnId))
+                && latestBoundary <= latestTurns.Count)
             {
+                ReportCompactionActivity(sessionId, sourceRunRevision, CompactionCompletedActivity);
                 return BuildProjectionForBoundary(
                     latestTurns,
                     activeUserTurnId,
@@ -228,6 +243,7 @@ public sealed class AgentSessionContextProjectionService
                     summaryUpdated: true);
             }
 
+            ReportCompactionActivity(sessionId, sourceRunRevision, CompactionInterruptedActivity);
             return BuildSafeFallbackProjection(
                 latestTurns,
                 activeUserTurnId,
@@ -235,14 +251,41 @@ public sealed class AgentSessionContextProjectionService
                 latestCheckpoint);
         }
 
-        return BuildProjectionForBoundary(
+        ReportCompactionActivity(sessionId, sourceRunRevision, CompactionInterruptedActivity);
+        throw new AgentRunTranscriptWriteRejectedException();
+    }
+
+    private AgentSessionPromptProjection BuildFreshSafeProjection(
+        Guid sessionId,
+        Guid sourceRunId,
+        long sourceRunRevision,
+        Guid activeUserTurnId,
+        int promptBudgetTokens)
+    {
+        var snapshot = _sessionService.ReadSessionContinuitySnapshot(
+            sessionId,
+            sourceRunId,
+            sourceRunRevision);
+        if (snapshot is null || snapshot.Turns.Count == 0)
+        {
+            throw new AgentRunTranscriptWriteRejectedException();
+        }
+
+        var turns = OrderTurns(snapshot.Turns);
+        EnsureActiveUserTurn(turns, activeUserTurnId, snapshot.SourceRun, snapshot.SourceUserTurnId);
+        return BuildSafeFallbackProjection(
             turns,
             activeUserTurnId,
             promptBudgetTokens,
-            boundary,
-            selectedCheckpoint.Record,
-            summaryUpdated: true);
+            snapshot.ActiveCheckpoint);
     }
+
+    private void ReportCompactionActivity(Guid sessionId, long sourceRunRevision, string text)
+        => _sessionService.ReportRunActivity(
+            sessionId,
+            sourceRunRevision,
+            AgentRunActivityKind.Processing,
+            text);
 
     private static AgentSessionContextCheckpointSaveRequest CreateSaveRequest(
         AgentSessionContinuitySnapshot snapshot,
@@ -280,7 +323,7 @@ public sealed class AgentSessionContextProjectionService
     {
         var boundary = checkpoint?.Record.OmittedTurnCount ?? 0;
         if (!IsExactCheckpointForBoundary(checkpoint, turns, boundary)
-            || boundary > FindTurnIndex(turns, activeUserTurnId))
+            || boundary > turns.Count)
         {
             boundary = 0;
             checkpoint = null;
@@ -303,11 +346,19 @@ public sealed class AgentSessionContextProjectionService
         AgentSessionContextCheckpointRecord? checkpoint,
         bool summaryUpdated)
     {
+        var activeUserTurnIndex = FindTurnIndex(turns, activeUserTurnId);
+        if (activeUserTurnIndex < 0)
+        {
+            throw new AgentRunTranscriptWriteRejectedException();
+        }
+
         var rawTail = turns.Skip(omittedPrefixCount).ToArray();
-        var pairedToolCallIds = CollectToolCallIds(rawTail, Enumerable.Range(0, rawTail.Length));
-        pairedToolCallIds.IntersectWith(CollectToolResultIds(rawTail, Enumerable.Range(0, rawTail.Length)));
-        var promptTurns = rawTail
-            .Select(turn => RemoveOrphanToolItems(turn, pairedToolCallIds))
+        var selectedTurns = omittedPrefixCount > activeUserTurnIndex
+            ? new[] { turns[activeUserTurnIndex] }.Concat(rawTail).ToArray()
+            : rawTail;
+        var toolExchanges = AgentToolExchangeAnalyzer.Analyze(selectedTurns);
+        var promptTurns = selectedTurns
+            .Select(turn => RemoveOrphanToolItems(turn, toolExchanges.PairedItemIds))
             .Where(turn => turn.Items.Count > 0)
             .ToArray();
         promptTurns = ReduceOversizedPromptTurns(promptTurns, activeUserTurnId, promptBudgetTokens).ToArray();
@@ -322,10 +373,11 @@ public sealed class AgentSessionContextProjectionService
         IReadOnlyList<AgentTurnRecord> turns,
         Guid activeUserTurnId,
         int promptBudgetTokens,
-        AgentAnchoredSessionContextCheckpoint? activeCheckpoint)
+        AgentAnchoredSessionContextCheckpoint? activeCheckpoint,
+        int minimumOmittedTurnCount = 0)
     {
         var activeTurnIndex = FindTurnIndex(turns, activeUserTurnId);
-        if (activeTurnIndex <= 0)
+        if (activeTurnIndex < 0)
         {
             return 0;
         }
@@ -336,7 +388,7 @@ public sealed class AgentSessionContextProjectionService
             activeCheckpoint?.Record.OmittedTurnCount ?? 0)
             ? activeCheckpoint!.Record.OmittedTurnCount
             : 0;
-        if (activeBoundary > activeTurnIndex)
+        if (activeBoundary > turns.Count)
         {
             activeBoundary = 0;
         }
@@ -344,7 +396,19 @@ public sealed class AgentSessionContextProjectionService
         var boundary = Math.Max(
             activeBoundary,
             Math.Max(0, activeTurnIndex - DefaultHistoricalTailTurnCount));
-        while (boundary < activeTurnIndex
+        var maximumBoundary = FindMaximumStableBoundary(turns, activeTurnIndex);
+        boundary = Math.Max(
+            boundary,
+            Math.Min(Math.Max(0, minimumOmittedTurnCount), maximumBoundary));
+        if (maximumBoundary > activeTurnIndex
+            && turns.Count - boundary > ActiveRunTailHighWaterTurnCount)
+        {
+            boundary = Math.Min(
+                maximumBoundary,
+                Math.Max(boundary, turns.Count - ActiveRunTailTargetTurnCount));
+        }
+
+        while (boundary < maximumBoundary
                && EstimateTokens(turns, Enumerable.Range(boundary, turns.Count - boundary)) > promptBudgetTokens)
         {
             boundary++;
@@ -353,8 +417,46 @@ public sealed class AgentSessionContextProjectionService
         return MoveBoundaryOutsideHistoricalToolExchanges(
             turns,
             boundary,
-            activeTurnIndex,
+            maximumBoundary,
             activeBoundary);
+    }
+
+    private static int FindMaximumStableBoundary(
+        IReadOnlyList<AgentTurnRecord> turns,
+        int activeUserTurnIndex)
+    {
+        var toolExchanges = AgentToolExchangeAnalyzer.Analyze(turns);
+        var hasCompletedActiveExchange = false;
+        var latestCompletedExchangeStart = activeUserTurnIndex;
+        for (var index = activeUserTurnIndex + 1; index < turns.Count; index++)
+        {
+            var turn = turns[index];
+            if (turn.IsStreaming
+                || turn.Items.Any(item => string.Equals(
+                    item.ErrorCode,
+                    AgentToolResultErrorCodes.ChildWaitingForApproval,
+                    StringComparison.Ordinal)))
+            {
+                return hasCompletedActiveExchange ? latestCompletedExchangeStart : activeUserTurnIndex;
+            }
+
+            foreach (var item in turn.Items.Where(item =>
+                         item.Kind is AgentTurnItemKind.ToolCall or AgentTurnItemKind.ToolResult))
+            {
+                if (!toolExchanges.TryGetPair(item.ItemId, out var pair))
+                {
+                    return hasCompletedActiveExchange ? latestCompletedExchangeStart : activeUserTurnIndex;
+                }
+
+                if (item.Kind == AgentTurnItemKind.ToolResult)
+                {
+                    hasCompletedActiveExchange = true;
+                    latestCompletedExchangeStart = Math.Min(index, pair.CallTurnIndex);
+                }
+            }
+        }
+
+        return hasCompletedActiveExchange ? latestCompletedExchangeStart : activeUserTurnIndex;
     }
 
     private static int MoveBoundaryOutsideHistoricalToolExchanges(
@@ -363,15 +465,14 @@ public sealed class AgentSessionContextProjectionService
         int activeTurnIndex,
         int minimumBoundary)
     {
-        var callIndexes = CollectToolItemIndexes(turns, AgentTurnItemKind.ToolCall);
-        var resultIndexes = CollectToolItemIndexes(turns, AgentTurnItemKind.ToolResult);
+        var toolExchanges = AgentToolExchangeAnalyzer.Analyze(turns);
         for (var pass = 0; pass < turns.Count; pass++)
         {
             var changed = false;
-            foreach (var callId in callIndexes.Keys.Intersect(resultIndexes.Keys, StringComparer.Ordinal))
+            foreach (var pair in toolExchanges.Pairs)
             {
-                var first = Math.Min(callIndexes[callId].Min(), resultIndexes[callId].Min());
-                var last = Math.Max(callIndexes[callId].Max(), resultIndexes[callId].Max());
+                var first = pair.CallTurnIndex;
+                var last = pair.ResultTurnIndex;
                 if (first >= boundary || last < boundary)
                 {
                     continue;
@@ -392,9 +493,7 @@ public sealed class AgentSessionContextProjectionService
             var lastUnpairedHistoricalToolTurn = Enumerable.Range(boundary, activeTurnIndex - boundary)
                 .Where(index => turns[index].Items.Any(item =>
                     (item.Kind is AgentTurnItemKind.ToolCall or AgentTurnItemKind.ToolResult)
-                    && (string.IsNullOrWhiteSpace(item.CallId)
-                        || !callIndexes.ContainsKey(item.CallId)
-                        || !resultIndexes.ContainsKey(item.CallId))))
+                    && toolExchanges.UnpairedItemIds.Contains(item.ItemId)))
                 .DefaultIfEmpty(-1)
                 .Max();
             if (lastUnpairedHistoricalToolTurn >= boundary)
@@ -411,26 +510,6 @@ public sealed class AgentSessionContextProjectionService
         }
 
         return boundary;
-    }
-
-    private static Dictionary<string, List<int>> CollectToolItemIndexes(
-        IReadOnlyList<AgentTurnRecord> turns,
-        AgentTurnItemKind kind)
-    {
-        var indexes = new Dictionary<string, List<int>>(StringComparer.Ordinal);
-        for (var index = 0; index < turns.Count; index++)
-        {
-            foreach (var item in turns[index].Items.Where(item => item.Kind == kind && !string.IsNullOrWhiteSpace(item.CallId)))
-            {
-                if (!indexes.TryGetValue(item.CallId!, out var values))
-                {
-                    values = [];
-                    indexes[item.CallId!] = values;
-                }
-                values.Add(index);
-            }
-        }
-        return indexes;
     }
 
     private static bool IsExactCheckpointForBoundary(
@@ -497,9 +576,7 @@ public sealed class AgentSessionContextProjectionService
             return compactedNonUserActiveText;
         }
 
-        return compactedNonUserActiveText
-            .Select(turn => turn.TurnId == activeUserTurnId ? CompactTextItems(turn, MaxCompactedActiveTextChars) : turn)
-            .ToArray();
+        return compactedNonUserActiveText;
     }
 
     private static AgentTurnRecord CompactLargeToolResults(AgentTurnRecord turn)
@@ -576,13 +653,8 @@ public sealed class AgentSessionContextProjectionService
 
     private static int EstimatePromptBudgetTokens(AgentProviderRunCapabilities runCapabilities, int promptOverheadTokens)
     {
-        var contextWindow = runCapabilities.ContextWindowTokens is > 0
-            ? runCapabilities.ContextWindowTokens.Value
-            : DefaultContextWindowTokens;
-        var outputReserve = runCapabilities.MaxOutputTokens is > 0
-            ? Math.Min(runCapabilities.MaxOutputTokens.Value, contextWindow / 2)
-            : Math.Min(DefaultOutputReserveTokens, contextWindow / 4);
-        return Math.Max(MinimumPromptBudgetTokens, contextWindow - outputReserve - SystemPromptReserveTokens - Math.Max(0, promptOverheadTokens));
+        var limits = AgentProviderRequestLimits.Resolve(runCapabilities);
+        return Math.Max(1, limits.ProactiveInputLimitTokens - Math.Max(0, promptOverheadTokens));
     }
 
     private static int EstimateTokens(IReadOnlyList<AgentTurnRecord> turns, IEnumerable<int> indexes)
@@ -592,40 +664,16 @@ public sealed class AgentSessionContextProjectionService
         => turns.Sum(EstimateTokens);
 
     private static int EstimateTokens(AgentTurnRecord turn)
-    {
-        var chars = 0;
-        foreach (var item in turn.Items)
-        {
-            chars += item.TextContent?.Length ?? 0;
-            chars += item.ArgumentsJson?.Length ?? 0;
-            chars += item.ResultSummary?.Length ?? 0;
-            chars += item.StructuredPayloadJson?.Length ?? 0;
-            chars += item.SourcesJson?.Length ?? 0;
-        }
+        => AgentProviderRequestBudget.EstimateTurnTokens(turn);
 
-        return 16 + (chars / 4);
-    }
-
-    private static HashSet<string> CollectToolCallIds(IReadOnlyList<AgentTurnRecord> turns, IEnumerable<int> indexes)
-        => indexes
-            .SelectMany(index => turns[index].Items)
-            .Where(item => item.Kind == AgentTurnItemKind.ToolCall && !string.IsNullOrWhiteSpace(item.CallId))
-            .Select(item => item.CallId!)
-            .ToHashSet(StringComparer.Ordinal);
-
-    private static HashSet<string> CollectToolResultIds(IReadOnlyList<AgentTurnRecord> turns, IEnumerable<int> indexes)
-        => indexes
-            .SelectMany(index => turns[index].Items)
-            .Where(item => item.Kind == AgentTurnItemKind.ToolResult && !string.IsNullOrWhiteSpace(item.CallId))
-            .Select(item => item.CallId!)
-            .ToHashSet(StringComparer.Ordinal);
-
-    private static AgentTurnRecord RemoveOrphanToolItems(AgentTurnRecord turn, ISet<string> pairedToolCallIds)
+    private static AgentTurnRecord RemoveOrphanToolItems(
+        AgentTurnRecord turn,
+        IReadOnlySet<Guid> pairedToolItemIds)
     {
         var filteredItems = turn.Items
             .Where(item => item.Kind switch
             {
-                AgentTurnItemKind.ToolCall or AgentTurnItemKind.ToolResult => !string.IsNullOrWhiteSpace(item.CallId) && pairedToolCallIds.Contains(item.CallId!),
+                AgentTurnItemKind.ToolCall or AgentTurnItemKind.ToolResult => pairedToolItemIds.Contains(item.ItemId),
                 _ => true,
             })
             .ToArray();
@@ -643,6 +691,26 @@ public sealed class AgentSessionContextProjectionService
         }
 
         return -1;
+    }
+
+    private static void EnsureActiveUserTurn(
+        IReadOnlyList<AgentTurnRecord> turns,
+        Guid activeUserTurnId,
+        AgentDurableRunKey sourceRun,
+        Guid sourceUserTurnId)
+    {
+        var activeUserTurn = turns.FirstOrDefault(turn => turn.TurnId == activeUserTurnId);
+        var hasRunStamp = activeUserTurn?.RunId is not null || activeUserTurn?.RunRevision is not null;
+        if (sourceUserTurnId != Guid.Empty && sourceUserTurnId != activeUserTurnId
+            || activeUserTurn is null
+            || activeUserTurn.SessionId != sourceRun.SessionId
+            || activeUserTurn.Role != AgentMessageRole.User
+            || hasRunStamp
+            && (activeUserTurn.RunId != sourceRun.RunId
+                || activeUserTurn.RunRevision != sourceRun.RunRevision))
+        {
+            throw new AgentRunTranscriptWriteRejectedException();
+        }
     }
 
     private static string CollapseWhitespace(string text)

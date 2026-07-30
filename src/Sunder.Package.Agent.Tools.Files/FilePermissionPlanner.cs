@@ -78,6 +78,7 @@ internal static class FilePermissionPlanner
             ResourceClaims = scope.ResourceClaims,
             ResourceCapabilities = scope.ResourceCapabilities,
             ResourceReferences = scope.ResourceReferences,
+            ScopeClassificationBasis = scope.ScopeClassificationBasis,
         };
     }
 
@@ -142,6 +143,7 @@ internal static class FilePermissionPlanner
         AgentResolvedResource? singleResource = null;
         var resourceReferences = new List<string>();
         var resourceClaims = new List<AgentResourceClaim>();
+        var classificationBases = new HashSet<AgentPermissionScopeClassificationBasis>();
         using var plannedAuthority = new PlannedResourceAuthority(target, MaximumResourceCapabilities);
         for (var resourceIndex = 0; resourceIndex < paths.Length; resourceIndex++)
         {
@@ -158,6 +160,7 @@ internal static class FilePermissionPlanner
                     cancellationToken);
                 plannedAuthority.Add(
                     resource.DeleteAuthorityReferences.Concat(resource.AuthorityReferences));
+                classificationBases.Add(resource.ScopeClassificationBasis);
                 singleResource = paths.Length == 1 ? resource : null;
                 var isDelete = operations
                     .Where(operation => string.Equals(operation.Path, path, StringComparison.Ordinal))
@@ -215,7 +218,10 @@ internal static class FilePermissionPlanner
                 .DistinctBy(static claim => (claim.NamespaceId, claim.ResourceIndex, claim.LogicalPath))
                 .OrderBy(static claim => claim.ResourceIndex)
                 .ToArray(),
-            plannedAuthority.Detach());
+            plannedAuthority.Detach(),
+            classificationBases.Count == 1
+                ? classificationBases.Single()
+                : AgentPermissionScopeClassificationBasis.Mixed);
     }
 
     private static bool CanResolve(IAgentExecutionTarget? target, AgentToolExecutionContext context, string? path)
@@ -247,6 +253,7 @@ internal static class FilePermissionPlanner
             AllowOutsideConfiguredScope: true)
         {
             ResourceOperation = operation,
+            ExpectedConfigurationGeneration = context.ExecutionTargetConfigurationGeneration,
         };
     }
 
@@ -352,7 +359,8 @@ internal sealed record FilePermissionScope(
     string? ResourceReference,
     IReadOnlyList<string> ResourceReferences,
     IReadOnlyList<AgentResourceClaim> ResourceClaims,
-    IReadOnlyList<string> ResourceCapabilities)
+    IReadOnlyList<string> ResourceCapabilities,
+    AgentPermissionScopeClassificationBasis ScopeClassificationBasis)
 {
     public static FilePermissionScope Unknown(string? path = null)
         => new(
@@ -363,7 +371,8 @@ internal sealed record FilePermissionScope(
             ResourceReference: null,
             ResourceReferences: [],
             ResourceClaims: [],
-            ResourceCapabilities: []);
+            ResourceCapabilities: [],
+            ScopeClassificationBasis: AgentPermissionScopeClassificationBasis.Unresolved);
 
     public static FilePermissionScope FromResource(string path, AgentResolvedResource resource)
         => new(
@@ -374,5 +383,6 @@ internal sealed record FilePermissionScope(
             resource.CanonicalReference,
             [resource.CanonicalReference],
             resource.ResourceClaim is null ? [] : [resource.ResourceClaim],
-            resource.AuthorityReferences);
+            resource.AuthorityReferences,
+            resource.ScopeClassificationBasis);
 }

@@ -11,11 +11,45 @@ public sealed partial class DockerExecutionTarget
         AgentExecutionTargetContext context,
         CancellationToken cancellationToken)
     {
-        _ = await _dockerCliRunner.GetPinnedEndpointAsync(cancellationToken).ConfigureAwait(false);
+        var snapshot = await GetCurrentConfigurationAsync(context, cancellationToken);
+        if (context.ExpectedConfigurationGeneration is not null
+            && snapshot.WorkspaceConfig.ImageReference is not null
+            && snapshot.ImageIdentity is null)
+        {
+            throw new InvalidOperationException(
+                "The Docker image identity is not available for this approved configuration; explicit reapproval is required after target readiness completes.");
+        }
         return _configService.BuildRuntimeConfig(
             context.Binding.BindingId,
             context.Workspace,
-            await _configService.GetConfigAsync(context.Binding.BindingId, cancellationToken));
+            snapshot.WorkspaceConfig) with
+        {
+            DockerCliPath = snapshot.DockerCliPath,
+            DefaultTimeoutSeconds = snapshot.DefaultTimeoutSeconds,
+            ImageIdentity = context.ExpectedConfigurationGeneration is null
+                ? null
+                : snapshot.ImageIdentity,
+        };
+    }
+
+    private async Task<DockerExecutionConfigurationSnapshot> GetCurrentConfigurationAsync(
+        AgentExecutionTargetContext context,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await CaptureCurrentConfigurationAsync(
+            context.Binding.BindingId,
+            cancellationToken);
+        if (context.ExpectedConfigurationGeneration is { } expected
+            && !string.Equals(
+                expected,
+                _configService.CreateGeneration(context.Binding.BindingId, snapshot),
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Docker execution configuration changed after permission planning; explicit reapproval is required.");
+        }
+
+        return snapshot;
     }
 
     internal string BuildStructuredNamespaceFingerprint(

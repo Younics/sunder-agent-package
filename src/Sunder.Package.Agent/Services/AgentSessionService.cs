@@ -375,12 +375,24 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
             if (result is not null)
             {
                 lease.AdvanceTo(lease.Epoch + 1);
-                EnqueueLeaseNotification(
-                    lease,
-                    () => NotifySessionChanged(lease.Key.SessionId));
             }
         }
-        DrainLeaseNotifications(lease);
+        return result;
+    }
+
+    internal AgentPermissionSuspensionPersistenceResult? SavePendingPermissionRequestAndSuspendRun(
+        AgentPendingPermissionRequestRecord request,
+        AgentDurableRunLease lease)
+    {
+        AgentPermissionSuspensionPersistenceResult? result;
+        lock (lease.SyncRoot)
+        {
+            result = _store.SavePendingPermissionRequestAndSuspendRun(request, lease.Epoch);
+            if (result is not null)
+            {
+                lease.AdvanceTo(lease.Epoch + 1);
+            }
+        }
         return result;
     }
 

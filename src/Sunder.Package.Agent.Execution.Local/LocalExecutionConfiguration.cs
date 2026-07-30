@@ -1,3 +1,5 @@
+using Sunder.Agent.Execution.Common;
+using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Execution.Local;
@@ -6,6 +8,15 @@ public static class LocalExecutionConfiguration
 {
     public const string TimeoutKey = "shell.timeoutSeconds.default";
     public const string DefaultTimeoutSeconds = "300";
+
+    internal static async ValueTask<int> ResolveDefaultTimeoutSecondsAsync(
+        IPackageContext packageContext,
+        CancellationToken cancellationToken = default)
+        => BoundedValue.ParseInt32(
+            await packageContext.Settings.GetValueAsync(TimeoutKey, cancellationToken),
+            int.Parse(DefaultTimeoutSeconds, System.Globalization.CultureInfo.InvariantCulture),
+            minimum: 1,
+            maximum: BoundedProcessRunner.MaximumTimeoutSeconds);
 
     public static PackageSettingsSchema Schema { get; } = new(
         "Configure local-machine execution defaults. Workspaces define paths before tools can use this target.",

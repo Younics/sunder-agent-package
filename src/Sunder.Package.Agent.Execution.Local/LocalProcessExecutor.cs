@@ -7,8 +7,6 @@ namespace Sunder.Package.Agent.Execution.Local;
 
 internal sealed class LocalProcessExecutor(IPackageContext packageContext)
 {
-    private const int DefaultTimeoutSeconds = 300;
-
     public async ValueTask<AgentShellCommandResult> ExecuteProcessAsync(
         LocalExecutionRuntimeConfig config,
         AgentExecutionTargetContext context,
@@ -45,16 +43,12 @@ internal sealed class LocalProcessExecutor(IPackageContext packageContext)
         LocalCommandRunner.ApplyPathEnvironment(startInfo, pathEntries);
         return await LocalCommandRunner.ExecuteAsync(
             startInfo,
-            request.TimeoutSeconds ?? await ResolveDefaultTimeoutSecondsAsync(cancellationToken),
+            request.TimeoutSeconds
+            ?? config.DefaultTimeoutSeconds
+            ?? await LocalExecutionConfiguration.ResolveDefaultTimeoutSecondsAsync(packageContext, cancellationToken),
             workingDirectory,
             executableResolution,
             cancellationToken);
     }
 
-    private async Task<int> ResolveDefaultTimeoutSecondsAsync(CancellationToken cancellationToken)
-        => BoundedValue.ParseInt32(
-            await packageContext.Settings.GetValueAsync(LocalExecutionConfiguration.TimeoutKey, cancellationToken),
-            DefaultTimeoutSeconds,
-            minimum: 1,
-            maximum: BoundedProcessRunner.MaximumTimeoutSeconds);
 }

@@ -50,6 +50,140 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
     }
 
     [Fact]
+    public void ResolveFileResource_ClassifiesMissingDescendantsInsideConfiguredRoot()
+    {
+        var (workspace, _) = CreateDirectories();
+        var requestedPath = Path.Combine("new", "nested", "file.txt");
+
+        var resource = LocalResourceResolver.ResolveFileResource(
+            CreateConfig(workspace),
+            requestedPath,
+            allowOutsideConfiguredScope: false);
+
+        Assert.Equal(AgentPermissionBoundaryIds.ConfiguredScope, resource.PermissionBoundaryId);
+        Assert.Contains(
+            resource.ScopeClassificationBasis,
+            new[]
+            {
+                AgentPermissionScopeClassificationBasis.OpenedAncestorIdentity,
+                AgentPermissionScopeClassificationBasis.LexicalAndOpenedIdentity,
+            });
+        Assert.False(resource.Exists);
+        Assert.Equal(
+            HostSecurePathEngine.NormalizePath(workspace),
+            Assert.IsType<AgentResourceClaim>(resource.ResourceClaim).ConfiguredRoot);
+    }
+
+    [Fact]
+    public void ResolveFileResource_UninspectableConfiguredRootUsesUnknownBoundary()
+    {
+        var (workspace, outside) = CreateDirectories();
+        var target = Path.Combine(outside, "file.txt");
+        File.WriteAllText(target, "outside");
+        var missingRoot = Path.Combine(_root, "missing-workspace");
+        var config = new LocalExecutionRuntimeConfig([workspace, missingRoot], workspace);
+
+        var resource = LocalResourceResolver.ResolveFileResource(
+            config,
+            target,
+            allowOutsideConfiguredScope: true);
+
+        Assert.Equal(AgentPermissionBoundaryIds.Unknown, resource.PermissionBoundaryId);
+        Assert.Equal(
+            AgentPermissionScopeClassificationBasis.Unresolved,
+            resource.ScopeClassificationBasis);
+        Assert.Null(Assert.IsType<AgentResourceClaim>(resource.ResourceClaim).ConfiguredRoot);
+    }
+
+    [Fact]
+    public void ResolveFileResource_WindowsOutsideScopeUsesLexicalExclusion()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var (workspace, outside) = CreateDirectories();
+        var target = Path.Combine(outside, "file.txt");
+        File.WriteAllText(target, "outside");
+
+        var resource = LocalResourceResolver.ResolveFileResource(
+            CreateConfig(workspace),
+            target,
+            allowOutsideConfiguredScope: true);
+
+        Assert.Equal(AgentPermissionBoundaryIds.OutsideConfiguredScope, resource.PermissionBoundaryId);
+        Assert.Equal(
+            AgentPermissionScopeClassificationBasis.LexicalExclusion,
+            resource.ScopeClassificationBasis);
+    }
+
+    [Fact]
+    public void ResolveFileResource_MacCaseAliasUsesOpenedConfiguredRootIdentity()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            throw SkipException.ForSkip("This verifies case-insensitive macOS path aliases.");
+        }
+
+        var (workspace, _) = CreateDirectories();
+        var aliasedWorkspace = Path.Combine(
+            Path.GetDirectoryName(workspace)!,
+            Path.GetFileName(workspace).ToUpperInvariant());
+        if (!Directory.Exists(aliasedWorkspace))
+        {
+            throw SkipException.ForSkip("The test volume is case-sensitive.");
+        }
+        var target = Path.Combine(workspace, "file.txt");
+        File.WriteAllText(target, "inside");
+        var config = new LocalExecutionRuntimeConfig([aliasedWorkspace], aliasedWorkspace);
+
+        var resource = LocalResourceResolver.ResolveFileResource(
+            config,
+            target,
+            allowOutsideConfiguredScope: false);
+
+        Assert.Equal(AgentPermissionBoundaryIds.ConfiguredScope, resource.PermissionBoundaryId);
+        Assert.Equal(
+            AgentPermissionScopeClassificationBasis.OpenedAncestorIdentity,
+            resource.ScopeClassificationBasis);
+        Assert.Equal(
+            HostSecurePathEngine.NormalizePath(aliasedWorkspace),
+            Assert.IsType<AgentResourceClaim>(resource.ResourceClaim).ConfiguredRoot);
+    }
+
+    [Fact]
+    public void ResolveFileResource_MacCaseAliasClassifiesMissingDescendants()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            throw SkipException.ForSkip("This verifies case-insensitive macOS path aliases.");
+        }
+
+        var (workspace, _) = CreateDirectories();
+        var aliasedWorkspace = Path.Combine(
+            Path.GetDirectoryName(workspace)!,
+            Path.GetFileName(workspace).ToUpperInvariant());
+        if (!Directory.Exists(aliasedWorkspace))
+        {
+            throw SkipException.ForSkip("The test volume is case-sensitive.");
+        }
+        var requestedPath = Path.Combine(workspace, "new", "nested", "file.txt");
+        var config = new LocalExecutionRuntimeConfig([aliasedWorkspace], aliasedWorkspace);
+
+        var resource = LocalResourceResolver.ResolveFileResource(
+            config,
+            requestedPath,
+            allowOutsideConfiguredScope: false);
+
+        Assert.Equal(AgentPermissionBoundaryIds.ConfiguredScope, resource.PermissionBoundaryId);
+        Assert.False(resource.Exists);
+        Assert.Equal(
+            AgentPermissionScopeClassificationBasis.OpenedAncestorIdentity,
+            resource.ScopeClassificationBasis);
+    }
+
+    [Fact]
     public void MapToHostPath_RejectsDirectorySymlinkEscape()
     {
         var (workspace, outside) = CreateDirectories();

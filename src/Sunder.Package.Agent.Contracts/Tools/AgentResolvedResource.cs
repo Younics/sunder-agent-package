@@ -20,6 +20,31 @@ public static class AgentPermissionBoundaryIds
     public const string Unknown = "unknown";
 }
 
+/// <summary>Identifies how an execution target established a resource's permission scope.</summary>
+public enum AgentPermissionScopeClassificationBasis
+{
+    /// <summary>The target did not provide structured scope provenance.</summary>
+    Unspecified = 0,
+
+    /// <summary>The configured root's opened ancestor identity chain matched the retained resource chain.</summary>
+    OpenedAncestorIdentity = 1,
+
+    /// <summary>Lexical containment was verified against opened filesystem identities.</summary>
+    LexicalAndOpenedIdentity = 2,
+
+    /// <summary>The target verified scope through its own immutable path mapping.</summary>
+    VerifiedTargetMapping = 3,
+
+    /// <summary>The target could not securely establish scope.</summary>
+    Unresolved = 4,
+
+    /// <summary>A multi-resource request used more than one classification basis.</summary>
+    Mixed = 5,
+
+    /// <summary>The target established outside scope because the normalized path had no lexical configured-root match.</summary>
+    LexicalExclusion = 6,
+}
+
 /// <summary>
 /// Captures an execution target's point-in-time resource classification and opaque identity for permission planning.
 /// </summary>
@@ -39,6 +64,9 @@ public sealed record AgentResolvedResource(
     string PermissionBoundaryId,
     bool Exists)
 {
+    /// <summary>Gets how the execution target established <see cref="PermissionBoundaryId"/>.</summary>
+    public AgentPermissionScopeClassificationBasis ScopeClassificationBasis { get; init; }
+
     /// <summary>Gets the structured durable claim for this resource, when supplied by the target.</summary>
     public AgentResourceClaim? ResourceClaim { get; init; }
 

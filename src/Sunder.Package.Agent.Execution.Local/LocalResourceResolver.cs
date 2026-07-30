@@ -31,7 +31,8 @@ internal static class LocalResourceResolver
         var fullPath = LocalSecurePathEngine.ResolveLexicalPath(config, path);
         var authority = HostSecurePathEngine.Capture(
             config.WorkspacePaths,
-            fullPath);
+            fullPath,
+            allowMissingSuffix: true);
         return ResolveFileResource(
             config,
             path,
@@ -92,12 +93,19 @@ internal static class LocalResourceResolver
         try
         {
             var binding = authority.Binding;
-            var configuredRoot = LocalSecurePathEngine.SelectConfiguredRoot(config, binding.FullPath);
-            var boundary = configuredRoot is not null
-                ? AgentPermissionBoundaryIds.ConfiguredScope
-                : AgentPermissionBoundaryIds.OutsideConfiguredScope;
+            var scope = HostSecurePathEngine.ClassifyConfiguredRoot(
+                config.WorkspacePaths,
+                authority);
+            var configuredRoot = scope.ConfiguredRoot;
+            RejectUnconfiguredMissingIntermediate(scope, binding);
+            var boundary = scope.Classification switch
+            {
+                LocalConfiguredScopeClassification.Configured => AgentPermissionBoundaryIds.ConfiguredScope,
+                LocalConfiguredScopeClassification.Outside => AgentPermissionBoundaryIds.OutsideConfiguredScope,
+                _ => AgentPermissionBoundaryIds.Unknown,
+            };
             if (!allowOutsideConfiguredScope
-                && string.Equals(boundary, AgentPermissionBoundaryIds.OutsideConfiguredScope, StringComparison.Ordinal))
+                && scope.Classification != LocalConfiguredScopeClassification.Configured)
             {
                 throw new InvalidOperationException($"Path '{path}' is outside the configured workspace paths.");
             }
@@ -115,7 +123,7 @@ internal static class LocalResourceResolver
             {
                 claim = HostResourceClaim.BindScope(claim, context);
             }
-            if (configuredRoot is null
+            if (scope.Classification != LocalConfiguredScopeClassification.Configured
                 && issueOutsideAuthority
                 && operation is not null
                 && context is not null)
@@ -137,7 +145,8 @@ internal static class LocalResourceResolver
                         "Outside Local authority requires an activation-owned capability store."));
                 authority = null;
             }
-            else if (configuredRoot is null && issueOutsideAuthority)
+            else if (scope.Classification != LocalConfiguredScopeClassification.Configured
+                     && issueOutsideAuthority)
             {
                 throw new InvalidOperationException(
                     "Outside Local authority requires an exact host-owned invocation binding.");
@@ -150,6 +159,7 @@ internal static class LocalResourceResolver
                 boundary,
                 binding.Exists)
             {
+                ScopeClassificationBasis = ToContractBasis(scope.Basis),
                 ResourceClaim = claim,
                 AuthorityReferences = authorityReferences,
                 DeleteCanonicalReference = resourceReference,
@@ -184,6 +194,19 @@ internal static class LocalResourceResolver
             : normalized;
     }
 
+    private static AgentPermissionScopeClassificationBasis ToContractBasis(
+        LocalConfiguredScopeClassificationBasis basis)
+        => basis switch
+        {
+            LocalConfiguredScopeClassificationBasis.OpenedAncestorIdentity
+                => AgentPermissionScopeClassificationBasis.OpenedAncestorIdentity,
+            LocalConfiguredScopeClassificationBasis.LexicalAndOpenedIdentity
+                => AgentPermissionScopeClassificationBasis.LexicalAndOpenedIdentity,
+            LocalConfiguredScopeClassificationBasis.LexicalContainment
+                => AgentPermissionScopeClassificationBasis.LexicalExclusion,
+            _ => AgentPermissionScopeClassificationBasis.Unresolved,
+        };
+
     private static int ValidateAuthorityUseCount(int count)
         => count is > 0 and <= HostResourceClaim.MaximumAuthorityUses
             ? count
@@ -206,7 +229,9 @@ internal static class LocalResourceResolver
         {
             for (var index = 1; index < authorityUseCount; index++)
             {
-                var authority = HostSecurePathEngine.Capture(config.WorkspacePaths, fullPath);
+                var authority = HostSecurePathEngine.Capture(
+                    config.WorkspacePaths,
+                    fullPath);
                 try
                 {
                     HostResourceClaim.Validate(
@@ -257,13 +282,39 @@ internal static class LocalResourceResolver
 
     public static AgentExecutionPathMapping MapToHostPath(LocalExecutionRuntimeConfig config, string executionPath)
     {
-        var binding = LocalSecurePathEngine.Probe(config, executionPath);
-        if (LocalSecurePathEngine.SelectConfiguredRoot(config, binding.FullPath) is null)
+        var fullPath = LocalSecurePathEngine.ResolveLexicalPath(config, executionPath);
+        using var authority = HostSecurePathEngine.Capture(
+            config.WorkspacePaths,
+            fullPath,
+            allowMissingSuffix: true);
+        var scope = HostSecurePathEngine.ClassifyConfiguredRoot(
+            config.WorkspacePaths,
+            authority);
+        if (scope.Classification != LocalConfiguredScopeClassification.Configured)
         {
             throw new InvalidOperationException($"Path '{executionPath}' is outside the configured workspace paths.");
         }
 
         // Mapping is advisory. Structured operations must reacquire their own secure handle chain.
-        return new AgentExecutionPathMapping(binding.FullPath, binding.FullPath, IsInsideAllowedRoot: true);
+        return new AgentExecutionPathMapping(fullPath, fullPath, IsInsideAllowedRoot: true);
+    }
+
+    private static void RejectUnconfiguredMissingIntermediate(
+        LocalConfiguredRootResolution scope,
+        LocalResourceBinding binding)
+    {
+        if (scope.Classification == LocalConfiguredScopeClassification.Configured
+            || binding.Exists)
+        {
+            return;
+        }
+        var missingSegments = HostSecurePathEngine.GetRelativeSegments(
+            binding.AnchorPath,
+            binding.FullPath);
+        if (missingSegments.Count > 1)
+        {
+            throw new LocalSecurePathNotFoundException(
+                Path.Combine(binding.AnchorPath, missingSegments[0]));
+        }
     }
 }

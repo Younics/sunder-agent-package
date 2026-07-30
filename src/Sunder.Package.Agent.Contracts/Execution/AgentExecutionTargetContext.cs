@@ -49,4 +49,9 @@ public sealed record AgentExecutionTargetContext(
     /// <summary>Gets whether a successful mutation should return a transient resource receipt for its exact post-mutation state.</summary>
     [JsonIgnore]
     public bool CapturePostMutationResource { get; init; }
+
+    /// <summary>Gets the target-owned configuration generation captured before permission planning.</summary>
+    /// <remarks>When set, the target must reject the operation before side effects if its current generation differs.</remarks>
+    [JsonIgnore]
+    public string? ExpectedConfigurationGeneration { get; init; }
 }

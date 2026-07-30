@@ -60,7 +60,7 @@ public sealed class DockerExecutionWorkspaceEditorContributor(
                         AgentEditorFieldKind.Select,
                         imageOptions.Length == 0
                             ? "Pull at least one configured image in Docker Execution settings."
-                            : "Choose a ready image pinned by explicit version tag or sha256 digest.",
+                            : "Choose a ready image with an explicit tag or sha256 digest.",
                         Value: config.ImageReference,
                         Options: imageOptions)
                     {

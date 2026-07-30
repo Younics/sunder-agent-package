@@ -197,7 +197,12 @@ internal sealed partial class TranscriptScrollCoordinator
             }
             finally
             {
-                if (ShouldRearmPagingEdge(loaded, interactionRevision, _interactionRevision))
+                if (ShouldRearmPagingEdge(
+                        loaded,
+                        interactionRevision,
+                        _interactionRevision,
+                        anchor.AuthorityRevision,
+                        _viewportAuthorityRevision))
                 {
                     _isOlderEdgeArmed = true;
                 }
@@ -238,7 +243,7 @@ internal sealed partial class TranscriptScrollCoordinator
             loaded = await _loadNewerRowsAsync(
                 new TranscriptPageAnchorAuthority(
                     protectedAnchorKey,
-                    ResolveActivePageProtectedAnchorKey),
+                    ResolveActivePageAnchor),
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (pagingContextRevision == _pagingContextRevision)
@@ -262,12 +267,16 @@ internal sealed partial class TranscriptScrollCoordinator
             {
                 if (!cancellationToken.IsCancellationRequested && !_disposed)
                 {
+                    var tailIntentIsCurrent = IsCurrentNewerTailIntent(
+                        anchor,
+                        interactionRevision,
+                        pagingContextRevision);
                     if (loaded
                         && interactionRevision == _interactionRevision
                         && anchor.AuthorityRevision == _viewportAuthorityRevision
                         && pagingContextRevision == _pagingContextRevision)
                     {
-                        if (wasFollowingTail)
+                        if (wasFollowingTail || tailIntentIsCurrent)
                         {
                             await YieldForRenderedContent(cancellationToken);
                             cancellationToken.ThrowIfCancellationRequested();
@@ -316,15 +325,21 @@ internal sealed partial class TranscriptScrollCoordinator
             }
             finally
             {
-                var tailIntentIsCurrent = pagingContextRevision == _pagingContextRevision
-                                          && anchor.AuthorityRevision == _viewportAuthorityRevision
-                                          && _loadNewerResumeInteractionRevision == _interactionRevision;
+                var tailIntentIsCurrent = IsCurrentNewerTailIntent(
+                    anchor,
+                    interactionRevision,
+                    pagingContextRevision);
                 continueToLatest = loaded
                                    && tailIntentIsCurrent
                                    && _hasNewerRows()
                                    && _canLoadNewerRows();
                 if (continueToLatest
-                    || ShouldRearmPagingEdge(loaded, interactionRevision, _interactionRevision))
+                    || ShouldRearmPagingEdge(
+                        loaded,
+                        interactionRevision,
+                        _interactionRevision,
+                        anchor.AuthorityRevision,
+                        _viewportAuthorityRevision))
                 {
                     _isNewerEdgeArmed = true;
                 }
@@ -344,8 +359,23 @@ internal sealed partial class TranscriptScrollCoordinator
         }
     }
 
+    private TranscriptPageAnchorResolution ResolveActivePageAnchor()
+        => HasCurrentNewerTailIntent()
+            ? TranscriptPageAnchorResolution.Relinquish()
+            : TranscriptPageAnchorResolution.Preserve(
+                Volatile.Read(ref _activePageProtectedAnchorKey));
+
     private object? ResolveActivePageProtectedAnchorKey()
         => Volatile.Read(ref _activePageProtectedAnchorKey);
+
+    private bool IsCurrentNewerTailIntent(
+        ScrollAnchor anchor,
+        long interactionRevision,
+        long pagingContextRevision)
+        => pagingContextRevision == _pagingContextRevision
+           && anchor.AuthorityRevision == _viewportAuthorityRevision
+           && _loadNewerResumeInteractionRevision == _interactionRevision
+           && interactionRevision <= _interactionRevision;
 
     private object? CaptureCurrentPageProtectedAnchorKey()
         => CaptureCurrentScrollAnchorKey()
@@ -392,8 +422,12 @@ internal sealed partial class TranscriptScrollCoordinator
     internal static bool ShouldRearmPagingEdge(
         bool loaded,
         long queuedInteractionRevision,
-        long currentInteractionRevision)
-        => !loaded || queuedInteractionRevision != currentInteractionRevision;
+        long currentInteractionRevision,
+        long queuedAuthorityRevision,
+        long currentAuthorityRevision)
+        => !loaded
+           || queuedInteractionRevision != currentInteractionRevision
+           || queuedAuthorityRevision != currentAuthorityRevision;
 
     private void ReportPagingFailure(Exception exception)
     {

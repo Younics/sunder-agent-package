@@ -7,7 +7,7 @@ namespace Sunder.Package.Agent.Execution.Docker;
 public sealed class DockerImageCatalogService
 {
     internal const string ImagesKey = "docker.images.v1";
-    internal const int CurrentSchemaVersion = 2;
+    internal const int CurrentSchemaVersion = 3;
     private const int ImageCheckTimeoutSeconds = 30;
     private const int ImagePullTimeoutSeconds = 1800;
     private const int MaximumReferenceLength = 512;
@@ -58,9 +58,7 @@ public sealed class DockerImageCatalogService
         _packageContext = packageContext;
         _dockerCliRunner = dockerCliRunner;
         _storageMigration = storageMigration;
-        _coordinator = Coordinators.GetValue(
-            packageContext.Storage.State,
-            static _ => new DockerImageCatalogCoordinator());
+        _coordinator = GetCoordinator(packageContext.Storage.State);
         _mutationGate = _coordinator.MutationGate;
     }
 
@@ -111,10 +109,11 @@ public sealed class DockerImageCatalogService
         var normalized = NormalizeImageReference(imageReference);
         DockerImageCatalogMutationResult result;
         var changed = false;
+        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var current = await LoadStateAfterMigrationAsync(cancellationToken).ConfigureAwait(false);
+            var current = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
             var existing = current.Images.FirstOrDefault(image => string.Equals(
                 image.ImageReference,
                 normalized,
@@ -163,10 +162,11 @@ public sealed class DockerImageCatalogService
         var normalized = NormalizeExistingReference(imageReference);
         DockerImageCatalogSnapshot result;
         var changed = false;
+        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var current = await LoadStateAfterMigrationAsync(cancellationToken).ConfigureAwait(false);
+            var current = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
             var images = current.Images.Where(image => !string.Equals(
                     image.ImageReference,
                     normalized,
@@ -221,7 +221,7 @@ public sealed class DockerImageCatalogService
         {
             return new DockerImageReadiness(
                 false,
-                "This workspace uses a legacy floating Docker image reference. Select a pinned version tag or sha256 digest.",
+                "This workspace uses a legacy tagless Docker image reference. Select an explicit tag or sha256 digest.",
                 image);
         }
 
@@ -351,10 +351,11 @@ public sealed class DockerImageCatalogService
         ArgumentNullException.ThrowIfNull(images);
         var normalized = NormalizeImages(images);
         var changed = false;
+        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var current = await LoadStateAfterMigrationAsync(cancellationToken).ConfigureAwait(false);
+            var current = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
             var updated = CreateUpdatedState(current, normalized);
             await SaveStateAsync(updated, cancellationToken).ConfigureAwait(false);
             _coordinator.InvalidateAllStatuses();
@@ -414,16 +415,9 @@ public sealed class DockerImageCatalogService
         {
             throw new DockerExecutionDomainException(
                 "docker.image-reference.unpinned",
-                "Docker image references must include an explicit version tag or sha256 digest.");
+                "Docker image references must include an explicit tag or sha256 digest.");
         }
 
-        var tag = normalized[(tagSeparator + 1)..];
-        if (string.Equals(tag, "latest", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new DockerExecutionDomainException(
-                "docker.image-reference.latest",
-                "Docker image tag 'latest' is not allowed. Use an explicit version tag or sha256 digest.");
-        }
         return normalized;
     }
 
@@ -448,17 +442,10 @@ public sealed class DockerImageCatalogService
             return NormalizeImageReference(imageReference);
         }
         catch (DockerExecutionDomainException exception) when (
-            exception.Code is "docker.image-reference.unpinned" or "docker.image-reference.latest")
+            exception.Code == "docker.image-reference.unpinned")
         {
             return NormalizeLegacyImageReference(imageReference);
         }
-    }
-
-    private async Task<DockerImageCatalogState> LoadStateAfterMigrationAsync(
-        CancellationToken cancellationToken)
-    {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
-        return await LoadStateAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<DockerImageCatalogState> LoadStateAsync(CancellationToken cancellationToken)
@@ -559,10 +546,11 @@ public sealed class DockerImageCatalogService
     {
         var changed = false;
         var committed = image;
+        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var current = await LoadStateAfterMigrationAsync(cancellationToken).ConfigureAwait(false);
+            var current = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
             var images = current.Images.ToList();
             var index = images.FindIndex(candidate => string.Equals(
                 candidate.ImageReference,
@@ -613,10 +601,11 @@ public sealed class DockerImageCatalogService
     {
         DockerImageStatusOperation? operation = null;
         var changed = false;
+        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var current = await LoadStateAfterMigrationAsync(cancellationToken).ConfigureAwait(false);
+            var current = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
             var image = current.Images.FirstOrDefault(candidate => string.Equals(
                 candidate.ImageReference,
                 imageReference,
@@ -742,6 +731,9 @@ public sealed class DockerImageCatalogService
         => value is { Length: > MaximumDiagnosticLength }
             ? value[..MaximumDiagnosticLength]
             : value;
+
+    internal static DockerImageCatalogCoordinator GetCoordinator(IPackageKeyValueStore state)
+        => Coordinators.GetValue(state, static _ => new DockerImageCatalogCoordinator());
 }
 
 internal sealed record DockerImageCatalogState(

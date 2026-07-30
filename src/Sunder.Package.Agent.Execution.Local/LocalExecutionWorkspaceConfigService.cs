@@ -1,4 +1,8 @@
+using System.Collections.Concurrent;
 using Sunder.Agent.Execution.Common;
+using System.Security.Cryptography;
+using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -10,8 +14,10 @@ namespace Sunder.Package.Agent.Execution.Local;
 public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMigrationContributor
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private static readonly ConditionalWeakTable<IPackageKeyValueStore, ConcurrentDictionary<string, SemaphoreSlim>> MutationGates = new();
     private readonly IPackageContext _packageContext;
     private readonly LocalPackageStorageMigration _storageMigration;
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _mutationGates;
 
     public LocalExecutionWorkspaceConfigService(IPackageContext packageContext)
         : this(packageContext, new LocalPackageStorageMigration(packageContext))
@@ -24,6 +30,9 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
     {
         _packageContext = packageContext;
         _storageMigration = storageMigration;
+        _mutationGates = MutationGates.GetValue(
+            packageContext.Storage.State,
+            static _ => new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal));
     }
 
     public string ContributorId => "sunder.package.agent.execution.local.workspace-path-migration";
@@ -56,11 +65,54 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
         CancellationToken cancellationToken = default)
     {
         await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
-        var normalized = Normalize(config);
-        await _packageContext.Storage.State.SetValueAsync(
+        var gate = _mutationGates.GetOrAdd(bindingId, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await SaveConfigCoreAsync(bindingId, config, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    internal async Task UpdateConfigAsync(
+        string bindingId,
+        Func<LocalExecutionWorkspaceConfig, CancellationToken, ValueTask<LocalExecutionWorkspaceConfig>> update,
+        CancellationToken cancellationToken)
+    {
+        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
+        var gate = _mutationGates.GetOrAdd(bindingId, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var current = await GetConfigAsync(bindingId, cancellationToken).ConfigureAwait(false);
+            var updated = await update(current, cancellationToken).ConfigureAwait(false);
+            await SaveConfigCoreAsync(bindingId, updated, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private Task SaveConfigCoreAsync(
+        string bindingId,
+        LocalExecutionWorkspaceConfig config,
+        CancellationToken cancellationToken)
+        => _packageContext.Storage.State.SetValueAsync(
             BuildKey(bindingId),
-            JsonSerializer.Serialize(normalized, JsonOptions),
-            cancellationToken).ConfigureAwait(false);
+            JsonSerializer.Serialize(Normalize(config), JsonOptions),
+            cancellationToken);
+
+    internal static string CreateGeneration(LocalExecutionConfigurationSnapshot snapshot)
+    {
+        var json = JsonSerializer.Serialize(
+            snapshot with { WorkspaceConfig = Normalize(snapshot.WorkspaceConfig) },
+            JsonOptions);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("local-execution-config-v1\n" + json)))
+            .ToLowerInvariant();
     }
 
     private static LocalExecutionWorkspaceConfig Normalize(LocalExecutionWorkspaceConfig config)

@@ -1,4 +1,3 @@
-using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 
@@ -6,7 +5,19 @@ namespace Sunder.Package.Agent.Execution.Docker;
 
 internal sealed class DockerCommandRunner(IPackageContext packageContext, DockerCliRunner dockerCliRunner) : IDockerCommandExecutor
 {
-    private const int DefaultTimeoutSeconds = 300;
+    private readonly AsyncLocal<DockerExecutionRuntimeConfig?> _executionConfiguration = new();
+
+    public IDisposable UseConfiguration(DockerExecutionRuntimeConfig config)
+    {
+        var previous = _executionConfiguration.Value;
+        _executionConfiguration.Value = config;
+        return new ConfigurationScope(
+            _executionConfiguration,
+            previous,
+            dockerCliRunner.UseExecutablePath(
+                config.DockerCliPath
+                ?? throw new InvalidOperationException("Docker CLI configuration was not captured for this operation.")));
+    }
 
     public async ValueTask<AgentShellCommandResult> ExecuteShellAsync(
         DockerExecutionRuntimeConfig config,
@@ -49,11 +60,10 @@ internal sealed class DockerCommandRunner(IPackageContext packageContext, Docker
         => await dockerCliRunner.RunAsync(args, timeoutSeconds, cancellationToken, standardInput).ConfigureAwait(false);
 
     public async Task<int> ResolveDefaultTimeoutSecondsAsync(CancellationToken cancellationToken = default)
-        => BoundedValue.ParseInt32(
-            await packageContext.Settings.GetValueAsync(DockerExecutionConfiguration.TimeoutKey, cancellationToken),
-            DefaultTimeoutSeconds,
-            minimum: 1,
-            maximum: BoundedProcessRunner.MaximumTimeoutSeconds);
+        => _executionConfiguration.Value?.DefaultTimeoutSeconds
+           ?? await DockerExecutionConfiguration.ResolveDefaultTimeoutSecondsAsync(
+               packageContext,
+               cancellationToken);
 
     public static AgentExecutionShellDescriptor GetShellDescriptor(DockerExecutionWorkspaceConfig config)
     {
@@ -108,4 +118,22 @@ internal sealed class DockerCommandRunner(IPackageContext packageContext, Docker
 
     private static string BuildProcessCommand(AgentProcessCommandRequest request)
         => string.Join(' ', new[] { Quote(request.FileName) }.Concat(request.Arguments.Select(Quote)));
+
+    private sealed class ConfigurationScope(
+        AsyncLocal<DockerExecutionRuntimeConfig?> configuration,
+        DockerExecutionRuntimeConfig? previous,
+        IDisposable executablePathScope) : IDisposable
+    {
+        private AsyncLocal<DockerExecutionRuntimeConfig?>? _configuration = configuration;
+
+        public void Dispose()
+        {
+            executablePathScope.Dispose();
+            var current = Interlocked.Exchange(ref _configuration, null);
+            if (current is not null)
+            {
+                current.Value = previous;
+            }
+        }
+    }
 }

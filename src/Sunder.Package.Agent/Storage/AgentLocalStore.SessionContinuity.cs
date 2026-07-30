@@ -78,6 +78,13 @@ public sealed partial class AgentLocalStore
             activeGeneration,
             sourceRun.Key,
             sourceRun.Epoch,
+            sourceRun.UserTurnId
+            ?? (sourceRun.Suspension switch
+            {
+                AgentPermissionRunSuspension permission => permission.UserTurnId,
+                AgentChildJoinRunSuspension childJoin => childJoin.UserTurnId,
+                _ => Guid.Empty,
+            }),
             turns,
             activeCheckpoint);
     }

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 using Sunder.Package.Agent.Contracts.Models;
@@ -13,22 +14,172 @@ internal sealed class OpenAiModelOptionsChatClient(IChatClient inner) : IChatCli
     public ChatClientMetadata Metadata { get; } =
         inner.GetService(typeof(ChatClientMetadata)) as ChatClientMetadata ?? new ChatClientMetadata("OpenAI");
 
-    public Task<ChatResponse> GetResponseAsync(
+    public async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
-        => _inner.GetResponseAsync(messages, PrepareOptions(options), cancellationToken);
+    {
+        try
+        {
+            var response = await _inner.GetResponseAsync(messages, PrepareOptions(options), cancellationToken)
+                .ConfigureAwait(false);
+            ThrowIfTerminalFailure(response);
+            return response;
+        }
+        catch (Exception ex)
+        {
+            if (OpenAiExceptionMapper.TryMapContextWindowExceeded(ex, out var providerException))
+            {
+                throw providerException;
+            }
 
-    public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            throw;
+        }
+    }
+
+    public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options = null,
-        CancellationToken cancellationToken = default)
-        => _inner.GetStreamingResponseAsync(messages, PrepareOptions(options), cancellationToken);
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        IAsyncEnumerator<ChatResponseUpdate> enumerator;
+        try
+        {
+            enumerator = _inner.GetStreamingResponseAsync(
+                    messages,
+                    PrepareOptions(options),
+                    cancellationToken)
+                .GetAsyncEnumerator(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            if (OpenAiExceptionMapper.TryMapContextWindowExceeded(ex, out var providerException))
+            {
+                throw providerException;
+            }
+
+            throw;
+        }
+
+        await using (enumerator.ConfigureAwait(false))
+        {
+            while (true)
+            {
+                ChatResponseUpdate update;
+                try
+                {
+                    if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    {
+                        yield break;
+                    }
+
+                    update = enumerator.Current;
+                }
+                catch (Exception ex)
+                {
+                    if (OpenAiExceptionMapper.TryMapContextWindowExceeded(ex, out var providerException))
+                    {
+                        throw providerException;
+                    }
+
+                    throw;
+                }
+
+                ThrowIfTerminalFailure(update);
+                yield return update;
+            }
+        }
+    }
 
     public object? GetService(Type serviceType, object? serviceKey = null) =>
         _inner.GetService(serviceType, serviceKey);
 
     public void Dispose() => _inner.Dispose();
+
+    private static void ThrowIfTerminalFailure(ChatResponse response)
+    {
+        foreach (var contentError in response.Messages
+                     .SelectMany(message => message.Contents)
+                     .OfType<ErrorContent>())
+        {
+            ThrowTerminalFailure(contentError.ErrorCode, contentError.Message, contentError.Details);
+        }
+
+        switch (response.RawRepresentation)
+        {
+            case ResponseResult { Error: { } error }:
+                ThrowTerminalFailure(error.Code.ToString(), error.Message);
+                break;
+            case ResponseResult { IncompleteStatusDetails: { } incomplete }:
+                ThrowTerminalFailure("response.incomplete", incomplete.Reason.ToString());
+                break;
+            default:
+                ThrowIfTerminalFailure(response.AdditionalProperties);
+                break;
+        }
+    }
+
+    private static void ThrowIfTerminalFailure(ChatResponseUpdate update)
+    {
+        foreach (var contentError in update.Contents.OfType<ErrorContent>())
+        {
+            ThrowTerminalFailure(contentError.ErrorCode, contentError.Message, contentError.Details);
+        }
+
+        if (update.RawRepresentation is StreamingResponseFailedUpdate failedUpdate)
+        {
+            if (failedUpdate.Response.Error is { } error)
+            {
+                ThrowTerminalFailure(error.Code.ToString(), error.Message);
+            }
+
+            ThrowTerminalFailure("response.failed", "OpenAI returned a failed response without error details.");
+        }
+        else if (update.RawRepresentation is StreamingResponseIncompleteUpdate incompleteUpdate)
+        {
+            ThrowTerminalFailure(
+                "response.incomplete",
+                incompleteUpdate.Response.IncompleteStatusDetails?.Reason.ToString());
+        }
+        else
+        {
+            ThrowIfTerminalFailure(update.AdditionalProperties);
+        }
+    }
+
+    private static void ThrowIfTerminalFailure(AdditionalPropertiesDictionary? properties)
+    {
+        if (properties is null)
+        {
+            return;
+        }
+
+        foreach (var key in new[] { "Error", "error", "response.failed", "response.incomplete" })
+        {
+            if (properties.TryGetValue(key, out var value))
+            {
+                ThrowTerminalFailure(key, value?.ToString());
+            }
+        }
+    }
+
+    private static void ThrowTerminalFailure(params string?[] details)
+    {
+        var diagnostic = string.Join(": ", details.Where(detail => !string.IsNullOrWhiteSpace(detail)));
+        if (OpenAiExceptionMapper.TryMapContextWindowExceeded(
+                new InvalidOperationException(diagnostic),
+                out var providerException))
+        {
+            throw providerException;
+        }
+
+        throw new AgentChatProviderException(
+            string.IsNullOrWhiteSpace(diagnostic)
+                ? "OpenAI returned a terminal error response."
+                : $"OpenAI returned a terminal error response: {diagnostic}",
+            "### OpenAI request failed\n\nThe provider returned an error instead of a completed response.",
+            "openai-response-failed");
+    }
 
     private static ChatOptions? PrepareOptions(ChatOptions? options)
     {

@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Text.Json;
-using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -177,6 +175,38 @@ public sealed partial class AgentToolService(
             .ToArray();
     }
 
+    internal async Task<AgentToolInvocationReference?> ResolvePreparedInvocationAsync(
+        AgentToolDescriptor advertisedDescriptor,
+        string ownerPackageId,
+        string? executionTargetOwnerPackageId,
+        AgentProfileRecord profile,
+        Guid sessionId,
+        AgentWorkspaceRecord workspace,
+        string? executionTargetConfigurationGeneration,
+        CancellationToken cancellationToken)
+    {
+        var context = CreateSourceContext(sessionId, profile, workspace) with
+        {
+            ExecutionTargetConfigurationGeneration = executionTargetConfigurationGeneration,
+        };
+        var matches = (await ListOwnedRuntimeToolCandidatesAsync(context, cancellationToken)
+                .ConfigureAwait(false))
+            .Where(candidate => IsSameAdvertisedTool(advertisedDescriptor, candidate.RuntimeTool.Descriptor)
+                                && string.Equals(
+                                    ownerPackageId,
+                                    candidate.Invocation.OwnerPackageId,
+                                    StringComparison.Ordinal)
+                                && string.Equals(
+                                    executionTargetOwnerPackageId,
+                                    candidate.Invocation.ExecutionTargetOwnerPackageId,
+                                    StringComparison.Ordinal)
+                                && IsAllowedForProfile(profile, candidate.RuntimeTool.Descriptor)
+                                && IsInvocationAvailable(candidate.Invocation))
+            .Take(2)
+            .ToArray();
+        return matches.Length == 1 ? matches[0].Invocation : null;
+    }
+
     internal async Task<AgentToolResult> ExecuteAsync(
         string toolId,
         string argumentsJson,
@@ -194,10 +224,19 @@ public sealed partial class AgentToolService(
         CancellationToken cancellationToken = default,
         AgentToolDescriptor? advertisedDescriptor = null,
         string? advertisedOwnerPackageId = null,
-        AgentToolInvocationReference? advertisedInvocation = null)
+        AgentToolInvocationReference? advertisedInvocation = null,
+        AgentWorkspaceBindingRecord? expectedExecutionBinding = null,
+        string? expectedExecutionTargetConfigurationGeneration = null,
+        bool enforceExpectedExecutionContext = false)
     {
         var effectiveProfileId = string.IsNullOrWhiteSpace(profileId) ? null : profileId;
         var executionBinding = ResolveExecutionBinding(workspace);
+        if (!IsCurrentWorkspaceExecutionContext(
+                workspace,
+                enforceExpectedExecutionContext ? expectedExecutionBinding : executionBinding))
+        {
+            return PermissionContextChangedResult(toolId);
+        }
         var context = new AgentToolExecutionContext(sessionId, effectiveProfileId, workspace, executionBinding, allowOutsideConfiguredScope, runId, runRevision, userTurnId, toolCallId)
         {
             TranscriptEpoch = ResolveTranscriptEpoch(sessionId),
@@ -205,6 +244,7 @@ public sealed partial class AgentToolService(
             ApprovedResourceClaims = approvedResourceClaims ?? [],
             ApprovedResourceCapabilities = approvedResourceCapabilities ?? [],
             ExecutionTargetReference = ResolveExecutionTargetReference(executionBinding, advertisedInvocation),
+            ExecutionTargetConfigurationGeneration = expectedExecutionTargetConfigurationGeneration,
         };
         try
         {
@@ -224,7 +264,13 @@ public sealed partial class AgentToolService(
                     IsError: true,
                     ErrorCode: AgentToolSecurityErrorCodes.NotAdvertised);
             }
-
+            if (!await IsCurrentExecutionTargetConfigurationAsync(
+                    context,
+                    resolvedTool.Invocation,
+                    cancellationToken).ConfigureAwait(false))
+            {
+                return PermissionContextChangedResult(toolId);
+            }
             var executionContext = context with
             {
                 ResourceOperation = CreateResourceOperation(
@@ -234,11 +280,15 @@ public sealed partial class AgentToolService(
                     canIssueOutsideAuthority: false),
             };
             var request = new AgentToolRequest(toolId, argumentsJson);
-            return await InvokeToolAsync(
-                resolvedTool.Invocation,
-                cancellationToken,
-                (installedTool, token) => installedTool.ExecuteAsync(executionContext, request, token),
-                (source, token) => source.ExecuteAsync(executionContext, request, token)).ConfigureAwait(false);
+            return await StartWorkspaceBoundInvocation(
+                workspace,
+                enforceExpectedExecutionContext ? expectedExecutionBinding : executionBinding,
+                PermissionContextChangedResult(toolId),
+                () => InvokeToolAsync(
+                    resolvedTool.Invocation,
+                    cancellationToken,
+                    (installedTool, token) => installedTool.ExecuteAsync(executionContext, request, token),
+                    (source, token) => source.ExecuteAsync(executionContext, request, token))).ConfigureAwait(false);
         }
         catch (AgentPackageUnavailableException ex)
         {
@@ -285,10 +335,19 @@ public sealed partial class AgentToolService(
         CancellationToken cancellationToken = default,
         AgentToolDescriptor? advertisedDescriptor = null,
         string? advertisedOwnerPackageId = null,
-        AgentToolInvocationReference? advertisedInvocation = null)
+        AgentToolInvocationReference? advertisedInvocation = null,
+        AgentWorkspaceBindingRecord? expectedExecutionBinding = null,
+        string? expectedExecutionTargetConfigurationGeneration = null,
+        bool enforceExpectedExecutionContext = false)
     {
         var effectiveProfileId = string.IsNullOrWhiteSpace(profileId) ? null : profileId;
         var executionBinding = ResolveExecutionBinding(workspace);
+        if (!IsCurrentWorkspaceExecutionContext(
+                workspace,
+                enforceExpectedExecutionContext ? expectedExecutionBinding : executionBinding))
+        {
+            return PermissionContextChangedResult(toolId);
+        }
         var context = new AgentToolExecutionContext(
             sessionId,
             effectiveProfileId,
@@ -305,6 +364,7 @@ public sealed partial class AgentToolService(
             ApprovedResourceClaims = approvedResourceClaims ?? [],
             ApprovedResourceCapabilities = approvedResourceCapabilities ?? [],
             ExecutionTargetReference = ResolveExecutionTargetReference(executionBinding, advertisedInvocation),
+            ExecutionTargetConfigurationGeneration = expectedExecutionTargetConfigurationGeneration,
         };
         ResolvedTool? resolvedTool;
         try
@@ -321,11 +381,32 @@ public sealed partial class AgentToolService(
         {
             return PackageUnavailableResult(toolId, ex.Message);
         }
-        if (resolvedTool is null || !resolvedTool.Invocation.SupportsPreflight)
+        if (resolvedTool is null)
         {
             return null;
         }
-
+        try
+        {
+            if (!await IsCurrentExecutionTargetConfigurationAsync(
+                    context,
+                    resolvedTool.Invocation,
+                    cancellationToken).ConfigureAwait(false))
+            {
+                return PermissionContextChangedResult(toolId);
+            }
+        }
+        catch (AgentPackageUnavailableException ex)
+        {
+            return PackageUnavailableResult(toolId, ex.Message);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return PermissionContextChangedResult(toolId);
+        }
+        if (!resolvedTool.Invocation.SupportsPreflight)
+        {
+            return null;
+        }
         AgentToolResult? result;
         try
         {
@@ -337,14 +418,18 @@ public sealed partial class AgentToolService(
                     ResolveActionId(toolId),
                     canIssueOutsideAuthority: false),
             };
-            result = await InvokeSourceAsync(
-                resolvedTool.Invocation,
-                cancellationToken,
-                (source, token) => ((IAgentToolExecutionPreflightSource)source)
-                    .PreflightExecutionAsync(
-                        executionContext,
-                        new AgentToolRequest(toolId, argumentsJson),
-                        token)).ConfigureAwait(false);
+            result = await StartWorkspaceBoundInvocation<AgentToolResult?>(
+                workspace,
+                enforceExpectedExecutionContext ? expectedExecutionBinding : executionBinding,
+                PermissionContextChangedResult(toolId),
+                () => InvokeSourceAsync(
+                    resolvedTool.Invocation,
+                    cancellationToken,
+                    (source, token) => ((IAgentToolExecutionPreflightSource)source)
+                        .PreflightExecutionAsync(
+                            executionContext,
+                            new AgentToolRequest(toolId, argumentsJson),
+                            token))).ConfigureAwait(false);
         }
         catch (AgentPackageUnavailableException ex)
         {
@@ -415,7 +500,10 @@ public sealed partial class AgentToolService(
         string? advertisedOwnerPackageId = null,
         AgentToolInvocationReference? advertisedInvocation = null,
         CancellationToken cancellationToken = default,
-        bool issueOutsideResourceAuthority = true)
+        bool issueOutsideResourceAuthority = true,
+        AgentWorkspaceBindingRecord? expectedExecutionBinding = null,
+        bool enforceExpectedExecutionContext = false,
+        bool requireReadiness = true)
     {
         var effectiveProfileId = string.IsNullOrWhiteSpace(profileId) ? null : profileId;
         var executionBinding = ResolveExecutionBinding(workspace);
@@ -441,7 +529,8 @@ public sealed partial class AgentToolService(
                 advertisedDescriptor,
                 advertisedOwnerPackageId,
                 advertisedInvocation,
-                cancellationToken);
+                cancellationToken,
+                requireReadiness);
         }
         catch (AgentPackageUnavailableException ex)
         {
@@ -462,9 +551,51 @@ public sealed partial class AgentToolService(
         {
             return null;
         }
+        if (!IsCurrentWorkspaceExecutionContext(
+                workspace,
+                enforceExpectedExecutionContext ? expectedExecutionBinding : executionBinding))
+        {
+            return new AgentToolPermissionResolution(
+                resolvedTool.Descriptor,
+                PermissionRequest: null,
+                executionBinding,
+                resolvedTool.Invocation.ExecutionTarget,
+                resolvedTool.Invocation.OwnerPackageId,
+                "The workspace paths or execution binding changed before permission planning began.");
+        }
+
+        string? executionTargetConfigurationGeneration;
+        try
+        {
+            executionTargetConfigurationGeneration = await GetExecutionTargetConfigurationGenerationAsync(
+                context,
+                resolvedTool.Invocation,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (AgentPackageUnavailableException ex)
+        {
+            return new AgentToolPermissionResolution(
+                resolvedTool.Descriptor,
+                PermissionRequest: null,
+                executionBinding,
+                resolvedTool.Invocation.ExecutionTarget,
+                resolvedTool.Invocation.OwnerPackageId,
+                ex.Message);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new AgentToolPermissionResolution(
+                resolvedTool.Descriptor,
+                PermissionRequest: null,
+                executionBinding,
+                resolvedTool.Invocation.ExecutionTarget,
+                resolvedTool.Invocation.OwnerPackageId,
+                $"The execution-target configuration could not be captured safely: {ex.Message}");
+        }
 
         context = context with
         {
+            ExecutionTargetConfigurationGeneration = executionTargetConfigurationGeneration,
             ResourceOperation = CreateResourceOperation(
                 context,
                 resolvedTool.Invocation,
@@ -555,228 +686,75 @@ public sealed partial class AgentToolService(
             };
         }
 
+        string? currentExecutionTargetConfigurationGeneration;
+        try
+        {
+            currentExecutionTargetConfigurationGeneration = await GetExecutionTargetConfigurationGenerationAsync(
+                context,
+                resolvedTool.Invocation,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (AgentPackageUnavailableException ex)
+        {
+            ReleasePermissionRequestAuthority(permissionRequest, resolvedTool.Invocation);
+            return new AgentToolPermissionResolution(
+                resolvedTool.Descriptor,
+                PermissionRequest: null,
+                executionBinding,
+                resolvedTool.Invocation.ExecutionTarget,
+                resolvedTool.Invocation.OwnerPackageId,
+                ex.Message);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ReleasePermissionRequestAuthority(permissionRequest, resolvedTool.Invocation);
+            return new AgentToolPermissionResolution(
+                resolvedTool.Descriptor,
+                PermissionRequest: null,
+                executionBinding,
+                resolvedTool.Invocation.ExecutionTarget,
+                resolvedTool.Invocation.OwnerPackageId,
+                $"The execution-target configuration could not be revalidated safely: {ex.Message}");
+        }
+        if (!string.Equals(
+                executionTargetConfigurationGeneration,
+                currentExecutionTargetConfigurationGeneration,
+                StringComparison.Ordinal))
+        {
+            ReleasePermissionRequestAuthority(permissionRequest, resolvedTool.Invocation);
+            return new AgentToolPermissionResolution(
+                resolvedTool.Descriptor,
+                PermissionRequest: null,
+                executionBinding,
+                resolvedTool.Invocation.ExecutionTarget,
+                resolvedTool.Invocation.OwnerPackageId,
+                "The execution-target configuration changed during permission planning.");
+        }
+
+        if (!IsCurrentWorkspaceExecutionContext(
+                workspace,
+                enforceExpectedExecutionContext ? expectedExecutionBinding : executionBinding))
+        {
+            ReleasePermissionRequestAuthority(permissionRequest, resolvedTool.Invocation);
+            return new AgentToolPermissionResolution(
+                resolvedTool.Descriptor,
+                PermissionRequest: null,
+                executionBinding,
+                resolvedTool.Invocation.ExecutionTarget,
+                resolvedTool.Invocation.OwnerPackageId,
+                "The workspace paths or execution binding changed during permission planning.");
+        }
+
         return new AgentToolPermissionResolution(
             resolvedTool.Descriptor,
             permissionRequest,
             executionBinding,
             resolvedTool.Invocation.ExecutionTarget,
             resolvedTool.Invocation.OwnerPackageId,
-            deniedReason);
-    }
-
-    private static async Task<IReadOnlyList<AgentRuntimeTool>> ListRuntimeToolsAsync(
-        IAgentToolSource source,
-        AgentToolSourceContext context,
-        CancellationToken cancellationToken)
-    {
-        if (source is IAgentNativeToolSource nativeToolSource)
+            deniedReason)
         {
-            return await nativeToolSource.ListRuntimeToolsAsync(context, cancellationToken);
-        }
-
-        var descriptors = await source.ListToolsAsync(context, cancellationToken);
-        return descriptors.Select(CreateRuntimeTool).ToArray();
-    }
-
-    private static AgentRuntimeTool CreateRuntimeTool(AgentToolDescriptor descriptor)
-        => new(
-            descriptor,
-            AIFunctionFactory.CreateDeclaration(
-                descriptor.ToolId,
-                descriptor.Description,
-                ParseJsonSchema(descriptor.ArgumentsJsonSchema),
-                returnJsonSchema: null));
-
-    private static JsonElement ParseJsonSchema(string? schemaJson)
-    {
-        if (string.IsNullOrWhiteSpace(schemaJson))
-        {
-            return JsonSerializer.SerializeToElement(new
-            {
-                type = "object",
-                properties = new { },
-                additionalProperties = false,
-            });
-        }
-
-        using var document = JsonDocument.Parse(schemaJson);
-        return document.RootElement.Clone();
-    }
-
-    private async Task<ResolvedTool?> ResolveAdvertisedToolAsync(
-        string toolId,
-        AgentToolExecutionContext context,
-        AgentToolDescriptor? advertisedDescriptor,
-        string? advertisedOwnerPackageId,
-        AgentToolInvocationReference? advertisedInvocation,
-        CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(toolId))
-        {
-            return null;
-        }
-
-        var profile = ResolveProfile(context.ProfileId);
-        if (!string.IsNullOrWhiteSpace(context.ProfileId) && profile is null)
-        {
-            return null;
-        }
-
-        var sourceContext = new AgentToolSourceContext(context.SessionId, profile, context.Workspace, context.ExecutionBinding)
-        {
-            ExecutionTargetReference = context.ExecutionTargetReference,
+            ExecutionTargetConfigurationGeneration = executionTargetConfigurationGeneration,
         };
-        var matching = advertisedInvocation is null
-            ? (await ListOwnedRuntimeToolCandidatesAsync(sourceContext, cancellationToken)
-                    .ConfigureAwait(false))
-                .Where(candidate => string.Equals(
-                    candidate.RuntimeTool.Descriptor.ToolId,
-                    toolId,
-                    StringComparison.OrdinalIgnoreCase))
-                .ToArray()
-            : string.Equals(
-                advertisedInvocation.Descriptor.ToolId,
-                toolId,
-                StringComparison.OrdinalIgnoreCase)
-                ? [new OwnedRuntimeToolCandidate(
-                    CreateRuntimeTool(advertisedInvocation.Descriptor),
-                    advertisedInvocation)]
-                : [];
-        if (matching.Length != 1)
-        {
-            return null;
-        }
-
-        var candidate = matching[0];
-        var descriptor = candidate.RuntimeTool.Descriptor;
-        if (advertisedDescriptor is not null && !IsSameAdvertisedTool(advertisedDescriptor, descriptor)
-            || advertisedOwnerPackageId is not null
-               && !string.Equals(
-                   advertisedOwnerPackageId,
-                    candidate.Invocation.OwnerPackageId,
-                   StringComparison.Ordinal)
-            || !IsAllowedForProfile(profile, descriptor))
-        {
-            return null;
-        }
-
-        var readiness = await GetReadinessAsync(candidate, sourceContext, cancellationToken)
-            .ConfigureAwait(false);
-        return readiness is not null && readiness.Status != AgentToolReadinessStatus.Ready
-            ? null
-            : new ResolvedTool(descriptor, candidate.Invocation);
     }
-
-    private async Task<IReadOnlyList<OwnedRuntimeToolCandidate>> ListOwnedRuntimeToolCandidatesAsync(
-        AgentToolSourceContext context,
-        CancellationToken cancellationToken)
-    {
-        var candidates = new List<OwnedRuntimeToolCandidate>();
-        var installedSource = new AgentToolSourceMetadata(
-            _installedPackageToolSource.SourceId,
-            _installedPackageToolSource.DisplayName,
-            _installedPackageToolSource.SourceKind,
-            SupportsPermission: false,
-            SupportsPreflight: false);
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.Tools))
-        {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-
-            using (lease)
-            {
-                var descriptor = WithSourceIdentity(installedSource, lease.Contribution.Descriptor);
-                if (lease.RetirementToken.IsCancellationRequested)
-                {
-                    continue;
-                }
-
-                var targetSnapshot = SnapshotExecutionTarget(context.ExecutionTargetReference);
-                var invocation = new AgentToolInvocationReference(
-                    lease.PackageId,
-                    descriptor,
-                    reference,
-                    SourceReference: null,
-                    SupportsInstalledPermission: lease.Contribution is IAgentPermissionAwareTool,
-                    SupportsSourcePermission: false,
-                    SupportsPreflight: false,
-                    context.ExecutionTargetReference,
-                    targetSnapshot?.Descriptor,
-                    targetSnapshot?.OwnerPackageId,
-                    Guid.NewGuid().ToString("N"));
-                candidates.Add(new OwnedRuntimeToolCandidate(
-                    CreateRuntimeTool(descriptor),
-                    invocation));
-            }
-        }
-
-        var sourceReferences = AgentExtensionInvocation.Snapshot(
-            _invocationCatalog,
-            PackageExtensionPoints.ToolSources,
-            static source => new AgentToolSourceMetadata(
-                source.SourceId,
-                source.DisplayName,
-                source.SourceKind,
-                source is IAgentPermissionAwareToolSource,
-                source is IAgentToolExecutionPreflightSource));
-        foreach (var sourceReference in sourceReferences
-                     .OrderBy(source => source.Metadata.DisplayName, StringComparer.OrdinalIgnoreCase))
-        {
-            IReadOnlyList<AgentRuntimeTool> runtimeTools;
-            try
-            {
-                runtimeTools = await InvokeTargetBoundAsync(
-                    context.ExecutionTargetReference,
-                    cancellationToken,
-                    token => AgentExtensionInvocation.InvokeAsync(
-                        sourceReference,
-                        token,
-                        (source, invocationToken) => new ValueTask<IReadOnlyList<AgentRuntimeTool>>(
-                            ListRuntimeToolsAsync(source, context, invocationToken)))).ConfigureAwait(false);
-            }
-            catch (AgentPackageUnavailableException)
-            {
-                continue;
-            }
-
-            foreach (var runtimeTool in runtimeTools)
-            {
-                var descriptor = WithSourceIdentity(sourceReference.Metadata, runtimeTool.Descriptor);
-                var targetSnapshot = SnapshotExecutionTarget(context.ExecutionTargetReference);
-                var invocation = new AgentToolInvocationReference(
-                    sourceReference.PackageId,
-                    descriptor,
-                    ToolReference: null,
-                    sourceReference.Reference,
-                    SupportsInstalledPermission: false,
-                    sourceReference.Metadata.SupportsPermission,
-                    sourceReference.Metadata.SupportsPreflight,
-                    context.ExecutionTargetReference,
-                    targetSnapshot?.Descriptor,
-                    targetSnapshot?.OwnerPackageId,
-                    Guid.NewGuid().ToString("N"));
-                candidates.Add(new OwnedRuntimeToolCandidate(
-                    CreateRuntimeTool(descriptor),
-                    invocation));
-            }
-        }
-        return candidates;
-    }
-
-    private static ValueTask<AgentToolReadiness?> GetReadinessAsync(
-        OwnedRuntimeToolCandidate candidate,
-        AgentToolSourceContext context,
-        CancellationToken cancellationToken)
-        => InvokeToolAsync<AgentToolReadiness?>(
-            candidate.Invocation,
-            cancellationToken,
-            static async (installedTool, token) =>
-                await installedTool.GetReadinessAsync(token).ConfigureAwait(false),
-            (source, token) => source.GetReadinessAsync(
-                candidate.RuntimeTool.Descriptor.ToolId,
-                context,
-                token));
 
 }

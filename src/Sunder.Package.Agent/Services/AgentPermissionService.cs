@@ -29,12 +29,18 @@ public sealed class AgentPermissionService(
     private readonly AgentLocalStore _store = store;
     private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
         AgentExtensionInvocation.Require(extensionCatalog);
+    private readonly object _policySyncRoot = new();
 
     public AgentSessionPermissionState GetSessionState(Guid sessionId)
         => _store.GetSessionPermissionState(sessionId);
 
     public void SetSessionUnrestrictedMode(Guid sessionId, bool isEnabled)
-        => _store.SetSessionUnrestrictedMode(sessionId, isEnabled);
+    {
+        lock (_policySyncRoot)
+        {
+            _store.SetSessionUnrestrictedMode(sessionId, isEnabled);
+        }
+    }
 
     public IReadOnlyList<AgentPermissionActionDescriptor> ListActions()
     {
@@ -67,36 +73,27 @@ public sealed class AgentPermissionService(
         => _store.ListPermissionOverrides();
 
     public void SaveOverride(string actionId, string boundaryId, AgentPermissionDecision decision)
-        => _store.SavePermissionOverride(new AgentPermissionOverride(actionId, boundaryId, decision, DateTimeOffset.UtcNow));
+    {
+        lock (_policySyncRoot)
+        {
+            _store.SavePermissionOverride(new AgentPermissionOverride(
+                actionId,
+                boundaryId,
+                decision,
+                DateTimeOffset.UtcNow));
+        }
+    }
 
     public void DeleteOverride(string actionId, string boundaryId)
-        => _store.DeletePermissionOverride(actionId, boundaryId);
+    {
+        lock (_policySyncRoot)
+        {
+            _store.DeletePermissionOverride(actionId, boundaryId);
+        }
+    }
 
     public AgentPendingPermissionRequestRecord SavePendingRequest(AgentPendingPermissionRequestRecord request)
         => _store.SavePendingPermissionRequest(request);
-
-    internal AgentPendingPermissionRequestRecord? SavePendingRequestAndSuspendRun(
-        AgentPendingPermissionRequestRecord request,
-        long expectedEpoch)
-        => _store.SavePendingPermissionRequestAndSuspendRun(request, expectedEpoch);
-
-    internal AgentPendingPermissionRequestRecord? SavePendingRequestAndSuspendRun(
-        AgentPendingPermissionRequestRecord request,
-        AgentDurableRunLease lease)
-    {
-        lock (lease.SyncRoot)
-        {
-            var persisted = _store.SavePendingPermissionRequestAndSuspendRun(
-                request,
-                lease.Epoch);
-            if (persisted is not null)
-            {
-                lease.AdvanceTo(lease.Epoch + 1);
-            }
-
-            return persisted;
-        }
-    }
 
     public IReadOnlyList<AgentPendingPermissionRequestRecord> ListPendingRequests(Guid sessionId)
         => _store.ListPendingPermissionRequests(sessionId);
@@ -129,6 +126,31 @@ public sealed class AgentPermissionService(
     internal AgentPendingPermissionClaimResult TryClaimPendingRequest(Guid sessionId, string requestId)
         => _store.TryClaimPendingPermissionRequest(sessionId, requestId);
 
+    internal (AgentPendingPermissionClaimResult Claim, AgentPendingPermissionDecisionResult? PolicyDenial)
+        TryClaimPendingRequestForApproval(Guid sessionId, string requestId)
+    {
+        lock (_policySyncRoot)
+        {
+            var request = _store.GetPendingPermissionRequest(sessionId, requestId);
+            if (request is not null
+                && EvaluateCore(sessionId, CreatePermissionRequest(request)).Decision
+                    == AgentPermissionDecision.Deny)
+            {
+                var denial = _store.TryDenyPendingPermissionRequest(
+                    sessionId,
+                    requestId,
+                    "Permission request denied by the current configured policy.");
+                return (
+                    new AgentPendingPermissionClaimResult(
+                        AgentPendingPermissionClaimOutcome.AlreadyDecided,
+                        request),
+                    denial);
+            }
+
+            return (_store.TryClaimPendingPermissionRequest(sessionId, requestId), null);
+        }
+    }
+
     internal AgentPendingPermissionDecisionResult TryDenyPendingRequest(
         Guid sessionId,
         string requestId,
@@ -156,27 +178,32 @@ public sealed class AgentPermissionService(
         AgentPendingPermissionRequestRecord request,
         bool approveForSession = false)
     {
-        if (string.IsNullOrWhiteSpace(request.ClaimToken))
+        lock (_policySyncRoot)
         {
-            return false;
-        }
+            if (string.IsNullOrWhiteSpace(request.ClaimToken)
+                || EvaluateCore(request.SessionId, CreatePermissionRequest(request)).Decision
+                    == AgentPermissionDecision.Deny)
+            {
+                return false;
+            }
 
-        var approval = approveForSession
-                       && !string.IsNullOrWhiteSpace(request.ActionId)
-                       && !string.IsNullOrWhiteSpace(request.BoundaryId)
-            ? new AgentSessionPermissionApproval(
-                Guid.NewGuid().ToString("N"),
+            var approval = approveForSession
+                           && !string.IsNullOrWhiteSpace(request.ActionId)
+                           && !string.IsNullOrWhiteSpace(request.BoundaryId)
+                ? new AgentSessionPermissionApproval(
+                    Guid.NewGuid().ToString("N"),
+                    request.SessionId,
+                    request.ActionId.Trim(),
+                    AgentPermissionMatcherKind.ActionId,
+                    request.BoundaryId.Trim(),
+                    DateTimeOffset.UtcNow)
+                : null;
+            return _store.MarkClaimedPermissionExecutionStarted(
                 request.SessionId,
-                request.ActionId.Trim(),
-                AgentPermissionMatcherKind.ActionId,
-                request.BoundaryId.Trim(),
-                DateTimeOffset.UtcNow)
-            : null;
-        return _store.MarkClaimedPermissionExecutionStarted(
-            request.SessionId,
-            request.RequestId,
-            request.ClaimToken,
-            approval);
+                request.RequestId,
+                request.ClaimToken,
+                approval);
+        }
     }
 
     internal AgentCheckpointPersistenceResult? FinalizeClaimedRequest(
@@ -197,9 +224,22 @@ public sealed class AgentPermissionService(
 
     public AgentPermissionEvaluation Evaluate(Guid? sessionId, AgentPermissionRequest request)
     {
+        lock (_policySyncRoot)
+        {
+            return EvaluateCore(sessionId, request);
+        }
+    }
+
+    private AgentPermissionEvaluation EvaluateCore(Guid? sessionId, AgentPermissionRequest request)
+    {
         if (string.IsNullOrWhiteSpace(request.ActionId))
         {
-            return new AgentPermissionEvaluation(AgentPermissionDecision.Deny, "Permission request action id is missing.");
+            return new AgentPermissionEvaluation(
+                AgentPermissionDecision.Deny,
+                "Permission request action id is missing.")
+            {
+                Source = AgentPermissionDecisionSource.UnknownBoundary,
+            };
         }
 
         var boundaryId = string.IsNullOrWhiteSpace(request.BoundaryId)
@@ -210,7 +250,12 @@ public sealed class AgentPermissionService(
         var boundary = action?.Boundaries.FirstOrDefault(item => string.Equals(item.BoundaryId, boundaryId, StringComparison.OrdinalIgnoreCase));
         if (action is null || boundary is null)
         {
-            return new AgentPermissionEvaluation(AgentPermissionDecision.Ask, $"Unknown permission boundary '{request.ActionId}:{boundaryId}'.");
+            return new AgentPermissionEvaluation(
+                AgentPermissionDecision.Ask,
+                $"Unknown permission boundary '{request.ActionId}:{boundaryId}'.")
+            {
+                Source = AgentPermissionDecisionSource.UnknownBoundary,
+            };
         }
 
         var permissionOverride = _store.ListPermissionOverrides()
@@ -220,9 +265,17 @@ public sealed class AgentPermissionService(
 
         if (decision == AgentPermissionDecision.Ask && sessionId is { } resolvedSessionId)
         {
-            if (FindSessionApprovalInHierarchy(resolvedSessionId, request, boundaryId) is not null)
+            if (FindSessionApprovalInHierarchy(resolvedSessionId, request, boundaryId) is { } approval)
             {
-                return new AgentPermissionEvaluation(AgentPermissionDecision.Allow, "Allowed by session-scoped approval.", permissionOverride);
+                return new AgentPermissionEvaluation(
+                    AgentPermissionDecision.Allow,
+                    "Allowed by session-scoped approval.",
+                    permissionOverride)
+                {
+                    BaseDecision = decision,
+                    Source = AgentPermissionDecisionSource.SessionApproval,
+                    SourceSessionId = approval.SessionId,
+                };
             }
 
             var unrestrictedSessionId = FindUnrestrictedSessionInHierarchy(resolvedSessionId);
@@ -231,15 +284,47 @@ public sealed class AgentPermissionService(
                 var unrestrictedReason = unrestrictedSessionId == resolvedSessionId
                     ? "Allowed by session Unrestricted Mode."
                     : "Allowed by inherited Unrestricted Mode from parent session.";
-                return new AgentPermissionEvaluation(AgentPermissionDecision.Allow, unrestrictedReason, permissionOverride);
+                return new AgentPermissionEvaluation(
+                    AgentPermissionDecision.Allow,
+                    unrestrictedReason,
+                    permissionOverride)
+                {
+                    BaseDecision = decision,
+                    Source = AgentPermissionDecisionSource.UnrestrictedMode,
+                    SourceSessionId = unrestrictedSessionId,
+                };
             }
         }
 
         var reason = permissionOverride is null
             ? $"Using default decision for '{request.ActionId}' in '{boundaryId}'."
             : $"Using configured decision for '{request.ActionId}' in '{boundaryId}'.";
-        return new AgentPermissionEvaluation(decision, reason, permissionOverride);
+        return new AgentPermissionEvaluation(decision, reason, permissionOverride)
+        {
+            BaseDecision = decision,
+            Source = permissionOverride is null
+                ? AgentPermissionDecisionSource.PackageDefault
+                : AgentPermissionDecisionSource.ConfiguredOverride,
+        };
     }
+
+    private static AgentPermissionRequest CreatePermissionRequest(
+        AgentPendingPermissionRequestRecord request)
+        => new(
+            request.ActionId,
+            request.BoundaryId,
+            request.Summary,
+            request.ToolId,
+            request.Command,
+            request.Path,
+            request.WorkspaceId,
+            request.BindingId,
+            request.ResourceDisplayName,
+            request.ResourceReference,
+            request.IsMutation)
+        {
+            ResourceClaims = request.ResourceClaims,
+        };
 
     private AgentSessionPermissionApproval? FindSessionApprovalInHierarchy(Guid sessionId, AgentPermissionRequest request, string boundaryId)
     {

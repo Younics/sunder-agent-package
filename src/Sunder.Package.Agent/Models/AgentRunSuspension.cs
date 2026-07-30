@@ -69,6 +69,10 @@ internal sealed record AgentRunSuspensionResult(
     string ContinuationToken,
     AgentRunCheckpointRecord Checkpoint);
 
+internal sealed record AgentPermissionSuspensionPersistenceResult(
+    AgentPendingPermissionRequestRecord Request,
+    AgentRunCheckpointRecord Checkpoint);
+
 internal sealed record AgentChildJoinTransitionResult(
     AgentChildJoinTransitionOutcome Outcome,
     AgentChildJoinRunSuspension? Suspension = null,

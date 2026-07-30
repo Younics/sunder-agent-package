@@ -1,5 +1,6 @@
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Provider.Shared;
 
 namespace Sunder.Package.Agent.Provider.Anthropic;
 
@@ -53,5 +54,24 @@ internal static class AnthropicExceptionMapper
             exception.Message,
             $"### Anthropic request failed\n\n{exception.Message}",
             "anthropic-http-error",
-            exception);
+            exception)
+        {
+            FailureKind = IsContextWindowExceeded(exception)
+                ? AgentChatProviderFailureKind.ContextWindowExceeded
+                : AgentChatProviderFailureKind.Unknown,
+        };
+
+    private static bool IsContextWindowExceeded(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (ProviderContextWindowFailureClassifier.IsAnthropic(
+                    ProviderErrorDiagnosticExtractor.Extract(current.Message)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

@@ -16,13 +16,12 @@ public sealed class AgentRunBudgetTrackerTests
         Assert.Equal(TimeSpan.FromMinutes(30), limits.MaxWallClock);
         Assert.Equal(64, limits.MaxProviderCycles);
         Assert.Equal(128, limits.MaxToolCalls);
-        Assert.Equal(1_000_000, limits.MaxSubmittedContextTokens);
     }
 
     [Fact]
     public void Constructor_RejectsNonPositiveLimits()
     {
-        var limits = new AgentRunBudgetLimits(TimeSpan.Zero, 1, 1, 1);
+        var limits = new AgentRunBudgetLimits(TimeSpan.Zero, 1, 1);
 
         Assert.Throws<ArgumentOutOfRangeException>(() => new AgentRunBudgetTracker(limits));
     }
@@ -31,11 +30,11 @@ public sealed class AgentRunBudgetTrackerTests
     public void ChargeProviderAttempt_AppliesInitialStateAcrossContinuation()
     {
         var tracker = new AgentRunBudgetTracker(
-            new AgentRunBudgetLimits(TimeSpan.FromMinutes(1), 1, 10, 10_000),
+            new AgentRunBudgetLimits(TimeSpan.FromMinutes(1), 1, 10),
             new AgentRunBudgetState(ProviderCycles: 1, ToolCalls: 0, SubmittedContextTokens: 10));
 
         var exception = Assert.Throws<AgentRunBudgetExceededException>(() =>
-            tracker.ChargeProviderAttempt([new ChatMessage(ChatRole.User, "continued")], promptOverheadTokens: 1));
+            tracker.ChargeProviderAttempt(10));
 
         Assert.Equal(AgentRunBudgetKind.ProviderCycles, exception.Violation.Kind);
         Assert.Equal(2, exception.Violation.Consumed);
@@ -46,7 +45,7 @@ public sealed class AgentRunBudgetTrackerTests
     {
         var durableState = new AgentRunBudgetState(4, 8, 16);
         var tracker = new AgentRunBudgetTracker(
-            new AgentRunBudgetLimits(TimeSpan.FromMinutes(1), 10, 10, 10_000),
+            new AgentRunBudgetLimits(TimeSpan.FromMinutes(1), 10, 10),
             durableCharge: charge => durableState = new AgentRunBudgetState(
                 durableState.ProviderCycles + charge.ProviderCycles,
                 durableState.ToolCalls + charge.ToolCalls,
@@ -94,7 +93,7 @@ public sealed class AgentRunBudgetTrackerTests
             blocks,
             availableTools: []);
 
-        Assert.Equal(512 + rendered.Length / 4, estimate);
+        Assert.Equal(512 + AgentProviderRequestBudget.EstimateTextTokens([rendered]), estimate);
         Assert.Contains("marker-31-", rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("marker-32-", rendered, StringComparison.Ordinal);
         Assert.Contains("required-marker", rendered, StringComparison.Ordinal);

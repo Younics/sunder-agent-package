@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
+using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Package.Agent.Storage;
 using Xunit;
 
@@ -104,6 +105,39 @@ public sealed class AgentSessionContinuityTests
     }
 
     [Fact]
+    public async Task Projection_UsesUtf8TokenEstimateForNonAsciiHistory()
+    {
+        using var fixture = ContinuityFixture.Create();
+        for (var index = 0; index < 36; index++)
+        {
+            fixture.Store.AppendTextTurn(
+                fixture.SessionId,
+                index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant,
+                $"history-{index:00}-" + new string('\u754c', 1_000));
+        }
+        fixture.StartRun();
+        var capabilities = DefaultCapabilities with { ContextWindowTokens = 12_000, MaxOutputTokens = 1_000 };
+        var snapshot = fixture.ReadSnapshot();
+        var historicalTurns = snapshot.Turns.Where(turn => turn.TurnId != fixture.ActiveUserTurnId).ToArray();
+        var details = AgentSessionContinuitySummaryBuilder.BuildDeterministic(null, historicalTurns);
+        var renderedSummary = AgentSessionContinuitySummaryBuilder.RenderSummary(
+            details,
+            historicalTurns.Length,
+            historicalTurns[^1]);
+        var detailsJson = AgentSessionContinuitySummaryBuilder.SerializeDetails(details);
+
+        Assert.True(renderedSummary.Length <= 12_000, $"Summary length: {renderedSummary.Length}");
+        Assert.True(detailsJson.Length <= 64_000, $"Details length: {detailsJson.Length}");
+
+        var projection = await fixture.BuildProjectionAsync(capabilities);
+        var limits = AgentProviderRequestLimits.Resolve(capabilities);
+        var projectedTokens = projection.PromptTurns.Sum(AgentProviderRequestBudget.EstimateTurnTokens);
+
+        Assert.NotNull(projection.ContextCheckpoint);
+        Assert.True(projectedTokens <= limits.ProactiveInputLimitTokens);
+    }
+
+    [Fact]
     public void CheckpointCas_RejectsHistoricalAppendBeforeAnchor()
     {
         using var fixture = ContinuityFixture.CreateStartedWithHistory(24);
@@ -154,6 +188,47 @@ public sealed class AgentSessionContinuityTests
             Assert.Contains(
                 projection.PromptTurns,
                 turn => turn.Items.Any(item => item.TextContent == "concurrent streaming tail"));
+        }
+    }
+
+    [Fact]
+    public async Task Projection_ReloadsTranscriptWhenRefinedCheckpointLosesCas()
+    {
+        ContinuityFixture? fixture = null;
+        Guid replacedTurnId = default;
+        var refiner = new CallbackRefiner(() =>
+        {
+            fixture!.Store.UpdateTextTurn(replacedTurnId, "replacement after deterministic checkpoint");
+            return CreateRefinement();
+        });
+        using (fixture = ContinuityFixture.CreateStartedWithHistory(24, refiner))
+        {
+            replacedTurnId = fixture.Store.ListTurns(fixture.SessionId)[0].TurnId;
+
+            var projection = await fixture.BuildProjectionAsync();
+
+            Assert.Contains(
+                projection.PromptTurns,
+                turn => turn.Items.Any(item => item.TextContent == "replacement after deterministic checkpoint"));
+            Assert.DoesNotContain(
+                projection.PromptTurns,
+                turn => turn.Items.Any(item => item.TextContent == "history-000"));
+        }
+    }
+
+    [Fact]
+    public async Task Projection_RejectsWhenActiveUserTurnIsRemovedDuringRefinement()
+    {
+        ContinuityFixture? fixture = null;
+        var refiner = new CallbackRefiner(() =>
+        {
+            fixture!.Store.RollbackTranscript(fixture.SessionId, fixture.ActiveUserTurnId);
+            return CreateRefinement();
+        });
+        using (fixture = ContinuityFixture.CreateStartedWithHistory(24, refiner))
+        {
+            await Assert.ThrowsAsync<AgentRunTranscriptWriteRejectedException>(
+                () => fixture.BuildProjectionAsync());
         }
     }
 
@@ -366,6 +441,35 @@ public sealed class AgentSessionContinuityTests
     }
 
     [Fact]
+    public async Task Projection_ReportsCompactionRunningThenCompletedWithoutTranscriptMutation()
+    {
+        var refiner = new BlockingRefiner();
+        using var fixture = ContinuityFixture.CreateStartedWithHistory(30, refiner);
+        var before = JsonSerializer.Serialize(fixture.Store.ListTurns(fixture.SessionId));
+        var updates = new List<AgentRunActivityUpdate>();
+        fixture.SessionService.RunActivityChanged += (_, update) => updates.Add(update);
+
+        var projectionTask = fixture.BuildProjectionAsync();
+        await refiner.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var running = Assert.Single(updates);
+        Assert.Equal(AgentRunActivityKind.Processing, running.Kind);
+        Assert.Equal("Running session compaction", running.Text);
+
+        refiner.Release.TrySetResult();
+        var projection = await projectionTask;
+
+        Assert.True(projection.SummaryUpdated);
+        Assert.Equal(
+            ["Running session compaction", "Session compaction completed"],
+            updates.Select(update => update.Text));
+        Assert.Equal(before, JsonSerializer.Serialize(fixture.Store.ListTurns(fixture.SessionId)));
+
+        await fixture.BuildProjectionAsync();
+        Assert.Equal(2, updates.Count);
+    }
+
+    [Fact]
     public async Task ActiveCheckpoint_PersistsAcrossStoreRestart()
     {
         using var fixture = ContinuityFixture.CreateStartedWithHistory(30);
@@ -476,6 +580,19 @@ public sealed class AgentSessionContinuityTests
             AgentSessionContinuitySummaryBuilder.SerializeDetails(details),
             AgentSessionContinuitySummaryBuilder.GeneratorVersion);
     }
+
+    private static AgentContinuityModelRefinement CreateRefinement()
+        => new(
+            new AgentContinuitySummaryDocument(
+                ["Refined goal"],
+                [],
+                [],
+                [],
+                [],
+                ["Continue"],
+                []),
+            "utility-provider",
+            "utility-model");
 
     private static string ReadActiveCheckpointKind(ContinuityFixture fixture)
         => ReadActiveCheckpointColumn(fixture, "CheckpointKind");
@@ -711,6 +828,25 @@ public sealed class AgentSessionContinuityTests
             IReadOnlyList<AgentTurnRecord> newlyCoveredTurns,
             CancellationToken cancellationToken)
             => Task.FromResult(callback());
+    }
+
+    private sealed class BlockingRefiner : IAgentSessionContinuityModelRefiner
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<AgentContinuityModelRefinement?> RefineAsync(
+            AgentProfileRecord profile,
+            string? priorSummary,
+            AgentContinuitySummaryDocument deterministicSummary,
+            IReadOnlyList<AgentTurnRecord> newlyCoveredTurns,
+            CancellationToken cancellationToken)
+        {
+            Started.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+            return null;
+        }
     }
 }
 

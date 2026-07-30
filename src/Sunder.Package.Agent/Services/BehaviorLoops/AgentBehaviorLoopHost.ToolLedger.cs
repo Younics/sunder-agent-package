@@ -104,9 +104,12 @@ internal sealed partial class AgentBehaviorLoopHost
            && string.Equals(advertised.SourceId, current.SourceId, StringComparison.OrdinalIgnoreCase)
            && advertised.IsReadOnly == current.IsReadOnly;
 
-    private AgentToolInvocationReference? GetOrRebindPreparedInvocation(
+    private async ValueTask<AgentToolInvocationReference?> GetOrRebindPreparedInvocationAsync(
         AgentToolExecutionRecord execution,
-        AgentToolDescriptor advertisedDescriptor)
+        AgentToolDescriptor advertisedDescriptor,
+        string? executionTargetConfigurationGeneration,
+        AgentWorkspaceRecord workspace,
+        CancellationToken cancellationToken)
     {
         var prepared = _toolService.GetPreparedInvocation(execution.ExecutionId);
         if (prepared is not null)
@@ -117,15 +120,27 @@ internal sealed partial class AgentBehaviorLoopHost
         }
 
         if (execution.Status != AgentToolExecutionStatus.Prepared
-            || _availableOwnedToolsById is null
-            || !_availableOwnedToolsById.TryGetValue(execution.ToolId, out var current)
-            || !IsExactPreparedOwner(execution, advertisedDescriptor, current.Invocation))
+            || string.IsNullOrWhiteSpace(execution.OwnerPackageId))
         {
             return null;
         }
 
-        _toolService.BindPreparedInvocation(execution.ExecutionId, current.Invocation);
-        return current.Invocation;
+        var current = await _toolService.ResolvePreparedInvocationAsync(
+            advertisedDescriptor,
+            execution.OwnerPackageId,
+            execution.ExecutionTargetOwnerPackageId,
+            _profile,
+            _session.SessionId,
+            workspace,
+            executionTargetConfigurationGeneration,
+            cancellationToken).ConfigureAwait(false);
+        if (current is null || !IsExactPreparedOwner(execution, advertisedDescriptor, current))
+        {
+            return null;
+        }
+
+        _toolService.BindPreparedInvocation(execution.ExecutionId, current);
+        return current;
     }
 
     private static bool IsExactPreparedOwner(

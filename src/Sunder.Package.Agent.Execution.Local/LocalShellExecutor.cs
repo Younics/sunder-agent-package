@@ -7,20 +7,19 @@ namespace Sunder.Package.Agent.Execution.Local;
 
 internal sealed class LocalShellExecutor(IPackageContext packageContext, LocalShellCatalogService shellCatalogService)
 {
-    private const int DefaultTimeoutSeconds = 300;
-
     public async Task<AgentExecutionShellDescriptor> GetShellAsync(
         LocalExecutionWorkspaceConfig config,
         CancellationToken cancellationToken = default)
-    {
-        var shell = await shellCatalogService.ResolveShellAsync(config.SelectedShellId, cancellationToken);
-        return new AgentExecutionShellDescriptor(
+        => GetShellDescriptor(
+            await shellCatalogService.ResolveShellAsync(config.SelectedShellId, cancellationToken));
+
+    public static AgentExecutionShellDescriptor GetShellDescriptor(LocalShellDefinition shell)
+        => new(
             shell.ShellId,
             shell.DisplayName,
             shell.ExecutablePath,
             shell.SyntaxKind,
             BuildShellDescription(shell));
-    }
 
     public async ValueTask<AgentShellCommandResult> ExecuteShellAsync(
         LocalExecutionRuntimeConfig config,
@@ -33,14 +32,17 @@ internal sealed class LocalShellExecutor(IPackageContext packageContext, LocalSh
             return new AgentShellCommandResult(1, "Command cannot be empty.");
         }
 
-        var shell = await shellCatalogService.ResolveShellAsync(config.SelectedShellId, cancellationToken);
+        var shell = config.SelectedShell
+                    ?? await shellCatalogService.ResolveShellAsync(config.SelectedShellId, cancellationToken);
         var workingDirectory = LocalPathResolver.ResolveWorkingDirectory(config, request.WorkingDirectory, context.AllowOutsideConfiguredScope);
         var pathEntries = LocalProcessEnvironment.BuildEffectivePathEntries(config.PathEntries);
         var startInfo = BuildShellStartInfo(shell, request.Command, workingDirectory);
         LocalCommandRunner.ApplyPathEnvironment(startInfo, pathEntries);
         return await LocalCommandRunner.ExecuteAsync(
             startInfo,
-            request.TimeoutSeconds ?? await ResolveDefaultTimeoutSecondsAsync(cancellationToken),
+            request.TimeoutSeconds
+            ?? config.DefaultTimeoutSeconds
+            ?? await LocalExecutionConfiguration.ResolveDefaultTimeoutSecondsAsync(packageContext, cancellationToken),
             workingDirectory,
             executableResolution: null,
             cancellationToken);
@@ -99,10 +101,4 @@ internal sealed class LocalShellExecutor(IPackageContext packageContext, LocalSh
             _ => $"Run commands with custom shell {shell.DisplayName}. Follow its configured syntax kind.",
         };
 
-    private async Task<int> ResolveDefaultTimeoutSecondsAsync(CancellationToken cancellationToken)
-        => BoundedValue.ParseInt32(
-            await packageContext.Settings.GetValueAsync(LocalExecutionConfiguration.TimeoutKey, cancellationToken),
-            DefaultTimeoutSeconds,
-            minimum: 1,
-            maximum: BoundedProcessRunner.MaximumTimeoutSeconds);
 }

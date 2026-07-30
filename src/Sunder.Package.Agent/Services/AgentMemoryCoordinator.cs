@@ -47,6 +47,7 @@ public sealed class AgentMemoryCoordinator(
             executionBinding,
             availableTools,
             _sessionService.GetLatestSessionContextCheckpoint(session.SessionId),
+            projectedTurns: null,
             cancellationToken);
 
     internal Task<AgentInstructionContext> BuildInstructionContextForProjectionAsync(
@@ -60,6 +61,7 @@ public sealed class AgentMemoryCoordinator(
         AgentWorkspaceBindingRecord? executionBinding,
         IReadOnlyList<AgentToolDescriptor>? availableTools,
         AgentSessionContextCheckpointRecord? selectedContextCheckpoint,
+        IReadOnlyList<AgentTurnRecord> projectedTurns,
         CancellationToken cancellationToken)
         => BuildInstructionContextCoreAsync(
             session,
@@ -72,6 +74,7 @@ public sealed class AgentMemoryCoordinator(
             executionBinding,
             availableTools,
             selectedContextCheckpoint,
+            projectedTurns,
             cancellationToken);
 
     private async Task<AgentInstructionContext> BuildInstructionContextCoreAsync(
@@ -85,9 +88,10 @@ public sealed class AgentMemoryCoordinator(
         AgentWorkspaceBindingRecord? executionBinding,
         IReadOnlyList<AgentToolDescriptor>? availableTools,
         AgentSessionContextCheckpointRecord? selectedContextCheckpoint,
+        IReadOnlyList<AgentTurnRecord>? projectedTurns,
         CancellationToken cancellationToken)
     {
-        var turns = _sessionService.ListRecentTurns(session.SessionId, MaxPromptContextTurns);
+        var turns = projectedTurns ?? _sessionService.ListRecentTurns(session.SessionId, MaxPromptContextTurns);
         var recentLiveBufferTurns = BuildRecentLiveBufferTurns(turns);
         var workingSummary = selectedContextCheckpoint?.SummaryText;
         var sessionContext = CreateSessionContext(session, profile, workingSummary);
@@ -419,6 +423,11 @@ public sealed class AgentMemoryCoordinator(
                 ex);
         }
     }
+
+    internal void DiscardPromptContextAcknowledgment(Guid sessionId, Guid runId, long transcriptEpoch)
+        => _promptContextAcknowledgments.TryRemove(
+            new PromptContextAcknowledgmentKey(sessionId, runId, transcriptEpoch),
+            out _);
 
     private static AgentPromptContextPlan ToPromptContextPlan(AgentMemoryRecallPlan recallPlan)
         => recallPlan.ShouldRecall

@@ -9,6 +9,8 @@ public sealed class LocalExecutionTarget
     : IAgentProcessExecutionTarget, IAgentStructuredFileSearchExecutionTarget, IAgentRangedFileExecutionTarget, IAgentExecutionScopeProvider, IAgentExecutionResourceResolver, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment, IAgentScopedInstructionDiscoveryTarget, IAgentResourceAuthorityExecutionTarget, IDisposable
 {
     private readonly LocalExecutionWorkspaceConfigService _configService;
+    private readonly IPackageContext _packageContext;
+    private readonly LocalShellCatalogService _shellCatalogService;
     private readonly LocalShellExecutor _shellExecutor;
     private readonly LocalProcessExecutor _processExecutor;
     private readonly LocalResourceReference _resourceReferences;
@@ -24,7 +26,9 @@ public sealed class LocalExecutionTarget
         LocalShellCatalogService shellCatalogService,
         LocalResourceReference resourceReferences)
     {
+        _packageContext = packageContext;
         _configService = configService;
+        _shellCatalogService = shellCatalogService;
         _shellExecutor = new LocalShellExecutor(packageContext, shellCatalogService);
         _processExecutor = new LocalProcessExecutor(packageContext);
         _resourceReferences = resourceReferences;
@@ -37,6 +41,12 @@ public sealed class LocalExecutionTarget
         "Executes commands and file operations on this machine within configured workspace paths.",
         SupportsShell: true,
         SupportsFiles: true);
+
+    public async ValueTask<string?> GetConfigurationGenerationAsync(
+        AgentExecutionTargetContext context,
+        CancellationToken cancellationToken = default)
+        => LocalExecutionWorkspaceConfigService.CreateGeneration(
+            await CaptureCurrentConfigurationAsync(context.Binding.BindingId, cancellationToken));
 
     public async ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
         AgentExecutionTargetContext context,
@@ -51,8 +61,8 @@ public sealed class LocalExecutionTarget
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await _shellExecutor.GetShellAsync(
-            await _configService.GetConfigAsync(context.Binding.BindingId, cancellationToken), cancellationToken);
+        return LocalShellExecutor.GetShellDescriptor(
+            (await GetCurrentConfigurationAsync(context, cancellationToken)).SelectedShell);
     }
 
     public async ValueTask<AgentExecutionScopeDescriptor> GetExecutionScopeAsync(
@@ -164,7 +174,7 @@ public sealed class LocalExecutionTarget
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return (await _configService.GetConfigAsync(context.Binding.BindingId, cancellationToken)).PathEntries ?? [];
+        return (await GetCurrentConfigurationAsync(context, cancellationToken)).WorkspaceConfig.PathEntries ?? [];
     }
 
     public async ValueTask AddPathEntryAsync(
@@ -178,13 +188,34 @@ public sealed class LocalExecutionTarget
             return;
         }
 
-        var config = await _configService.GetConfigAsync(context.Binding.BindingId, cancellationToken);
         var pathEntry = Path.GetFullPath(LocalExecutionWorkspaceConfigService.ExpandPath(executionPath.Trim()));
-        var pathEntries = (config.PathEntries ?? [])
-            .Append(pathEntry)
-            .Distinct(LocalExecutionWorkspaceConfigService.PathStringComparer)
-            .ToArray();
-        await _configService.SaveConfigAsync(context.Binding.BindingId, config with { PathEntries = pathEntries }, cancellationToken);
+        await _configService.UpdateConfigAsync(
+            context.Binding.BindingId,
+            async (config, token) =>
+            {
+                var snapshot = await CaptureCurrentConfigurationAsync(
+                    context.Binding.BindingId,
+                    token,
+                    config);
+                if (context.ExpectedConfigurationGeneration is { } expected
+                    && !string.Equals(
+                        expected,
+                        LocalExecutionWorkspaceConfigService.CreateGeneration(snapshot),
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "Local execution configuration changed after permission planning; explicit reapproval is required.");
+                }
+
+                return config with
+                {
+                    PathEntries = (config.PathEntries ?? [])
+                        .Append(pathEntry)
+                        .Distinct(LocalExecutionWorkspaceConfigService.PathStringComparer)
+                        .ToArray(),
+                };
+            },
+            cancellationToken);
     }
 
     public async ValueTask<AgentFileReadResult> ReadFileAsync(
@@ -294,7 +325,8 @@ public sealed class LocalExecutionTarget
         AgentExecutionTargetContext context,
         CancellationToken cancellationToken)
     {
-        var config = await _configService.GetConfigAsync(context.Binding.BindingId, cancellationToken);
+        var snapshot = await GetCurrentConfigurationAsync(context, cancellationToken);
+        var config = snapshot.WorkspaceConfig;
         var paths = context.Workspace.Paths
             .Where(path => !string.IsNullOrWhiteSpace(path.HostPath))
             .OrderBy(path => path.SortOrder)
@@ -314,6 +346,43 @@ public sealed class LocalExecutionTarget
             defaultWorkingDirectory = paths.FirstOrDefault();
         }
 
-        return new LocalExecutionRuntimeConfig(paths, defaultWorkingDirectory, config.SelectedShellId, config.PathEntries);
+        return new LocalExecutionRuntimeConfig(paths, defaultWorkingDirectory, config.SelectedShellId, config.PathEntries)
+        {
+            SelectedShell = snapshot.SelectedShell,
+            DefaultTimeoutSeconds = snapshot.DefaultTimeoutSeconds,
+        };
+    }
+
+    private async Task<LocalExecutionConfigurationSnapshot> GetCurrentConfigurationAsync(
+        AgentExecutionTargetContext context,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await CaptureCurrentConfigurationAsync(context.Binding.BindingId, cancellationToken);
+        if (context.ExpectedConfigurationGeneration is { } expected
+            && !string.Equals(
+                expected,
+                LocalExecutionWorkspaceConfigService.CreateGeneration(snapshot),
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Local execution configuration changed after permission planning; explicit reapproval is required.");
+        }
+
+        return snapshot;
+    }
+
+    private async Task<LocalExecutionConfigurationSnapshot> CaptureCurrentConfigurationAsync(
+        string bindingId,
+        CancellationToken cancellationToken,
+        LocalExecutionWorkspaceConfig? workspaceConfig = null)
+    {
+        var config = workspaceConfig
+                     ?? await _configService.GetConfigAsync(bindingId, cancellationToken);
+        return new LocalExecutionConfigurationSnapshot(
+            config,
+            await _shellCatalogService.ResolveShellAsync(config.SelectedShellId, cancellationToken),
+            await LocalExecutionConfiguration.ResolveDefaultTimeoutSecondsAsync(
+                _packageContext,
+                cancellationToken));
     }
 }

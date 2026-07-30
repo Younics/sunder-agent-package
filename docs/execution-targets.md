@@ -136,7 +136,7 @@ These guarantees apply to structured Files read/list/write/delete/search and Loc
 
 ### Docker Execution
 
-The Docker custom settings view hydrates image catalog, command timeout, and CLI path as one required Runtime snapshot before first presentation. Image add/delete are serialized single-document commits with a monotonically increasing catalog revision; listing is read-only and malformed or future catalog documents are preserved and surfaced. New image references require an explicit non-`latest` tag or full sha256 digest. Semantic migration retains legacy floating references as `NeedsAttention` and requires users to select a pinned replacement instead of silently changing workspace behavior.
+The Docker custom settings view hydrates image catalog, command timeout, and CLI path as one required Runtime snapshot before first presentation. Image add/delete are serialized single-document commits with a monotonically increasing catalog revision; listing is read-only and malformed or future catalog documents are preserved and surfaced. New image references require an explicit tag, including `latest`, or a full sha256 digest; tagless references remain invalid. Before launch, Docker resolves the selected reference to a complete local sha256 image ID and runs with `--pull never`. Semantic migration retains legacy tagless references as `NeedsAttention`, while schema 2 `latest` entries become refreshable under schema 3.
 
 The first-party Docker target drops all Linux capabilities, enables `no-new-privileges`, disables networking by default, bounds memory/CPU/PIDs, and uses an init process. It is still not a complete sandbox:
 

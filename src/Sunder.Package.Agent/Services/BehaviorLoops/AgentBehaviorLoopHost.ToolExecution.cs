@@ -7,6 +7,76 @@ namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
 internal sealed partial class AgentBehaviorLoopHost
 {
+    internal void RecordToolCallStart(AgentToolCallRequest toolCall)
+    {
+        SaveCheckpoint(AgentRunStatus.Running, $"Executing tool '{toolCall.ToolId}'.");
+
+        LogEvent(PackageLogLevel.Information, "tool.execution.start", "Executing tool.", attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["tool.id"] = toolCall.ToolId,
+        });
+    }
+
+    private async Task<AgentToolCallOutcome> RecordSecurityDenialAsync(
+        AgentToolCallRequest toolCall,
+        string summary,
+        string errorCode,
+        CancellationToken cancellationToken)
+    {
+        var result = new AgentToolResult(
+            toolCall.ToolId,
+            summary,
+            Content: $"### Tool denied\n\n{summary}",
+            IsError: true,
+            ErrorCode: errorCode);
+        _toolService.ReleasePreparedInvocation(GetToolExecution(toolCall.CallId).ExecutionId);
+        var resultTurn = CompleteToolExecution(
+            toolCall,
+            result,
+            AgentToolExecutionStatus.Failed,
+            errorCode);
+        var checkpoint = SaveCheckpoint(AgentRunStatus.Failed, summary);
+        await PublishLifecycleEventAsync(
+            AgentLifecycleEventKind.RunFailed,
+            AgentRunStatus.Failed,
+            triggerTurn: resultTurn,
+            checkpoint: checkpoint,
+            cancellationToken: cancellationToken);
+        return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Denied, checkpoint, result);
+    }
+
+    private async Task<AgentToolCallOutcome> RecordApprovedSecurityDenialAsync(
+        AgentPendingPermissionRequestRecord pending,
+        string summary,
+        string errorCode,
+        CancellationToken cancellationToken)
+    {
+        var result = new AgentToolResult(
+            pending.ToolId ?? string.Empty,
+            summary,
+            Content: $"### Approved tool not executed\n\n{summary}",
+            IsError: true,
+            ErrorCode: errorCode);
+        if (pending.ToolExecutionId is { } executionId)
+        {
+            _toolService.ReleasePreparedInvocation(executionId);
+        }
+        var resultTurn = CompleteToolExecution(
+            pending,
+            result,
+            AgentToolExecutionStatus.Failed,
+            errorCode,
+            AgentPendingPermissionStatus.Expired);
+        var checkpoint = SaveCheckpoint(AgentRunStatus.Failed, summary);
+        await PublishLifecycleEventAsync(
+            AgentLifecycleEventKind.RunFailed,
+            AgentRunStatus.Failed,
+            triggerTurn: resultTurn,
+            checkpoint: checkpoint,
+            cancellationToken: cancellationToken);
+        return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Denied, checkpoint, result);
+    }
+
     internal async Task<IReadOnlyList<ExecutedToolResult>> ExecuteToolBatchAsync(
         IReadOnlyList<AgentToolCallRequest> batch,
         IReadOnlyDictionary<string, AgentToolDescriptor> availableToolsById,
@@ -178,8 +248,20 @@ internal sealed partial class AgentBehaviorLoopHost
         IReadOnlyDictionary<string, AgentToolDescriptor> availableToolsById,
         CancellationToken cancellationToken)
     {
+        if (!_toolService.IsCurrentWorkspaceExecutionContext(_workspace, _executionBinding))
+        {
+            return new ResolvedToolResult(
+                new AgentToolResult(
+                    call.ToolId,
+                    "The workspace execution context changed before the tool could run.",
+                    Content: "### Tool not dispatched\n\nThe workspace paths or execution binding changed. Retry the tool against the current workspace configuration.",
+                    IsError: true,
+                    ErrorCode: AgentToolSecurityErrorCodes.PermissionContextChanged),
+                WasReadOnlyCacheHit: false);
+        }
         if (!IsCacheableReadOnlyTool(call.ToolId, availableToolsById)
-            || HasTransientResourceCapabilities(call.CallId))
+            || HasTransientResourceCapabilities(call.CallId)
+            || _executionTargetConfigurationGenerationByCallId.GetValueOrDefault(call.CallId) is not null)
         {
             try
             {
@@ -224,6 +306,8 @@ internal sealed partial class AgentBehaviorLoopHost
         var approvedResourceReferences = _approvedResourceReferencesByCallId.GetValueOrDefault(call.CallId) ?? [];
         var approvedResourceClaims = _approvedResourceClaimsByCallId.GetValueOrDefault(call.CallId) ?? [];
         var approvedResourceCapabilities = _approvedResourceCapabilitiesByCallId.GetValueOrDefault(call.CallId) ?? [];
+        var executionTargetConfigurationGeneration =
+            _executionTargetConfigurationGenerationByCallId.GetValueOrDefault(call.CallId);
         var execution = GetToolExecution(call.CallId);
         var invocation = _toolService.GetPreparedInvocation(execution.ExecutionId)
             ?? throw new InvalidOperationException(
@@ -245,7 +329,10 @@ internal sealed partial class AgentBehaviorLoopHost
             cancellationToken: cancellationToken,
             advertisedDescriptor: descriptor,
             advertisedOwnerPackageId: execution.OwnerPackageId,
-            advertisedInvocation: invocation);
+            advertisedInvocation: invocation,
+            expectedExecutionBinding: _executionBinding,
+            expectedExecutionTargetConfigurationGeneration: executionTargetConfigurationGeneration,
+            enforceExpectedExecutionContext: true);
         if (preflight is not null)
         {
             _toolService.ReleasePreparedInvocation(execution.ExecutionId);
@@ -273,6 +360,9 @@ internal sealed partial class AgentBehaviorLoopHost
             advertisedDescriptor: descriptor,
             advertisedOwnerPackageId: execution.OwnerPackageId,
             advertisedInvocation: invocation,
+            expectedExecutionBinding: _executionBinding,
+            expectedExecutionTargetConfigurationGeneration: executionTargetConfigurationGeneration,
+            enforceExpectedExecutionContext: true,
             cancellationToken: cancellationToken);
         _sessionService.PublishToolExecutionStarted(_runLease, started.ToolCallTurn);
         try
@@ -318,6 +408,10 @@ internal sealed partial class AgentBehaviorLoopHost
                 advertisedDescriptor: advertisedDescriptor,
                 advertisedOwnerPackageId: advertisedOwnerPackageId,
                 advertisedInvocation: advertisedInvocation,
+                expectedExecutionBinding: _executionBinding,
+                expectedExecutionTargetConfigurationGeneration:
+                    _executionTargetConfigurationGenerationByCallId.GetValueOrDefault(pending.CallId),
+                enforceExpectedExecutionContext: true,
                 cancellationToken: cancellationToken);
         }
         finally
@@ -347,6 +441,8 @@ internal sealed partial class AgentBehaviorLoopHost
             "\n",
             _allowOutsideConfiguredScopeByCallId.GetValueOrDefault(call.CallId) ? "outside-approved" : "configured-scope",
             "\n",
+            _executionTargetConfigurationGenerationByCallId.GetValueOrDefault(call.CallId) ?? string.Empty,
+            "\n",
             string.Join("\n", (_approvedResourceReferencesByCallId.GetValueOrDefault(call.CallId) ?? []).Order(StringComparer.Ordinal)),
             "\n",
             string.IsNullOrWhiteSpace(call.ArgumentsJson) ? "{}" : call.ArgumentsJson.Trim());
@@ -372,6 +468,32 @@ internal sealed partial class AgentBehaviorLoopHost
         lock (_readOnlyToolResultCacheSync)
         {
             _readOnlyToolResultCache.Clear();
+        }
+    }
+
+    internal AgentToolCallOutcome RecordUnexecutedToolCall(
+        AgentToolCallRequest toolCall,
+        string summary)
+    {
+        try
+        {
+            var result = new AgentToolResult(
+                toolCall.ToolId,
+                summary,
+                Content: $"### Tool call canceled\n\n{summary}",
+                IsError: true,
+                ErrorCode: "tool-batch-canceled");
+            _toolService.ReleasePreparedInvocation(GetToolExecution(toolCall.CallId).ExecutionId);
+            CompleteToolExecution(
+                toolCall,
+                result,
+                AgentToolExecutionStatus.Failed,
+                "tool-batch-canceled");
+            return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: result);
+        }
+        catch (AgentRunTranscriptWriteRejectedException)
+        {
+            return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Failed);
         }
     }
 

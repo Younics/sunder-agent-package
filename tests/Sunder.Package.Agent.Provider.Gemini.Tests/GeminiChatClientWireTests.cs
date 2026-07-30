@@ -173,7 +173,35 @@ public sealed class GeminiChatClientWireTests
             () => ReadUpdatesAsync(client, [new AIChatMessage(AIChatRole.User, "fail")]));
 
         Assert.Equal("gemini-http-error", exception.ErrorCode);
+        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
         Assert.Contains(logger.Events, entry => entry.EventName == "provider.stream.failed");
+    }
+
+    [Fact]
+    public async Task StreamingRequest_ContextWindowFailureIsNormalized()
+    {
+        await using var server = new GeminiWireServer(
+            """{"error":{"code":400,"message":"The input token count (1048577) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}""",
+            statusCode: 400);
+        using var client = CreateClient(server);
+
+        var exception = await Assert.ThrowsAsync<AgentChatProviderException>(
+            () => ReadUpdatesAsync(client, [new AIChatMessage(AIChatRole.User, "fail")]));
+
+        Assert.Equal(AgentChatProviderFailureKind.ContextWindowExceeded, exception.FailureKind);
+    }
+
+    [Theory]
+    [InlineData("Gemini returned HTTP 400: bad request")]
+    [InlineData("max_output_tokens exceeds the supported value")]
+    [InlineData("The output length limit was reached")]
+    [InlineData("Quota exceeded for GenerateContent requests")]
+    [InlineData("Request payload is too large")]
+    public void ExceptionMapper_DoesNotClassifyAmbiguousFailures(string message)
+    {
+        var exception = GeminiExceptionMapper.Request(new ClientError(message, 400, "INVALID_ARGUMENT"));
+
+        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
     }
 
     [Fact]

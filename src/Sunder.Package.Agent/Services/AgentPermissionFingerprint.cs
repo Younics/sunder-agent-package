@@ -10,8 +10,8 @@ namespace Sunder.Package.Agent.Services;
 
 internal static class AgentPermissionFingerprint
 {
-    private const string Version = "agent-permission-fingerprint-v1";
-    private const int SnapshotVersion = 1;
+    private const string Version = "agent-permission-fingerprint-v2";
+    private const int SnapshotVersion = 2;
     private static readonly JsonSerializerOptions SnapshotJsonOptions = new(JsonSerializerDefaults.Web);
 
     public static string Create(
@@ -28,7 +28,8 @@ internal static class AgentPermissionFingerprint
         string? providerId = null,
         string? modelId = null,
         string? toolOwnerPackageId = null,
-        string? executionTargetOwnerPackageId = null)
+        string? executionTargetOwnerPackageId = null,
+        string? executionTargetConfigurationGeneration = null)
     {
         var values = new[]
         {
@@ -49,6 +50,7 @@ internal static class AgentPermissionFingerprint
             NormalizeIdentity(target?.TargetId),
             NormalizeIdentity(toolOwnerPackageId),
             NormalizeIdentity(executionTargetOwnerPackageId),
+            NormalizeResource(executionTargetConfigurationGeneration),
             NormalizeIdentity(permissionRequest?.ActionId),
             NormalizeIdentity(permissionRequest?.BoundaryId),
             NormalizeIdentity(permissionRequest?.WorkspaceId),
@@ -72,7 +74,8 @@ internal static class AgentPermissionFingerprint
                 providerId,
                 modelId,
                 toolOwnerPackageId,
-                executionTargetOwnerPackageId)),
+                executionTargetOwnerPackageId,
+                executionTargetConfigurationGeneration: executionTargetConfigurationGeneration)),
         };
 
         var material = new StringBuilder();
@@ -100,7 +103,9 @@ internal static class AgentPermissionFingerprint
         string? providerId,
         string? modelId,
         string? toolOwnerPackageId = null,
-        string? executionTargetOwnerPackageId = null)
+        string? executionTargetOwnerPackageId = null,
+        AgentPermissionEvaluation? permissionEvaluation = null,
+        string? executionTargetConfigurationGeneration = null)
         => JsonSerializer.Serialize(
             new PermissionExecutionSnapshot(
                 SnapshotVersion,
@@ -114,10 +119,20 @@ internal static class AgentPermissionFingerprint
                 workspace,
                 binding,
                 target,
+                executionTargetConfigurationGeneration,
                 descriptor,
                 permissionRequest,
                 toolOwnerPackageId,
-                executionTargetOwnerPackageId),
+                executionTargetOwnerPackageId,
+                permissionEvaluation is null
+                    ? null
+                    : new PermissionDecisionAudit(
+                        permissionEvaluation.Decision,
+                        permissionEvaluation.BaseDecision,
+                        permissionEvaluation.Source,
+                        permissionEvaluation.Reason,
+                        permissionEvaluation.SourceSessionId,
+                        permissionEvaluation.Override?.UpdatedAtUtc)),
             SnapshotJsonOptions);
 
     public static bool MatchesExecutionContext(
@@ -147,6 +162,36 @@ internal static class AgentPermissionFingerprint
                    && string.Equals(snapshot.ModelId, modelId, StringComparison.OrdinalIgnoreCase)
                    && JsonEquals(snapshot.Workspace, workspace)
                    && JsonEquals(snapshot.Binding, binding);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    internal static bool TryReadExecutionSnapshot(
+        string snapshotJson,
+        out AgentToolDescriptor? descriptor,
+        out string? executionTargetConfigurationGeneration)
+    {
+        descriptor = null;
+        executionTargetConfigurationGeneration = null;
+        if (string.IsNullOrWhiteSpace(snapshotJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            var snapshot = JsonSerializer.Deserialize<PermissionExecutionSnapshot>(snapshotJson, SnapshotJsonOptions);
+            if (snapshot is null || snapshot.Version != SnapshotVersion || snapshot.Descriptor is null)
+            {
+                return false;
+            }
+
+            descriptor = snapshot.Descriptor;
+            executionTargetConfigurationGeneration = snapshot.ExecutionTargetConfigurationGeneration;
+            return true;
         }
         catch (JsonException)
         {
@@ -251,8 +296,18 @@ internal static class AgentPermissionFingerprint
         AgentWorkspaceRecord? Workspace,
         AgentWorkspaceBindingRecord? Binding,
         AgentExecutionTargetDescriptor? Target,
+        string? ExecutionTargetConfigurationGeneration,
         AgentToolDescriptor Descriptor,
         AgentPermissionRequest? PermissionRequest,
         string? ToolOwnerPackageId,
-        string? ExecutionTargetOwnerPackageId);
+        string? ExecutionTargetOwnerPackageId,
+        PermissionDecisionAudit? DecisionAudit);
+
+    private sealed record PermissionDecisionAudit(
+        AgentPermissionDecision Decision,
+        AgentPermissionDecision BaseDecision,
+        AgentPermissionDecisionSource Source,
+        string Reason,
+        Guid? SourceSessionId,
+        DateTimeOffset? OverrideUpdatedAtUtc);
 }

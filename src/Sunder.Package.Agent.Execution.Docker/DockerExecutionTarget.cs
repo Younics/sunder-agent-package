@@ -18,6 +18,7 @@ public sealed partial class DockerExecutionTarget
     private const string ContainerSecurityPolicyVersion = "4";
 
     private readonly DockerExecutionWorkspaceConfigService _configService;
+    private readonly IPackageContext _packageContext;
     private readonly DockerContainerLifecycleService _lifecycleService;
     private readonly DockerImageCatalogService _imageCatalogService;
     private readonly DockerCommandRunner _commandRunner;
@@ -28,6 +29,7 @@ public sealed partial class DockerExecutionTarget
     private string? _pinnedEndpointIdentity;
     private string? _verifiedDaemonIdentity;
     private readonly ConcurrentDictionary<string, string> _verifiedContainerSignatures = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _verifiedImageIdentities = new(StringComparer.Ordinal);
 
     public DockerExecutionTarget(
         IPackageContext packageContext,
@@ -54,6 +56,7 @@ public sealed partial class DockerExecutionTarget
         IDockerMountIdentityVerifier mountIdentityVerifier)
     {
         var runner = dockerCliRunner ?? new DockerCliRunner(packageContext);
+        _packageContext = packageContext;
         _configService = configService;
         _lifecycleService = lifecycleService;
         _imageCatalogService = imageCatalogService ?? new DockerImageCatalogService(packageContext, runner);
@@ -71,6 +74,16 @@ public sealed partial class DockerExecutionTarget
         SupportsShell: true,
         SupportsFiles: true);
 
+    public async ValueTask<string?> GetConfigurationGenerationAsync(
+        AgentExecutionTargetContext context,
+        CancellationToken cancellationToken = default)
+    {
+        var snapshot = await CaptureCurrentConfigurationAsync(
+            context.Binding.BindingId,
+            cancellationToken);
+        return _configService.CreateGeneration(context.Binding.BindingId, snapshot);
+    }
+
     public async ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
         AgentExecutionTargetContext context,
         CancellationToken cancellationToken = default)
@@ -78,6 +91,7 @@ public sealed partial class DockerExecutionTarget
         try
         {
             var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+            using var configurationScope = _commandRunner.UseConfiguration(config);
             if (string.IsNullOrWhiteSpace(config.ImageReference))
             {
                 return new AgentExecutionTargetReadiness(Descriptor.TargetKind, Descriptor.TargetId, AgentExecutionTargetReadinessStatus.NeedsConfiguration, "Configure a Docker image before using Docker execution.");
@@ -122,8 +136,8 @@ public sealed partial class DockerExecutionTarget
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var config = await _configService.GetConfigAsync(context.Binding.BindingId, cancellationToken);
-        return DockerCommandRunner.GetShellDescriptor(config);
+        var snapshot = await GetCurrentConfigurationAsync(context, cancellationToken);
+        return DockerCommandRunner.GetShellDescriptor(snapshot.WorkspaceConfig);
     }
 
     public async ValueTask<AgentExecutionScopeDescriptor> GetExecutionScopeAsync(
@@ -132,6 +146,7 @@ public sealed partial class DockerExecutionTarget
     {
         cancellationToken.ThrowIfCancellationRequested();
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        using var configurationScope = _commandRunner.UseConfiguration(config);
         return new AgentExecutionScopeDescriptor(
             Descriptor.DisplayName,
             config.Mounts.Select(mount => mount.ContainerPath).ToArray(),
@@ -146,6 +161,7 @@ public sealed partial class DockerExecutionTarget
     {
         cancellationToken.ThrowIfCancellationRequested();
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        using var configurationScope = _commandRunner.UseConfiguration(config);
         var binding = DockerPathResolver.ResolveHostBinding(config, path);
         using var operation = await AcquireStructuredOperationAsync(context, config, cancellationToken);
         var retainedMountRoot = operation.TakeMountRoot(binding.Mount);
@@ -210,6 +226,7 @@ public sealed partial class DockerExecutionTarget
         CancellationToken cancellationToken = default)
     {
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        using var configurationScope = _commandRunner.UseConfiguration(config);
         using var lease = await AcquireContainerAsync(context, config, cancellationToken);
         return await _commandRunner.ExecuteShellAsync(config, lease.ContainerName, context, request, cancellationToken);
     }
@@ -220,6 +237,7 @@ public sealed partial class DockerExecutionTarget
         CancellationToken cancellationToken = default)
     {
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        using var configurationScope = _commandRunner.UseConfiguration(config);
         using var lease = await AcquireContainerAsync(context, config, cancellationToken);
         return await _commandRunner.ExecuteProcessAsync(config, lease.ContainerName, context, request, cancellationToken);
     }
@@ -237,6 +255,7 @@ public sealed partial class DockerExecutionTarget
                 validationError!);
         }
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        using var configurationScope = _commandRunner.UseConfiguration(config);
         try
         {
             _ = DockerPathResolver.ResolveHostBinding(config, request.Path);
@@ -266,6 +285,7 @@ public sealed partial class DockerExecutionTarget
     {
         cancellationToken.ThrowIfCancellationRequested();
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        using var configurationScope = _commandRunner.UseConfiguration(config);
         _ = DockerPathResolver.ResolveHostBinding(config, executionPath);
         using var operation = await AcquireStructuredOperationAsync(context, config, cancellationToken);
         return DockerPathResolver.MapToHostPath(config, executionPath);
@@ -276,7 +296,7 @@ public sealed partial class DockerExecutionTarget
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return (await _configService.GetConfigAsync(context.Binding.BindingId, cancellationToken)).PathEntries ?? [];
+        return (await GetCurrentConfigurationAsync(context, cancellationToken)).WorkspaceConfig.PathEntries ?? [];
     }
 
     public async ValueTask AddPathEntryAsync(
@@ -290,13 +310,41 @@ public sealed partial class DockerExecutionTarget
             return;
         }
 
-        var config = await _configService.GetConfigAsync(context.Binding.BindingId, cancellationToken);
         var pathEntry = DockerExecutionWorkspaceConfigService.NormalizeContainerPath(executionPath.Trim());
-        var pathEntries = (config.PathEntries ?? [])
-            .Append(pathEntry)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        await _configService.SaveConfigAsync(context.Binding.BindingId, config with { PathEntries = pathEntries }, cancellationToken);
+        await _configService.UpdateConfigAsync(
+            context.Binding.BindingId,
+            async (config, token) =>
+            {
+                var snapshot = await CaptureCurrentConfigurationAsync(
+                    context.Binding.BindingId,
+                    token,
+                    config);
+                if (context.ExpectedConfigurationGeneration is { } expected
+                    && !string.Equals(
+                        expected,
+                        _configService.CreateGeneration(context.Binding.BindingId, snapshot),
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "Docker execution configuration changed after permission planning; explicit reapproval is required.");
+                }
+                if (context.ExpectedConfigurationGeneration is not null
+                    && snapshot.WorkspaceConfig.ImageReference is not null
+                    && snapshot.ImageIdentity is null)
+                {
+                    throw new InvalidOperationException(
+                        "The Docker image identity is not available for this approved configuration; explicit reapproval is required after target readiness completes.");
+                }
+
+                return config with
+                {
+                    PathEntries = (config.PathEntries ?? [])
+                        .Append(pathEntry)
+                        .Distinct(StringComparer.Ordinal)
+                        .ToArray(),
+                };
+            },
+            cancellationToken);
     }
 
     public async ValueTask<AgentFileReadResult> ReadFileAsync(
@@ -312,6 +360,7 @@ public sealed partial class DockerExecutionTarget
                 rangeError!);
         }
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        using var configurationScope = _commandRunner.UseConfiguration(config);
         try
         {
             _ = DockerPathResolver.ResolveHostBinding(config, request.Path);
@@ -347,6 +396,7 @@ public sealed partial class DockerExecutionTarget
         CancellationToken cancellationToken = default)
     {
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        using var configurationScope = _commandRunner.UseConfiguration(config);
         try
         {
             _ = DockerPathResolver.ResolveHostBinding(config, request.Path);
@@ -397,6 +447,7 @@ public sealed partial class DockerExecutionTarget
         CancellationToken cancellationToken = default)
     {
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        using var configurationScope = _commandRunner.UseConfiguration(config);
         try
         {
             _ = DockerPathResolver.ResolveHostBinding(config, request.Path);
@@ -449,6 +500,7 @@ public sealed partial class DockerExecutionTarget
     {
         cancellationToken.ThrowIfCancellationRequested();
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
+        using var configurationScope = _commandRunner.UseConfiguration(config);
         using var operation = await AcquireStructuredOperationAsync(context, config, cancellationToken);
         var identity = CaptureStructuredIdentity(config, context.Binding.BindingId, operation);
         return await _fileSystemExecutor.DiscoverScopedInstructionsAsync(
@@ -476,6 +528,12 @@ public sealed partial class DockerExecutionTarget
             var hostAccessPolicy = DockerHostAccessPolicy.Resolve();
             var daemonIdentity = await ResolveLocalDaemonIdentityAsync(cancellationToken);
             var imageIdentity = await ResolveImageIdentityAsync(imageReference, cancellationToken);
+            if (config.ImageIdentity is { } expectedImageIdentity
+                && !string.Equals(expectedImageIdentity, imageIdentity, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "The Docker image identity changed after permission planning; explicit reapproval is required.");
+            }
             var signature = BuildContainerSignature(
                 config,
                 verifiedMounts,
@@ -704,70 +762,6 @@ public sealed partial class DockerExecutionTarget
             }
             throw;
         }
-    }
-
-    private async Task<string> ResolveImageIdentityAsync(
-        string imageReference,
-        CancellationToken cancellationToken)
-    {
-        var inspect = await RunDockerAsync(
-            ["image", "inspect", "--format", "{{.Id}}", imageReference],
-            cancellationToken);
-        var identity = inspect.Output.Trim();
-        if (inspect.ExitCode != 0
-            || !identity.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)
-            || identity.Length != "sha256:".Length + 64
-            || !identity["sha256:".Length..].All(Uri.IsHexDigit))
-        {
-            throw new InvalidOperationException(AppendDockerOutput(
-                $"Docker image '{imageReference}' does not have a resolvable immutable image id.",
-                inspect.Output));
-        }
-
-        return identity.ToLowerInvariant();
-    }
-
-    private sealed class DockerStructuredOperationLease(
-        DockerContainerLifecycleService.DockerContainerLease container,
-        IReadOnlyList<DockerVerifiedMount> mounts) : IDisposable
-    {
-        private readonly HashSet<LocalSecureRoot> _detachedRoots = [];
-        private DockerContainerLifecycleService.DockerContainerLease? _container = container;
-
-        public string ContainerName => _container?.ContainerName
-                                       ?? throw new ObjectDisposedException(nameof(DockerStructuredOperationLease));
-
-        public IReadOnlyList<DockerVerifiedMount> Mounts { get; } = mounts;
-
-        public LocalSecureRoot GetMountRoot(DockerExecutionMount mount)
-            => FindMount(mount).Root;
-
-        public LocalSecureRoot TakeMountRoot(DockerExecutionMount mount)
-        {
-            var root = FindMount(mount).Root;
-            if (!_detachedRoots.Add(root))
-            {
-                throw new InvalidOperationException(
-                    $"Docker mount authority for '{mount.ContainerPath}' was already transferred.");
-            }
-            return root;
-        }
-
-        public void Dispose()
-        {
-            foreach (var mount in Mounts)
-            {
-                if (!_detachedRoots.Contains(mount.Root))
-                {
-                    mount.Root.Dispose();
-                }
-            }
-            Interlocked.Exchange(ref _container, null)?.Dispose();
-        }
-
-        private DockerVerifiedMount FindMount(DockerExecutionMount mount)
-            => Mounts.Single(candidate =>
-                string.Equals(candidate.Mount.ContainerPath, mount.ContainerPath, StringComparison.Ordinal));
     }
 
 }

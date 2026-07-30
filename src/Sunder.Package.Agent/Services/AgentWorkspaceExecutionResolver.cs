@@ -65,6 +65,14 @@ internal sealed class AgentExecutionTargetInvocationProxy(
 {
     public AgentExecutionTargetDescriptor Descriptor { get; } = target.Metadata;
 
+    public ValueTask<string?> GetConfigurationGenerationAsync(
+        AgentExecutionTargetContext context,
+        CancellationToken cancellationToken = default)
+        => AgentExtensionInvocation.InvokeAsync(
+            target,
+            cancellationToken,
+            (instance, token) => instance.GetConfigurationGenerationAsync(context, token));
+
     public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
         AgentExecutionTargetContext context,
         CancellationToken cancellationToken = default)

@@ -35,7 +35,7 @@
             <TextBlock Classes="section-title"
                        Text="Docker Images" />
             <TextBlock Classes="caption"
-                       Text="Manage images pinned by explicit version tag or sha256 digest. Floating or implicit latest tags are rejected. Containers use bounded resources and no network by default, but writable bind mounts mean Docker execution is not a complete security sandbox."
+                       Text="Manage images with an explicit tag or sha256 digest. Tagless references are rejected; tagged references are resolved to an immutable local image ID before launch. Containers use bounded resources and no network by default, but writable bind mounts mean Docker execution is not a complete security sandbox."
                        TextWrapping="Wrap" />
           </StackPanel>
 

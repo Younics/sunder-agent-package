@@ -402,6 +402,10 @@ internal sealed class AgentRunDispatcher : IPackageBackgroundService, IAsyncDisp
             providerRetirementRegistration.Dispose();
             preparedPlan?.Dispose();
             _activeRunRegistry.Complete(run.Key.SessionId, run.Key.RunId, run.Key.RunRevision);
+            if (_sessionService.GetRun(run.Key.RunId)?.Status == AgentDurableRunStatus.WaitingForApproval)
+            {
+                _sessionService.PublishCommittedSessionChanged(run.Key.SessionId);
+            }
         }
     }
 

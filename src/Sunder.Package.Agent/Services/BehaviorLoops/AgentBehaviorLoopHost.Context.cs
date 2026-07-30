@@ -6,15 +6,13 @@ namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
 internal sealed partial class AgentBehaviorLoopHost
 {
-    private AgentSessionContextCheckpointRecord? _selectedSessionContextCheckpoint;
-    private bool _hasSelectedSessionContextCheckpoint;
+    private AgentSessionPromptProjection? _selectedSessionContextProjection;
     private long _promptContextTranscriptEpoch;
 
-    void IAgentSessionContextSelectionRuntime.SelectSessionContextCheckpoint(
-        AgentSessionContextCheckpointRecord? checkpoint)
+    void IAgentSessionContextSelectionRuntime.SelectSessionContextProjection(
+        AgentSessionPromptProjection projection)
     {
-        _selectedSessionContextCheckpoint = checkpoint;
-        _hasSelectedSessionContextCheckpoint = true;
+        _selectedSessionContextProjection = projection;
     }
 
     ValueTask IAgentPromptContextAcknowledgmentRuntime.AcknowledgePromptContextAsync(
@@ -28,6 +26,12 @@ internal sealed partial class AgentBehaviorLoopHost
                 blocks),
             cancellationToken);
 
+    void IAgentPromptContextAcknowledgmentRuntime.DiscardPromptContextAcknowledgment()
+        => _memoryCoordinator.DiscardPromptContextAcknowledgment(
+            _session.SessionId,
+            _runId,
+            _promptContextTranscriptEpoch);
+
     public async ValueTask<AgentBehaviorInstructionContext> BuildInstructionContextAsync(
         CancellationToken cancellationToken = default)
     {
@@ -35,7 +39,7 @@ internal sealed partial class AgentBehaviorLoopHost
         LogEvent(PackageLogLevel.Debug, "memory.context.start", "Building memory context.");
         try
         {
-            var context = _hasSelectedSessionContextCheckpoint
+            var context = _selectedSessionContextProjection is { } projection
                 ? await _memoryCoordinator.BuildInstructionContextForProjectionAsync(
                     _session,
                     _profile,
@@ -46,7 +50,8 @@ internal sealed partial class AgentBehaviorLoopHost
                     _workspace,
                     _executionBinding,
                     _availableToolsById?.Values.ToArray() ?? [],
-                    _selectedSessionContextCheckpoint,
+                    projection.ContextCheckpoint,
+                    projection.PromptTurns,
                     cancellationToken)
                 : await _memoryCoordinator.BuildInstructionContextAsync(
                     _session,

@@ -207,7 +207,7 @@ public sealed partial class AgentLocalStore
             : throw new InvalidOperationException("The pending permission request could not be persisted.");
     }
 
-    internal AgentPendingPermissionRequestRecord? SavePendingPermissionRequestAndSuspendRun(
+    internal AgentPermissionSuspensionPersistenceResult? SavePendingPermissionRequestAndSuspendRun(
         AgentPendingPermissionRequestRecord record,
         long expectedEpoch)
     {
@@ -275,10 +275,12 @@ public sealed partial class AgentLocalStore
         }
 
         transaction.Commit();
-        return persisted;
+        return new AgentPermissionSuspensionPersistenceResult(
+            persisted,
+            suspended.Checkpoint);
     }
 
-    internal AgentPendingPermissionRequestRecord? SavePendingPermissionRequestAndSuspendRun(
+    internal AgentPermissionSuspensionPersistenceResult? SavePendingPermissionRequestAndSuspendRun(
         AgentPendingPermissionRequestRecord record)
     {
         var run = GetRun(record.RunId);

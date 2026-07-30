@@ -38,6 +38,8 @@ internal sealed class DockerPackageStorageMigration(IPackageContext packageConte
     };
 
     private readonly object _syncRoot = new();
+    private readonly DockerImageCatalogCoordinator _coordinator =
+        DockerImageCatalogService.GetCoordinator(packageContext.Storage.State);
     private Task? _physicalMigration;
     private Task? _semanticMigration;
 
@@ -98,102 +100,150 @@ internal sealed class DockerPackageStorageMigration(IPackageContext packageConte
 
     private async Task MigrateSemanticStateAsync(CancellationToken cancellationToken)
     {
-        await MigrateCatalogAsync(cancellationToken).ConfigureAwait(false);
-        await MigrateWorkspaceConfigsAsync(cancellationToken).ConfigureAwait(false);
-        await MigrateSettingAsync(
-            DockerExecutionConfiguration.TimeoutKey,
-            static value => BoundedValue.TryParseInt32(
-                value,
-                1,
-                BoundedProcessRunner.MaximumTimeoutSeconds,
-                out _),
-            "docker.migration.timeout-invalid",
-            cancellationToken).ConfigureAwait(false);
-        await MigrateSettingAsync(
-            DockerCli.ExecutablePathConfigurationKey,
-            static value => value.Length <= 1024 && Path.IsPathFullyQualified(value),
-            "docker.migration.cli-path-invalid",
-            cancellationToken).ConfigureAwait(false);
+        await _coordinator.MigrationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await MigrateCatalogAsync(cancellationToken).ConfigureAwait(false);
+            await MigrateWorkspaceConfigsAsync(cancellationToken).ConfigureAwait(false);
+            await MigrateSettingAsync(
+                DockerExecutionConfiguration.TimeoutKey,
+                static value => BoundedValue.TryParseInt32(
+                    value,
+                    1,
+                    BoundedProcessRunner.MaximumTimeoutSeconds,
+                    out _),
+                "docker.migration.timeout-invalid",
+                cancellationToken).ConfigureAwait(false);
+            await MigrateSettingAsync(
+                DockerCli.ExecutablePathConfigurationKey,
+                static value => value.Length <= 1024 && Path.IsPathFullyQualified(value),
+                "docker.migration.cli-path-invalid",
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _coordinator.MigrationGate.Release();
+        }
     }
 
     private async Task MigrateCatalogAsync(CancellationToken cancellationToken)
     {
-        var json = await packageContext.Storage.State.GetValueAsync(
-            DockerImageCatalogService.ImagesKey,
-            cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return;
-        }
-
+        await _coordinator.MutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            using var document = JsonDocument.Parse(json);
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                throw new JsonException("Catalog root is not an object.");
-            }
-            var hasSchemaVersion = HasProperty(document.RootElement, "schemaVersion");
-            if (TryReadInt32(document.RootElement, "schemaVersion", out var schemaVersion))
-            {
-                if (schemaVersion > DockerImageCatalogService.CurrentSchemaVersion)
-                {
-                    return;
-                }
-                if (schemaVersion == DockerImageCatalogService.CurrentSchemaVersion)
-                {
-                    DockerImageCatalogService.ValidateCatalogProperties(document.RootElement, legacy: false);
-                    return;
-                }
-                throw new DockerExecutionDomainException(
-                    "docker.catalog.unsupported-schema",
-                    "The stored Docker image catalog uses an unsupported schema and was left unchanged.");
-            }
-            if (hasSchemaVersion)
-            {
-                throw new DockerExecutionDomainException(
-                    "docker.catalog.malformed",
-                    "The stored Docker image catalog is malformed and was left unchanged.");
-            }
-
-            DockerImageCatalogService.ValidateCatalogProperties(document.RootElement, legacy: true);
-            var legacy = JsonSerializer.Deserialize<LegacyDockerImageCatalogState>(json, JsonOptions)
-                ?? throw new JsonException("Legacy catalog is null.");
-            if (legacy.Version != 1 || legacy.Images is null)
-            {
-                throw new DockerExecutionDomainException(
-                    "docker.catalog.unsupported-schema",
-                    "The stored Docker image catalog uses an unsupported schema and was left unchanged.");
-            }
-
-            var migratedImages = legacy.Images.Select(MigrateLegacyImage).ToArray();
-            if (migratedImages.Select(image => image.ImageReference)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Count() != migratedImages.Length)
-            {
-                throw new DockerExecutionDomainException(
-                    "docker.catalog.malformed",
-                    "The stored Docker image catalog contains duplicate references and was left unchanged.");
-            }
-            var migrated = new DockerImageCatalogState(
-                DockerImageCatalogService.CurrentSchemaVersion,
-                1,
-                migratedImages);
-            await packageContext.Storage.State.SetValueAsync(
+            var json = await packageContext.Storage.State.GetValueAsync(
                 DockerImageCatalogService.ImagesKey,
-                JsonSerializer.Serialize(migrated, JsonOptions),
                 cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(json);
+                if (document.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    throw new JsonException("Catalog root is not an object.");
+                }
+                var hasSchemaVersion = HasProperty(document.RootElement, "schemaVersion");
+                if (TryReadInt32(document.RootElement, "schemaVersion", out var schemaVersion))
+                {
+                    if (schemaVersion > DockerImageCatalogService.CurrentSchemaVersion)
+                    {
+                        return;
+                    }
+                    if (schemaVersion == DockerImageCatalogService.CurrentSchemaVersion)
+                    {
+                        DockerImageCatalogService.ValidateCatalogProperties(document.RootElement, legacy: false);
+                        return;
+                    }
+                    if (schemaVersion == 2)
+                    {
+                        DockerImageCatalogService.ValidateCatalogProperties(document.RootElement, legacy: false);
+                        var previous = JsonSerializer.Deserialize<DockerImageCatalogState>(json, JsonOptions)
+                            ?? throw new JsonException("Docker image catalog is null.");
+                        if (previous.Revision < 0 || previous.Images is null)
+                        {
+                            throw new DockerExecutionDomainException(
+                                "docker.catalog.malformed",
+                                "The stored Docker image catalog is malformed and was left unchanged.");
+                        }
+                        var migratedSchema2Images = previous.Images
+                            .Select(MigrateSchema2Image)
+                            .ToArray();
+                        if (migratedSchema2Images.Select(image => image.ImageReference)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Count() != migratedSchema2Images.Length)
+                        {
+                            throw new DockerExecutionDomainException(
+                                "docker.catalog.malformed",
+                                "The stored Docker image catalog contains duplicate references and was left unchanged.");
+                        }
+                        var migratedSchema2 = new DockerImageCatalogState(
+                            DockerImageCatalogService.CurrentSchemaVersion,
+                            checked(previous.Revision + 1),
+                            migratedSchema2Images);
+                        await packageContext.Storage.State.SetValueAsync(
+                            DockerImageCatalogService.ImagesKey,
+                            JsonSerializer.Serialize(migratedSchema2, JsonOptions),
+                            cancellationToken).ConfigureAwait(false);
+                        return;
+                    }
+                    throw new DockerExecutionDomainException(
+                        "docker.catalog.unsupported-schema",
+                        "The stored Docker image catalog uses an unsupported schema and was left unchanged.");
+                }
+                if (hasSchemaVersion)
+                {
+                    throw new DockerExecutionDomainException(
+                        "docker.catalog.malformed",
+                        "The stored Docker image catalog is malformed and was left unchanged.");
+                }
+
+                DockerImageCatalogService.ValidateCatalogProperties(document.RootElement, legacy: true);
+                var legacy = JsonSerializer.Deserialize<LegacyDockerImageCatalogState>(json, JsonOptions)
+                    ?? throw new JsonException("Legacy catalog is null.");
+                if (legacy.Version != 1 || legacy.Images is null)
+                {
+                    throw new DockerExecutionDomainException(
+                        "docker.catalog.unsupported-schema",
+                        "The stored Docker image catalog uses an unsupported schema and was left unchanged.");
+                }
+
+                var migratedImages = legacy.Images.Select(MigrateLegacyImage).ToArray();
+                if (migratedImages.Select(image => image.ImageReference)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count() != migratedImages.Length)
+                {
+                    throw new DockerExecutionDomainException(
+                        "docker.catalog.malformed",
+                        "The stored Docker image catalog contains duplicate references and was left unchanged.");
+                }
+                var migrated = new DockerImageCatalogState(
+                    DockerImageCatalogService.CurrentSchemaVersion,
+                    1,
+                    migratedImages);
+                await packageContext.Storage.State.SetValueAsync(
+                    DockerImageCatalogService.ImagesKey,
+                    JsonSerializer.Serialize(migrated, JsonOptions),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (DockerExecutionDomainException)
+            {
+                throw;
+            }
+            catch (Exception exception) when (exception is JsonException or NotSupportedException)
+            {
+                throw new DockerExecutionDomainException(
+                    "docker.catalog.malformed",
+                    "The stored Docker image catalog is malformed and was left unchanged.",
+                    innerException: exception);
+            }
         }
-        catch (DockerExecutionDomainException)
+        finally
         {
-            throw;
-        }
-        catch (Exception exception) when (exception is JsonException or NotSupportedException)
-        {
-            throw new DockerExecutionDomainException(
-                "docker.catalog.malformed",
-                "The stored Docker image catalog is malformed and was left unchanged.",
-                innerException: exception);
+            _coordinator.MutationGate.Release();
         }
     }
 
@@ -265,7 +315,7 @@ internal sealed class DockerPackageStorageMigration(IPackageContext packageConte
                         _ = DockerImageCatalogService.NormalizeImageReference(imageReference);
                     }
                     catch (DockerExecutionDomainException exception) when (
-                        exception.Code is "docker.image-reference.unpinned" or "docker.image-reference.latest")
+                        exception.Code == "docker.image-reference.unpinned")
                     {
                         _ = DockerImageCatalogService.NormalizeLegacyImageReference(imageReference);
                         needsAttention = true;
@@ -337,13 +387,47 @@ internal sealed class DockerPackageStorageMigration(IPackageContext packageConte
             };
         }
         catch (DockerExecutionDomainException exception) when (
-            exception.Code is "docker.image-reference.unpinned" or "docker.image-reference.latest")
+            exception.Code == "docker.image-reference.unpinned")
         {
             return image with
             {
                 ImageReference = DockerImageCatalogService.NormalizeLegacyImageReference(image.ImageReference),
                 Status = DockerImageStatus.NeedsAttention,
-                LastMessage = "Legacy floating reference requires a pinned version tag or sha256 digest.",
+                LastMessage = "Legacy tagless reference requires an explicit tag or sha256 digest.",
+            };
+        }
+    }
+
+    private static DockerImageDefinition MigrateSchema2Image(DockerImageDefinition image)
+    {
+        if (!Enum.IsDefined(image.Status))
+        {
+            throw new DockerExecutionDomainException(
+                "docker.catalog.malformed",
+                "The stored Docker image catalog contains an unknown image status and was left unchanged.");
+        }
+        try
+        {
+            var normalized = DockerImageCatalogService.NormalizeImageReference(image.ImageReference);
+            return image with
+            {
+                ImageReference = normalized,
+                Status = image.Status is DockerImageStatus.Pulling or DockerImageStatus.NeedsAttention
+                    ? DockerImageStatus.NotPulled
+                    : image.Status,
+                LastMessage = image.Status == DockerImageStatus.NeedsAttention
+                    ? "Image reference is valid; refresh readiness before use."
+                    : image.LastMessage,
+            };
+        }
+        catch (DockerExecutionDomainException exception) when (
+            exception.Code == "docker.image-reference.unpinned")
+        {
+            return image with
+            {
+                ImageReference = DockerImageCatalogService.NormalizeLegacyImageReference(image.ImageReference),
+                Status = DockerImageStatus.NeedsAttention,
+                LastMessage = "Legacy tagless reference requires an explicit tag or sha256 digest.",
             };
         }
     }

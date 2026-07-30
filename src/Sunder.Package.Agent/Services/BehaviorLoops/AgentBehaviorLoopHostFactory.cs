@@ -30,7 +30,7 @@ public sealed class AgentBehaviorLoopHostFactory(
         DateTimeOffset runStartedAtUtc,
         string userMessage,
         Guid userTurnId,
-        AgentWorkspaceBindingRecord? executionBinding = null)
+        AgentWorkspaceBindingRecord? executionBinding)
     {
         var runLease = _activeRunRegistry
                            .GetCurrent(session.SessionId, runId, runRevision)?.DurableLease

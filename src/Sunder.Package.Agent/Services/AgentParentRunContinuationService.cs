@@ -413,6 +413,10 @@ public sealed class AgentParentRunContinuationService(
         finally
         {
             _activeRunRegistry.Complete(key.SessionId, key.RunId, key.RunRevision);
+            if (_sessionService.GetRun(key.RunId)?.Status == AgentDurableRunStatus.WaitingForApproval)
+            {
+                _sessionService.PublishCommittedSessionChanged(key.SessionId);
+            }
             runHandle.CancellationTokenSource.Dispose();
         }
     }

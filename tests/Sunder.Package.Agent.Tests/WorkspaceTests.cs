@@ -269,6 +269,56 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
+    public async Task AgentWorkspaceStackContributor_ImportFailureRollsBackWorkspaceAndBindingTogether()
+    {
+        using var scope = TestScope.Create();
+        var sourceContext = new TestPackageContext(Path.Combine(scope.RootPath, "source-atomic"));
+        var sourceService = new AgentWorkspaceService(new AgentLocalStore(sourceContext));
+        sourceService.ImportWorkspace(
+            new AgentWorkspaceRecord("workspace.atomic", "Atomic Workspace", null, default, default),
+            [new AgentWorkspacePathRecord("root", "workspace.atomic", scope.RootPath, true, 0, default, default)],
+            primaryExecutionTargetId: "local");
+        var sourceContributor = new AgentWorkspaceStackContributor(
+            sourceService,
+            sourceContext,
+            new TestExtensionCatalog());
+        var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(
+            [new StackExportItemSelection("workspace.atomic")]))).Fragments);
+        var importFragment = ToImportFragment(fragment, sourceContributor.ContributorId);
+
+        var targetContext = new TestPackageContext(Path.Combine(scope.RootPath, "target-atomic"));
+        var targetStore = new AgentLocalStore(targetContext)
+        {
+            WorkspaceAggregateStageCompleted = stage =>
+            {
+                if (stage == "bindings")
+                {
+                    throw new InvalidOperationException("injected binding-stage failure");
+                }
+            },
+        };
+        var targetService = new AgentWorkspaceService(targetStore);
+        var targetContributor = new AgentWorkspaceStackContributor(
+            targetService,
+            targetContext,
+            new TestExtensionCatalog());
+        var preview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest(
+            [importFragment],
+            new Dictionary<string, string>(),
+            new Dictionary<string, string>()));
+
+        var result = await targetContributor.ImportAsync(new StackImportRequest(
+            [importFragment],
+            new Dictionary<string, string>(),
+            new Dictionary<string, string>(),
+            [Assert.Single(preview.Actions).ActionId]));
+
+        Assert.Equal(StackImportOutcome.Failed, result.Outcome);
+        Assert.Null(targetService.GetWorkspace("workspace.atomic"));
+        Assert.Empty(targetService.ListBindings("workspace.atomic"));
+    }
+
+    [Fact]
     public async Task WorkspaceDocumentationContextService_ContributeContextAsync_LoadsOnlyExplicitDocsInConfiguredOrder()
     {
         using var scope = TestScope.Create();
@@ -1081,8 +1131,7 @@ public sealed class WorkspaceTests
 
     [Theory]
     [InlineData("custom")]
-    [InlineData("custom:latest")]
-    public async Task DockerImageCatalogService_RejectsUnpinnedImageReferences(string imageReference)
+    public async Task DockerImageCatalogService_RejectsTaglessImageReferences(string imageReference)
     {
         using var scope = TestScope.Create();
         var imageCatalog = new DockerImageCatalogService(scope.Context);
@@ -1090,7 +1139,7 @@ public sealed class WorkspaceTests
         var exception = await Assert.ThrowsAsync<DockerExecutionDomainException>(() => imageCatalog.AddImageAsync(imageReference));
 
         Assert.StartsWith("docker.image-reference.", exception.Code, StringComparison.Ordinal);
-        Assert.Contains("explicit version tag or sha256 digest", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("explicit tag or sha256 digest", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(await imageCatalog.ListImagesAsync());
     }
 
@@ -2040,6 +2089,24 @@ public sealed class WorkspaceTests
         var context = new AgentExecutionTargetContext(null, null, workspace, binding);
 
         Assert.Equal(AgentExecutionTargetReadinessStatus.Ready, (await target.GetReadinessAsync(context)).Status);
+        var generation = await target.GetConfigurationGenerationAsync(context);
+        using (var restartedLifecycle = new DockerContainerLifecycleService())
+        {
+            var restartedTarget = new DockerExecutionTarget(
+                scope.Context,
+                configService,
+                restartedLifecycle,
+                imageCatalog,
+                targetRunner,
+                new PassThroughDockerMountIdentityVerifier());
+            Assert.Equal(generation, await restartedTarget.GetConfigurationGenerationAsync(context));
+        }
+        var staleReadiness = await target.GetReadinessAsync(context with
+        {
+            ExpectedConfigurationGeneration = generation,
+        });
+        Assert.Equal(AgentExecutionTargetReadinessStatus.Failed, staleReadiness.Status);
+        Assert.Contains("image identity changed", staleReadiness.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(AgentExecutionTargetReadinessStatus.Ready, (await target.GetReadinessAsync(context)).Status);
 
         Assert.Equal(2, runCalls.Count);
@@ -2926,6 +2993,7 @@ public sealed class WorkspaceTests
         viewModel.CreateWorkspaceCommand.Execute(null);
         viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase));
         await WaitUntilAsync(() => viewModel.EditorSections.Any(section => string.Equals(section.SectionId, "docker-execution-settings", StringComparison.OrdinalIgnoreCase)));
+        await viewModel.CurrentEditorSectionRefresh.WaitAsync(TimeSpan.FromSeconds(2));
 
         var section = viewModel.EditorSections.Single(section => string.Equals(section.SectionId, "docker-execution-settings", StringComparison.OrdinalIgnoreCase));
         var imageField = Assert.IsType<AgentEditorSelectFieldViewModel>(section.Fields.Single(field => field.FieldId == "image"));
@@ -3041,6 +3109,10 @@ public sealed class WorkspaceTests
 
         Assert.Equal(AgentPermissionDecision.Allow, allowed.Decision);
         Assert.Equal(AgentPermissionDecision.Deny, denied.Decision);
+        Assert.Equal(AgentPermissionDecision.Ask, allowed.BaseDecision);
+        Assert.Equal(AgentPermissionDecisionSource.UnrestrictedMode, allowed.Source);
+        Assert.Equal(session.SessionId, allowed.SourceSessionId);
+        Assert.Equal(AgentPermissionDecisionSource.ConfiguredOverride, denied.Source);
     }
 
     [Fact]
@@ -5314,6 +5386,13 @@ public sealed class WorkspaceTests
         public List<IReadOnlyList<string>> Calls { get; } = [];
 
         public List<IReadOnlyList<string>> RawCalls { get; } = [];
+
+        internal override Task<DockerCliResolution> ResolveExecutableAsync(
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new DockerCliResolution(
+                Path.Combine(AppContext.BaseDirectory, "fake-docker"),
+                [],
+                null));
 
         protected override Task<string> ResolveEndpointAsync(CancellationToken cancellationToken)
             => Task.FromResult(endpoint?.Invoke() ?? "unix:///var/run/docker.sock");

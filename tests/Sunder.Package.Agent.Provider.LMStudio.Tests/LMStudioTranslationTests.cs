@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
@@ -216,5 +217,47 @@ public sealed class LMStudioTranslationTests
         });
 
         Assert.Equal("lmstudio-timeout", exception.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ChatClient_ContextWindowFailureIsNormalized()
+    {
+        var handler = new LMStudioTestHttpHandler((_, _, _) => LMStudioTestHttpHandler.Json(
+            "{\"error\":{\"message\":\"This model's maximum context length is 4096 tokens. However, your messages resulted in 5000 tokens.\",\"type\":\"invalid_request_error\",\"param\":\"messages\",\"code\":\"context_length_exceeded\"}}",
+            HttpStatusCode.BadRequest));
+        var context = new ProviderTestPackageContext(
+            "sunder.package.agent.provider.lmstudio",
+            new Dictionary<string, string>
+            {
+                [LMStudioProviderConfiguration.BaseUrlKey] = "http://lmstudio.test/v1",
+            });
+        using var connection = new LMStudioConnection(context, handler);
+        using var client = new LMStudioChatClient(
+            new AgentChatClientContext("lmstudio", "lmstudio/model"),
+            connection);
+
+        var exception = await Assert.ThrowsAsync<AgentChatProviderException>(async () =>
+        {
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Continue.")]))
+            {
+            }
+        });
+
+        Assert.Equal(AgentChatProviderFailureKind.ContextWindowExceeded, exception.FailureKind);
+    }
+
+    [Theory]
+    [InlineData("LM Studio returned HTTP 400: bad request")]
+    [InlineData("max_output_tokens exceeds the supported value")]
+    [InlineData("The output length limit was reached")]
+    [InlineData("Insufficient quota")]
+    [InlineData("Request too large")]
+    [InlineData("{\"error\":{\"message\":\"backend failed\"},\"output\":\"context_length_exceeded was mentioned by the user\"}")]
+    [InlineData("\"{\\\"error\\\":{\\\"message\\\":\\\"backend failed\\\"},\\\"output\\\":\\\"context_length_exceeded was mentioned by the user\\\"}\"")]
+    public void ExceptionMapper_DoesNotClassifyAmbiguousFailures(string message)
+    {
+        var exception = LMStudioExceptionMapper.Map(new InvalidOperationException(message));
+
+        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
     }
 }

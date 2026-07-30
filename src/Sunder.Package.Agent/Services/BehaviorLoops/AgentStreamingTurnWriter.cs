@@ -67,6 +67,12 @@ internal sealed class AgentStreamingTurnWriter(
                     return;
                 }
 
+                if (!string.IsNullOrEmpty(streamUpdate.Text)
+                    || streamUpdate.Contents.Any(IsContentBearingOutput))
+                {
+                    state.HasContentBearingOutput = true;
+                }
+
                 foreach (var functionCall in streamUpdate.Contents.OfType<FunctionCallContent>())
                 {
                     state.ToolCalls.Add(functionCall);
@@ -121,6 +127,15 @@ internal sealed class AgentStreamingTurnWriter(
             await BlockProtocolLeakAsync(state, cancellationToken);
         }
     }
+
+    private static bool IsContentBearingOutput(AIContent content)
+        => content switch
+        {
+            UsageContent => false,
+            TextContent text => !string.IsNullOrEmpty(text.Text),
+            TextReasoningContent reasoning => !string.IsNullOrEmpty(reasoning.Text),
+            _ => true,
+        };
 
     public AgentProviderCycleResult CompleteCycle(AgentStreamingTurnState state)
     {
@@ -233,6 +248,8 @@ internal sealed class AgentStreamingTurnState(
     public int PersistedContentLength { get; set; }
 
     public bool SuppressPendingFlush { get; set; }
+
+    public bool HasContentBearingOutput { get; set; }
 
     public AgentBehaviorLoopResult? TerminalResult { get; set; }
 }

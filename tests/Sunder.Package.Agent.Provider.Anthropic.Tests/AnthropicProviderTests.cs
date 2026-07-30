@@ -512,7 +512,42 @@ public sealed class AnthropicProviderTests
             [new ChatMessage(ChatRole.User, "Fail.")]));
 
         Assert.Equal("anthropic-http-error", exception.ErrorCode);
+        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
         Assert.Contains("provider.stream.failed", logger.EventNames);
+    }
+
+    [Fact]
+    public async Task HttpContextWindowFailure_IsNormalized()
+    {
+        var handler = new CapturingHandler(_ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(
+                "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"prompt is too long: 200001 tokens > 200000 maximum\"}}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        var client = CreateChatClient(handler);
+
+        var exception = await Assert.ThrowsAsync<AgentChatProviderException>(() => ReadUpdatesAsync(
+            client,
+            [new ChatMessage(ChatRole.User, "Fail.")]));
+
+        Assert.Equal(AgentChatProviderFailureKind.ContextWindowExceeded, exception.FailureKind);
+    }
+
+    [Theory]
+    [InlineData("Anthropic returned HTTP 400: bad request")]
+    [InlineData("max_output_tokens must be positive")]
+    [InlineData("The output length limit was reached")]
+    [InlineData("Your account quota was exceeded")]
+    [InlineData("Request too large: payload exceeds 32 MB")]
+    [InlineData("{\"error\":{\"message\":\"backend failed\"},\"output\":\"prompt is too long: 200001 tokens\"}")]
+    [InlineData("\"{\\\"error\\\":{\\\"message\\\":\\\"backend failed\\\"},\\\"output\\\":\\\"prompt is too long: 200001 tokens\\\"}\"")]
+    public void ExceptionMapper_DoesNotClassifyAmbiguousFailures(string message)
+    {
+        var exception = AnthropicExceptionMapper.Map(new HttpRequestException(message));
+
+        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
     }
 
     [Fact]

@@ -65,6 +65,7 @@ public sealed class AgentPermissionResumeCoordinator(
         CancellationToken cancellationToken)
     {
         AgentPendingPermissionClaimResult claim;
+        AgentPendingPermissionDecisionResult? policyDenial;
         using (await _transitionGate.EnterAsync(sessionId, cancellationToken).ConfigureAwait(false))
         {
             if (_sessionService.GetSession(sessionId) is { } claimSession
@@ -72,7 +73,14 @@ public sealed class AgentPermissionResumeCoordinator(
             {
                 return _sessionService.GetLatestCheckpoint(sessionId);
             }
-            claim = _permissionService.TryClaimPendingRequest(sessionId, requestId);
+            (claim, policyDenial) = _permissionService.TryClaimPendingRequestForApproval(
+                sessionId,
+                requestId);
+        }
+        if (policyDenial is not null)
+        {
+            return await CompleteDeniedDecisionAsync(policyDenial, cancellationToken)
+                .ConfigureAwait(false);
         }
         if (!claim.IsClaimed || claim.Request is not { } pending)
         {
@@ -575,6 +583,10 @@ public sealed class AgentPermissionResumeCoordinator(
         finally
         {
             _activeRunRegistry.Complete(sessionId, pending.RunId, pending.RunRevision);
+            if (_sessionService.GetRun(pending.RunId)?.Status == AgentDurableRunStatus.WaitingForApproval)
+            {
+                _sessionService.PublishCommittedSessionChanged(sessionId);
+            }
             runHandle.CancellationTokenSource.Dispose();
         }
 
@@ -647,16 +659,29 @@ public sealed class AgentPermissionResumeCoordinator(
             return _sessionService.GetLatestCheckpoint(sessionId);
         }
 
-        ReleasePreparedAuthority(decision.Request);
+        return await CompleteDeniedDecisionAsync(decision, cancellationToken).ConfigureAwait(false);
+    }
 
+    private async Task<AgentRunCheckpointRecord?> CompleteDeniedDecisionAsync(
+        AgentPendingPermissionDecisionResult decision,
+        CancellationToken cancellationToken)
+    {
+        if (!decision.IsDecided || decision.Request is null)
+        {
+            return decision.Request is null
+                ? null
+                : _sessionService.GetLatestCheckpoint(decision.Request.SessionId);
+        }
+
+        ReleasePreparedAuthority(decision.Request);
         var finalization = decision.Finalization
             ?? throw new InvalidOperationException("The denied permission suspension did not produce a finalization result.");
         var toolResultTurn = decision.ToolResultTurn
             ?? throw new InvalidOperationException("The denied permission suspension did not produce a tool result.");
         _sessionService.PublishCommittedPermissionDecision(finalization, toolResultTurn);
-        var session = _sessionService.GetSession(sessionId);
+        var session = _sessionService.GetSession(decision.Request.SessionId);
         var stoppedCheckpoint = decision.Checkpoint
-            ?? _sessionService.GetLatestCheckpoint(sessionId)
+            ?? _sessionService.GetLatestCheckpoint(decision.Request.SessionId)
             ?? throw new InvalidOperationException("The denied permission suspension did not produce a checkpoint.");
         if (session is not null)
         {

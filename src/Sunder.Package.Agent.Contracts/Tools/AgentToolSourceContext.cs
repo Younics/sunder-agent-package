@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Sdk.Abstractions;
 
@@ -22,4 +23,8 @@ public sealed record AgentToolSourceContext(
 {
     /// <summary>Gets an opaque reference to the exact execution-target activation selected for this discovery callback.</summary>
     public IPackageExtensionReference<IAgentExecutionTarget>? ExecutionTargetReference { get; init; }
+
+    /// <summary>Gets the expected target-owned configuration generation for a fenced readiness check.</summary>
+    [JsonIgnore]
+    public string? ExecutionTargetConfigurationGeneration { get; init; }
 }

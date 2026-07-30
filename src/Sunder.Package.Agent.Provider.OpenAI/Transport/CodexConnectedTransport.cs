@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
+using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Logging;
 using AIChatMessage = Microsoft.Extensions.AI.ChatMessage;
 using AIChatToolMode = Microsoft.Extensions.AI.ChatToolMode;
@@ -303,7 +304,13 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
             "codex-http-error",
             $"### {title}\n\nStatus: {(int)response.StatusCode} {response.ReasonPhrase}\n\n```json\n{responseContent}\n```",
             "codex-http-error",
-            new HttpRequestException(title, null, response.StatusCode));
+            new HttpRequestException(title, null, response.StatusCode))
+        {
+            FailureKind = ProviderContextWindowFailureClassifier.IsOpenAi(
+                    OpenAiErrorDiagnosticExtractor.Extract(responseContent))
+                ? AgentChatProviderFailureKind.ContextWindowExceeded
+                : AgentChatProviderFailureKind.Unknown,
+        };
     }
 
     private static bool IsModelUnavailable(string responseContent)

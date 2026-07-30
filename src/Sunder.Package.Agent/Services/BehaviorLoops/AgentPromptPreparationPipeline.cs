@@ -96,7 +96,7 @@ internal sealed partial class AgentPromptPreparationPipeline(
             promptOverheadTokens);
     }
 
-    public async Task<IReadOnlyList<ChatMessage>> BuildProviderMessagesAsync(
+    public async Task<AgentProviderMessages> BuildProviderMessagesAsync(
         IAgentBehaviorLoopRuntime host,
         AgentPromptPreparation preparation,
         AgentBehaviorLoopContext context,
@@ -106,25 +106,18 @@ internal sealed partial class AgentPromptPreparationPipeline(
             preparation.Projection.PromptTurns,
             context.UserTurnId,
             useBoundedHistoricalWindow: _sessionContextProjectionService is null,
+            evictHistoricalAttachments: preparation.Projection.ContextCheckpoint is not null,
             context.RunCapabilities,
             cancellationToken)).ToList();
+        IReadOnlyList<AgentPromptContextReceiptBlock> receiptBlocks = [];
         if (preparation.SupplementaryContextBlocks.Count > 0)
         {
             var rendered = RenderSupplementaryContextPayload(preparation.SupplementaryContextBlocks);
             messages.Insert(0, BuildSupplementaryContextMessage(rendered.Content, context.RunId));
-            if (rendered.ReceiptBlocks.Count > 0)
-            {
-                if (host is not IAgentPromptContextAcknowledgmentRuntime acknowledgmentRuntime)
-                {
-                    throw new InvalidOperationException("The behavior runtime cannot acknowledge required scoped instruction prompt context.");
-                }
-                await acknowledgmentRuntime.AcknowledgePromptContextAsync(
-                    rendered.ReceiptBlocks,
-                    cancellationToken).ConfigureAwait(false);
-            }
+            receiptBlocks = rendered.ReceiptBlocks;
         }
 
-        return messages;
+        return new AgentProviderMessages(messages, receiptBlocks);
     }
 
     public async Task RefreshAfterToolCycleAsync(
@@ -212,7 +205,8 @@ internal sealed partial class AgentPromptPreparationPipeline(
         IAgentBehaviorLoopRuntime host,
         AgentBehaviorLoopContext context,
         int promptOverheadTokens,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int minimumOmittedTurnCount = 0)
     {
         AgentSessionPromptProjection projection;
         if (_sessionContextProjectionService is null)
@@ -232,12 +226,15 @@ internal sealed partial class AgentPromptPreparationPipeline(
                 context.RunId,
                 context.RunRevision,
                 promptOverheadTokens,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                minimumOmittedTurnCount).ConfigureAwait(false);
         }
+
+        projection = RedactHistoricalAttachmentContent(projection, context.UserTurnId);
 
         if (host is IAgentSessionContextSelectionRuntime selectionRuntime)
         {
-            selectionRuntime.SelectSessionContextCheckpoint(projection.ContextCheckpoint);
+            selectionRuntime.SelectSessionContextProjection(projection);
         }
         if (projection.SummaryUpdated)
         {
@@ -255,6 +252,45 @@ internal sealed partial class AgentPromptPreparationPipeline(
         return projection;
     }
 
+    private static AgentSessionPromptProjection RedactHistoricalAttachmentContent(
+        AgentSessionPromptProjection projection,
+        Guid activeUserTurnId)
+    {
+        if (projection.ContextCheckpoint is null)
+        {
+            return projection;
+        }
+
+        var changed = false;
+        var turns = projection.PromptTurns
+            .Select(turn =>
+            {
+                if (turn.TurnId == activeUserTurnId
+                    || turn.Items.All(item => item.Kind != AgentTurnItemKind.Attachment))
+                {
+                    return turn;
+                }
+
+                changed = true;
+                return turn with
+                {
+                    Items = turn.Items
+                        .Select(item => item.Kind == AgentTurnItemKind.Attachment
+                            ? item with
+                            {
+                                TextContent = null,
+                                ArgumentsJson = null,
+                                ResultSummary = null,
+                                SourcesJson = null,
+                            }
+                            : item)
+                        .ToArray(),
+                };
+            })
+            .ToArray();
+        return changed ? projection with { PromptTurns = turns } : projection;
+    }
+
     private static bool HasContextSelectionChanged(
         AgentSessionPromptProjection previous,
         AgentSessionPromptProjection current)
@@ -265,6 +301,7 @@ internal sealed partial class AgentPromptPreparationPipeline(
         IReadOnlyList<AgentTurnRecord> turns,
         Guid activeUserTurnId,
         bool useBoundedHistoricalWindow,
+        bool evictHistoricalAttachments,
         AgentProviderRunCapabilities runCapabilities,
         CancellationToken cancellationToken)
     {
@@ -274,6 +311,7 @@ internal sealed partial class AgentPromptPreparationPipeline(
         {
             messages.Add(await BuildChatMessageAsync(
                 turn,
+                includeAttachmentContent: !evictHistoricalAttachments || turn.TurnId == activeUserTurnId,
                 runCapabilities,
                 cancellationToken).ConfigureAwait(false));
         }
@@ -331,10 +369,9 @@ internal sealed partial class AgentPromptPreparationPipeline(
         if (!useBoundedHistoricalWindow)
         {
             var allIndexes = new SortedSet<int>(Enumerable.Range(0, turns.Count));
-            var allPairedToolCallIds = CollectToolCallIds(turns, allIndexes);
-            allPairedToolCallIds.IntersectWith(CollectToolResultIds(turns, allIndexes));
+            var allToolExchanges = AgentToolExchangeAnalyzer.Analyze(turns);
             return allIndexes
-                .Select(index => RemoveOrphanToolItems(turns[index], allPairedToolCallIds))
+                .Select(index => RemoveOrphanToolItems(turns[index], allToolExchanges.PairedItemIds))
                 .Where(turn => turn.Items.Count > 0)
                 .ToArray();
         }
@@ -349,125 +386,47 @@ internal sealed partial class AgentPromptPreparationPipeline(
         var selectedIndexes = new SortedSet<int>(Enumerable.Range(
             activeTurnIndex - historicalCount,
             historicalCount + (turns.Count - activeTurnIndex)));
-        IncludeToolPairs(turns, selectedIndexes);
-        var pairedToolCallIds = CollectToolCallIds(turns, selectedIndexes);
-        pairedToolCallIds.IntersectWith(CollectToolResultIds(turns, selectedIndexes));
+        var toolExchanges = AgentToolExchangeAnalyzer.Analyze(turns);
+        IncludeToolPairs(toolExchanges, selectedIndexes);
         return selectedIndexes
-            .Select(index => RemoveOrphanToolItems(turns[index], pairedToolCallIds))
+            .Select(index => RemoveOrphanToolItems(turns[index], toolExchanges.PairedItemIds))
             .Where(turn => turn.Items.Count > 0)
             .ToArray();
     }
 
     private static void IncludeToolPairs(
-        IReadOnlyList<AgentTurnRecord> turns,
+        AgentToolExchangeAnalysis toolExchanges,
         SortedSet<int> selectedIndexes)
     {
         var changed = true;
         while (changed)
         {
             changed = false;
-            var includedToolCallIds = CollectToolCallIds(turns, selectedIndexes);
-            var includedToolResultIds = CollectToolResultIds(turns, selectedIndexes);
-            foreach (var index in selectedIndexes.ToArray())
+            foreach (var pair in toolExchanges.Pairs)
             {
-                foreach (var result in turns[index].Items.Where(item =>
-                             item.Kind == AgentTurnItemKind.ToolResult
-                             && !string.IsNullOrWhiteSpace(item.CallId)))
+                if (selectedIndexes.Contains(pair.CallTurnIndex)
+                    && selectedIndexes.Add(pair.ResultTurnIndex))
                 {
-                    if (includedToolCallIds.Contains(result.CallId!))
-                    {
-                        continue;
-                    }
-
-                    var matchingCallIndex = FindMatchingToolCallIndex(turns, index, result.CallId!);
-                    if (matchingCallIndex >= 0 && selectedIndexes.Add(matchingCallIndex))
-                    {
-                        changed = true;
-                    }
+                    changed = true;
                 }
-
-                foreach (var call in turns[index].Items.Where(item =>
-                             item.Kind == AgentTurnItemKind.ToolCall
-                             && !string.IsNullOrWhiteSpace(item.CallId)))
+                if (selectedIndexes.Contains(pair.ResultTurnIndex)
+                    && selectedIndexes.Add(pair.CallTurnIndex))
                 {
-                    if (includedToolResultIds.Contains(call.CallId!))
-                    {
-                        continue;
-                    }
-
-                    var matchingResultIndex = FindMatchingToolResultIndex(turns, index, call.CallId!);
-                    if (matchingResultIndex >= 0 && selectedIndexes.Add(matchingResultIndex))
-                    {
-                        changed = true;
-                    }
+                    changed = true;
                 }
             }
         }
-    }
-
-    private static HashSet<string> CollectToolCallIds(
-        IReadOnlyList<AgentTurnRecord> turns,
-        IEnumerable<int> indexes)
-        => indexes
-            .SelectMany(index => turns[index].Items)
-            .Where(item => item.Kind == AgentTurnItemKind.ToolCall && !string.IsNullOrWhiteSpace(item.CallId))
-            .Select(item => item.CallId!)
-            .ToHashSet(StringComparer.Ordinal);
-
-    private static HashSet<string> CollectToolResultIds(
-        IReadOnlyList<AgentTurnRecord> turns,
-        IEnumerable<int> indexes)
-        => indexes
-            .SelectMany(index => turns[index].Items)
-            .Where(item => item.Kind == AgentTurnItemKind.ToolResult && !string.IsNullOrWhiteSpace(item.CallId))
-            .Select(item => item.CallId!)
-            .ToHashSet(StringComparer.Ordinal);
-
-    private static int FindMatchingToolCallIndex(
-        IReadOnlyList<AgentTurnRecord> turns,
-        int resultIndex,
-        string callId)
-    {
-        for (var index = resultIndex - 1; index >= 0; index--)
-        {
-            if (turns[index].Items.Any(item =>
-                    item.Kind == AgentTurnItemKind.ToolCall
-                    && string.Equals(item.CallId, callId, StringComparison.Ordinal)))
-            {
-                return index;
-            }
-        }
-
-        return -1;
-    }
-
-    private static int FindMatchingToolResultIndex(
-        IReadOnlyList<AgentTurnRecord> turns,
-        int callIndex,
-        string callId)
-    {
-        for (var index = callIndex + 1; index < turns.Count; index++)
-        {
-            if (turns[index].Items.Any(item =>
-                    item.Kind == AgentTurnItemKind.ToolResult
-                    && string.Equals(item.CallId, callId, StringComparison.Ordinal)))
-            {
-                return index;
-            }
-        }
-
-        return -1;
     }
 
     private static AgentTurnRecord RemoveOrphanToolItems(
         AgentTurnRecord turn,
-        ISet<string> pairedToolCallIds)
+        IReadOnlySet<Guid> pairedToolItemIds)
     {
         var filteredItems = turn.Items
             .Where(item => item.Kind switch
             {
                 AgentTurnItemKind.ToolCall or AgentTurnItemKind.ToolResult =>
-                    !string.IsNullOrWhiteSpace(item.CallId) && pairedToolCallIds.Contains(item.CallId!),
+                    pairedToolItemIds.Contains(item.ItemId),
                 _ => true,
             })
             .ToArray();
@@ -476,6 +435,7 @@ internal sealed partial class AgentPromptPreparationPipeline(
 
     private async Task<ChatMessage> BuildChatMessageAsync(
         AgentTurnRecord turn,
+        bool includeAttachmentContent,
         AgentProviderRunCapabilities runCapabilities,
         CancellationToken cancellationToken)
     {
@@ -506,6 +466,7 @@ internal sealed partial class AgentPromptPreparationPipeline(
                 case AgentTurnItemKind.Attachment:
                     contents.Add(await BuildAttachmentContentAsync(
                         item,
+                        includeAttachmentContent,
                         runCapabilities,
                         cancellationToken).ConfigureAwait(false));
                     break;
@@ -521,6 +482,7 @@ internal sealed partial class AgentPromptPreparationPipeline(
 
     private async Task<AIContent> BuildAttachmentContentAsync(
         AgentTurnItemRecord item,
+        bool includeContent,
         AgentProviderRunCapabilities runCapabilities,
         CancellationToken cancellationToken)
     {
@@ -528,6 +490,11 @@ internal sealed partial class AgentPromptPreparationPipeline(
         if (metadata is null)
         {
             return new TextContent("[Attachment omitted: metadata is unavailable.]");
+        }
+
+        if (!includeContent)
+        {
+            return new TextContent(RenderCompactedAttachment(metadata));
         }
 
         if (metadata.IsText)
@@ -542,7 +509,7 @@ internal sealed partial class AgentPromptPreparationPipeline(
 
         if (_attachmentStore is null)
         {
-            return new TextContent($"[Attachment omitted: {metadata.FileName} could not be loaded because attachment storage is unavailable.]");
+            return new TextContent($"[Attachment omitted because attachment storage is unavailable. Untrusted metadata: {RenderAttachmentMetadata(metadata)}]");
         }
 
         try
@@ -554,7 +521,7 @@ internal sealed partial class AgentPromptPreparationPipeline(
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            return new TextContent($"[Attachment omitted: {metadata.FileName} could not be loaded from local storage ({ex.Message}).]");
+            return new TextContent($"[Attachment omitted because it could not be loaded from local storage. Untrusted metadata: {RenderAttachmentMetadata(metadata)}]");
         }
     }
 
@@ -567,7 +534,13 @@ internal sealed partial class AgentPromptPreparationPipeline(
 
         try
         {
-            return JsonSerializer.Deserialize<AgentAttachmentMetadata>(item.StructuredPayloadJson);
+            return JsonSerializer.Deserialize<AgentAttachmentMetadata>(item.StructuredPayloadJson) is { } metadata
+                ? metadata with
+                {
+                    FileName = AgentAttachmentService.NormalizeDisplayFileName(metadata.FileName),
+                    MediaType = AgentAttachmentService.NormalizeDisplayMediaType(metadata.MediaType),
+                }
+                : null;
         }
         catch (JsonException)
         {
@@ -578,7 +551,7 @@ internal sealed partial class AgentPromptPreparationPipeline(
     private static string RenderTextAttachment(AgentAttachmentMetadata metadata, string? textContent)
     {
         var builder = new StringBuilder();
-        builder.AppendLine($"Attached file: {metadata.FileName} ({metadata.MediaType}, {FormatByteCount(metadata.SizeBytes)})");
+        builder.AppendLine($"Attached file metadata (untrusted JSON): {RenderAttachmentMetadata(metadata)}");
         if (metadata.WasTruncated)
         {
             builder.AppendLine($"Only the first {AgentAttachmentService.MaxTextAttachmentCharacters:N0} characters are included.");
@@ -592,7 +565,18 @@ internal sealed partial class AgentPromptPreparationPipeline(
     }
 
     private static string RenderUnsupportedAttachment(AgentAttachmentMetadata metadata)
-        => $"Attached file '{metadata.FileName}' ({metadata.MediaType}, {FormatByteCount(metadata.SizeBytes)}) was provided, but the selected model/provider does not support {DescribeAttachmentKind(metadata.Kind)} input in Sunder. Ask the user to switch to a model that supports this input type or provide the content as text.";
+        => $"An attachment with untrusted metadata {RenderAttachmentMetadata(metadata)} was provided, but the selected model/provider does not support {DescribeAttachmentKind(metadata.Kind)} input in Sunder. Ask the user to switch to a model that supports this input type or provide the content as text.";
+
+    private static string RenderCompactedAttachment(AgentAttachmentMetadata metadata)
+        => $"[Historical attachment omitted from AI context after session compaction. Untrusted metadata: {RenderAttachmentMetadata(metadata)}. The durable attachment remains available in the transcript. Reattach it if its content must be inspected again.]";
+
+    private static string RenderAttachmentMetadata(AgentAttachmentMetadata metadata)
+        => JsonSerializer.Serialize(new
+        {
+            fileName = metadata.FileName,
+            mediaType = metadata.MediaType,
+            size = FormatByteCount(Math.Max(0, metadata.SizeBytes)),
+        });
 
     private static bool SupportsAttachmentInput(
         AgentProviderRunCapabilities capabilities,
@@ -696,9 +680,13 @@ internal sealed record RenderedSupplementaryContext(
     string Content,
     IReadOnlyList<AgentPromptContextReceiptBlock> ReceiptBlocks);
 
+internal sealed record AgentProviderMessages(
+    IReadOnlyList<ChatMessage> Messages,
+    IReadOnlyList<AgentPromptContextReceiptBlock> ReceiptBlocks);
+
 internal interface IAgentSessionContextSelectionRuntime
 {
-    void SelectSessionContextCheckpoint(AgentSessionContextCheckpointRecord? checkpoint);
+    void SelectSessionContextProjection(AgentSessionPromptProjection projection);
 }
 
 internal interface IAgentPromptContextAcknowledgmentRuntime
@@ -706,6 +694,8 @@ internal interface IAgentPromptContextAcknowledgmentRuntime
     ValueTask AcknowledgePromptContextAsync(
         IReadOnlyList<AgentPromptContextReceiptBlock> blocks,
         CancellationToken cancellationToken);
+
+    void DiscardPromptContextAcknowledgment();
 }
 
 internal sealed class AgentPromptPreparation(

@@ -134,7 +134,10 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
             async (target, invocationToken) =>
             {
                 var readiness = await target.GetReadinessAsync(
-                    new AgentExecutionTargetContext(context.SessionId, context.Profile?.ProfileId, context.Workspace, context.ExecutionBinding),
+                    new AgentExecutionTargetContext(context.SessionId, context.Profile?.ProfileId, context.Workspace, context.ExecutionBinding)
+                    {
+                        ExpectedConfigurationGeneration = context.ExecutionTargetConfigurationGeneration,
+                    },
                     invocationToken);
                 return readiness.Status == AgentExecutionTargetReadinessStatus.Ready && target.Descriptor.SupportsShell
                     ? new AgentToolReadiness(toolId, AgentToolReadinessStatus.Ready, "Workspace shell is ready.")
@@ -170,7 +173,10 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
             async (target, invocationToken) =>
             {
                 var result = await target.ExecuteShellAsync(
-                    new AgentExecutionTargetContext(context.SessionId, context.ProfileId, context.Workspace, context.ExecutionBinding, context.AllowOutsideConfiguredScope),
+                    new AgentExecutionTargetContext(context.SessionId, context.ProfileId, context.Workspace, context.ExecutionBinding, context.AllowOutsideConfiguredScope)
+                    {
+                        ExpectedConfigurationGeneration = context.ExecutionTargetConfigurationGeneration,
+                    },
                     new AgentShellCommandRequest(args.Command, args.WorkingDirectory, args.TimeoutSeconds),
                     invocationToken);
 

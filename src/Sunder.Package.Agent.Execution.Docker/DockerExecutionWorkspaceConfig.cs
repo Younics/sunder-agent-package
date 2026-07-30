@@ -19,4 +19,22 @@ internal sealed record DockerExecutionRuntimeConfig(
     IReadOnlyList<string>? PathEntries,
     IReadOnlyList<DockerExecutionMount> Mounts,
     string? DefaultWorkingDirectory,
-    bool ImageReferenceNeedsAttention = false);
+    bool ImageReferenceNeedsAttention = false)
+{
+    public string? DockerCliPath { get; init; }
+
+    public int? DefaultTimeoutSeconds { get; init; }
+
+    public string? ImageIdentity { get; init; }
+}
+
+internal sealed record DockerExecutionConfigurationSnapshot(
+    DockerExecutionWorkspaceConfig WorkspaceConfig,
+    int DefaultTimeoutSeconds)
+{
+    public string? DockerCliPath { get; init; }
+
+    public string DockerCliResolution { get; init; } = string.Empty;
+
+    public string? ImageIdentity { get; init; }
+}

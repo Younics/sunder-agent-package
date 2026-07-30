@@ -128,16 +128,15 @@ public sealed class AgentWorkspaceStackContributor(
 
             try
             {
-                var existing = workspaceService.GetWorkspace(payload.WorkspaceId);
                 var paths = ResolvePathRecords(
                     payload,
                     request.InputValues,
-                    preserveExistingWhenEmpty: existing is not null,
+                    preserveExistingWhenEmpty: true,
                     warnings: warnings);
                 var documents = ResolveDocumentRecords(
                     payload,
                     request.InputValues,
-                    preserveExistingWhenEmpty: existing is not null,
+                    preserveExistingWhenEmpty: true,
                     warnings: warnings);
                 var now = DateTimeOffset.UtcNow;
                 workspaceService.ImportWorkspace(
@@ -145,17 +144,11 @@ public sealed class AgentWorkspaceStackContributor(
                         payload.WorkspaceId,
                         payload.DisplayName,
                         payload.Description,
-                        existing?.CreatedAtUtc ?? now,
+                        now,
                         now),
                     paths,
-                    documents);
-
-                if (!string.IsNullOrWhiteSpace(payload.PrimaryExecutionBinding?.ContributionId))
-                {
-                    workspaceService.SavePrimaryExecutionBinding(
-                        payload.WorkspaceId,
-                        payload.PrimaryExecutionBinding.ContributionId);
-                }
+                    documents,
+                    payload.PrimaryExecutionBinding?.ContributionId);
 
                 idRemaps[payload.WorkspaceId] = payload.WorkspaceId;
                 imported.Add(new StackImportedItem(payload.WorkspaceId, payload.DisplayName, "agent-workspace"));
@@ -325,7 +318,7 @@ public sealed class AgentWorkspaceStackContributor(
 
         if (paths.Count == 0 && skippedInputs > 0 && preserveExistingWhenEmpty)
         {
-            warnings.Add($"Preserved existing workspace paths for '{payload.DisplayName}' because no replacement local paths were supplied.");
+            warnings.Add($"No workspace paths were imported for '{payload.DisplayName}' because no local paths were supplied. Existing paths, if any, were preserved.");
             return null;
         }
 
@@ -375,7 +368,7 @@ public sealed class AgentWorkspaceStackContributor(
 
         if (documents.Count == 0 && skippedInputs > 0 && preserveExistingWhenEmpty)
         {
-            warnings.Add($"Preserved existing workspace documents for '{payload.DisplayName}' because no replacement local document paths were supplied.");
+            warnings.Add($"No workspace documents were imported for '{payload.DisplayName}' because no local document paths were supplied. Existing documents, if any, were preserved.");
             return null;
         }
 

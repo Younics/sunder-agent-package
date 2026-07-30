@@ -20,6 +20,32 @@ internal sealed record TranscriptTurnPage(
 internal sealed partial class TranscriptTimelineState<TRow>
     where TRow : class
 {
+    private void PreserveViewportAnchor(object? protectedAnchorKey)
+    {
+        var resolution = ResolvePageProtectedAnchor(protectedAnchorKey);
+        if (!resolution.PreserveAnchor || resolution.AnchorKey is null)
+        {
+            return;
+        }
+
+        SetViewportAnchor(_viewportAnchor is { } anchor
+            ? anchor with { AnchorKey = resolution.AnchorKey }
+            : new TranscriptViewportAnchorData(resolution.AnchorKey, 0, 0));
+    }
+
+    private static TranscriptPageAnchorResolution ResolvePageProtectedAnchor(object? protectedAnchorKey)
+        => protectedAnchorKey is TranscriptPageAnchorAuthority authority
+            ? authority.ResolveCurrentAnchor()
+            : TranscriptPageAnchorResolution.Preserve(protectedAnchorKey);
+
+    private object? ResolveTrimProtectedAnchorKey(object? protectedAnchorKey)
+    {
+        var resolution = ResolvePageProtectedAnchor(protectedAnchorKey);
+        return resolution.PreserveAnchor
+            ? resolution.AnchorKey ?? _viewportAnchor?.AnchorKey
+            : null;
+    }
+
     public bool TrySelectLoadedAnchor(Guid sessionId, object targetAnchorKey)
     {
         if (_disposed
@@ -171,7 +197,7 @@ internal sealed partial class TranscriptTimelineState<TRow>
         object? protectedAnchorKey,
         CancellationToken cancellationToken)
     {
-        if (SessionId != sessionId || cancellationToken.IsCancellationRequested)
+        if (!IsPageApplicationCurrent(sessionId, cancellationToken))
         {
             return false;
         }
@@ -181,9 +207,18 @@ internal sealed partial class TranscriptTimelineState<TRow>
                              ? TranscriptPageCursor.FromTurn(oldestTurn)
                              : (TranscriptPageCursor?)null);
         var cursorAdvanced = nextCursor is { } next && IsBefore(next, before);
+        if (hasMore && !cursorAdvanced)
+        {
+            SetHasOlderRows(true);
+            return false;
+        }
         if (turns.Count == 0)
         {
-            SetHasOlderRows(hasMore && cursorAdvanced);
+            SetHasOlderRows(hasMore);
+            if (!IsPageApplicationCurrent(sessionId, cancellationToken))
+            {
+                return false;
+            }
             if (cursorAdvanced)
             {
                 _olderPageCursor = nextCursor;
@@ -191,25 +226,45 @@ internal sealed partial class TranscriptTimelineState<TRow>
             return !hasMore || cursorAdvanced;
         }
 
-        var trimProtectedAnchorKey = ResolvePageProtectedAnchorKey(protectedAnchorKey)
-                                     ?? _viewportAnchor?.AnchorKey;
+        var trimProtectedAnchorKey = ResolveTrimProtectedAnchorKey(protectedAnchorKey);
         _isApplyingPageRows = true;
         try
         {
-            using var deferredRows = (_projector.Rows as TranscriptObservableCollection<TRow>)?
-                .DeferReconciliation();
-            _projector.ApplyTurns(
-                TranscriptRowProjector<TRow>.SelectLatestTurns(orderedTurns, _pageSize),
-                TranscriptInsertMode.Prepend);
-            _olderPageCursor = nextCursor;
-            SetHasOlderRows(hasMore);
-            ApplyTrim(AgentTranscriptTrimDirection.Newest, trimProtectedAnchorKey);
+            using ((_projector.Rows as TranscriptObservableCollection<TRow>)?.DeferReconciliation())
+            {
+                _projector.ApplyTurns(
+                    TranscriptRowProjector<TRow>.SelectLatestTurns(orderedTurns, _pageSize),
+                    TranscriptInsertMode.Prepend);
+                if (!IsPageApplicationCurrent(sessionId, cancellationToken))
+                {
+                    return false;
+                }
+                SetHasOlderRows(hasMore);
+                if (!IsPageApplicationCurrent(sessionId, cancellationToken))
+                {
+                    return false;
+                }
+                ApplyTrim(AgentTranscriptTrimDirection.Newest, trimProtectedAnchorKey);
+                if (!IsPageApplicationCurrent(sessionId, cancellationToken))
+                {
+                    return false;
+                }
+            }
+            if (!IsPageApplicationCurrent(sessionId, cancellationToken))
+            {
+                return false;
+            }
         }
         finally
         {
             _isApplyingPageRows = false;
         }
         RowsChanged?.Invoke();
+        if (!IsPageApplicationCurrent(sessionId, cancellationToken))
+        {
+            return false;
+        }
+        _olderPageCursor = nextCursor;
         return true;
     }
 
@@ -223,7 +278,7 @@ internal sealed partial class TranscriptTimelineState<TRow>
         object? protectedAnchorKey,
         CancellationToken cancellationToken)
     {
-        if (SessionId != sessionId || cancellationToken.IsCancellationRequested)
+        if (!IsPageApplicationCurrent(sessionId, cancellationToken))
         {
             return false;
         }
@@ -239,6 +294,12 @@ internal sealed partial class TranscriptTimelineState<TRow>
                          ?? (serverPage.LastOrDefault() is { } newestTurn
                              ? TranscriptPageCursor.FromTurn(newestTurn)
                              : (TranscriptPageCursor?)null);
+        var continuationAdvanced = nextCursor is { } next && IsAfter(next, after);
+        if (hasMore && !continuationAdvanced)
+        {
+            SetHasNewerRows(true);
+            return false;
+        }
         var pendingTurns = _pendingTurnsById.Values
             .Where(turn => turn.SessionId == sessionId);
         if (hasMore && serverPage.LastOrDefault() is { } lastServerTurn)
@@ -248,43 +309,76 @@ internal sealed partial class TranscriptTimelineState<TRow>
 
         var pendingTurnsById = pendingTurns.ToDictionary(turn => turn.TurnId);
         var turnsToApply = SelectFreshestTurns(pendingTurnsById.Values.Concat(serverPage));
-        var trimProtectedAnchorKey = ResolvePageProtectedAnchorKey(protectedAnchorKey)
-                                     ?? _viewportAnchor?.AnchorKey;
+        var trimProtectedAnchorKey = ResolveTrimProtectedAnchorKey(protectedAnchorKey);
         _isApplyingPageRows = true;
         try
         {
-            foreach (var turn in turnsToApply)
+            using ((_projector.Rows as TranscriptObservableCollection<TRow>)?.DeferReconciliation())
             {
-                RemovePendingTurn(turn.TurnId);
-                var canApply = _projector.CanApplyTurn(turn);
-                _projector.ApplyTurn(turn, TranscriptInsertMode.Append);
-                if (canApply
-                    && pendingTurnsById.TryGetValue(turn.TurnId, out var pendingTurn)
-                    && ReferenceEquals(turn, pendingTurn))
+                foreach (var turn in turnsToApply)
                 {
-                    TurnProjected?.Invoke(turn, true, true);
+                    RemovePendingTurn(turn.TurnId);
+                    var canApply = _projector.CanApplyTurn(turn);
+                    _projector.ApplyTurn(turn, TranscriptInsertMode.Append);
+                    if (canApply
+                        && pendingTurnsById.TryGetValue(turn.TurnId, out var pendingTurn)
+                        && ReferenceEquals(turn, pendingTurn))
+                    {
+                        TurnProjected?.Invoke(turn, true, true);
+                    }
+                    if (!IsPageApplicationCurrent(sessionId, cancellationToken))
+                    {
+                        return false;
+                    }
+                }
+                _projector.ReorderRowsChronologically();
+                if (!IsPageApplicationCurrent(sessionId, cancellationToken))
+                {
+                    return false;
+                }
+
+                SetHasNewerRows(hasMore
+                                || _pendingTurnsById.Values.Any(turn => turn.SessionId == sessionId));
+                if (!IsPageApplicationCurrent(sessionId, cancellationToken))
+                {
+                    return false;
+                }
+                ApplyTrim(AgentTranscriptTrimDirection.Oldest, trimProtectedAnchorKey);
+                if (!IsPageApplicationCurrent(sessionId, cancellationToken))
+                {
+                    return false;
                 }
             }
-            _projector.ReorderRowsChronologically();
-            _newerPageCursor = nextCursor;
-
-            if (!hasMore)
+            if (!IsPageApplicationCurrent(sessionId, cancellationToken))
             {
-                _pendingTurnsOverflowed = false;
+                return false;
             }
-            SetHasNewerRows(hasMore
-                            || _pendingTurnsOverflowed
-                            || _pendingTurnsById.Values.Any(turn => turn.SessionId == sessionId));
-            ApplyTrim(AgentTranscriptTrimDirection.Oldest, trimProtectedAnchorKey);
         }
         finally
         {
             _isApplyingPageRows = false;
         }
         RowsChanged?.Invoke();
-        var cursorAdvanced = nextCursor is { } next && IsAfter(next, after);
-        return cursorAdvanced || !HasNewerRows;
+        if (!IsPageApplicationCurrent(sessionId, cancellationToken))
+        {
+            return false;
+        }
+        if (!hasMore)
+        {
+            _pendingTurnsOverflowed = false;
+        }
+        if (continuationAdvanced)
+        {
+            _newerPageCursor = nextCursor;
+        }
+        var retainedCursor = GetNewestLoadedCursor();
+        var retainedCursorAdvanced = retainedCursor is { } retained && IsAfter(retained, after);
+        return !HasNewerRows
+               || continuationAdvanced && (retainedCursorAdvanced || serverPage.Length == 0);
     }
+
+    private bool IsPageApplicationCurrent(Guid sessionId, CancellationToken cancellationToken)
+        => SessionId == sessionId && !cancellationToken.IsCancellationRequested;
 
     private TranscriptPageCursor? GetOldestLoadedCursor()
         => _projector.TurnWindow.OldestCreatedAtUtc is { } createdAt

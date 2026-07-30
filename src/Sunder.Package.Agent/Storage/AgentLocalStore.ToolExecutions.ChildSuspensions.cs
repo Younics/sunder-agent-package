@@ -137,6 +137,7 @@ public sealed partial class AgentLocalStore
             }
         }
 
+        InvalidateSessionContext(connection, transaction, key.SessionId);
         TouchSession(connection, key.SessionId, null, null, transaction);
         var turn = GetTurn(connection, turnId, transaction)
             ?? throw new InvalidOperationException("The replaced child tool-result turn could not be reloaded.");

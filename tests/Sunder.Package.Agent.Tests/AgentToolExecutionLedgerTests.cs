@@ -239,6 +239,7 @@ public sealed class AgentToolExecutionLedgerTests
             Content: isError ? "Reviewer failed." : "Reviewer completed.",
             IsError: isError,
             ErrorCode: isError ? AgentToolResultErrorCodes.SubagentRunFailed : null);
+        var transcriptEpoch = store.GetTranscriptEpoch(session.SessionId);
 
         var replaced = store.TryReplaceChildSuspensionToolResult(
             run.Key,
@@ -247,6 +248,8 @@ public sealed class AgentToolExecutionLedgerTests
             finalResult);
 
         Assert.NotNull(replaced);
+        Assert.Equal(transcriptEpoch + 1, store.GetTranscriptEpoch(session.SessionId));
+        Assert.Null(store.GetLatestSessionContextCheckpoint(session.SessionId));
         var restarted = new AgentLocalStore(scope.Context);
         var execution = Assert.IsType<AgentToolExecutionRecord>(
             restarted.GetToolExecution(prepared.Execution.ExecutionId));

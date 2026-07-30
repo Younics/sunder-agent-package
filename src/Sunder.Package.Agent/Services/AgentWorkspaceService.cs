@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -15,6 +16,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
     private readonly AgentLocalStore _store;
     private readonly IPackageExtensionCatalog? _extensionCatalog;
     private readonly AgentSessionService? _sessionService;
+    private readonly ConcurrentDictionary<string, object> _executionContextSyncRoots = new(StringComparer.Ordinal);
     private bool _isMigratingWorkspacePaths;
 
     public AgentWorkspaceService(
@@ -28,6 +30,9 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
     }
 
     public event Action? WorkspacesChanged;
+
+    internal object GetExecutionContextSyncRoot(string workspaceId)
+        => _executionContextSyncRoots.GetOrAdd(workspaceId, static _ => new object());
 
     public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces()
     {
@@ -59,17 +64,20 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
         string displayName,
         string? description)
     {
-        var existing = _store.GetWorkspace(workspaceId)
-            ?? throw new InvalidOperationException($"Workspace '{workspaceId}' was not found.");
-
-        var next = existing with
+        lock (GetExecutionContextSyncRoot(workspaceId))
         {
-            DisplayName = string.IsNullOrWhiteSpace(displayName) ? "Unnamed Workspace" : displayName.Trim(),
-            Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
-            UpdatedAtUtc = DateTimeOffset.UtcNow,
-        };
+            var existing = _store.GetWorkspace(workspaceId)
+                ?? throw new InvalidOperationException($"Workspace '{workspaceId}' was not found.");
 
-        _store.SaveWorkspace(next);
+            var next = existing with
+            {
+                DisplayName = string.IsNullOrWhiteSpace(displayName) ? "Unnamed Workspace" : displayName.Trim(),
+                Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+            };
+
+            _store.SaveWorkspace(next);
+        }
         WorkspacesChanged?.Invoke();
     }
 
@@ -99,66 +107,77 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
         IReadOnlyList<AgentWorkspaceDocumentRecord> documents,
         string? executionTargetId)
     {
-        var existing = _store.GetWorkspace(workspaceId)
-            ?? throw new InvalidOperationException($"Workspace '{workspaceId}' was not found.");
-        var now = DateTimeOffset.UtcNow;
-        var workspace = existing with
+        lock (GetExecutionContextSyncRoot(workspaceId))
         {
-            DisplayName = string.IsNullOrWhiteSpace(displayName) ? "Unnamed Workspace" : displayName.Trim(),
-            Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
-            UpdatedAtUtc = now,
-        };
-        var existingBinding = _store.ListWorkspaceBindings(workspaceId)
-            .FirstOrDefault(binding => string.Equals(
-                binding.Role,
-                AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
-                StringComparison.OrdinalIgnoreCase));
-        var binding = string.IsNullOrWhiteSpace(executionTargetId)
-            ? null
-            : existingBinding is null
-                ? new AgentWorkspaceBindingRecord(
-                    BuildPrimaryBindingId(workspaceId),
-                    workspaceId,
-                    PackageExtensionPoints.ExecutionTargets.Id,
-                    executionTargetId,
+            var existing = _store.GetWorkspace(workspaceId)
+                ?? throw new InvalidOperationException($"Workspace '{workspaceId}' was not found.");
+            var now = DateTimeOffset.UtcNow;
+            var workspace = existing with
+            {
+                DisplayName = string.IsNullOrWhiteSpace(displayName) ? "Unnamed Workspace" : displayName.Trim(),
+                Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+                UpdatedAtUtc = now,
+            };
+            var existingBinding = _store.ListWorkspaceBindings(workspaceId)
+                .FirstOrDefault(binding => string.Equals(
+                    binding.Role,
                     AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
-                    true,
-                    0,
-                    now,
-                    now)
-                : existingBinding with
-                {
-                    ContributionId = executionTargetId,
-                    IsEnabled = true,
-                    UpdatedAtUtc = now,
-                };
-        _store.SaveWorkspaceAggregate(
-            workspace,
-            NormalizePathRecords(workspaceId, paths),
-            NormalizeDocumentRecords(workspaceId, documents),
-            binding);
+                    StringComparison.OrdinalIgnoreCase));
+            var binding = string.IsNullOrWhiteSpace(executionTargetId)
+                ? null
+                : existingBinding is null
+                    ? new AgentWorkspaceBindingRecord(
+                        BuildPrimaryBindingId(workspaceId),
+                        workspaceId,
+                        PackageExtensionPoints.ExecutionTargets.Id,
+                        executionTargetId,
+                        AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
+                        true,
+                        0,
+                        now,
+                        now)
+                    : existingBinding with
+                    {
+                        ContributionId = executionTargetId,
+                        IsEnabled = true,
+                        UpdatedAtUtc = now,
+                    };
+            _store.SaveWorkspaceAggregate(
+                workspace,
+                NormalizePathRecords(workspaceId, paths),
+                NormalizeDocumentRecords(workspaceId, documents),
+                binding);
+        }
         WorkspacesChanged?.Invoke();
     }
 
     public void DeleteWorkspace(string workspaceId)
     {
-        var cleaners = _sessionService?.SnapshotSessionDataCleaners()
-            ?? AgentSessionService.SnapshotSessionDataCleaners(_extensionCatalog);
-        var deletedSessionIds = _store.DeleteWorkspaceWithSessions(workspaceId, cleaners);
+        IReadOnlyList<Guid> deletedSessionIds;
+        lock (GetExecutionContextSyncRoot(workspaceId))
+        {
+            var cleaners = _sessionService?.SnapshotSessionDataCleaners()
+                ?? AgentSessionService.SnapshotSessionDataCleaners(_extensionCatalog);
+            deletedSessionIds = _store.DeleteWorkspaceWithSessions(workspaceId, cleaners);
+        }
         WorkspacesChanged?.Invoke();
         _sessionService?.CompleteSessionDeletion(deletedSessionIds);
     }
 
     internal void DeleteWorkspacePersistence(string workspaceId)
     {
-        _store.DeleteWorkspace(workspaceId);
+        lock (GetExecutionContextSyncRoot(workspaceId))
+        {
+            _store.DeleteWorkspace(workspaceId);
+        }
         WorkspacesChanged?.Invoke();
     }
 
     public void ImportWorkspace(
         AgentWorkspaceRecord workspace,
         IReadOnlyList<AgentWorkspacePathRecord>? paths = null,
-        IReadOnlyList<AgentWorkspaceDocumentRecord>? documents = null)
+        IReadOnlyList<AgentWorkspaceDocumentRecord>? documents = null,
+        string? primaryExecutionTargetId = null)
     {
         if (string.IsNullOrWhiteSpace(workspace.WorkspaceId))
         {
@@ -166,24 +185,49 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
         }
 
         var workspaceId = workspace.WorkspaceId.Trim();
-        var existing = _store.GetWorkspace(workspaceId);
-        var now = DateTimeOffset.UtcNow;
-        var imported = new AgentWorkspaceRecord(
-            workspaceId,
-            string.IsNullOrWhiteSpace(workspace.DisplayName) ? "Imported Workspace" : workspace.DisplayName.Trim(),
-            string.IsNullOrWhiteSpace(workspace.Description) ? null : workspace.Description.Trim(),
-            existing?.CreatedAtUtc ?? now,
-            now);
-
-        _store.SaveWorkspace(imported);
-        if (paths is not null)
+        lock (GetExecutionContextSyncRoot(workspaceId))
         {
-            SaveWorkspacePathsCore(workspaceId, paths);
-        }
-
-        if (documents is not null)
-        {
-            SaveWorkspaceDocumentsCore(workspaceId, documents);
+            var existing = _store.GetWorkspace(workspaceId);
+            var now = DateTimeOffset.UtcNow;
+            var imported = new AgentWorkspaceRecord(
+                workspaceId,
+                string.IsNullOrWhiteSpace(workspace.DisplayName) ? "Imported Workspace" : workspace.DisplayName.Trim(),
+                string.IsNullOrWhiteSpace(workspace.Description) ? null : workspace.Description.Trim(),
+                existing?.CreatedAtUtc ?? now,
+                now);
+            var existingBinding = _store.ListWorkspaceBindings(workspaceId)
+                .FirstOrDefault(binding => string.Equals(
+                    binding.Role,
+                    AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
+                    StringComparison.OrdinalIgnoreCase));
+            var binding = string.IsNullOrWhiteSpace(primaryExecutionTargetId)
+                ? existingBinding
+                : existingBinding is null
+                    ? new AgentWorkspaceBindingRecord(
+                        BuildPrimaryBindingId(workspaceId),
+                        workspaceId,
+                        PackageExtensionPoints.ExecutionTargets.Id,
+                        primaryExecutionTargetId.Trim(),
+                        AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
+                        IsEnabled: true,
+                        SortOrder: 0,
+                        now,
+                        now)
+                    : existingBinding with
+                    {
+                        ContributionId = primaryExecutionTargetId.Trim(),
+                        IsEnabled = true,
+                        UpdatedAtUtc = now,
+                    };
+            _store.SaveWorkspaceAggregate(
+                imported,
+                paths is null
+                    ? existing?.Paths ?? []
+                    : NormalizePathRecords(workspaceId, paths),
+                documents is null
+                    ? existing?.Documents ?? []
+                    : NormalizeDocumentRecords(workspaceId, documents),
+                binding);
         }
 
         WorkspacesChanged?.Invoke();
@@ -203,28 +247,32 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
         string contributionId,
         string displayRole = AgentWorkspaceBindingRoles.PrimaryExecutionTarget)
     {
-        var existing = _store.ListWorkspaceBindings(workspaceId)
-            .FirstOrDefault(binding => string.Equals(binding.Role, displayRole, StringComparison.OrdinalIgnoreCase));
-        var now = DateTimeOffset.UtcNow;
-        var binding = existing is null
-            ? new AgentWorkspaceBindingRecord(
-                BuildPrimaryBindingId(workspaceId, displayRole),
-                workspaceId,
-                PackageExtensionPoints.ExecutionTargets.Id,
-                contributionId,
-                displayRole,
-                IsEnabled: true,
-                SortOrder: 0,
-                now,
-                now)
-            : existing with
-            {
-                ContributionId = contributionId,
-                IsEnabled = true,
-                UpdatedAtUtc = now,
-            };
+        AgentWorkspaceBindingRecord binding;
+        lock (GetExecutionContextSyncRoot(workspaceId))
+        {
+            var existing = _store.ListWorkspaceBindings(workspaceId)
+                .FirstOrDefault(candidate => string.Equals(candidate.Role, displayRole, StringComparison.OrdinalIgnoreCase));
+            var now = DateTimeOffset.UtcNow;
+            binding = existing is null
+                ? new AgentWorkspaceBindingRecord(
+                    BuildPrimaryBindingId(workspaceId, displayRole),
+                    workspaceId,
+                    PackageExtensionPoints.ExecutionTargets.Id,
+                    contributionId,
+                    displayRole,
+                    IsEnabled: true,
+                    SortOrder: 0,
+                    now,
+                    now)
+                : existing with
+                {
+                    ContributionId = contributionId,
+                    IsEnabled = true,
+                    UpdatedAtUtc = now,
+                };
 
-        _store.SaveWorkspaceBinding(binding);
+            _store.SaveWorkspaceBinding(binding);
+        }
         WorkspacesChanged?.Invoke();
         return binding;
     }
@@ -234,10 +282,13 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
 
     public void RemovePrimaryExecutionBinding(string workspaceId)
     {
-        foreach (var binding in _store.ListWorkspaceBindings(workspaceId)
-                     .Where(binding => string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase)))
+        lock (GetExecutionContextSyncRoot(workspaceId))
         {
-            _store.DeleteWorkspaceBinding(binding.BindingId);
+            foreach (var binding in _store.ListWorkspaceBindings(workspaceId)
+                         .Where(binding => string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase)))
+            {
+                _store.DeleteWorkspaceBinding(binding.BindingId);
+            }
         }
 
         WorkspacesChanged?.Invoke();
@@ -340,10 +391,20 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
     }
 
     private void SaveWorkspacePathsCore(string workspaceId, IReadOnlyList<AgentWorkspacePathRecord> paths)
-        => _store.SaveWorkspacePaths(workspaceId, NormalizePathRecords(workspaceId, paths));
+    {
+        lock (GetExecutionContextSyncRoot(workspaceId))
+        {
+            _store.SaveWorkspacePaths(workspaceId, NormalizePathRecords(workspaceId, paths));
+        }
+    }
 
     private void SaveWorkspaceDocumentsCore(string workspaceId, IReadOnlyList<AgentWorkspaceDocumentRecord> documents)
-        => _store.SaveWorkspaceDocuments(workspaceId, NormalizeDocumentRecords(workspaceId, documents));
+    {
+        lock (GetExecutionContextSyncRoot(workspaceId))
+        {
+            _store.SaveWorkspaceDocuments(workspaceId, NormalizeDocumentRecords(workspaceId, documents));
+        }
+    }
 
     private static IReadOnlyList<AgentWorkspacePathRecord> BuildPathRecords(
         string workspaceId,

@@ -30,6 +30,7 @@ internal sealed record AgentSessionContinuitySnapshot(
     long ActiveContextGeneration,
     AgentDurableRunKey SourceRun,
     long SourceRunEpoch,
+    Guid SourceUserTurnId,
     IReadOnlyList<AgentTurnRecord> Turns,
     AgentAnchoredSessionContextCheckpoint? ActiveCheckpoint);
 

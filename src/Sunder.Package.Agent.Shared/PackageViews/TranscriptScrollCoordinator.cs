@@ -598,6 +598,12 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         return true;
     }
 
+    private bool HasCurrentNewerTailIntent()
+        => _loadNewerPending
+           && _loadNewerResumeInteractionRevision == _interactionRevision
+           && _newerPagingAnchor is { } anchor
+           && anchor.AuthorityRevision == _viewportAuthorityRevision;
+
     private bool QueueLoadOlderRowsIfNearTop()
     {
         if (IsFollowingTail || !_isOlderEdgeArmed || !IsNearLoadTop())

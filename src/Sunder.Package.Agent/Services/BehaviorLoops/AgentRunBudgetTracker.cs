@@ -1,5 +1,3 @@
-using System.Text.Json;
-using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Models;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
@@ -7,14 +5,12 @@ namespace Sunder.Package.Agent.Services.BehaviorLoops;
 internal sealed record AgentRunBudgetLimits(
     TimeSpan MaxWallClock,
     int MaxProviderCycles,
-    int MaxToolCalls,
-    long MaxSubmittedContextTokens)
+    int MaxToolCalls)
 {
     public static AgentRunBudgetLimits Default { get; } = new(
         TimeSpan.FromMinutes(30),
         MaxProviderCycles: 64,
-        MaxToolCalls: 128,
-        MaxSubmittedContextTokens: 1_000_000);
+        MaxToolCalls: 128);
 }
 
 internal enum AgentRunBudgetKind
@@ -22,7 +18,6 @@ internal enum AgentRunBudgetKind
     WallClock,
     ProviderCycles,
     ToolCalls,
-    SubmittedContext,
 }
 
 internal sealed record AgentRunBudgetViolation(
@@ -53,8 +48,7 @@ internal sealed class AgentRunBudgetTracker
     {
         if (limits.MaxWallClock <= TimeSpan.Zero
             || limits.MaxProviderCycles <= 0
-            || limits.MaxToolCalls <= 0
-            || limits.MaxSubmittedContextTokens <= 0)
+            || limits.MaxToolCalls <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(limits), "Every run budget limit must be positive.");
         }
@@ -77,14 +71,16 @@ internal sealed class AgentRunBudgetTracker
             (long)_limits.MaxWallClock.TotalMilliseconds,
             (long)_limits.MaxWallClock.TotalMilliseconds);
 
-    public void ChargeProviderAttempt(
-        IReadOnlyList<ChatMessage> promptMessages,
-        int promptOverheadTokens)
+    public void ChargeProviderAttempt(long estimatedSubmittedContextTokens)
     {
-        var estimatedTokens = Math.Max(1, promptOverheadTokens) + EstimateMessageTokens(promptMessages);
+        if (estimatedSubmittedContextTokens <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(estimatedSubmittedContextTokens));
+        }
+
         var state = ApplyCharge(new AgentRunBudgetCharge(
             ProviderCycles: 1,
-            SubmittedContextTokens: estimatedTokens));
+            SubmittedContextTokens: estimatedSubmittedContextTokens));
         var cycleCount = state.ProviderCycles;
         if (cycleCount > _limits.MaxProviderCycles)
         {
@@ -96,16 +92,6 @@ internal sealed class AgentRunBudgetTracker
                 _limits.MaxProviderCycles));
         }
 
-        var total = state.SubmittedContextTokens;
-        if (total > _limits.MaxSubmittedContextTokens)
-        {
-            throw new AgentRunBudgetExceededException(new AgentRunBudgetViolation(
-                AgentRunBudgetKind.SubmittedContext,
-                $"Agent run exceeded its {_limits.MaxSubmittedContextTokens:N0}-token cumulative context budget.",
-                $"The run stopped after reaching its cumulative submitted-context limit of {_limits.MaxSubmittedContextTokens:N0} estimated tokens.",
-                total,
-                _limits.MaxSubmittedContextTokens));
-        }
     }
 
     public void ChargeToolCalls(int count)
@@ -124,51 +110,6 @@ internal sealed class AgentRunBudgetTracker
                 $"The run stopped before executing a tool batch that would exceed the total limit of {_limits.MaxToolCalls} tool calls.",
                 total,
                 _limits.MaxToolCalls));
-        }
-    }
-
-    private static long EstimateMessageTokens(IReadOnlyList<ChatMessage> messages)
-    {
-        long characters = messages.Count * 64L;
-        long binaryBytes = 0;
-        foreach (var message in messages)
-        {
-            foreach (var content in message.Contents)
-            {
-                switch (content)
-                {
-                    case TextContent text:
-                        characters = SaturatingAdd(characters, text.Text?.Length ?? 0);
-                        break;
-                    case FunctionCallContent call:
-                        characters = SaturatingAdd(characters, call.Name?.Length ?? 0);
-                        characters = SaturatingAdd(characters, SafeJsonLength(call.Arguments));
-                        break;
-                    case FunctionResultContent result:
-                        characters = SaturatingAdd(characters, SafeJsonLength(result.Result));
-                        break;
-                    case DataContent data:
-                        binaryBytes = SaturatingAdd(binaryBytes, data.Data.Length);
-                        break;
-                    default:
-                        characters = SaturatingAdd(characters, content.ToString()?.Length ?? 0);
-                        break;
-                }
-            }
-        }
-
-        return Math.Max(1, characters / 4L + binaryBytes / 3L);
-    }
-
-    private static int SafeJsonLength(object? value)
-    {
-        try
-        {
-            return value is null ? 0 : JsonSerializer.Serialize(value).Length;
-        }
-        catch (Exception ex) when (ex is NotSupportedException or JsonException)
-        {
-            return value?.ToString()?.Length ?? 0;
         }
     }
 

@@ -8,4 +8,14 @@ internal sealed record LocalExecutionRuntimeConfig(
     IReadOnlyList<string> WorkspacePaths,
     string? DefaultWorkingDirectory,
     string? SelectedShellId = null,
-    IReadOnlyList<string>? PathEntries = null);
+    IReadOnlyList<string>? PathEntries = null)
+{
+    public LocalShellDefinition? SelectedShell { get; init; }
+
+    public int? DefaultTimeoutSeconds { get; init; }
+}
+
+internal sealed record LocalExecutionConfigurationSnapshot(
+    LocalExecutionWorkspaceConfig WorkspaceConfig,
+    LocalShellDefinition SelectedShell,
+    int DefaultTimeoutSeconds);

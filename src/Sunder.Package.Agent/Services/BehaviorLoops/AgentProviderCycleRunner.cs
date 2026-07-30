@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
@@ -42,7 +43,7 @@ internal sealed class AgentProviderCycleRunner(AgentStreamingTurnWriter streamin
         Stopwatch loopStopwatch,
         CancellationToken cancellationToken,
         AgentRunBudgetTracker? budgetTracker = null,
-        int promptOverheadTokens = 0)
+        long estimatedInputTokens = 1)
     {
         var streamState = _streamingTurnWriter.BeginCycle(
             host,
@@ -51,16 +52,21 @@ internal sealed class AgentProviderCycleRunner(AgentStreamingTurnWriter streamin
             loopStopwatch);
         var streamAttempt = 0;
         var chatClient = await providerSession.GetChatClientAsync(host, cancellationToken);
+        if (host is IAgentRunActivitySink activitySink)
+        {
+            activitySink.ReportRunActivity(AgentRunActivityKind.Thinking, "Thinking");
+        }
         var retryPipeline = AgentProviderResilience.CreatePipeline(notification => LogRetry(
             host,
             loopStopwatch,
-            notification));
+            notification),
+            () => !streamState.HasContentBearingOutput);
 
         try
         {
             await retryPipeline.ExecuteAsync(async attemptCancellationToken =>
             {
-                budgetTracker?.ChargeProviderAttempt(promptMessages, promptOverheadTokens);
+                budgetTracker?.ChargeProviderAttempt(Math.Max(1, estimatedInputTokens));
                 if (streamAttempt > 0)
                 {
                     _streamingTurnWriter.ResetForRetry(streamState);
@@ -84,6 +90,14 @@ internal sealed class AgentProviderCycleRunner(AgentStreamingTurnWriter streamin
                     providerSession.Options,
                     attemptCancellationToken);
             }, cancellationToken);
+        }
+        catch (AgentChatProviderException ex)
+            when (ex.FailureKind == AgentChatProviderFailureKind.ContextWindowExceeded)
+        {
+            throw new AgentProviderContextWindowException(
+                ex,
+                streamState.HasContentBearingOutput,
+                Math.Max(1, estimatedInputTokens));
         }
         finally
         {
@@ -156,6 +170,18 @@ internal sealed class AgentProviderCycleRunner(AgentStreamingTurnWriter streamin
             AgentReasoningEffort.ExtraHigh => ReasoningEffort.ExtraHigh,
             _ => ReasoningEffort.Medium,
         };
+}
+
+internal sealed class AgentProviderContextWindowException(
+    AgentChatProviderException providerException,
+    bool hasContentBearingOutput,
+    long estimatedInputTokens) : Exception(providerException.Message, providerException)
+{
+    public AgentChatProviderException ProviderException { get; } = providerException;
+
+    public bool HasContentBearingOutput { get; } = hasContentBearingOutput;
+
+    public long EstimatedInputTokens { get; } = estimatedInputTokens;
 }
 
 internal sealed class AgentProviderSession(

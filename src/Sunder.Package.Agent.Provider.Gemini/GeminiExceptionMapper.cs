@@ -1,5 +1,6 @@
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Provider.Shared;
 
 namespace Sunder.Package.Agent.Provider.Gemini;
 
@@ -19,11 +20,23 @@ internal static class GeminiExceptionMapper
             exception);
 
     public static AgentChatProviderException Request(Exception exception)
-        => exception as AgentChatProviderException ?? new AgentChatProviderException(
+    {
+        if (exception is AgentChatProviderException providerException)
+        {
+            return providerException;
+        }
+
+        return new AgentChatProviderException(
             exception.Message,
             $"### Gemini request failed\n\n{exception.Message}",
             "gemini-http-error",
-            exception);
+            exception)
+        {
+            FailureKind = ProviderContextWindowFailureClassifier.IsGemini(exception)
+                ? AgentChatProviderFailureKind.ContextWindowExceeded
+                : AgentChatProviderFailureKind.Unknown,
+        };
+    }
 
     public static AgentChatProviderException MultipleToolCalls()
         => new(

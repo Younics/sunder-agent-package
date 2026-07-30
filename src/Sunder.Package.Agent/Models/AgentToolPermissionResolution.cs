@@ -8,7 +8,10 @@ internal sealed record AgentToolPermissionResolution(
     AgentWorkspaceBindingRecord? ExecutionBinding,
     AgentExecutionTargetDescriptor? ExecutionTarget,
     string OwnerPackageId,
-    string? DeniedReason = null);
+    string? DeniedReason = null)
+{
+    public string? ExecutionTargetConfigurationGeneration { get; init; }
+}
 
 internal static class AgentToolSecurityErrorCodes
 {

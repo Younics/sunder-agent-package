@@ -167,6 +167,48 @@ public sealed class AgentPermissionHardeningTests
     }
 
     [Fact]
+    public async Task ChangedExecutionTargetConfiguration_ExpiresApprovalWithoutExecution()
+    {
+        var source = new PermissionAwareMutationToolSource("mutate");
+        await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
+        var pending = await runtime.CreatePendingRequestAsync();
+        var readinessCount = source.ReadinessCount;
+        runtime.PrimaryExecutionTarget.AdvanceConfiguration();
+
+        await runtime.ResumeCoordinator.ApproveAsync(
+            runtime.Session.SessionId,
+            pending.RequestId,
+            approveForSession: true);
+
+        var persisted = runtime.Store.GetPermissionRequest(runtime.Session.SessionId, pending.RequestId);
+        Assert.Equal(AgentPendingPermissionStatus.Expired, persisted?.Status);
+        Assert.Equal(0, source.ExecutionCount);
+        Assert.Equal(readinessCount, source.ReadinessCount);
+        Assert.Contains("configuration changed", persisted?.DecisionSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(runtime.Store.ListSessionPermissionApprovals(runtime.Session.SessionId));
+    }
+
+    [Fact]
+    public async Task ExecutionTargetConfigurationMutationDuringPlanningDispatchesNoTool()
+    {
+        var source = new PermissionAwareMutationToolSource("mutate");
+        source.BlockPermissionResolution();
+        await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
+
+        var invocation = runtime.Host.InvokeToolAsync(
+            new AgentToolCallRequest("call-1", source.ToolId, "{}"),
+            assistantTurn: null).AsTask();
+        await source.PermissionResolutionStarted.WaitAsync(TimeSpan.FromSeconds(10));
+        runtime.PrimaryExecutionTarget.AdvanceConfiguration();
+        source.ReleasePermissionResolution();
+        var outcome = await invocation.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(AgentToolCallOutcomeKind.Denied, outcome.Kind);
+        Assert.Equal(0, source.ExecutionCount);
+        Assert.Empty(runtime.PermissionService.ListPendingRequests(runtime.Session.SessionId));
+    }
+
+    [Fact]
     public async Task WorkspaceMutationDuringPermissionRevalidationExpiresWithoutExecution()
     {
         var source = new PermissionAwareMutationToolSource("mutate");
@@ -458,6 +500,7 @@ public sealed class AgentPermissionHardeningTests
             AgentPermissionBoundaryIds.ConfiguredScope,
             "Read file")
         {
+            ScopeClassificationBasis = AgentPermissionScopeClassificationBasis.OpenedAncestorIdentity,
             ResourceClaims = [claim],
             ResourceCapabilities = ["transient-capability-one"],
         };
@@ -496,6 +539,28 @@ public sealed class AgentPermissionHardeningTests
             null,
             null,
             first with { ResourceClaims = [claim with { TargetIdentity = "identity-two" }] });
+        var changedTargetConfigurationFingerprint = AgentPermissionFingerprint.Create(
+            runId,
+            1,
+            descriptor,
+            "call-1",
+            "{}",
+            null,
+            null,
+            null,
+            first,
+            executionTargetConfigurationGeneration: "target-config-two");
+        var originalTargetConfigurationFingerprint = AgentPermissionFingerprint.Create(
+            runId,
+            1,
+            descriptor,
+            "call-1",
+            "{}",
+            null,
+            null,
+            null,
+            first,
+            executionTargetConfigurationGeneration: "target-config-one");
         var snapshot = AgentPermissionFingerprint.CreateExecutionSnapshot(
             runId,
             1,
@@ -508,7 +573,14 @@ public sealed class AgentPermissionHardeningTests
             first,
             null,
             null,
-            null);
+            null,
+            permissionEvaluation: new AgentPermissionEvaluation(
+                AgentPermissionDecision.Ask,
+                "Using configured decision.")
+            {
+                BaseDecision = AgentPermissionDecision.Ask,
+                Source = AgentPermissionDecisionSource.ConfiguredOverride,
+            });
         var operationJson = JsonSerializer.Serialize(new AgentResourceOperationContext(
             runId,
             1,
@@ -534,11 +606,39 @@ public sealed class AgentPermissionHardeningTests
 
         Assert.Equal(firstFingerprint, secondFingerprint);
         Assert.NotEqual(firstFingerprint, changedClaimFingerprint);
+        Assert.NotEqual(originalTargetConfigurationFingerprint, changedTargetConfigurationFingerprint);
         Assert.Contains("local-host-resource-claim-v1", snapshot, StringComparison.Ordinal);
+        using var snapshotDocument = JsonDocument.Parse(snapshot);
+        Assert.Equal(
+            (int)AgentPermissionScopeClassificationBasis.OpenedAncestorIdentity,
+            snapshotDocument.RootElement
+                .GetProperty("permissionRequest")
+                .GetProperty("scopeClassificationBasis")
+                .GetInt32());
+        Assert.Equal(
+            (int)AgentPermissionDecisionSource.ConfiguredOverride,
+            snapshotDocument.RootElement
+                .GetProperty("decisionAudit")
+                .GetProperty("source")
+                .GetInt32());
         Assert.DoesNotContain("transient-capability-one", snapshot, StringComparison.Ordinal);
         Assert.DoesNotContain("authority-activation-secret", operationJson, StringComparison.Ordinal);
         Assert.DoesNotContain("resolved-authority-secret", resolvedJson, StringComparison.Ordinal);
         Assert.DoesNotContain("delete-authority-secret", resolvedJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task MissingActionId_UsesUnknownBoundaryDecisionSource()
+    {
+        await using var runtime = await PermissionHardeningRuntime.CreateAsync(
+            new MutationToolSource("mutate"));
+
+        var evaluation = runtime.PermissionService.Evaluate(
+            runtime.Session.SessionId,
+            new AgentPermissionRequest(string.Empty, AgentPermissionBoundaryIds.Unknown, "Malformed request"));
+
+        Assert.Equal(AgentPermissionDecision.Deny, evaluation.Decision);
+        Assert.Equal(AgentPermissionDecisionSource.UnknownBoundary, evaluation.Source);
     }
 }
 
@@ -558,7 +658,8 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
         AgentActiveRunRegistry activeRunRegistry,
         AgentBehaviorLoopHost host,
         AgentSessionRecord session,
-        AgentWorkspaceRecord workspace)
+        AgentWorkspaceRecord workspace,
+        PermissionHardeningExecutionTarget primaryExecutionTarget)
     {
         _scope = scope;
         Store = store;
@@ -572,6 +673,7 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
         Host = host;
         Session = session;
         Workspace = workspace;
+        PrimaryExecutionTarget = primaryExecutionTarget;
     }
 
     public AgentLocalStore Store { get; }
@@ -596,6 +698,8 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
 
     public AgentWorkspaceRecord Workspace { get; }
 
+    public PermissionHardeningExecutionTarget PrimaryExecutionTarget { get; }
+
     public static async Task<PermissionHardeningRuntime> CreateAsync(
         MutationToolSource source,
         bool assignTool = true)
@@ -612,10 +716,11 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
                 catalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, permissionSurface);
             }
 
+            var primaryExecutionTarget = new PermissionHardeningExecutionTarget(
+                PermissionHardeningExecutionTarget.PrimaryTargetId);
             catalog.AddExtension(
                 PackageExtensionPoints.ExecutionTargets,
-                new PermissionHardeningExecutionTarget(
-                    PermissionHardeningExecutionTarget.PrimaryTargetId));
+                primaryExecutionTarget);
             catalog.AddExtension(
                 PackageExtensionPoints.ExecutionTargets,
                 new PermissionHardeningExecutionTarget(
@@ -659,7 +764,7 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
             profile = profileService.GetProfile(profile.ProfileId)!;
 
             var workspace = workspaceService.CreateWorkspace("Permission hardening workspace");
-            workspaceService.SavePrimaryExecutionBinding(
+            var executionBinding = workspaceService.SavePrimaryExecutionBinding(
                 workspace.WorkspaceId,
                 PermissionHardeningExecutionTarget.PrimaryTargetId);
             workspace = workspaceService.GetWorkspace(workspace.WorkspaceId)!;
@@ -730,7 +835,8 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
                 run.Key.RunRevision,
                 run.StartedAtUtc,
                 run.UserMessage,
-                userTurn.TurnId);
+                userTurn.TurnId,
+                executionBinding);
 
             return new PermissionHardeningRuntime(
                 scope,
@@ -744,7 +850,8 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
                 activeRunRegistry,
                 host,
                 session,
-                workspace);
+                workspace,
+                primaryExecutionTarget);
         }
         catch
         {
@@ -777,12 +884,15 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
 internal class MutationToolSource(string toolId) : IAgentToolSource
 {
     private int _executionCount;
+    private int _readinessCount;
     private TaskCompletionSource? _executionStarted;
     private TaskCompletionSource? _executionRelease;
 
     public string ToolId { get; } = toolId;
 
     public int ExecutionCount => Volatile.Read(ref _executionCount);
+
+    public int ReadinessCount => Volatile.Read(ref _readinessCount);
 
     public bool ThrowOnExecution { get; init; }
 
@@ -821,10 +931,13 @@ internal class MutationToolSource(string toolId) : IAgentToolSource
         string requestedToolId,
         AgentToolSourceContext context,
         CancellationToken cancellationToken = default)
-        => ValueTask.FromResult<AgentToolReadiness?>(
+    {
+        Interlocked.Increment(ref _readinessCount);
+        return ValueTask.FromResult<AgentToolReadiness?>(
             string.Equals(requestedToolId, ToolId, StringComparison.OrdinalIgnoreCase)
                 ? new AgentToolReadiness(ToolId, AgentToolReadinessStatus.Ready, "Ready.")
                 : null);
+    }
 
     public async ValueTask<AgentToolResult> ExecuteAsync(
         AgentToolExecutionContext context,
@@ -1003,6 +1116,7 @@ internal sealed class PermissionHardeningExecutionTarget(string targetId) : IAge
 {
     public const string PrimaryTargetId = "permission-target-a";
     public const string SecondaryTargetId = "permission-target-b";
+    private int _configurationRevision = 1;
 
     public AgentExecutionTargetDescriptor Descriptor { get; } = new(
         "test-target",
@@ -1011,6 +1125,17 @@ internal sealed class PermissionHardeningExecutionTarget(string targetId) : IAge
         null,
         SupportsShell: false,
         SupportsFiles: false);
+
+    public void AdvanceConfiguration() => Interlocked.Increment(ref _configurationRevision);
+
+    public ValueTask<string?> GetConfigurationGenerationAsync(
+        AgentExecutionTargetContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult<string?>(
+            Volatile.Read(ref _configurationRevision).ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
 
     public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
         AgentExecutionTargetContext context,

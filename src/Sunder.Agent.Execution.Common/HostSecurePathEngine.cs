@@ -53,7 +53,8 @@ internal static class HostSecurePathEngine
         IReadOnlyList<string> configuredRoots,
         string fullPath,
         ILocalSecureFileSystemHooks? hooks = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool allowMissingSuffix = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         fullPath = NormalizePath(fullPath);
@@ -63,7 +64,12 @@ internal static class HostSecurePathEngine
         var root = OpenRoot(anchorStart, hooks, cancellationToken);
         try
         {
-            return CaptureFromRoot(root, fullPath, hooks, cancellationToken);
+            return CaptureFromRoot(
+                root,
+                fullPath,
+                hooks,
+                cancellationToken,
+                allowMissingSuffix);
         }
         catch
         {
@@ -242,6 +248,87 @@ internal static class HostSecurePathEngine
         }
     }
 
+    public static LocalConfiguredRootResolution ClassifyConfiguredRoot(
+        IReadOnlyList<string> configuredRoots,
+        LocalSecureApprovalLease authority,
+        ILocalSecureFileSystemHooks? hooks = null,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedRoots = configuredRoots
+            .Where(static path => !string.IsNullOrWhiteSpace(path))
+            .Select(NormalizePath)
+            .Distinct(PathComparer)
+            .ToArray();
+        if (OperatingSystem.IsWindows())
+        {
+            var lexicalRoot = SelectConfiguredRoot(normalizedRoots, authority.Binding.FullPath);
+            if (lexicalRoot is null)
+            {
+                return LocalConfiguredRootResolution.Outside(
+                    LocalConfiguredScopeClassificationBasis.LexicalContainment);
+            }
+
+            try
+            {
+                using var root = OpenRoot(lexicalRoot, hooks, cancellationToken);
+                return IsIdentityChainPrefix(root.HandleIdentities, authority.RetainedPathIdentities)
+                    ? LocalConfiguredRootResolution.Configured(
+                        lexicalRoot,
+                        LocalConfiguredScopeClassificationBasis.LexicalAndOpenedIdentity)
+                    : LocalConfiguredRootResolution.Unknown();
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is IOException
+                                       or UnauthorizedAccessException
+                                       or PlatformNotSupportedException)
+            {
+                return LocalConfiguredRootResolution.Unknown();
+            }
+        }
+
+        string? matchedRoot = null;
+        var matchedDepth = -1;
+        var unresolvedRoot = false;
+        foreach (var configuredRoot in normalizedRoots)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                using var root = OpenRoot(configuredRoot, hooks, cancellationToken);
+                if (root.HandleIdentities.Count > matchedDepth
+                    && IsIdentityChainPrefix(root.HandleIdentities, authority.RetainedPathIdentities))
+                {
+                    matchedRoot = configuredRoot;
+                    matchedDepth = root.HandleIdentities.Count;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is IOException
+                                       or UnauthorizedAccessException
+                                       or PlatformNotSupportedException)
+            {
+                unresolvedRoot = true;
+            }
+        }
+
+        if (matchedRoot is not null)
+        {
+            return LocalConfiguredRootResolution.Configured(
+                matchedRoot,
+                LocalConfiguredScopeClassificationBasis.OpenedAncestorIdentity);
+        }
+        return unresolvedRoot
+            ? LocalConfiguredRootResolution.Unknown()
+            : LocalConfiguredRootResolution.Outside(
+                LocalConfiguredScopeClassificationBasis.OpenedAncestorIdentity);
+    }
+
     public static string? SelectConfiguredRoot(IReadOnlyList<string> configuredRoots, string fullPath)
         => configuredRoots
             .Select(NormalizePath)
@@ -295,6 +382,24 @@ internal static class HostSecurePathEngine
         return segments;
     }
 
+    private static bool IsIdentityChainPrefix(
+        IReadOnlyList<LocalSecureIdentity> expectedPrefix,
+        IReadOnlyList<LocalSecureIdentity> candidate)
+    {
+        if (expectedPrefix.Count > candidate.Count)
+        {
+            return false;
+        }
+        for (var index = 0; index < expectedPrefix.Count; index++)
+        {
+            if (expectedPrefix[index] != candidate[index])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     internal static StringComparer PathComparer
         => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
@@ -343,6 +448,42 @@ internal static class HostSecurePathEngine
             ? root!
             : fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
+}
+
+internal enum LocalConfiguredScopeClassification
+{
+    Configured,
+    Outside,
+    Unknown,
+}
+
+internal enum LocalConfiguredScopeClassificationBasis
+{
+    OpenedAncestorIdentity,
+    LexicalContainment,
+    LexicalAndOpenedIdentity,
+    Unresolved,
+}
+
+internal sealed record LocalConfiguredRootResolution(
+    LocalConfiguredScopeClassification Classification,
+    string? ConfiguredRoot,
+    LocalConfiguredScopeClassificationBasis Basis)
+{
+    public static LocalConfiguredRootResolution Configured(
+        string configuredRoot,
+        LocalConfiguredScopeClassificationBasis basis)
+        => new(LocalConfiguredScopeClassification.Configured, configuredRoot, basis);
+
+    public static LocalConfiguredRootResolution Outside(
+        LocalConfiguredScopeClassificationBasis basis)
+        => new(LocalConfiguredScopeClassification.Outside, null, basis);
+
+    public static LocalConfiguredRootResolution Unknown()
+        => new(
+            LocalConfiguredScopeClassification.Unknown,
+            ConfiguredRoot: null,
+            LocalConfiguredScopeClassificationBasis.Unresolved);
 }
 
 internal sealed class LocalSecureRootIdentitySet(IReadOnlyList<LocalSecureRoot> roots) : IDisposable

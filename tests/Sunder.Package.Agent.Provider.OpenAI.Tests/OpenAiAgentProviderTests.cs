@@ -19,6 +19,154 @@ namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
 public sealed class OpenAiAgentProviderTests
 {
     [Fact]
+    public void AgentChatProviderException_ExistingConstructorDefaultsFailureKindToUnknown()
+    {
+        var exception = new AgentChatProviderException("diagnostic", "content", "code");
+
+        Assert.Equal("content", exception.Content);
+        Assert.Equal("code", exception.ErrorCode);
+        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OpenAiModelOptionsChatClient_ClassifiesApiContextWindowFailures(bool streaming)
+    {
+        var client = new OpenAiModelOptionsChatClient(new ThrowingChatClient(
+            new InvalidOperationException(
+                "context_length_exceeded: Your input exceeds the context window of this model.")));
+
+        var exception = streaming
+            ? await Assert.ThrowsAsync<AgentChatProviderException>(() => DrainAsync(
+                client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Continue.")])))
+            : await Assert.ThrowsAsync<AgentChatProviderException>(() => client.GetResponseAsync(
+                [new ChatMessage(ChatRole.User, "Continue.")]));
+
+        Assert.Equal(AgentChatProviderFailureKind.ContextWindowExceeded, exception.FailureKind);
+        Assert.Equal("openai-context-window-exceeded", exception.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task OpenAiModelOptionsChatClient_ClassifiesReturnedContextWindowFailures(
+        bool streaming,
+        bool metadataOnly)
+    {
+        const string failure = "context_length_exceeded: Input exceeds the model context window.";
+        var response = new ChatResponse();
+        var update = new ChatResponseUpdate();
+        if (metadataOnly)
+        {
+            response.AdditionalProperties = new AdditionalPropertiesDictionary { ["Error"] = failure };
+            update.AdditionalProperties = new AdditionalPropertiesDictionary { ["response.failed"] = failure };
+        }
+        else
+        {
+            var error = new ErrorContent(failure) { ErrorCode = "context_length_exceeded" };
+            response.Messages.Add(new ChatMessage(ChatRole.Assistant, [error]));
+            update.Contents.Add(error);
+        }
+
+        var client = new OpenAiModelOptionsChatClient(new ReturningChatClient(response, update));
+
+        var exception = streaming
+            ? await Assert.ThrowsAsync<AgentChatProviderException>(() => DrainAsync(
+                client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Continue.")])))
+            : await Assert.ThrowsAsync<AgentChatProviderException>(() => client.GetResponseAsync(
+                [new ChatMessage(ChatRole.User, "Continue.")]));
+
+        Assert.Equal(AgentChatProviderFailureKind.ContextWindowExceeded, exception.FailureKind);
+        Assert.Equal("openai-context-window-exceeded", exception.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OpenAiModelOptionsChatClient_SurfacesUnrelatedReturnedErrors(bool streaming)
+    {
+        const string failure = "insufficient_quota: You exceeded your current quota.";
+        var response = new ChatResponse
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["Error"] = failure },
+        };
+        var update = new ChatResponseUpdate
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["response.failed"] = failure },
+        };
+        var client = new OpenAiModelOptionsChatClient(new ReturningChatClient(response, update));
+
+        var exception = streaming
+            ? await Assert.ThrowsAsync<AgentChatProviderException>(() => DrainAsync(
+                client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Continue.")])))
+            : await Assert.ThrowsAsync<AgentChatProviderException>(() => client.GetResponseAsync(
+                [new ChatMessage(ChatRole.User, "Continue.")]));
+
+        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
+        Assert.Equal("openai-response-failed", exception.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OpenAiModelOptionsChatClient_SurfacesIncompleteResponses(bool streaming)
+    {
+        const string reason = "max_output_tokens";
+        var response = new ChatResponse
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["response.incomplete"] = reason },
+        };
+        var update = new ChatResponseUpdate
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["response.incomplete"] = reason },
+        };
+        var client = new OpenAiModelOptionsChatClient(new ReturningChatClient(response, update));
+
+        var exception = streaming
+            ? await Assert.ThrowsAsync<AgentChatProviderException>(() => DrainAsync(
+                client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Continue.")])))
+            : await Assert.ThrowsAsync<AgentChatProviderException>(() => client.GetResponseAsync(
+                [new ChatMessage(ChatRole.User, "Continue.")]));
+
+        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
+        Assert.Equal("openai-response-failed", exception.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData("OpenAI returned HTTP 400: bad request")]
+    [InlineData("Response incomplete because max_output_tokens was reached")]
+    [InlineData("The output length limit was reached")]
+    [InlineData("Output token count exceeds the context window")]
+    [InlineData("You exceeded your current quota")]
+    [InlineData("Context window quota exceeded")]
+    [InlineData("Request too large")]
+    [InlineData("Request too large for the context window")]
+    [InlineData("{\"error\":{\"message\":\"backend failed\"},\"output\":\"context_length_exceeded was mentioned by the user\"}")]
+    [InlineData("\"{\\\"error\\\":{\\\"message\\\":\\\"backend failed\\\"},\\\"output\\\":\\\"context_length_exceeded was mentioned by the user\\\"}\"")]
+    public void OpenAiExceptionMapper_DoesNotClassifyAmbiguousFailures(string message)
+    {
+        Assert.False(OpenAiExceptionMapper.TryMapContextWindowExceeded(
+            new InvalidOperationException(message),
+            out _));
+    }
+
+    [Fact]
+    public void OpenAiExceptionMapper_FailsClosedForOverDepthStructuredErrorWrapper()
+    {
+        const string payload = "{\"error\":{\"message\":\"backend failed\"},\"output\":\"context_length_exceeded was mentioned by the user\"}";
+        var wrapped = JsonSerializer.Serialize(
+            JsonSerializer.Serialize(
+                JsonSerializer.Serialize(payload)));
+
+        Assert.False(OpenAiExceptionMapper.TryMapContextWindowExceeded(
+            new InvalidOperationException(wrapped),
+            out _));
+    }
+
+    [Fact]
     public async Task CreateChatClientAsync_ApiKeyMode_UsesResponsesOptionsWrapperEvenWhenCodexSessionExists()
     {
         var packageContext = new TestPackageContext(
@@ -207,6 +355,30 @@ public sealed class OpenAiAgentProviderTests
         Assert.Equal("openai-model-unavailable", exception.ErrorCode);
         Assert.Contains("### OpenAI model unavailable", exception.Content, StringComparison.Ordinal);
         Assert.DoesNotContain("tool request failed", exception.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
+    }
+
+    [Theory]
+    [InlineData(
+        "{\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"The prompt is too long.\"}}",
+        AgentChatProviderFailureKind.ContextWindowExceeded)]
+    [InlineData(
+        "{\"detail\":\"Your input exceeds the context window of this model. Please adjust your input and try again.\"}",
+        AgentChatProviderFailureKind.ContextWindowExceeded)]
+    [InlineData("{\"error\":{\"message\":\"bad request\"}}", AgentChatProviderFailureKind.Unknown)]
+    [InlineData("{\"error\":{\"message\":\"max_output_tokens is too large\"}}", AgentChatProviderFailureKind.Unknown)]
+    [InlineData("{\"error\":{\"code\":\"insufficient_quota\",\"message\":\"quota exceeded\"}}", AgentChatProviderFailureKind.Unknown)]
+    [InlineData("{\"error\":{\"message\":\"request too large\"}}", AgentChatProviderFailureKind.Unknown)]
+    [InlineData(
+        "{\"error\":{\"message\":\"backend failed\"},\"output\":\"context_length_exceeded was mentioned by the user\"}",
+        AgentChatProviderFailureKind.Unknown)]
+    public async Task CodexConnectedTransport_ClassifiesOnlyExplicitContextWindowFailures(
+        string responseContent,
+        AgentChatProviderFailureKind expectedKind)
+    {
+        var exception = await SendCodexFailureAsync(responseContent);
+
+        Assert.Equal(expectedKind, exception.FailureKind);
     }
 
     [Fact]
@@ -331,6 +503,29 @@ public sealed class OpenAiAgentProviderTests
             packageContext);
     }
 
+    private static async Task<AgentChatProviderException> SendCodexFailureAsync(string responseContent)
+    {
+        var packageContext = new TestPackageContext(
+            new Dictionary<string, string> { ["auth.mode"] = OpenAiAuthMode.CodexConnected },
+            new Dictionary<string, string>());
+        using var auth = new CodexConnectedAuthStrategy(packageContext);
+        var handler = new CapturingHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(responseContent),
+        });
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://chatgpt.com/backend-api/") };
+        var transport = new CodexConnectedTransport(auth, client);
+
+        return await Assert.ThrowsAsync<AgentChatProviderException>(() => DrainAsync(transport.StreamResponseAsync(
+            new OpenAiCodexSession("access-token", "refresh-token", DateTimeOffset.UtcNow.AddHours(1), "account-id"),
+            new AgentChatClientContext("openai", "openai/gpt-5.5"),
+            [new ChatMessage(ChatRole.User, "Hello")],
+            new ChatOptions(),
+            new CodexResponseContinuationStore(),
+            "response-id",
+            "message-id")));
+    }
+
     private static async Task DrainAsync(IAsyncEnumerable<ChatResponseUpdate> updates)
     {
         await foreach (var _ in updates)
@@ -399,6 +594,62 @@ public sealed class OpenAiAgentProviderTests
 
         public void Dispose()
         {
+        }
+    }
+
+    private sealed class ThrowingChatClient(Exception exception) : IChatClient
+    {
+        public ChatClientMetadata Metadata { get; } = new("Throwing OpenAI client");
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromException<ChatResponse>(exception);
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => ThrowAsync(exception);
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose()
+        {
+        }
+
+        private static async IAsyncEnumerable<ChatResponseUpdate> ThrowAsync(Exception failure)
+        {
+            await Task.Yield();
+            yield return await Task.FromException<ChatResponseUpdate>(failure);
+        }
+    }
+
+    private sealed class ReturningChatClient(ChatResponse response, ChatResponseUpdate update) : IChatClient
+    {
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(response);
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => ReturnAsync(update);
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose()
+        {
+        }
+
+        private static async IAsyncEnumerable<ChatResponseUpdate> ReturnAsync(ChatResponseUpdate item)
+        {
+            await Task.Yield();
+            yield return item;
         }
     }
 

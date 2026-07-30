@@ -118,20 +118,22 @@ internal sealed partial class AgentPromptPreparationPipeline
         IReadOnlyList<AgentPromptContextBlock>? supplementaryContextBlocks,
         IReadOnlyList<AgentToolDescriptor> availableTools)
     {
-        var chars = systemInstructions?.Length ?? 0;
+        var textValues = new List<string?> { systemInstructions };
         if (supplementaryContextBlocks is { Count: > 0 })
         {
-            chars += RenderSupplementaryContext(supplementaryContextBlocks).Length;
+            textValues.Add(RenderSupplementaryContext(supplementaryContextBlocks));
         }
         foreach (var tool in availableTools)
         {
-            chars += tool.ToolId.Length;
-            chars += tool.DisplayName.Length;
-            chars += tool.Description.Length;
-            chars += tool.ArgumentsJsonSchema?.Length ?? 0;
-            chars += tool.RuntimeInstructions?.Length ?? 0;
+            textValues.Add(tool.ToolId);
+            textValues.Add(tool.DisplayName);
+            textValues.Add(tool.Description);
+            textValues.Add(tool.ArgumentsJsonSchema);
+            textValues.Add(tool.RuntimeInstructions);
         }
 
-        return 512 + (chars / 4);
+        return (int)Math.Min(
+            int.MaxValue,
+            512L + AgentProviderRequestBudget.EstimateTextTokens(textValues));
     }
 }

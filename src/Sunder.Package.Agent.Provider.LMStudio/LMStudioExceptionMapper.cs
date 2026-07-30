@@ -1,5 +1,6 @@
 using System.ClientModel;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Provider.Shared;
 
 namespace Sunder.Package.Agent.Provider.LMStudio;
 
@@ -19,7 +20,12 @@ internal static class LMStudioExceptionMapper
             detail,
             $"### LM Studio request failed\n\n{detail}",
             "lmstudio-sdk-error",
-            exception);
+            exception)
+        {
+            FailureKind = IsContextWindowExceeded(exception)
+                ? AgentChatProviderFailureKind.ContextWindowExceeded
+                : AgentChatProviderFailureKind.Unknown,
+        };
     }
 
     public static AgentChatProviderException InvalidConfiguration(string detail)
@@ -52,5 +58,41 @@ internal static class LMStudioExceptionMapper
             "### LM Studio request timed out\n\nThe provider canceled the request before the caller requested cancellation.",
             "lmstudio-timeout",
             exception);
+
+    private static bool IsContextWindowExceeded(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (ProviderContextWindowFailureClassifier.IsLmStudio(
+                    ProviderErrorDiagnosticExtractor.Extract(current.Message)))
+            {
+                return true;
+            }
+        }
+
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is not ClientResultException resultException)
+            {
+                continue;
+            }
+
+            try
+            {
+                if (ProviderContextWindowFailureClassifier.IsLmStudio(
+                        ProviderErrorDiagnosticExtractor.Extract(
+                            resultException.GetRawResponse()?.Content.ToString())))
+                {
+                    return true;
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // Streaming responses are not guaranteed to have buffered error content.
+            }
+        }
+
+        return false;
+    }
 
 }

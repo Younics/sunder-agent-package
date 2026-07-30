@@ -22,6 +22,23 @@ public interface IAgentExecutionTarget
     AgentExecutionTargetDescriptor Descriptor { get; }
 
     /// <summary>
+    /// Gets an opaque generation for all target-owned mutable configuration that can affect workspace execution.
+    /// </summary>
+    /// <remarks>
+    /// Implementations with target-owned workspace settings must return the same value for semantically equivalent normalized configuration
+    /// and a different value when execution behavior can change. Operations receiving an expected generation in
+    /// <see cref="AgentExecutionTargetContext.ExpectedConfigurationGeneration"/> must reject the operation before side effects when the
+    /// current generation differs. Targets without mutable target-owned configuration may use the default <see langword="null"/> result.
+    /// </remarks>
+    /// <param name="context">The workspace and execution binding whose target-owned configuration is requested.</param>
+    /// <param name="cancellationToken">Signals that configuration loading should be canceled.</param>
+    /// <returns>An opaque stable generation, or <see langword="null"/> when no target-owned mutable configuration applies.</returns>
+    ValueTask<string?> GetConfigurationGenerationAsync(
+        AgentExecutionTargetContext context,
+        CancellationToken cancellationToken = default)
+        => ValueTask.FromResult<string?>(null);
+
+    /// <summary>
     /// Assesses required binding configuration and backend availability for a workspace.
     /// </summary>
     /// <param name="context">The workspace and execution binding to assess.</param>
