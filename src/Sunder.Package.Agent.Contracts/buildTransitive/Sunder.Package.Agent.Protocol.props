@@ -1,0 +1,22 @@
+<Project>
+  <ItemGroup>
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\chat-provider.rpc.json" ContractId="sunder.agent.chat.provider" Version="1.0.0" DescriptorPath="contracts/chat-provider.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\embedding-provider.rpc.json" ContractId="sunder.agent.embedding.provider" Version="1.0.0" DescriptorPath="contracts/embedding-provider.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\runtime-catalog.rpc.json" ContractId="sunder.agent.runtime.catalog" Version="1.0.0" DescriptorPath="contracts/runtime-catalog.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\workspace-execution-resolver.rpc.json" ContractId="sunder.agent.workspace.execution.resolver" Version="1.0.0" DescriptorPath="contracts/workspace-execution-resolver.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\child-run-executor.rpc.json" ContractId="sunder.agent.child.run.executor" Version="1.0.0" DescriptorPath="contracts/child-run-executor.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\session-cleaner.rpc.json" ContractId="sunder.agent.session.cleaner" Version="1.0.0" DescriptorPath="contracts/session-cleaner.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\system-prompt-contributor.rpc.json" ContractId="sunder.agent.system.prompt.contributor" Version="1.0.0" DescriptorPath="contracts/system-prompt-contributor.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\tool-source.rpc.json" ContractId="sunder.agent.tool.source" Version="1.0.0" DescriptorPath="contracts/tool-source.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\permission-surface.rpc.json" ContractId="sunder.agent.permission.surface" Version="1.0.0" DescriptorPath="contracts/permission-surface.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\prompt-context-contributor.rpc.json" ContractId="sunder.agent.prompt.context.contributor" Version="1.0.0" DescriptorPath="contracts/prompt-context-contributor.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\durable-lifecycle-observer.rpc.json" ContractId="sunder.agent.durable.lifecycle.observer" Version="1.0.0" DescriptorPath="contracts/durable-lifecycle-observer.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\profile-capability-consumer.rpc.json" ContractId="sunder.agent.profile.capability.consumer" Version="1.0.0" DescriptorPath="contracts/profile-capability-consumer.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\selectable-capability-provider.rpc.json" ContractId="sunder.agent.selectable.capability.provider" Version="1.0.0" DescriptorPath="contracts/selectable-capability-provider.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\behavior-loop.rpc.json" ContractId="sunder.agent.behavior.loop" Version="1.0.0" DescriptorPath="contracts/behavior-loop.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\run-control.rpc.json" ContractId="sunder.agent.run.control" Version="1.0.0" DescriptorPath="contracts/run-control.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\execution-target.rpc.json" ContractId="sunder.agent.execution.target" Version="1.0.0" DescriptorPath="contracts/execution-target.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\workspace-path-migrator.rpc.json" ContractId="sunder.agent.workspace.path.migrator" Version="1.0.0" DescriptorPath="contracts/workspace-path-migrator.rpc.json" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)..\contracts\workspace-editor.rpc.json" ContractId="sunder.agent.workspace.editor" Version="1.0.0" DescriptorPath="contracts/workspace-editor.rpc.json" />
+  </ItemGroup>
+</Project>

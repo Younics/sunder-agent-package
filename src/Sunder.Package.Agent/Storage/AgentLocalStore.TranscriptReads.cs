@@ -550,9 +550,13 @@ public sealed partial class AgentLocalStore
             1,
             timestamps
                 .Where(static timestamp => !string.IsNullOrWhiteSpace(timestamp))
-                .Select(static timestamp => DateTimeOffset.Parse(timestamp!).UtcDateTime.Ticks)
+                .Select(static timestamp => CreateProtocolTimestampRevision(DateTimeOffset.Parse(timestamp!)))
                 .DefaultIfEmpty(1)
                 .Max());
+
+    private static long CreateProtocolTimestampRevision(DateTimeOffset timestamp)
+        // Unix microseconds retain timestamp ordering while staying within the RPC safe-integer bound.
+        => Math.Max(1, (timestamp.UtcDateTime.Ticks - DateTime.UnixEpoch.Ticks) / 10);
 
     private static IReadOnlyList<AgentTurnRecord> AttachItems(
         IReadOnlyList<AgentTurnRecord> turns,

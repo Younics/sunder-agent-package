@@ -1,6 +1,6 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Subagents.Runtime;
 
@@ -11,22 +11,17 @@ internal sealed class SubsessionLocalRuntimeAdapter :
     ISubsessionChangeNotifications,
     IDisposable
 {
-    private readonly IPackageExtensionReference<IAgentRuntimeCatalog> _runtimeReference;
+    private readonly AgentRpcReference<IAgentRuntimeCatalog> _runtimeReference;
     private readonly SemaphoreSlim _readGate = new(1, 1);
     private readonly object _eventSync = new();
-    private IPackageExtensionLease<IAgentRuntimeCatalog>? _eventLease;
+    private AgentRpcLease<IAgentRuntimeCatalog>? _eventLease;
     private CancellationTokenRegistration _eventRetirement;
     private Action<Guid>? _sessionChanged;
     private Action<Guid, AgentTurnRecord>? _turnChanged;
     private int _disposed;
 
-    internal SubsessionLocalRuntimeAdapter(IAgentRuntimeCatalog runtime)
-        : this(new CompatibilityRuntimeReference(runtime))
-    {
-    }
-
     internal SubsessionLocalRuntimeAdapter(
-        IPackageExtensionReference<IAgentRuntimeCatalog> runtimeReference)
+        AgentRpcReference<IAgentRuntimeCatalog> runtimeReference)
     {
         _runtimeReference = runtimeReference;
     }
@@ -175,7 +170,7 @@ internal sealed class SubsessionLocalRuntimeAdapter :
                 return await Task.Run(() =>
                 {
                     invocation.Token.ThrowIfCancellationRequested();
-                    var result = read(lease.Contribution);
+                    var result = read(lease.Service);
                     invocation.Token.ThrowIfCancellationRequested();
                     return result;
                 }, invocation.Token).ConfigureAwait(false);
@@ -207,8 +202,8 @@ internal sealed class SubsessionLocalRuntimeAdapter :
         }
 
         _eventLease = lease;
-        lease.Contribution.SessionChanged += ForwardSessionChanged;
-        lease.Contribution.TurnChanged += ForwardTurnChanged;
+        lease.Service.SessionChanged += ForwardSessionChanged;
+        lease.Service.TurnChanged += ForwardTurnChanged;
         _eventRetirement = lease.RetirementToken.Register(
             static state => ((SubsessionLocalRuntimeAdapter)state!).RetireEventLease(),
             this);
@@ -269,8 +264,8 @@ internal sealed class SubsessionLocalRuntimeAdapter :
         }
 
         _eventLease = null;
-        lease.Contribution.SessionChanged -= ForwardSessionChanged;
-        lease.Contribution.TurnChanged -= ForwardTurnChanged;
+        lease.Service.SessionChanged -= ForwardSessionChanged;
+        lease.Service.TurnChanged -= ForwardTurnChanged;
         lease.Dispose();
         var registration = _eventRetirement;
         _eventRetirement = default;
@@ -425,45 +420,4 @@ internal sealed class SubsessionLocalRuntimeAdapter :
         AgentTranscriptToolDetailRequest request)
         => (runtime as IAgentTranscriptCatalog)?.GetTranscriptToolDetail(request);
 
-    private sealed class CompatibilityRuntimeReference(IAgentRuntimeCatalog runtime)
-        : IPackageExtensionReference<IAgentRuntimeCatalog>
-    {
-        public bool TryAcquire(
-            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-            out IPackageExtensionLease<IAgentRuntimeCatalog>? lease)
-        {
-            lease = new CompatibilityRuntimeLease(runtime);
-            return true;
-        }
-    }
-
-    private sealed class CompatibilityRuntimeLease(IAgentRuntimeCatalog runtime)
-        : IPackageExtensionLease<IAgentRuntimeCatalog>
-    {
-        private IAgentRuntimeCatalog? _runtime = runtime;
-
-        public string PackageId
-        {
-            get
-            {
-                ObjectDisposedException.ThrowIf(_runtime is null, this);
-                return "sunder.package.agent.subagents.compatibility";
-            }
-        }
-
-        public IAgentRuntimeCatalog Contribution
-            => Volatile.Read(ref _runtime)
-               ?? throw new ObjectDisposedException(nameof(CompatibilityRuntimeLease));
-
-        public CancellationToken RetirementToken
-        {
-            get
-            {
-                ObjectDisposedException.ThrowIf(_runtime is null, this);
-                return CancellationToken.None;
-            }
-        }
-
-        public void Dispose() => Interlocked.Exchange(ref _runtime, null);
-    }
 }

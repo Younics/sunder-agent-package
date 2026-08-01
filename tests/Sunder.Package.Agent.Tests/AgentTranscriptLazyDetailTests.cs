@@ -3,6 +3,7 @@ extern alias AgentCore;
 using Microsoft.Data.Sqlite;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
@@ -23,13 +24,14 @@ public sealed class AgentTranscriptLazyDetailTests
         var sessions = new AgentSessionService(store, extensions);
         var workspaces = new AgentWorkspaceService(store, extensions, sessions);
         var toolService = new AgentToolService(
-            new InstalledPackageToolSource(extensions),
             sessions,
             workspaces,
             new AgentExecutionTargetService(extensions),
             extensions);
-        using var profiles = new AgentProfileService(store, toolService, extensions);
-        IAgentRuntimeCatalog runtime = new AgentRuntimeCatalog(sessions, profiles, workspaces);
+        using var profiles = new AgentProfileService(store, toolService, extensions, extensions.BehaviorLoops);
+        var runtimeCatalog = new AgentRuntimeCatalog(sessions, profiles, workspaces);
+        extensions.AddProvider(AgentRpcServices.RuntimeCatalogs, runtimeCatalog);
+        IAgentRuntimeCatalog runtime = runtimeCatalog;
         var workspace = workspaces.CreateWorkspace("Catalog payloads");
         var session = sessions.CreateSession("Catalog payloads", workspaceId: workspace.WorkspaceId);
         AgentTurnRecord? catalogEventTurn = null;
@@ -62,7 +64,8 @@ public sealed class AgentTranscriptLazyDetailTests
             Guid.Empty,
             1)));
 
-        using var subsessions = new SubsessionLocalRuntimeAdapter(runtime);
+        using var subsessions = new SubsessionLocalRuntimeAdapter(
+            extensions.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
         var recent = await subsessions.ListRecentTurnsAsync(session.SessionId, 1);
         var before = await subsessions.ListTurnsBeforeAsync(
             session.SessionId,
@@ -166,7 +169,8 @@ public sealed class AgentTranscriptLazyDetailTests
             afterLimit: 30);
         var anchor = Assert.Single(page.Turns, turn => turn.TurnId == callTurnIds[anchorIndex]);
         var header = Assert.Single(anchor.Items);
-        var expectedRevision = start.AddMinutes(1).AddTicks(anchorIndex + 1).UtcDateTime.Ticks;
+        var expectedTimestamp = start.AddMinutes(1).AddTicks(anchorIndex + 1);
+        var expectedRevision = (expectedTimestamp.UtcDateTime.Ticks - DateTime.UnixEpoch.Ticks) / 10;
 
         Assert.Equal(61, page.Turns.Count);
         Assert.DoesNotContain(page.Turns, turn => turn.TurnId == resultTurnIds[anchorIndex]);
@@ -300,12 +304,11 @@ public sealed class AgentTranscriptLazyDetailTests
         var sessions = new AgentSessionService(store, extensions);
         var workspaces = new AgentWorkspaceService(store, extensions, sessions);
         var toolService = new AgentToolService(
-            new InstalledPackageToolSource(extensions),
             sessions,
             workspaces,
             new AgentExecutionTargetService(extensions),
             extensions);
-        using var profiles = new AgentProfileService(store, toolService, extensions);
+        using var profiles = new AgentProfileService(store, toolService, extensions, extensions.BehaviorLoops);
         using var changes = new AgentRuntimeChangeHub(profiles, workspaces, sessions);
         var workspace = workspaces.CreateWorkspace("Live header reads");
         var session = sessions.CreateSession("Live header reads", workspaceId: workspace.WorkspaceId);

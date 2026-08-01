@@ -1,0 +1,259 @@
+{
+  "descriptorVersion": 1,
+  "contractId": "sunder.agent.child.run.executor",
+  "version": "1.0.0",
+  "services": [
+    {
+      "serviceId": "child-run-executor",
+      "methods": [
+        {
+          "methodId": "run-child",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentChildRunRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentChildRunResult"
+          }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "String": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "DateTimeOffset": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "Boolean": {
+      "type": "boolean"
+    },
+    "AgentProfileModelBindingRecord": {
+      "type": "object",
+      "properties": {
+        "capabilityKind": {
+          "$ref": "#/$defs/String"
+        },
+        "modelId": {
+          "$ref": "#/$defs/String"
+        },
+        "profileId": {
+          "$ref": "#/$defs/String"
+        },
+        "providerId": {
+          "$ref": "#/$defs/String"
+        },
+        "settingsJson": {
+          "$ref": "#/$defs/String"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        }
+      },
+      "required": [
+        "capabilityKind",
+        "profileId",
+        "updatedAtUtc"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentProfileModelBindingRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentProfileModelBindingRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentProfileSelectableCapabilityAssignmentRecord": {
+      "type": "object",
+      "properties": {
+        "capabilityId": {
+          "$ref": "#/$defs/String"
+        },
+        "kind": {
+          "$ref": "#/$defs/String"
+        },
+        "sourceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "capabilityId",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentProfileSelectableCapabilityAssignmentRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentProfileSelectableCapabilityAssignmentRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentProfileRecord": {
+      "type": "object",
+      "properties": {
+        "behaviorLoopId": {
+          "$ref": "#/$defs/String"
+        },
+        "behaviorLoopSettingsJson": {
+          "$ref": "#/$defs/String"
+        },
+        "behaviorLoopSourceId": {
+          "$ref": "#/$defs/String"
+        },
+        "chatModelId": {
+          "$ref": "#/$defs/String"
+        },
+        "chatProviderId": {
+          "$ref": "#/$defs/String"
+        },
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "embeddingModelId": {
+          "$ref": "#/$defs/String"
+        },
+        "embeddingProviderId": {
+          "$ref": "#/$defs/String"
+        },
+        "instructions": {
+          "$ref": "#/$defs/String"
+        },
+        "isInternal": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "modelBindings": {
+          "$ref": "#/$defs/ListOfAgentProfileModelBindingRecord"
+        },
+        "profileId": {
+          "$ref": "#/$defs/String"
+        },
+        "selectableCapabilityAssignments": {
+          "$ref": "#/$defs/ListOfAgentProfileSelectableCapabilityAssignmentRecord"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "displayName",
+        "isInternal",
+        "profileId",
+        "updatedAtUtc"
+      ],
+      "additionalProperties": false
+    },
+    "Guid": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "Int64": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "AgentChildRunRequest": {
+      "type": "object",
+      "properties": {
+        "agentKind": {
+          "$ref": "#/$defs/String"
+        },
+        "childProfile": {
+          "$ref": "#/$defs/AgentProfileRecord"
+        },
+        "parentRunId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "parentRunRevision": {
+          "$ref": "#/$defs/Int64"
+        },
+        "parentSessionId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "parentToolCallId": {
+          "$ref": "#/$defs/String"
+        },
+        "taskId": {
+          "$ref": "#/$defs/String"
+        },
+        "title": {
+          "$ref": "#/$defs/String"
+        },
+        "userMessage": {
+          "$ref": "#/$defs/String"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "agentKind",
+        "childProfile",
+        "parentRunId",
+        "parentRunRevision",
+        "parentSessionId",
+        "parentToolCallId",
+        "title",
+        "userMessage",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRunStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    "AgentChildRunResult": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/String"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentRunStatus"
+        },
+        "summary": {
+          "$ref": "#/$defs/String"
+        },
+        "title": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "sessionId",
+        "status",
+        "summary"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

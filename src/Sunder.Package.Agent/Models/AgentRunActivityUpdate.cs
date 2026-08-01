@@ -1,12 +1,6 @@
-namespace Sunder.Package.Agent.Models;
+using Sunder.Package.Agent.Contracts.Models;
 
-public enum AgentRunActivityKind
-{
-    Thinking = 0,
-    Reasoning = 1,
-    Tool = 2,
-    Processing = 3,
-}
+namespace Sunder.Package.Agent.Models;
 
 public sealed record AgentRunActivityUpdate(
     long RunRevision,

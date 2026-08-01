@@ -1,20 +1,14 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.HistorySearch;
 
-internal sealed class HistoryEmbeddingProviderCatalog(IPackageExtensionCatalog extensions)
+internal sealed class HistoryEmbeddingProviderCatalog(AgentRpcCatalog rpcCatalog)
 {
-    private readonly IPackageExtensionInvocationCatalog _invocations =
-        extensions as IPackageExtensionInvocationCatalog
-        ?? throw new InvalidOperationException(
-            "The host extension catalog does not support activation-scoped invocation leases.");
-
     internal IReadOnlyList<HistoryEmbeddingProviderOption> ListOptions()
         => SnapshotProviders()
             .Select(static item => new HistoryEmbeddingProviderOption(
@@ -142,7 +136,7 @@ internal sealed class HistoryEmbeddingProviderCatalog(IPackageExtensionCatalog e
     private IReadOnlyList<OwnedEmbeddingProvider> SnapshotProviders()
     {
         var providers = new List<OwnedEmbeddingProvider>();
-        foreach (var reference in _invocations.GetExtensionReferences(PackageExtensionPoints.EmbeddingProviders))
+        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.EmbeddingProviders))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -150,22 +144,22 @@ internal sealed class HistoryEmbeddingProviderCatalog(IPackageExtensionCatalog e
             }
             using (lease)
             {
-                var descriptor = lease.Contribution.Descriptor;
+                var descriptor = lease.Service.Descriptor;
                 if (lease.RetirementToken.IsCancellationRequested
                     || string.IsNullOrWhiteSpace(descriptor.ProviderId))
                 {
                     continue;
                 }
 
-                var providerType = lease.Contribution.GetType();
                 providers.Add(new OwnedEmbeddingProvider(
                     lease.PackageId,
                     descriptor.ProviderId,
                     descriptor.DisplayName,
                     string.Join('\n',
-                        providerType.Assembly.FullName,
-                        providerType.FullName,
-                        providerType.Module.ModuleVersionId.ToString("D")),
+                        reference.Provider.PackageVersion,
+                        reference.Provider.ContractVersion,
+                        reference.Provider.ContractSha256,
+                        reference.Provider.ProviderId),
                     reference));
             }
         }
@@ -192,7 +186,7 @@ internal sealed class HistoryEmbeddingProviderCatalog(IPackageExtensionCatalog e
                 retirementToken);
             try
             {
-                var result = await callback(lease.Contribution, invocation.Token).ConfigureAwait(false);
+                var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
                 if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
                     throw new OperationCanceledException(
@@ -271,7 +265,7 @@ internal sealed record OwnedEmbeddingProvider(
     string ProviderId,
     string DisplayName,
     string ImplementationIdentity,
-    IPackageExtensionReference<IAgentEmbeddingProvider> Reference);
+    AgentRpcReference<IAgentEmbeddingProvider> Reference);
 
 internal sealed record ResolvedEmbeddingSelection(
     OwnedEmbeddingProvider OwnedProvider,

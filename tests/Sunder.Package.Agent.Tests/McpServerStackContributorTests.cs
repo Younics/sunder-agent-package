@@ -5,6 +5,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Mcp;
 using Sunder.Package.Agent.Mcp.Services;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Stacks;
@@ -602,65 +603,14 @@ public sealed class McpServerStackContributorTests
             [new AgentWorkspacePathRecord("path-1", workspaceId, hostPath, IsDefault: true, SortOrder: 0, now, now)]);
     }
 
-    private sealed class TestExtensionCatalog(params IAgentRuntimeCatalog[] runtimeCatalogs) :
-        IPackageExtensionCatalog,
-        IPackageExtensionInvocationCatalog
+    private sealed class TestExtensionCatalog : RegressionTestExtensionCatalog
     {
-        public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
-            => typeof(TContract) == typeof(IAgentRuntimeCatalog)
-                ? runtimeCatalogs.Cast<TContract>().ToArray()
-                : [];
-
-        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
-            => GetExtensions(extensionPoint)
-                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
-                .ToArray();
-
-        public IReadOnlyList<IPackageExtensionReference<TContract>> GetExtensionReferences<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint)
-            => GetExtensions(extensionPoint)
-                .Select(extension => (IPackageExtensionReference<TContract>)new TestReference<TContract>(extension))
-                .ToArray();
-
-        private sealed class TestReference<TContract>(TContract contribution)
-            : IPackageExtensionReference<TContract>
+        public TestExtensionCatalog(params IAgentRuntimeCatalog[] runtimeCatalogs)
         {
-            public bool TryAcquire(
-                [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-                out IPackageExtensionLease<TContract>? lease)
+            foreach (var runtimeCatalog in runtimeCatalogs)
             {
-                lease = new TestLease<TContract>(contribution);
-                return true;
+                AddProvider(AgentRpcServices.RuntimeCatalogs, runtimeCatalog);
             }
-        }
-
-        private sealed class TestLease<TContract>(TContract contribution) : IPackageExtensionLease<TContract>
-        {
-            private object? _contribution = contribution;
-
-            public string PackageId
-            {
-                get
-                {
-                    ObjectDisposedException.ThrowIf(_contribution is null, this);
-                    return "test.package";
-                }
-            }
-
-            public TContract Contribution
-                => (TContract)(Volatile.Read(ref _contribution)
-                    ?? throw new ObjectDisposedException(nameof(TestLease<TContract>)));
-
-            public CancellationToken RetirementToken
-            {
-                get
-                {
-                    ObjectDisposedException.ThrowIf(_contribution is null, this);
-                    return CancellationToken.None;
-                }
-            }
-
-            public void Dispose() => Interlocked.Exchange(ref _contribution, null);
         }
     }
 

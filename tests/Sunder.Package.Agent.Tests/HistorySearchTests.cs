@@ -5,6 +5,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.HistorySearch;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
@@ -323,10 +324,10 @@ public sealed class HistorySearchTests
         services.AddSingleton<IPackageContext>(scope.Context);
         var extensionCatalog = new RegressionTestExtensionCatalog();
         var embeddingProvider = new HistoryEmbeddingProvider();
-        extensionCatalog.AddExtension(
-            PackageExtensionPoints.EmbeddingProviders,
+        extensionCatalog.AddProvider(
+            AgentRpcServices.EmbeddingProviders,
             embeddingProvider);
-        services.AddSingleton<IPackageExtensionCatalog>(extensionCatalog);
+        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(extensionCatalog);
         services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
         new PackageModule().ConfigureRuntimeServices(services, scope.Context);
         await using var provider = services.BuildServiceProvider();
@@ -407,8 +408,11 @@ public sealed class HistorySearchTests
         Assert.Equal(2, around.Turns.Count);
         Assert.True(around.HasNewer);
 
+        extensionCatalog.AddProvider(
+            AgentRpcServices.RuntimeCatalogs,
+            provider.GetRequiredService<AgentRuntimeCatalog>());
         var childAround = await new SubsessionLocalRuntimeAdapter(
-                provider.GetRequiredService<AgentRuntimeCatalog>())
+                extensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs))
             .LoadAroundTurnAsync(
                 child.SessionId,
                 childTurn.TurnId,

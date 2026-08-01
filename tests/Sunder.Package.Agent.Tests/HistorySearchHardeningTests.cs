@@ -9,6 +9,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.HistorySearch;
 using Sunder.Package.Agent.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
@@ -476,18 +477,14 @@ public sealed class HistorySearchHardeningTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddExtension(
-            PackageExtensionPoints.Tools,
-            new CatalogTool("shell"),
+        catalog.AddTool(new CatalogTool("shell"),
             "sunder.package.agent.tools.shell");
         await using var services = CreateRuntime(scope, catalog);
         var toolService = services.GetRequiredService<AgentToolService>();
         var advertised = Assert.Single(
             await toolService.ListReadyOwnedRuntimeToolsAsync(),
             tool => tool.RuntimeTool.Descriptor.ToolId == "shell");
-        catalog.AddExtension(
-            PackageExtensionPoints.Tools,
-            new CatalogTool("SHELL"),
+        catalog.AddTool(new CatalogTool("SHELL"),
             "vendor.colliding.tools");
 
         var ready = await toolService.ListReadyOwnedRuntimeToolsAsync();
@@ -513,7 +510,7 @@ public sealed class HistorySearchHardeningTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
         var vendorShell = new CatalogTool("shell");
-        catalog.AddExtension(PackageExtensionPoints.Tools, vendorShell, "vendor.shell.tools");
+        catalog.AddTool(vendorShell, "vendor.shell.tools");
         await using var services = CreateRuntime(scope, catalog);
         var toolService = services.GetRequiredService<AgentToolService>();
         var ownerAtPreparation = Assert.Single(
@@ -532,10 +529,8 @@ public sealed class HistorySearchHardeningTests
             isReadOnly: false,
             ownerPackageId: ownerAtPreparation.OwnerPackageId);
 
-        catalog.RemoveExtension(PackageExtensionPoints.Tools, vendorShell);
-        catalog.AddExtension(
-            PackageExtensionPoints.Tools,
-            new CatalogTool("shell"),
+        catalog.RemoveProvider(vendorShell);
+        catalog.AddTool(new CatalogTool("shell"),
             "sunder.package.agent.tools.shell");
         var replacement = Assert.Single(
             await toolService.ListReadyOwnedRuntimeToolsAsync(),
@@ -608,8 +603,8 @@ public sealed class HistorySearchHardeningTests
         var catalog = new RegressionTestExtensionCatalog();
         var first = new FirstFingerprintProvider("DUPLICATE", "MODEL");
         var second = new SecondFingerprintProvider("duplicate", "model");
-        catalog.AddExtension(PackageExtensionPoints.EmbeddingProviders, first, "package.one");
-        catalog.AddExtension(PackageExtensionPoints.EmbeddingProviders, second, "package.two");
+        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, first, "package.one");
+        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, second, "package.two");
         var providers = new HistoryEmbeddingProviderCatalog(catalog);
 
         Assert.Throws<InvalidOperationException>(() => providers.Resolve(null, "duplicate"));
@@ -617,7 +612,10 @@ public sealed class HistorySearchHardeningTests
         Assert.True(owned.Reference.TryAcquire(out var providerLease));
         using (providerLease)
         {
-            Assert.Same(first, providerLease.Contribution);
+            Assert.Equal("package.one", providerLease.PackageId);
+            Assert.Equal(first.Descriptor.ProviderId, providerLease.Service.Descriptor.ProviderId);
+            Assert.Equal(first.Descriptor.DisplayName, providerLease.Service.Descriptor.DisplayName);
+            Assert.Equal(first.Descriptor.SupportedAuthModes, providerLease.Service.Descriptor.SupportedAuthModes);
         }
         Assert.Equal(2, providers.ListOptions().Count);
 
@@ -642,7 +640,7 @@ public sealed class HistorySearchHardeningTests
             providerId,
             modelId,
             "Useful provider password=display-canary");
-        catalog.AddExtension(PackageExtensionPoints.EmbeddingProviders, provider, packageId);
+        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, provider, packageId);
         var providers = new HistoryEmbeddingProviderCatalog(catalog);
 
         var option = Assert.Single(providers.ListOptions());
@@ -732,7 +730,7 @@ public sealed class HistorySearchHardeningTests
         {
             SpaceIdentity = "https://first.example/v1",
         };
-        catalog.AddExtension(PackageExtensionPoints.EmbeddingProviders, provider, "package.configured");
+        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, provider, "package.configured");
         var providers = new HistoryEmbeddingProviderCatalog(catalog);
 
         var first = await providers.ResolveSelectionAsync(
@@ -753,7 +751,7 @@ public sealed class HistorySearchHardeningTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
         var embeddings = new ReadinessEmbeddingProvider();
-        catalog.AddExtension(PackageExtensionPoints.EmbeddingProviders, embeddings, "package.ready");
+        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, embeddings, "package.ready");
         var seededProjection = CreateReadyEmbeddingProjection(scope.Context);
         Assert.True(seededProjection.GetConfiguration().SemanticEnabled);
         Assert.True(seededProjection.GetSnapshot().SemanticReady);
@@ -880,7 +878,7 @@ public sealed class HistorySearchHardeningTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
         var embeddings = new ReadinessEmbeddingProvider();
-        catalog.AddExtension(PackageExtensionPoints.EmbeddingProviders, embeddings, "package.readiness");
+        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, embeddings, "package.readiness");
         await using var services = CreateRuntime(scope, catalog);
         var indexer = services.GetRequiredService<HistorySearchIndexingService>();
         var projection = services.GetRequiredService<HistorySearchStore>();
@@ -1922,7 +1920,7 @@ public sealed class HistorySearchHardeningTests
         var services = new ServiceCollection();
         services.AddSingleton(scope.Context);
         services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton<IPackageExtensionCatalog>(catalog);
+        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(catalog);
         services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
         new PackageModule().ConfigureRuntimeServices(services, scope.Context);
         return services.BuildServiceProvider();

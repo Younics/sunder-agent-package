@@ -7,9 +7,11 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Memory.Semantic;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Logging;
+using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -88,7 +90,7 @@ public sealed class AgentLifecycleOutboxTests
         var store = new AgentLocalStore(scope.Context);
         var catalog = new RegressionTestExtensionCatalog();
         var cleaner = new ThrowingSessionDataCleaner();
-        catalog.AddExtension(PackageExtensionPoints.SessionDataCleaners, cleaner);
+        catalog.AddProvider(AgentRpcServices.SessionCleaners, cleaner);
         var sessions = new AgentSessionService(store, catalog);
         var workspaces = new AgentWorkspaceService(store, catalog, sessions);
         var workspace = workspaces.CreateWorkspace("Lifecycle workspace");
@@ -152,7 +154,7 @@ public sealed class AgentLifecycleOutboxTests
         CreateStartedRun(store);
         var catalog = new RegressionTestExtensionCatalog();
         var observer = new RecordingObserver("duplicate-observer") { FailuresRemaining = 1 };
-        catalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, observer);
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
 
         await dispatcher.FlushAsync();
@@ -175,17 +177,17 @@ public sealed class AgentLifecycleOutboxTests
         var store = new AgentLocalStore(scope.Context);
         var catalog = new RegressionTestExtensionCatalog();
         var firstActivation = new RecordingObserver("stable-observer");
-        catalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, firstActivation);
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, firstActivation);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
         await dispatcher.FlushAsync();
-        catalog.RemoveExtension(PackageExtensionPoints.DurableLifecycleObservers, firstActivation);
+        catalog.RemoveProvider(AgentRpcServices.DurableLifecycleObservers, firstActivation);
 
         CreateStartedRun(store);
         await dispatcher.FlushAsync();
         Assert.Equal(0, firstActivation.DeliveryCount);
 
         var secondActivation = new RecordingObserver("stable-observer");
-        catalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, secondActivation);
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, secondActivation);
         await dispatcher.FlushAsync();
 
         Assert.Equal(1, secondActivation.DeliveryCount);
@@ -201,8 +203,8 @@ public sealed class AgentLifecycleOutboxTests
         SelfRemovingDurableObserver? observer = null;
         observer = new SelfRemovingDurableObserver(
             "discovery-race-observer",
-            () => catalog.RemoveExtension(PackageExtensionPoints.DurableLifecycleObservers, observer!));
-        catalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, observer);
+            () => catalog.RemoveProvider(AgentRpcServices.DurableLifecycleObservers, observer!));
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
 
         await dispatcher.FlushAsync();
@@ -225,12 +227,12 @@ public sealed class AgentLifecycleOutboxTests
         CreateStartedRun(store);
         var catalog = new RegressionTestExtensionCatalog();
         var observer = new BlockingDurableObserver("blocking-durable-observer");
-        catalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, observer);
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
 
         var flush = dispatcher.FlushAsync();
         await observer.Started.WaitAsync(TimeSpan.FromSeconds(2));
-        catalog.RemoveExtension(PackageExtensionPoints.DurableLifecycleObservers, observer);
+        catalog.RemoveProvider(AgentRpcServices.DurableLifecycleObservers, observer);
         await flush.WaitAsync(TimeSpan.FromSeconds(2));
 
         var subscriptionId = AgentLocalStore.BuildLifecycleSubscriptionId(
@@ -244,77 +246,6 @@ public sealed class AgentLifecycleOutboxTests
     }
 
     [Fact]
-    public async Task CompatibilityObserverRetirement_CancelsCallbackAndReleasesDeliveryWithoutAttempt()
-    {
-        using var scope = RegressionTestPackageScope.Create();
-        var store = new AgentLocalStore(scope.Context);
-        CreateStartedRun(store);
-        var catalog = new RegressionTestExtensionCatalog();
-        var observer = new BlockingCompatibilityObserver("blocking-compatibility-observer");
-        catalog.AddExtension(PackageExtensionPoints.LifecycleObservers, observer);
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
-
-        var flush = dispatcher.FlushAsync();
-        await observer.Started.WaitAsync(TimeSpan.FromSeconds(2));
-        catalog.RemoveExtension(PackageExtensionPoints.LifecycleObservers, observer);
-        await flush.WaitAsync(TimeSpan.FromSeconds(2));
-
-        var subscriptionId = AgentLocalStore.BuildLifecycleSubscriptionId(
-            "test.package",
-            observer.ObserverId,
-            "Compatibility");
-        var state = Assert.IsType<AgentLifecycleDeliveryState>(store.GetLifecycleDeliveryState(subscriptionId, 1));
-        Assert.True(observer.RetirementObserved);
-        Assert.Equal("Pending", state.Status);
-        Assert.Equal(0, state.AttemptCount);
-    }
-
-    [Fact]
-    public async Task CompatibilityFallbackRetirement_CancelsBlockingObserver()
-    {
-        using var scope = RegressionTestPackageScope.Create();
-        var store = new AgentLocalStore(scope.Context);
-        var sessions = new AgentSessionService(store);
-        var workspace = new AgentWorkspaceService(store).CreateWorkspace("Compatibility fallback workspace");
-        var profile = new AgentProfileRecord(
-            "profile.compatibility",
-            "Compatibility profile",
-            Description: null,
-            Instructions: null,
-            ChatProviderId: null,
-            ChatModelId: null,
-            EmbeddingProviderId: null,
-            EmbeddingModelId: null,
-            DateTimeOffset.UtcNow,
-            DateTimeOffset.UtcNow);
-        var session = sessions.CreateSession(
-            "Compatibility fallback session",
-            profileId: profile.ProfileId,
-            workspaceId: workspace.WorkspaceId);
-        var catalog = new RegressionTestExtensionCatalog();
-        var observer = new BlockingCompatibilityObserver("blocking-fallback-observer");
-        catalog.AddExtension(PackageExtensionPoints.LifecycleObservers, observer);
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
-        var memory = new AgentMemoryCoordinator(sessions, catalog, dispatcher);
-
-        var publish = memory.PublishLifecycleEventAsync(
-            AgentLifecycleEventKind.AssistantTurnCompleted,
-            session,
-            profile,
-            Guid.NewGuid(),
-            runRevision: 1,
-            AgentRunStatus.Completed,
-            DateTimeOffset.UtcNow,
-            "Compatibility fallback",
-            cancellationToken: CancellationToken.None);
-        await observer.Started.WaitAsync(TimeSpan.FromSeconds(2));
-        catalog.RemoveExtension(PackageExtensionPoints.LifecycleObservers, observer);
-
-        await publish.WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.True(observer.RetirementObserved);
-    }
-
-    [Fact]
     public async Task PermanentlyFailingObserver_ReachesBoundedPoisonState()
     {
         using var scope = RegressionTestPackageScope.Create();
@@ -322,7 +253,7 @@ public sealed class AgentLifecycleOutboxTests
         CreateStartedRun(store);
         var catalog = new RegressionTestExtensionCatalog();
         var observer = new RecordingObserver("poison-observer") { AlwaysFail = true };
-        catalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, observer);
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
         await dispatcher.StartAsync();
         var subscriptionId = AgentLocalStore.BuildLifecycleSubscriptionId(
@@ -493,7 +424,7 @@ public sealed class AgentLifecycleOutboxTests
         Assert.True(failure.NextAttemptAtUtc > now.AddMinutes(1));
 
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, observer);
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
         await dispatcher.StartAsync();
         await WaitUntilAsync(
@@ -660,7 +591,7 @@ public sealed class AgentLifecycleOutboxTests
         AssertDatabaseHasNoCanaries(store.DatabasePath, fixture.Canaries);
 
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, knownObserver);
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, knownObserver);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
         await dispatcher.FlushAsync();
 
@@ -675,7 +606,7 @@ public sealed class AgentLifecycleOutboxTests
             deleted => Assert.Equal(AgentLifecycleEventKind.SessionDeleted, deleted.Kind));
 
         var newObserver = new RecordingObserver("new-session-erasure-observer");
-        catalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, newObserver);
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, newObserver);
         await dispatcher.FlushAsync();
 
         var replayedTombstone = Assert.Single(newObserver.Events);
@@ -707,7 +638,7 @@ public sealed class AgentLifecycleOutboxTests
         AssertDatabaseHasNoCanaries(store.DatabasePath, fixture.Canaries);
 
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, observer);
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
         await dispatcher.FlushAsync();
 
@@ -949,10 +880,10 @@ public sealed class AgentLifecycleOutboxTests
         var store = new AgentLocalStore(scope.Context);
         var catalog = new RegressionTestExtensionCatalog();
         var first = new RecordingSessionDataCleaner("stable-cleaner");
-        catalog.AddExtension(PackageExtensionPoints.SessionDataCleaners, first, "package.cleaner");
+        catalog.AddProvider(AgentRpcServices.SessionCleaners, first, "package.cleaner");
         await using var dispatcher = new AgentSessionCleanupDispatcher(store, catalog);
         await dispatcher.FlushAsync();
-        catalog.RemoveExtension(PackageExtensionPoints.SessionDataCleaners, first);
+        catalog.RemoveProvider(AgentRpcServices.SessionCleaners, first);
         var sessions = new AgentSessionService(store, catalog);
         var workspace = new AgentWorkspaceService(store).CreateWorkspace("Cleaner reactivation workspace");
         var session = sessions.CreateSession(
@@ -966,7 +897,7 @@ public sealed class AgentLifecycleOutboxTests
         Assert.Empty(first.SessionIds);
         Assert.Equal("Pending", Assert.Single(store.ListSessionCleanupJobs()).Status);
         var replacement = new RecordingSessionDataCleaner("stable-cleaner");
-        catalog.AddExtension(PackageExtensionPoints.SessionDataCleaners, replacement, "package.cleaner");
+        catalog.AddProvider(AgentRpcServices.SessionCleaners, replacement, "package.cleaner");
         await dispatcher.FlushAsync();
         Assert.Equal([session.SessionId], replacement.SessionIds);
         Assert.Equal("Completed", Assert.Single(store.ListSessionCleanupJobs()).Status);
@@ -1066,7 +997,7 @@ public sealed class AgentLifecycleOutboxTests
         InsertLifecycleEvents(store, workspace, session, totalEventCount);
         var observer = new RecordingObserver("bounded-replay-observer");
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, observer);
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
 
         await dispatcher.FlushAsync();
@@ -1103,7 +1034,7 @@ public sealed class AgentLifecycleOutboxTests
         InsertLifecycleEvents(store, workspace, session, totalEventCount);
         var knownObserver = new RecordingObserver("catch-up-erasure-known-observer");
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, knownObserver);
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, knownObserver);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
         await dispatcher.FlushAsync();
         Assert.Equal(AgentLocalStore.MaxLifecycleReconciliationBatchSize, knownObserver.DeliveryCount);
@@ -1123,7 +1054,7 @@ public sealed class AgentLifecycleOutboxTests
         Assert.Equal(AgentLifecycleEventKind.SessionDeleted, knownObserver.Events[^1].Kind);
 
         var newObserver = new RecordingObserver("catch-up-erasure-new-observer");
-        catalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, newObserver);
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, newObserver);
         await dispatcher.FlushAsync();
 
         Assert.Equal(AgentLifecycleEventKind.SessionDeleted, Assert.Single(newObserver.Events).Kind);
@@ -1142,7 +1073,7 @@ public sealed class AgentLifecycleOutboxTests
             FailureMessage = secretCanary,
         };
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, observer);
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
         var logger = new RecordingEventLogger();
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog, logger);
 
@@ -1170,6 +1101,61 @@ public sealed class AgentLifecycleOutboxTests
             secretCanary,
             Encoding.UTF8.GetString(File.ReadAllBytes(store.DatabasePath)),
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ObserverRpcFailure_LogsSafeKindAndCodeWithoutMessage()
+    {
+        const string secretCanary = "rpc-secret-canary-never-log";
+        const string rpcCode = "observer.domain-failure";
+        using var scope = RegressionTestPackageScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        CreateStartedRun(store);
+        var observer = new RecordingObserver("rpc-failure-observer")
+        {
+            AlwaysFail = true,
+            FailureException = new SunderRpcException(new SunderRpcError(
+                SunderRpcErrorKind.Domain,
+                rpcCode,
+                secretCanary)),
+        };
+        var catalog = new RegressionTestExtensionCatalog();
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
+        var logger = new RecordingEventLogger();
+        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog, logger);
+
+        await dispatcher.FlushAsync();
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal("lifecycle.delivery.retry", entry.EventName);
+        Assert.Equal(nameof(SunderRpcErrorKind.Domain), entry.Attributes["rpc.error_kind"]);
+        Assert.Equal(rpcCode, entry.Attributes["rpc.error_code"]);
+        Assert.Null(entry.Exception);
+        Assert.DoesNotContain(secretCanary, entry.Message, StringComparison.Ordinal);
+        Assert.All(entry.Attributes.Values, value =>
+            Assert.DoesNotContain(secretCanary, value?.ToString() ?? string.Empty, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DispatcherProcessingRpcFailure_ProjectsSafeKindAndCode()
+    {
+        const string secretCanary = "dispatcher-rpc-secret-canary-never-log";
+        const string rpcCode = "rpc.endpoint.stale";
+        var attributes = AgentLifecycleDispatcher.CreateProcessingFailureAttributes(
+            new InvalidOperationException(
+                secretCanary,
+                new AggregateException(
+                    new InvalidOperationException(secretCanary),
+                    new SunderRpcException(new SunderRpcError(
+                        SunderRpcErrorKind.StaleEndpoint,
+                        rpcCode,
+                        secretCanary)))));
+
+        Assert.Equal("dispatcher_processing_failure", attributes["lifecycle.failure_code"]);
+        Assert.Equal(nameof(SunderRpcErrorKind.StaleEndpoint), attributes["rpc.error_kind"]);
+        Assert.Equal(rpcCode, attributes["rpc.error_code"]);
+        Assert.All(attributes.Values, value =>
+            Assert.DoesNotContain(secretCanary, value?.ToString() ?? string.Empty, StringComparison.Ordinal));
     }
 
     [Theory]
@@ -1606,6 +1592,7 @@ public sealed class AgentLifecycleOutboxTests
         public int FailuresRemaining { get; set; }
         public bool AlwaysFail { get; set; }
         public string FailureMessage { get; set; } = "Observer fixture failure.";
+        public Exception? FailureException { get; set; }
         public int DeliveryCount { get; private set; }
         public List<string> EventIds { get; } = [];
         public List<AgentDurableLifecycleEventEnvelope> Events { get; } = [];
@@ -1620,7 +1607,7 @@ public sealed class AgentLifecycleOutboxTests
             Events.Add(lifecycleEvent);
             if (AlwaysFail || FailuresRemaining-- > 0)
             {
-                throw new InvalidOperationException(FailureMessage);
+                throw FailureException ?? new InvalidOperationException(FailureMessage);
             }
             return ValueTask.CompletedTask;
         }
@@ -1666,32 +1653,6 @@ public sealed class AgentLifecycleOutboxTests
 
         public async ValueTask HandleDurableLifecycleEventAsync(
             AgentDurableLifecycleEventEnvelope lifecycleEvent,
-            CancellationToken cancellationToken = default)
-        {
-            _started.TrySetResult();
-            try
-            {
-                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                RetirementObserved = true;
-                throw;
-            }
-        }
-    }
-
-    private sealed class BlockingCompatibilityObserver(string observerId) : IAgentLifecycleObserver
-    {
-        private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public string ObserverId { get; } = observerId;
-        public string DisplayName => ObserverId;
-        public Task Started => _started.Task;
-        public bool RetirementObserved { get; private set; }
-
-        public async ValueTask HandleLifecycleEventAsync(
-            AgentLifecycleEvent lifecycleEvent,
             CancellationToken cancellationToken = default)
         {
             _started.TrySetResult();

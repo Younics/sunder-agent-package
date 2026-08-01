@@ -3,23 +3,21 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
 
 public sealed partial class AgentToolService(
-    InstalledPackageToolSource installedPackageToolSource,
     AgentSessionService sessionService,
     AgentWorkspaceService workspaceService,
     AgentExecutionTargetService executionTargetService,
-    IPackageExtensionCatalog extensionCatalog)
+    AgentRpcCatalog rpcCatalog)
 {
-    private readonly InstalledPackageToolSource _installedPackageToolSource = installedPackageToolSource;
     private readonly AgentSessionService _sessionService = sessionService;
     private readonly AgentWorkspaceService _workspaceService = workspaceService;
     private readonly AgentExecutionTargetService _executionTargetService = executionTargetService;
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
-        AgentExtensionInvocation.Require(extensionCatalog);
+    private readonly AgentRpcCatalog _rpcCatalog = rpcCatalog;
     private readonly ConcurrentDictionary<Guid, AgentToolInvocationReference> _preparedInvocations = new();
     private readonly ConcurrentDictionary<Guid, PreparedResourceAuthority> _preparedResourceCapabilities = new();
 
@@ -287,7 +285,6 @@ public sealed partial class AgentToolService(
                 () => InvokeToolAsync(
                     resolvedTool.Invocation,
                     cancellationToken,
-                    (installedTool, token) => installedTool.ExecuteAsync(executionContext, request, token),
                     (source, token) => source.ExecuteAsync(executionContext, request, token))).ConfigureAwait(false);
         }
         catch (AgentPackageUnavailableException ex)
@@ -606,17 +603,7 @@ public sealed partial class AgentToolService(
         AgentPermissionRequest? permissionRequest;
         try
         {
-            if (resolvedTool.Invocation.SupportsInstalledPermission)
-            {
-                permissionRequest = await InvokeInstalledToolAsync(
-                    resolvedTool.Invocation,
-                    cancellationToken,
-                    (tool, token) => ((IAgentPermissionAwareTool)tool).BuildPermissionRequestAsync(
-                        context,
-                        new AgentToolRequest(toolId, argumentsJson),
-                        token)).ConfigureAwait(false);
-            }
-            else if (resolvedTool.Invocation.SupportsSourcePermission)
+            if (resolvedTool.Invocation.SupportsSourcePermission)
             {
                 permissionRequest = await InvokeSourceAsync(
                     resolvedTool.Invocation,

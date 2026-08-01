@@ -2,6 +2,7 @@ using System.Text;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Skills.PackageViews;
 using Sunder.Package.Agent.Skills.Services;
 using Sunder.Sdk.Abstractions;
@@ -618,23 +619,12 @@ public sealed class SkillPackageTests
             ["references/guide.md"] = "guide",
         };
 
-    private sealed class TestExtensionCatalog(AgentProfileRecord profile) : IPackageExtensionCatalog
+    private sealed class TestExtensionCatalog : RegressionTestExtensionCatalog
     {
-        public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
+        public TestExtensionCatalog(AgentProfileRecord profile)
         {
-            if (extensionPoint.Id == PackageExtensionPoints.RuntimeCatalogs.Id
-                && typeof(TContract) == typeof(IAgentRuntimeCatalog))
-            {
-                return [(TContract)(object)new TestRuntimeCatalog(profile)];
-            }
-
-            return [];
+            AddProvider(AgentRpcServices.RuntimeCatalogs, new TestRuntimeCatalog(profile));
         }
-
-        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
-            => GetExtensions(extensionPoint)
-                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
-                .ToArray();
     }
 
     private sealed class TestRuntimeCatalog(AgentProfileRecord profile) : IAgentRuntimeCatalog

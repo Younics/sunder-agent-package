@@ -5,9 +5,11 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Execution.Docker;
 using Sunder.Package.Agent.Execution.Local;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
+using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Settings;
 using Sunder.Sdk.Runtime;
 using Xunit;
@@ -21,7 +23,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void AppModules_RegisterOnlyPresentationServicesAndWorkspaceEditorProxy(bool local)
+    public void AppModules_RegisterOnlyPresentationServices(bool local)
     {
         using var scope = RegressionTestPackageScope.Create();
         var services = new ServiceCollection();
@@ -60,9 +62,6 @@ public sealed class ExecutionPackageRoleBoundaryTests
         }
 
         Assert.Single(registry.SettingsViews);
-        var extension = Assert.Single(registry.Extensions);
-        Assert.Equal(PackageExtensionPoints.WorkspaceEditorContributors.Id, extension.ExtensionPointId);
-        Assert.EndsWith("WorkspaceEditorPresentationContributor", extension.ContributionType.Name, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -73,6 +72,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         using var scope = RegressionTestPackageScope.Create();
         var services = new ServiceCollection();
         services.AddSingleton(scope.Context);
+        services.AddSingleton<ISunderRpcContentClient>(TestRpcContentClient.Instance);
 
         if (local)
         {
@@ -100,9 +100,10 @@ public sealed class ExecutionPackageRoleBoundaryTests
         }
 
         Assert.Contains(operationId, registry.OperationIds);
-        Assert.Contains(PackageExtensionPoints.ExecutionTargets.Id, registry.ExtensionPointIds);
-        Assert.Contains(PackageExtensionPoints.WorkspacePathMigrationContributors.Id, registry.ExtensionPointIds);
-        Assert.Contains(PackageExtensionPoints.WorkspaceEditorContributors.Id, registry.ExtensionPointIds);
+        var providerPrefix = local ? "local" : "docker";
+        Assert.Contains($"{providerPrefix}.execution.target", registry.RpcProviderIds);
+        Assert.Contains($"{providerPrefix}.workspace.path.migrator", registry.RpcProviderIds);
+        Assert.Contains($"{providerPrefix}.workspace.editor", registry.RpcProviderIds);
     }
 
     [Fact]
@@ -146,7 +147,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
-            PackageExtensionPoints.ExecutionTargets.Id,
+            AgentRpcContractIds.ExecutionTarget,
             "local",
             "primary-execution-target",
             true,
@@ -191,7 +192,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
-            PackageExtensionPoints.ExecutionTargets.Id,
+            AgentRpcContractIds.ExecutionTarget,
             "local",
             "primary-execution-target",
             true,
@@ -257,7 +258,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
-            PackageExtensionPoints.ExecutionTargets.Id,
+            AgentRpcContractIds.ExecutionTarget,
             "docker",
             "primary-execution-target",
             true,
@@ -304,7 +305,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
-            PackageExtensionPoints.ExecutionTargets.Id,
+            AgentRpcContractIds.ExecutionTarget,
             "docker",
             "primary-execution-target",
             true,
@@ -485,23 +486,20 @@ public sealed class ExecutionPackageRoleBoundaryTests
     private sealed class RecordingAppRegistry : IAvaloniaPackageContributionRegistry
     {
         public List<Type> SettingsViews { get; } = [];
-        public List<(string ExtensionPointId, Type ContributionType)> Extensions { get; } = [];
 
         public void RegisterPackageView<TView>(PackageViewRegistration registration) where TView : Control { }
         public void RegisterSettingsView<TView>() where TView : Control => SettingsViews.Add(typeof(TView));
-        public void RegisterExtension<TContract>(PackageExtensionPoint<TContract> extensionPoint, TContract contribution)
-            => Extensions.Add((extensionPoint.Id, contribution!.GetType()));
     }
 
     private sealed class RecordingRuntimeRegistry : ISunderRuntimeContributionRegistry
     {
-        public List<string> ExtensionPointIds { get; } = [];
         public List<string> OperationIds { get; } = [];
+        public List<string> RpcProviderIds { get; } = [];
 
         public void RegisterBackgroundService<TService>() where TService : class, IPackageBackgroundService { }
-        public void RegisterExtension<TContract>(PackageExtensionPoint<TContract> extensionPoint, TContract contribution)
-            => ExtensionPointIds.Add(extensionPoint.Id);
         public void RegisterSettingsSchema(PackageSettingsSchema schema) { }
+        public void RegisterRpcProvider(string providerId, ISunderRpcServiceHandler handler)
+            => RpcProviderIds.Add(providerId);
         public void RegisterRuntimeOperation<TRequest, TResponse>(
             PackageRuntimeOperation<TRequest, TResponse> operation,
             IPackageRuntimeOperationHandler<TRequest, TResponse> handler)
@@ -512,6 +510,31 @@ public sealed class ExecutionPackageRoleBoundaryTests
             IPackageRuntimeStreamHandler<TRequest, TEvent> handler)
             where TRequest : class where TEvent : class
         { }
+    }
+
+    private sealed class TestRpcContentClient : ISunderRpcContentClient
+    {
+        public static TestRpcContentClient Instance { get; } = new();
+
+        public ValueTask<SunderRpcContentReference> RegisterAsync(
+            SunderRpcInvocationContext context,
+            Stream source,
+            SunderRpcContentRegistrationOptions options,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SunderRpcContentReference>(new NotSupportedException());
+
+        public ValueTask<SunderRpcContentReference> RegisterFileAsync(
+            SunderRpcInvocationContext context,
+            string filePath,
+            SunderRpcContentRegistrationOptions options,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SunderRpcContentReference>(new NotSupportedException());
+
+        public ValueTask<Stream> OpenReadAsync(
+            SunderRpcInvocationContext context,
+            SunderRpcContentReference reference,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<Stream>(new NotSupportedException());
     }
 
     private sealed class NoopBackgroundProcessQueue : IBackgroundProcessQueue

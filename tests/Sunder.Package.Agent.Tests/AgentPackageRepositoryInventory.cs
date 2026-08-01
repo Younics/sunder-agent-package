@@ -62,16 +62,29 @@ internal static class AgentPackageRepositoryInventory
 
     private static DirectoryInfo FindRepositoryRoot()
     {
-        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "Sunder.AgentPackage.slnx"))
-                && Directory.Exists(Path.Combine(directory.FullName, "src", "Sunder.Package.Agent")))
+        var startPaths = new[]
             {
-                return directory;
+                Environment.GetEnvironmentVariable("SUNDER_AGENT_REPOSITORY_ROOT"),
+                AppContext.BaseDirectory,
+                Environment.CurrentDirectory,
+            }
+            .Where(static path => !string.IsNullOrWhiteSpace(path))
+            .Select(static path => path!)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var startPath in startPaths)
+        {
+            for (var directory = new DirectoryInfo(startPath); directory is not null; directory = directory.Parent)
+            {
+                if (File.Exists(Path.Combine(directory.FullName, "Sunder.AgentPackage.slnx"))
+                    && Directory.Exists(Path.Combine(directory.FullName, "src", "Sunder.Package.Agent")))
+                {
+                    return directory;
+                }
             }
         }
 
-        throw new InvalidOperationException("Could not locate the repository root from the test output directory.");
+        throw new InvalidOperationException(
+            "Could not locate the repository root from SUNDER_AGENT_REPOSITORY_ROOT, the test output, or the working directory.");
     }
 
     private static string NormalizePath(string path)

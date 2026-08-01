@@ -1,0 +1,129 @@
+{
+  "descriptorVersion": 1,
+  "contractId": "sunder.agent.permission.surface",
+  "version": "1.0.0",
+  "services": [
+    {
+      "serviceId": "permission-surface",
+      "methods": [
+        {
+          "methodId": "describe",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentRpcEmpty"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/PermissionSurfaceSnapshot"
+          }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "AgentRpcEmpty": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "String": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "AgentPermissionDecision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentPermissionBoundaryDescriptor": {
+      "type": "object",
+      "properties": {
+        "boundaryId": {
+          "$ref": "#/$defs/String"
+        },
+        "defaultDecision": {
+          "$ref": "#/$defs/AgentPermissionDecision"
+        },
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "boundaryId",
+        "defaultDecision",
+        "description",
+        "displayName"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentPermissionBoundaryDescriptor": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentPermissionBoundaryDescriptor"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentPermissionActionDescriptor": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "$ref": "#/$defs/String"
+        },
+        "boundaries": {
+          "$ref": "#/$defs/ListOfAgentPermissionBoundaryDescriptor"
+        },
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "actionId",
+        "boundaries",
+        "description",
+        "displayName"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentPermissionActionDescriptor": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentPermissionActionDescriptor"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "PermissionSurfaceSnapshot": {
+      "type": "object",
+      "properties": {
+        "actions": {
+          "$ref": "#/$defs/ListOfAgentPermissionActionDescriptor"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "surfaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "actions",
+        "displayName",
+        "surfaceId"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

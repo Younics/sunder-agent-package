@@ -7,9 +7,9 @@ namespace Sunder.Package.Agent.Contracts.Contracts;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Role and direction: this is a Runtime-role extension contract. Zero or more active packages
-/// contribute implementations through <see cref="PackageExtensionPoints.PromptContextContributors"/>,
-/// and the Agent Runtime consumes every registered implementation while preparing a run.
+/// Role and direction: this is a Runtime-role RPC adapter contract. Zero or more active packages
+/// provide the <c>sunder.agent.prompt.context.contributor</c> contract, and the Agent Runtime consumes every
+/// active provider while preparing a run.
 /// </para>
 /// <para>
 /// Identity and ordering: <see cref="ContributorId"/> is a stable package-scoped identity, but the

@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Tools.Files;
 
@@ -25,11 +26,13 @@ internal static class FileSearchHandler
         }
 
         var path = string.IsNullOrWhiteSpace(args.Path) ? "." : args.Path;
-        if (target is IAgentStructuredFileSearchExecutionTarget structuredTarget)
+        if (AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch)
+            && target is IAgentStructuredFileSearchExecutionTarget structuredTarget)
         {
             return await ExecuteStructuredGrepAsync(structuredTarget, context, request.ToolId, path, args, cancellationToken);
         }
-        if (target is not IAgentFileSearchExecutionTarget searchTarget)
+        if (!AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.LegacyFileSearch)
+            || target is not IAgentFileSearchExecutionTarget searchTarget)
         {
             return SearchBindingUnavailable(request.ToolId, target);
         }
@@ -99,11 +102,13 @@ internal static class FileSearchHandler
         }
 
         var path = string.IsNullOrWhiteSpace(args.Path) ? "." : args.Path;
-        if (target is IAgentStructuredFileSearchExecutionTarget structuredTarget)
+        if (AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch)
+            && target is IAgentStructuredFileSearchExecutionTarget structuredTarget)
         {
             return await ExecuteStructuredGlobAsync(structuredTarget, context, request.ToolId, path, args, cancellationToken);
         }
-        if (target is not IAgentFileSearchExecutionTarget searchTarget)
+        if (!AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.LegacyFileSearch)
+            || target is not IAgentFileSearchExecutionTarget searchTarget)
         {
             return SearchBindingUnavailable(request.ToolId, target);
         }

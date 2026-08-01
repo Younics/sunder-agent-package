@@ -1,19 +1,16 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Contracts.Services;
 
 /// <summary>
-/// Aggregates extension-catalog and provider-specific selectable-capability invalidations.
+/// Aggregates RPC catalog and provider-specific selectable-capability invalidations.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The observer operates within the App or Runtime role represented by the supplied catalog; catalogs
-/// are isolated, so it never bridges contributions between roles. It subscribes to every current
+/// The observer operates within the role represented by the supplied RPC catalog. It subscribes to every current
 /// <see cref="IAgentProfileSelectableCapabilityChangeNotifier"/> registered at
-/// <see cref="PackageExtensionPoints.ProfileSelectableCapabilityProviders"/> and also watches catalog
-/// revisions when the catalog implements <see cref="IPackageExtensionCatalogMonitor"/>.
+/// the selectable-capability provider contract and also watches RPC catalog revisions.
 /// </para>
 /// <para>
 /// Provider subscriptions are deduplicated by object identity, not provider identifier, and no ordering,
@@ -29,9 +26,7 @@ namespace Sunder.Package.Agent.Contracts.Services;
 /// </remarks>
 public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
 {
-    private readonly IPackageExtensionCatalog _extensionCatalog;
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog;
-    private readonly IPackageExtensionCatalogMonitor? _extensionCatalogMonitor;
+    private readonly AgentRpcCatalog _catalog;
     private readonly object _syncRoot = new();
     private readonly List<ProviderSubscription> _providerSubscriptions = [];
     private bool _disposed;
@@ -39,28 +34,23 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
     /// <summary>
     /// Initializes an observer and subscribes to the catalog and its current notifying providers.
     /// </summary>
-    /// <param name="extensionCatalog">
-    /// The role-local, host-owned extension catalog to observe. The observer does not dispose it.
+    /// <param name="catalog">
+    /// The role-local RPC catalog to observe. The observer does not dispose it.
     /// </param>
-    public AgentProfileSelectableCapabilityChangeObserver(IPackageExtensionCatalog extensionCatalog)
+    public AgentProfileSelectableCapabilityChangeObserver(AgentRpcCatalog catalog)
     {
-        _extensionCatalog = extensionCatalog;
-        _invocationCatalog = extensionCatalog as IPackageExtensionInvocationCatalog
-            ?? throw new InvalidOperationException(
-                "The host extension catalog does not support activation-scoped invocation leases.");
-        if (_extensionCatalog is IPackageExtensionCatalogMonitor monitor)
-        {
-            _extensionCatalogMonitor = monitor;
-            monitor.Changed += OnExtensionCatalogChanged;
-        }
+        _catalog = catalog;
+        _catalog.Changed += OnCatalogChanged;
         RefreshProviderSubscriptions();
     }
 
     /// <summary>
-    /// Occurs when catalog membership or a provider notification may have changed selectable capabilities.
+    /// Occurs when any Agent RPC catalog projection or provider-specific selectable capabilities may have changed.
     /// </summary>
     /// <remarks>
-    /// Handlers run synchronously on the publishing thread. Notifications can be repeated or concurrent,
+    /// Every RPC catalog transition is forwarded because consumers commonly cache combined provider, tool, model,
+    /// execution-target, behavior-loop, and selectable-capability projections. Handlers run synchronously on the
+    /// publishing thread. Notifications can be repeated or concurrent,
     /// have no payload, and do not guarantee that the resulting descriptor set is different.
     /// </remarks>
     public event Action? Changed;
@@ -83,15 +73,14 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
             }
 
             var currentSubscriptions = new HashSet<ProviderSubscription>();
-            foreach (var reference in _invocationCatalog.GetExtensionReferences(
-                         PackageExtensionPoints.ProfileSelectableCapabilityProviders))
+            foreach (var reference in _catalog.GetServiceReferences(AgentRpcServices.SelectableCapabilityProviders))
             {
                 if (!reference.TryAcquire(out var lease))
                 {
                     continue;
                 }
 
-                if (lease.Contribution is not IAgentProfileSelectableCapabilityChangeNotifier notifier
+                if (lease.Service is not IAgentProfileSelectableCapabilityChangeNotifier notifier
                     || lease.RetirementToken.IsCancellationRequested)
                 {
                     lease.Dispose();
@@ -124,9 +113,10 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
         }
     }
 
-    private void OnExtensionCatalogChanged(object? sender, PackageExtensionCatalogChangedEventArgs e)
+    private void OnCatalogChanged(object? sender, AgentRpcCatalogChangedEventArgs e)
     {
-        RefreshProviderSubscriptions();
+        var selectableProvidersChanged = e.IncludesContract(AgentRpcContractIds.SelectableCapabilityProvider);
+        if (selectableProvidersChanged) RefreshProviderSubscriptions();
         Changed?.Invoke();
     }
 
@@ -150,10 +140,7 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
             }
 
             _disposed = true;
-            if (_extensionCatalogMonitor is not null)
-            {
-                _extensionCatalogMonitor.Changed -= OnExtensionCatalogChanged;
-            }
+            _catalog.Changed -= OnCatalogChanged;
 
             foreach (var subscription in _providerSubscriptions)
             {
@@ -166,10 +153,10 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
     }
 
     private sealed class ProviderSubscription(
-        IPackageExtensionLease<IAgentProfileSelectableCapabilityProvider> lease,
+        AgentRpcLease<IAgentProfileSelectableCapabilityProvider> lease,
         IAgentProfileSelectableCapabilityChangeNotifier notifier) : IDisposable
     {
-        private IPackageExtensionLease<IAgentProfileSelectableCapabilityProvider>? _lease = lease;
+        private AgentRpcLease<IAgentProfileSelectableCapabilityProvider>? _lease = lease;
 
         internal IAgentProfileSelectableCapabilityChangeNotifier Notifier { get; } = notifier;
 

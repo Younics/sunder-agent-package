@@ -6,7 +6,7 @@ namespace Sunder.Package.Agent.Contracts.Contracts;
 /// Defines a Runtime-side backend that executes shell and filesystem operations for a selected workspace binding.
 /// </summary>
 /// <remarks>
-/// The Runtime extension catalog owns target instances and may share one instance across workspaces and overlapping requests. Implementations
+/// The providing package owns target instances and may reuse one instance across workspaces and overlapping RPC requests. Implementations
 /// must be thread-safe or serialize access to shared backend state, must not require a UI thread, and own all processes, command streams,
 /// temporary files, mounts, and backend leases they create. Permission planning remains caller-owned, while the target owns final path
 /// canonicalization and containment checks immediately before each operation.

@@ -1,6 +1,7 @@
 using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Tools.Files;
 
@@ -292,7 +293,8 @@ internal static class FilePermissionPlanner
             {
                 return;
             }
-            if (target is IAgentResourceAuthorityExecutionTarget authorityTarget)
+            if (AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
+                && target is IAgentResourceAuthorityExecutionTarget authorityTarget)
             {
                 authorityTarget.ReleaseResourceAuthority(_capabilities.ToArray());
             }

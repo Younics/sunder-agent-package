@@ -7,9 +7,9 @@ namespace Sunder.Package.Agent.Contracts.Contracts;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Role and direction: this is a Runtime-role extension contract. Zero or more packages contribute
-/// consumer declarations through <see cref="PackageExtensionPoints.ProfileCapabilityConsumers"/>, and
-/// the Agent Runtime consumes them to decide which profile capability selectors are relevant.
+/// Role and direction: this is a Runtime-role RPC adapter contract. Zero or more packages provide
+/// the <c>sunder.agent.profile.capability.consumer</c> contract, and the Agent Runtime consumes their
+/// declarations to decide which profile capability selectors are relevant.
 /// </para>
 /// <para>
 /// Identity, cardinality, and ordering: <see cref="ConsumerId"/> identifies the contributor, while each
@@ -28,7 +28,7 @@ namespace Sunder.Package.Agent.Contracts.Contracts;
 /// metadata and avoid I/O.
 /// </para>
 /// <para>
-/// Trust, provenance, and security: package ownership is available from the extension catalog, while
+/// Trust, provenance, and security: package ownership is supplied by the RPC catalog, while
 /// <see cref="ConsumerId"/> and descriptor strings are self-declared metadata. A declaration neither
 /// grants access to a provider nor authorizes use of credentials or profile data. Display text must not
 /// contain secrets, and consumers must use the selected capability only through its governing contracts.

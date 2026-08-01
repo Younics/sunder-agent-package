@@ -4,7 +4,7 @@ Agent tools are Runtime contributions. Choose `IAgentTool` for a fixed tool and 
 
 ## Static Tools
 
-Register each fixed `IAgentTool` through `PackageExtensionPoints.Tools`. The base Agent wraps all fixed tools in the `installed-packages` source.
+Wrap fixed `IAgentTool` instances in `AgentStaticToolSourceAdapter`, then publish `AgentToolSourceRpc.CreateHandler(source)` under `sunder.agent.tool.source`.
 
 An implementation provides:
 
@@ -18,7 +18,7 @@ The [minimal sample](../samples/Sunder.Agent.Extension.Minimal/CurrentUtcTimeToo
 
 ## Dynamic Tool Sources
 
-Register an `IAgentToolSource` through `PackageExtensionPoints.ToolSources` when the catalog can change or needs `AgentToolSourceContext`:
+Implement `IAgentToolSource` when the catalog can change or needs `AgentToolSourceContext`, then publish it through the `sunder.agent.tool.source` RPC contract:
 
 ```csharp
 public interface IAgentToolSource
@@ -107,7 +107,7 @@ public IReadOnlyList<AgentPermissionActionDescriptor> ListActions() =>
 ];
 ```
 
-Register that object separately through `PackageExtensionPoints.PermissionSurfaces`; merely implementing the interface does not publish it. Action and boundary ids become persisted user preference keys, so changing them resets effective policy.
+Publish that object separately with `AgentPermissionSurfaceRpc.CreateHandler(surface)` under `sunder.agent.permission.surface`; merely implementing the interface does not expose it. Action and boundary ids become persisted user preference keys, so changing them resets effective policy.
 
 Build the corresponding request from parsed, canonicalized arguments:
 
@@ -143,7 +143,7 @@ Transient authority is separate. First-party Local planning issues random `local
 
 Shell permission includes a bounded command summary and the selected binding. Structured process invocation is safer than caller-authored shell quoting but still requires execution permission. Shell commands are not parsed into trustworthy file paths and are outside Local and Docker no-follow structured-files guarantees, so scoped `AGENTS.md` mutation enforcement applies only to structured Files tools. Shell completion refreshes workspace roots and known claims; it does not claim arbitrary command paths.
 
-The explicit legacy `FilesToolSource(IPackageExtensionCatalog)` constructor remains for CLR compatibility but reports scoped enforcement disabled. First-party package composition requires the two-argument constructor with `IPackageContext`; first-party Local/Docker use also requires `IAgentScopedInstructionDiscoveryTarget` and `IAgentExecutionScopeProvider`. Files `grep`/`glob` prefer `IAgentStructuredFileSearchExecutionTarget`; the additive path-bound `IAgentFileSearchExecutionTarget` remains only for external compatibility. Neither path falls back to broad shell authorization.
+First-party package composition constructs `FilesToolSource` with `IPackageContext` and resolves targets through the Agent RPC catalog. Local/Docker use also requires `IAgentScopedInstructionDiscoveryTarget` and `IAgentExecutionScopeProvider`. Files `grep`/`glob` prefer `IAgentStructuredFileSearchExecutionTarget`; the path-bound `IAgentFileSearchExecutionTarget` remains a narrower compatibility facet. Neither path falls back to broad shell authorization.
 
 ## Discovery And Presentation
 

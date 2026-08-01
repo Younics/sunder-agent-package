@@ -4,6 +4,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
 using Sunder.Package.Agent.Provider.Shared;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
@@ -36,9 +37,9 @@ public sealed class PackageModule : ISunderRuntimePackageModule
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterSettingsSchema(OpenAiProviderConfiguration.Schema);
-        registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<OpenAiAgentProvider>());
-        registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<OpenAiEmbeddingProvider>());
-        registry.RegisterExtension(PackageExtensionPoints.SessionDataCleaners, services.GetRequiredService<CodexResponseContinuationStore>());
+        registry.RegisterRpcProvider("openai.chat", AgentChatProviderRpc.CreateHandler(services.GetRequiredService<OpenAiAgentProvider>()));
+        registry.RegisterRpcProvider("openai.embedding", AgentEmbeddingProviderRpc.CreateHandler(services.GetRequiredService<OpenAiEmbeddingProvider>()));
+        registry.RegisterRpcProvider("openai.continuation.cleaner", AgentSessionCleanerRpc.CreateHandler(services.GetRequiredService<CodexResponseContinuationStore>()));
         registry.RegisterRuntimeOperation(
             OpenAiRuntimeOperations.Auth,
             services.GetRequiredService<OpenAiAuthOperationHandler>());

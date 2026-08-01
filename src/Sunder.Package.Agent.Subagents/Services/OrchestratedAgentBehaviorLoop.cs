@@ -1,17 +1,10 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
 public sealed class OrchestratedAgentBehaviorLoop : IAgentBehaviorLoop
 {
-    public OrchestratedAgentBehaviorLoop(IPackageExtensionCatalog? extensionCatalog = null)
-    {
-        // Keep the established constructor shape without rediscovering/decorating behavior loops.
-        _ = extensionCatalog;
-    }
-
     public AgentBehaviorLoopDescriptor Descriptor { get; } = new(
         SubagentConstants.OrchestratedBehaviorLoopId,
         "Orchestrated",

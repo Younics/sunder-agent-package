@@ -40,27 +40,15 @@ Create a service collection, call `ConfigureRuntimeServices`, build the provider
 
 Assert:
 
-- The intended extension-point id and concrete service instance are registered exactly once.
+- The intended provider id and RPC handler are registered exactly once.
 - The instance is the DI-owned singleton, not a second allocation.
 - Settings schema, operations, streams, callbacks, and background services are registered in the correct role.
 - Runtime authority is absent from App services/registrations.
 - App presentation and typed Runtime clients are absent from headless Runtime composition.
 
-If a test fake implements `IPackageExtensionCatalog`, implement both methods:
+Exercise the handler through an `ISunderRpcClient` test broker rather than calling another package's implementation object. The broker should validate requests and outputs against the bundled descriptor, stamp caller/provider identity, and model endpoint retirement.
 
-```csharp
-public IReadOnlyList<T> GetExtensions<T>(PackageExtensionPoint<T> point) => ...;
-
-public IReadOnlyList<PackageExtensionContribution<T>> GetExtensionContributions<T>(
-    PackageExtensionPoint<T> point)
-    => GetExtensions(point)
-        .Select(value => new PackageExtensionContribution<T>("test.package", value))
-        .ToArray();
-```
-
-Use canonical lowercase test package ids because owner validation is part of the contract.
-
-Tests that exercise an Agent consumer across an asynchronous callback must also provide `IPackageExtensionInvocationCatalog`. Model references as exact activation epochs rather than wrappers that re-query by package or semantic id. A retirement test should remove the old epoch from discovery, reject new leases from its retained references, cancel every active lease token, wait for those leases to drain, and permit a same-id replacement independently. Lease properties must throw after disposal.
+Use canonical lowercase test package ids because owner validation is part of the contract. Model references as exact endpoint activations rather than wrappers that re-query by package or semantic id. A retirement test should remove the old endpoint from discovery, reject new calls through retained references, cancel active calls, wait for those calls to drain, and permit a same-id replacement independently.
 
 ## Capability Test Matrix
 
@@ -92,7 +80,7 @@ dotnet publish path/to/Extension.csproj -c Release --no-restore
 Inspect generated `sunder-dev/sunder-package.json` and the `.sunderpkg`:
 
 - Correct package id/name/version.
-- Runtime dependency `sunder.package.agent` with `>=1.1.0 <1.2.0`.
+- Runtime dependency `sunder.package.agent` with `>=2.0.0 <3.0.0`.
 - No source-authored manifest overriding generated metadata.
 - Expected entry assembly and assets.
 - Required inferred capabilities and no accidental capabilities from wrong-role code.

@@ -4,25 +4,25 @@ This guide is for extension authors. Maintainers releasing the complete first-pa
 
 ## Compatibility Contract
 
-Agent 1.1 is a clean break from the unused 1.0 public line. There are no 1.0 compatibility shims.
+Agent 2.x defines one schema-first RPC compatibility surface. Cross-package behavior is limited to the 18 bundled descriptors, generated bindings, and manifest-declared providers.
 
 Use these coordinated ranges:
 
 ```xml
 <PackageReference Include="Sunder.Sdk" Version="[1.1.0,1.2.0)" />
 <PackageReference Include="Sunder.Package.Build" Version="[1.1.0,1.2.0)" PrivateAssets="all" />
-<PackageReference Include="Sunder.Package.Agent.Contracts" Version="[1.1.0,1.2.0)" />
+<PackageReference Include="Sunder.Package.Agent.Protocol" Version="[2.0.0,3.0.0)" />
 ```
 
 ```csharp
 [assembly: SunderPackageDependency(
     PackageId = "sunder.package.agent",
-    VersionRange = ">=1.1.0 <1.2.0")]
+    VersionRange = ">=2.0.0 <3.0.0")]
 ```
 
-NuGet and Sunder Runtime ranges use different syntax. Both accept compatible 1.1 patches and reject 1.2. The stable lower bound excludes `1.1.0-*` prereleases.
+NuGet and Sunder Runtime ranges use different syntax. The Protocol and Runtime ranges accept compatible 2.x releases and reject 3.0. Sunder SDK packages keep their independent Core version range.
 
-Do not use an unbounded `>=1.1.0` runtime dependency. A future minor may intentionally change the contracts or behavioral invariants even when binary loading appears possible.
+Do not use an unbounded `>=2.0.0` runtime dependency. A future major may intentionally change descriptors or behavioral invariants even when binary loading appears possible.
 
 ## Versioning An Extension
 
@@ -31,22 +31,22 @@ An independent extension can use its own package version, but every released bui
 - Patch release: fixes behavior without changing extension package contracts or Agent range.
 - Minor release: adds backward-compatible extension features while retaining the same Agent range.
 - Major release: breaks the extension's own persisted/public behavior.
-- Agent-minor migration: compile against the new contracts and change both NuGet and runtime upper/lower bounds in a deliberate release.
+- Agent-major update: compile against the new Protocol package and change both NuGet and runtime upper/lower bounds in a deliberate release.
 
 Do not publish different bytes for an existing package id/version. Sunder package versions are immutable artifacts.
 
-## Contracts Surface
+## Protocol Surface
 
 For this repository, `src/Sunder.Package.Agent.Contracts/PublicAPI.Shipped.txt` is the immutable stable API ledger. `PublicAPI.Unshipped.txt` tracks reviewed changes before the next stable boundary. Stable family releases require no unshipped entries.
 
 Extension authors should:
 
-- Compile against public contract types only.
+- Compile against public Protocol and SDK types only.
 - Avoid reflection into concrete first-party assemblies.
 - Treat optional interfaces as capability checks.
 - Persist stable ids rather than CLR type/assembly names.
-- Handle an optional contribution disappearing on package deactivation.
-- Rebuild and retest for each supported Agent minor.
+- Handle an endpoint becoming stale on package deactivation.
+- Rebuild and retest for each supported Agent major.
 
 Binary compatibility is not the only requirement. Descriptor ids, permission boundaries, trust channels, role ownership, ordering, persistence, and failure semantics are behavioral contracts documented in this guide set.
 
@@ -63,7 +63,7 @@ Binary compatibility is not the only requirement. Descriptor ids, permission bou
 9. Exercise migration from the previous extension version with a backup of test data.
 10. Publish immutable bytes, then move a Registry dist tag only after verification.
 
-The first-party family releases all 15 runtime packages and `Sunder.Package.Agent.Contracts` from one Agent commit against one Core `main` commit resolved at workflow start. Third-party extensions should not assume a mixed family patch set is valid.
+The first-party family releases all 15 runtime packages and `Sunder.Package.Agent.Protocol` from one Agent commit against one Core `main` commit resolved at workflow start. Third-party extensions should not assume a mixed family patch set is valid.
 
 ## Troubleshooting
 
@@ -71,10 +71,10 @@ The first-party family releases all 15 runtime packages and `Sunder.Package.Agen
 
 | Symptom | Check |
 | --- | --- |
-| Contracts types missing | Directly reference `Sunder.Package.Agent.Contracts` with `[1.1.0,1.2.0)`. Use namespaces `.Contracts`, `.Models`, and root `PackageExtensionPoints`. |
-| SDK/module types missing | Add a direct `Sunder.Sdk` reference; do not rely on the contracts package's transitive dependency. |
+| Protocol types missing | Directly reference `Sunder.Package.Agent.Protocol` with `[2.0.0,3.0.0)`. Generated bindings are under `Sunder.Package.Agent.Protocol.Generated.*`. |
+| SDK/module types missing | Add a direct `Sunder.Sdk` reference; do not rely on the Protocol package's transitive dependency. |
 | Manifest/build targets missing | Add `Sunder.Package.Build` with `PrivateAssets="all"`. |
-| Mixed package downgrade/conflict | Inspect transitive packages and align all coordinated Sunder references to `[1.1.0,1.2.0)`. |
+| Mixed package downgrade/conflict | Inspect transitive packages and align the Agent Protocol/runtime family to 2.x while preserving the supported Core SDK range. |
 | Works only in private workspace | Force standalone/NuGet mode and restore in a clean checkout; remove accidental project/implementation references. |
 
 Useful commands:
@@ -98,16 +98,17 @@ Check the generated `sunder-package.json`, not a source manifest:
 
 Runtime validates the package graph before assembly load. A dependency-range or SDK-baseline error cannot be fixed inside `PackageModule`.
 
-### Contribution Is Missing
+### RPC Provider Is Missing
 
 - Confirm `ConfigureRuntimeServices` registered the service.
-- Confirm `RegisterRuntimeContributions` registered that same DI instance on the intended `PackageExtensionPoints` property.
+- Confirm the project declares the provider id and contract with `SunderRpcProvider`.
+- Confirm `RegisterRuntimeContributions` publishes that same provider id with `RegisterRpcProvider`.
 - Confirm the code is in `ISunderRuntimePackageModule`, not only `ISunderAppPackageModule`.
 - For App presentation, confirm the inverse: the App contribution is registered in the App role and calls Runtime through typed operations.
 - Confirm stable semantic ids do not collide with another active contribution.
-- Use `GetExtensionContributions` in a diagnostic fixture to verify owner and active instance.
+- Use RPC discovery in a diagnostic fixture to verify the contract id, owner package, provider id, and active endpoint.
 
-Runtime and App catalogs are intentionally separate.
+Runtime and App provider visibility is intentionally role-scoped.
 
 ### Provider Or Model Is Unavailable
 

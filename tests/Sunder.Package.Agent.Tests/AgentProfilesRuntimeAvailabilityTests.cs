@@ -530,12 +530,11 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
             var workspaces = new AgentWorkspaceService(store, extensions, sessions);
             var targets = new AgentExecutionTargetService(extensions);
             var tools = new AgentToolService(
-                new InstalledPackageToolSource(extensions),
                 sessions,
                 workspaces,
                 targets,
                 extensions);
-            var profiles = new AgentProfileService(store, tools, extensions);
+            var profiles = new AgentProfileService(store, tools, extensions, extensions.BehaviorLoops);
             var changes = new AgentRuntimeChangeHub(profiles, workspaces, sessions);
             var client = new ProfileHandlerRuntimeClient(
                 new AgentDashboardHandler(profiles, workspaces, changes),

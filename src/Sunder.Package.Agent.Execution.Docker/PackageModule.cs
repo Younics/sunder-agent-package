@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Contracts;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 using Sunder.Sdk.Stacks;
@@ -33,13 +34,11 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterBackgroundService<DockerPackageStorageMigration>();
         registry.RegisterSettingsSchema(DockerExecutionConfiguration.Schema);
         var stackContributor = services.GetRequiredService<DockerImageStackContributor>();
-        registry.RegisterExtension(SunderStackExtensionPoints.StackExporters, stackContributor);
-        registry.RegisterExtension(SunderStackExtensionPoints.StackImporters, stackContributor);
-        registry.RegisterExtension(SunderStackExtensionPoints.StackImportAppliedHandlers, stackContributor);
+        registry.RegisterStackContributor("docker.stack", stackContributor, services);
         var target = services.GetRequiredService<DockerExecutionTarget>();
-        registry.RegisterExtension(PackageExtensionPoints.ExecutionTargets, target);
-        registry.RegisterExtension(PackageExtensionPoints.WorkspacePathMigrationContributors, services.GetRequiredService<DockerExecutionWorkspaceConfigService>());
-        registry.RegisterExtension(PackageExtensionPoints.WorkspaceEditorContributors, services.GetRequiredService<DockerExecutionWorkspaceEditorContributor>());
+        registry.RegisterRpcProvider("docker.execution.target", AgentExecutionTargetRpc.CreateHandler(target));
+        registry.RegisterRpcProvider("docker.workspace.path.migrator", AgentWorkspacePathMigratorRpc.CreateHandler(services.GetRequiredService<DockerExecutionWorkspaceConfigService>()));
+        registry.RegisterRpcProvider("docker.workspace.editor", AgentWorkspaceEditorRpc.CreateHandler(services.GetRequiredService<DockerExecutionWorkspaceEditorContributor>()));
         registry.RegisterRuntimeOperation(DockerExecutionRuntimeOperations.Execute, services.GetRequiredService<DockerExecutionRuntimeOperationHandler>());
     }
 
@@ -60,8 +59,5 @@ public sealed class AppPackageModule : ISunderAppPackageModule
     public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterSettingsView<DockerExecutionSettingsView>();
-        registry.RegisterExtension(
-            PackageExtensionPoints.WorkspaceEditorContributors,
-            services.GetRequiredService<DockerExecutionWorkspaceEditorPresentationContributor>());
     }
 }

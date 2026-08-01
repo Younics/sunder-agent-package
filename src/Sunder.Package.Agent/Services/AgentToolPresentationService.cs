@@ -1,8 +1,7 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.PackageViews;
-using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -11,26 +10,16 @@ public sealed class AgentToolPresentationService
     private readonly TranscriptToolPresentationService _shared;
 
     public AgentToolPresentationService(
-        InstalledPackageToolSource? installedPackageToolSource = null,
-        IPackageExtensionCatalog? extensionCatalog = null)
+        AgentRpcCatalog? rpcCatalog = null)
     {
         _shared = new TranscriptToolPresentationService(() =>
         {
-            var resolvers = new List<IAgentToolPresentationResolver>();
-            if (installedPackageToolSource is not null)
-            {
-                resolvers.Add(installedPackageToolSource);
-            }
-            if (extensionCatalog is not null)
-            {
-                var invocationCatalog = AgentExtensionInvocation.Require(extensionCatalog);
-                resolvers.AddRange(invocationCatalog
-                    .GetExtensionReferences(PackageExtensionPoints.ToolSources)
+            return rpcCatalog is null
+                ? []
+                : rpcCatalog.GetServiceReferences(AgentRpcServices.ToolSources)
                     .Select(static reference =>
-                        (IAgentToolPresentationResolver)new PackageToolSourcePresentationResolver(reference)));
-            }
-
-            return resolvers;
+                        (IAgentToolPresentationResolver)new RpcToolSourcePresentationResolver(reference))
+                    .ToArray();
         });
     }
 

@@ -6,6 +6,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
@@ -54,28 +55,26 @@ public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageVie
     public AgentWorkspacesView(
         IAgentWorkspaceGateway workspaceService,
         IAgentExecutionGateway executionGateway,
-        IPackageExtensionCatalog extensionCatalog,
+        AgentRpcCatalog rpcCatalog,
         IPackageSettingsNavigationService? settingsNavigationService = null,
-        AgentWorkspacesViewContext? context = null,
-        IPackageExtensionInvocationCatalog? extensionInvocationCatalog = null)
+        AgentWorkspacesViewContext? context = null)
         : this(context ?? new AgentWorkspacesViewContext())
     {
         _viewModel = new AgentWorkspacesViewModel(
             workspaceService,
             executionGateway,
-            extensionCatalog,
-            settingsNavigationService,
-            extensionInvocationCatalog);
+            rpcCatalog,
+            settingsNavigationService);
         DataContext = _viewModel;
     }
 
     public AgentWorkspacesView(
         AgentWorkspaceService workspaceService,
         AgentExecutionTargetService executionTargetService,
-        IPackageExtensionCatalog extensionCatalog,
+        AgentRpcCatalog rpcCatalog,
         AgentExecutionTargetWarmupService warmupService,
         IPackageSettingsNavigationService? settingsNavigationService = null)
-        : this(workspaceService, warmupService, extensionCatalog, settingsNavigationService)
+        : this(workspaceService, warmupService, rpcCatalog, settingsNavigationService)
     {
     }
 

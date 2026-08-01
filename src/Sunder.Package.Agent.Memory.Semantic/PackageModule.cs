@@ -1,8 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Memory.Semantic.PackageViews;
 using Sunder.Package.Agent.Memory.Semantic.Services;
 using Sunder.Package.Agent.Memory.Semantic.Runtime;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
@@ -15,6 +17,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
     {
         services.AddSingleton(new MemoryLocalStore(context));
         services.AddSingleton(new MemorySemanticSettingsService(context));
+        services.TryAddSingleton<AgentRpcCatalog>();
         services.AddSingleton<SemanticMemoryMetricsService>();
         services.AddSingleton<SemanticModelRuntimeResolver>();
         services.AddSingleton<SemanticMemoryRetrievalBackend>();
@@ -31,10 +34,11 @@ public sealed class PackageModule : ISunderRuntimePackageModule
     {
         registry.RegisterSettingsSchema(MemorySemanticPackageConfiguration.Schema);
         registry.RegisterBackgroundService<SemanticMemoryIndexingBackgroundService>();
-        registry.RegisterExtension(PackageExtensionPoints.PromptContextContributors, services.GetRequiredService<MemorySemanticFeature>());
-        registry.RegisterExtension(PackageExtensionPoints.DurableLifecycleObservers, services.GetRequiredService<MemorySemanticFeature>());
-        registry.RegisterExtension(PackageExtensionPoints.ProfileCapabilityConsumers, services.GetRequiredService<MemorySemanticFeature>());
-        registry.RegisterExtension(PackageExtensionPoints.SessionDataCleaners, services.GetRequiredService<MemorySemanticFeature>());
+        var feature = services.GetRequiredService<MemorySemanticFeature>();
+        registry.RegisterRpcProvider("semantic.memory.prompt.context", AgentPromptContextContributorRpc.CreateHandler(feature));
+        registry.RegisterRpcProvider("semantic.memory.lifecycle", AgentDurableLifecycleObserverRpc.CreateHandler(feature));
+        registry.RegisterRpcProvider("semantic.memory.profile.capabilities", AgentProfileCapabilityConsumerRpc.CreateHandler(feature));
+        registry.RegisterRpcProvider("semantic.memory.session.cleaner", AgentSessionCleanerRpc.CreateHandler(feature));
         registry.RegisterRuntimeOperation(MemoryRuntimeOperations.Query, services.GetRequiredService<MemoryRuntimeHandler>());
         registry.RegisterRuntimeOperation(MemoryRuntimeOperations.Command, services.GetRequiredService<MemoryRuntimeHandler>());
         registry.RegisterRuntimeStream(MemoryRuntimeOperations.Changes, services.GetRequiredService<MemoryRuntimeChangeStream>());

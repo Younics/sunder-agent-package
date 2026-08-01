@@ -75,12 +75,11 @@ public sealed class EditorDirtyStateTests
         var sessionService = new AgentSessionService(store, extensionCatalog);
         var workspaceService = new AgentWorkspaceService(store, extensionCatalog, sessionService);
         var toolService = new AgentToolService(
-            new InstalledPackageToolSource(extensionCatalog),
             sessionService,
             workspaceService,
             new AgentExecutionTargetService(extensionCatalog),
             extensionCatalog);
-        return new AgentProfileService(store, toolService, extensionCatalog);
+        return new AgentProfileService(store, toolService, extensionCatalog, extensionCatalog.BehaviorLoops);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

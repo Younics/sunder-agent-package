@@ -1,0 +1,468 @@
+{
+  "descriptorVersion": 1,
+  "contractId": "sunder.agent.chat.provider",
+  "version": "1.0.0",
+  "services": [
+    {
+      "serviceId": "chat-provider",
+      "methods": [
+        {
+          "methodId": "describe",
+          "kind": "unary",
+          "requestSchema": { "$ref": "#/$defs/AgentRpcEmpty" },
+          "responseSchema": { "$ref": "#/$defs/AgentProviderDescriptor" }
+        },
+        {
+          "methodId": "list-models",
+          "kind": "unary",
+          "requestSchema": { "$ref": "#/$defs/AgentRpcEmpty" },
+          "responseSchema": { "$ref": "#/$defs/AgentModelDescriptorList" }
+        },
+        {
+          "methodId": "get-readiness",
+          "kind": "unary",
+          "requestSchema": { "$ref": "#/$defs/AgentRpcEmpty" },
+          "responseSchema": { "$ref": "#/$defs/AgentProviderReadiness" }
+        },
+        {
+          "methodId": "get-capabilities",
+          "kind": "unary",
+          "requestSchema": { "$ref": "#/$defs/ChatCapabilitiesRequest" },
+          "responseSchema": { "$ref": "#/$defs/AgentProviderRunCapabilities" }
+        },
+        {
+          "methodId": "resolve-utility-model",
+          "kind": "unary",
+          "requestSchema": { "$ref": "#/$defs/AgentRpcEmpty" },
+          "responseSchema": { "$ref": "#/$defs/AgentRpcOptionalString" }
+        },
+        {
+          "methodId": "stage-content",
+          "kind": "unary",
+          "requestSchema": { "$ref": "#/$defs/AgentChatContentChunk" },
+          "responseSchema": { "$ref": "#/$defs/AgentRpcEmpty" }
+        },
+        {
+          "methodId": "discard-content",
+          "kind": "unary",
+          "requestSchema": { "$ref": "#/$defs/AgentChatContentDiscard" },
+          "responseSchema": { "$ref": "#/$defs/AgentRpcEmpty" }
+        },
+        {
+          "methodId": "stream-chat",
+          "kind": "server-stream",
+          "requestSchema": { "$ref": "#/$defs/AgentChatStreamRequest" },
+          "eventSchema": { "$ref": "#/$defs/AgentChatStreamEvent" }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "AgentRpcEmpty": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "Text": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "ShortText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 2048
+    },
+    "Timestamp": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "Int32": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "NonNegativeInt32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "SafeInteger": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "OptionNumber": {
+      "type": "number",
+      "minimum": -1000000,
+      "maximum": 1000000
+    },
+    "AgentAuthMode": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1,
+      "enum": [0, 1]
+    },
+    "AgentAuthModeList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/AgentAuthMode" },
+      "minItems": 0,
+      "maxItems": 16
+    },
+    "AgentProviderDescriptor": {
+      "type": "object",
+      "properties": {
+        "providerId": { "$ref": "#/$defs/ShortText" },
+        "displayName": { "$ref": "#/$defs/ShortText" },
+        "supportedAuthModes": { "$ref": "#/$defs/AgentAuthModeList" },
+        "supportsStreaming": { "type": "boolean" },
+        "supportsInterruptibleRuns": { "type": "boolean" },
+        "packageId": { "$ref": "#/$defs/ShortText" }
+      },
+      "required": [
+        "providerId",
+        "displayName",
+        "supportedAuthModes",
+        "supportsStreaming",
+        "supportsInterruptibleRuns"
+      ],
+      "additionalProperties": false
+    },
+    "AgentReasoningEffort": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "enum": [0, 1, 2, 3, 4]
+    },
+    "AgentModelVariantDescriptor": {
+      "type": "object",
+      "properties": {
+        "variantId": { "$ref": "#/$defs/ShortText" },
+        "displayName": { "$ref": "#/$defs/ShortText" },
+        "description": { "$ref": "#/$defs/Text" },
+        "reasoningEffort": { "$ref": "#/$defs/AgentReasoningEffort" }
+      },
+      "required": ["variantId", "displayName"],
+      "additionalProperties": false
+    },
+    "AgentModelVariantDescriptorList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/AgentModelVariantDescriptor" },
+      "minItems": 0,
+      "maxItems": 256
+    },
+    "AgentModelSpeedOptionDescriptor": {
+      "type": "object",
+      "properties": {
+        "speedOptionId": { "$ref": "#/$defs/ShortText" },
+        "displayName": { "$ref": "#/$defs/ShortText" },
+        "description": { "$ref": "#/$defs/Text" }
+      },
+      "required": ["speedOptionId", "displayName"],
+      "additionalProperties": false
+    },
+    "AgentModelSpeedOptionDescriptorList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/AgentModelSpeedOptionDescriptor" },
+      "minItems": 0,
+      "maxItems": 256
+    },
+    "AgentModelModeOptionDescriptor": {
+      "type": "object",
+      "properties": {
+        "modeOptionId": { "$ref": "#/$defs/ShortText" },
+        "displayName": { "$ref": "#/$defs/ShortText" },
+        "description": { "$ref": "#/$defs/Text" },
+        "disablesReasoning": { "type": "boolean" }
+      },
+      "required": ["modeOptionId", "displayName", "disablesReasoning"],
+      "additionalProperties": false
+    },
+    "AgentModelModeOptionDescriptorList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/AgentModelModeOptionDescriptor" },
+      "minItems": 0,
+      "maxItems": 256
+    },
+    "AgentModelDescriptor": {
+      "type": "object",
+      "properties": {
+        "modelId": { "$ref": "#/$defs/ShortText" },
+        "displayName": { "$ref": "#/$defs/ShortText" },
+        "contextWindow": { "$ref": "#/$defs/NonNegativeInt32" },
+        "maxOutputTokens": { "$ref": "#/$defs/NonNegativeInt32" },
+        "isRecommended": { "type": "boolean" },
+        "variants": { "$ref": "#/$defs/AgentModelVariantDescriptorList" },
+        "speedOptions": { "$ref": "#/$defs/AgentModelSpeedOptionDescriptorList" },
+        "modeOptions": { "$ref": "#/$defs/AgentModelModeOptionDescriptorList" },
+        "releaseDate": { "$ref": "#/$defs/Timestamp" }
+      },
+      "required": ["modelId", "displayName", "contextWindow", "maxOutputTokens", "isRecommended"],
+      "additionalProperties": false
+    },
+    "AgentModelDescriptorList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/AgentModelDescriptor" },
+      "minItems": 0,
+      "maxItems": 10000
+    },
+    "AgentProviderReadinessStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [0, 1, 2]
+    },
+    "AgentProviderReadiness": {
+      "type": "object",
+      "properties": {
+        "providerId": { "$ref": "#/$defs/ShortText" },
+        "status": { "$ref": "#/$defs/AgentProviderReadinessStatus" },
+        "message": { "$ref": "#/$defs/Text" }
+      },
+      "required": ["providerId", "status", "message"],
+      "additionalProperties": false
+    },
+    "ChatCapabilitiesRequest": {
+      "type": "object",
+      "properties": {
+        "modelId": { "$ref": "#/$defs/ShortText" }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "AgentProviderRunCapabilities": {
+      "type": "object",
+      "properties": {
+        "supportsNativeToolCalling": { "type": "boolean" },
+        "supportsStreamingToolCalls": { "type": "boolean" },
+        "supportsMultipleToolCalls": { "type": "boolean" },
+        "summary": { "$ref": "#/$defs/Text" },
+        "supportsImageInput": { "type": "boolean" },
+        "supportsPdfInput": { "type": "boolean" },
+        "supportsAudioInput": { "type": "boolean" },
+        "supportsVideoInput": { "type": "boolean" },
+        "contextWindowTokens": { "$ref": "#/$defs/NonNegativeInt32" },
+        "maxOutputTokens": { "$ref": "#/$defs/NonNegativeInt32" }
+      },
+      "required": [
+        "supportsNativeToolCalling",
+        "supportsStreamingToolCalls",
+        "supportsMultipleToolCalls",
+        "summary",
+        "supportsImageInput",
+        "supportsPdfInput",
+        "supportsAudioInput",
+        "supportsVideoInput"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRpcOptionalString": {
+      "type": "object",
+      "properties": {
+        "hasValue": { "type": "boolean" },
+        "value": { "$ref": "#/$defs/ShortText" }
+      },
+      "required": ["hasValue"],
+      "additionalProperties": false
+    },
+    "SunderRpcContentRepeatability": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1,
+      "enum": [0, 1]
+    },
+    "SunderRpcContentReference": {
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/ShortText" },
+        "length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 33554432
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "mediaType": { "$ref": "#/$defs/ShortText" },
+        "fileName": { "$ref": "#/$defs/ShortText" },
+        "expiresAtUtc": { "$ref": "#/$defs/Timestamp" },
+        "repeatability": { "$ref": "#/$defs/SunderRpcContentRepeatability" }
+      },
+      "required": ["id", "length", "sha256", "mediaType", "fileName", "expiresAtUtc", "repeatability"],
+      "additionalProperties": false
+    },
+    "AgentChatContentChunk": {
+      "type": "object",
+      "properties": {
+        "reference": { "$ref": "#/$defs/SunderRpcContentReference" },
+        "offset": { "$ref": "#/$defs/NonNegativeInt32" },
+        "data": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600000
+        },
+        "isFinal": { "type": "boolean" }
+      },
+      "required": ["reference", "offset", "data", "isFinal"],
+      "additionalProperties": false
+    },
+    "AgentChatContentDiscard": {
+      "type": "object",
+      "properties": {
+        "contentId": { "$ref": "#/$defs/ShortText" }
+      },
+      "required": ["contentId"],
+      "additionalProperties": false
+    },
+    "AgentChatMessage": {
+      "type": "object",
+      "properties": {
+        "role": { "$ref": "#/$defs/ShortText" },
+        "messageId": { "$ref": "#/$defs/ShortText" },
+        "authorName": { "$ref": "#/$defs/ShortText" },
+        "contents": { "$ref": "#/$defs/AgentChatContentList" }
+      },
+      "required": ["role", "contents"],
+      "additionalProperties": false
+    },
+    "AgentChatMessageList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/AgentChatMessage" },
+      "minItems": 0,
+      "maxItems": 10000
+    },
+    "AgentChatTool": {
+      "type": "object",
+      "properties": {
+        "name": { "$ref": "#/$defs/ShortText" },
+        "description": { "$ref": "#/$defs/Text" },
+        "jsonSchema": { "$ref": "#/$defs/Text" }
+      },
+      "required": ["name", "jsonSchema"],
+      "additionalProperties": false
+    },
+    "AgentChatToolList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/AgentChatTool" },
+      "minItems": 0,
+      "maxItems": 10000
+    },
+    "StringMap": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/Text" },
+      "propertyNames": {
+        "type": "string",
+        "minLength": 0,
+        "maxLength": 2048
+      },
+      "minProperties": 0,
+      "maxProperties": 10000
+    },
+    "AgentChatOptions": {
+      "type": "object",
+      "properties": {
+        "instructions": { "$ref": "#/$defs/Text" },
+        "conversationId": { "$ref": "#/$defs/ShortText" },
+        "modelId": { "$ref": "#/$defs/ShortText" },
+        "temperature": { "$ref": "#/$defs/OptionNumber" },
+        "maxOutputTokens": { "$ref": "#/$defs/NonNegativeInt32" },
+        "topP": { "$ref": "#/$defs/OptionNumber" },
+        "topK": { "$ref": "#/$defs/Int32" },
+        "frequencyPenalty": { "$ref": "#/$defs/OptionNumber" },
+        "presencePenalty": { "$ref": "#/$defs/OptionNumber" },
+        "seed": { "$ref": "#/$defs/SafeInteger" },
+        "allowMultipleToolCalls": { "type": "boolean" },
+        "reasoningEffort": { "$ref": "#/$defs/ShortText" },
+        "tools": { "$ref": "#/$defs/AgentChatToolList" },
+        "additionalProperties": { "$ref": "#/$defs/StringMap" },
+        "continuationHandle": { "$ref": "#/$defs/Text" }
+      },
+      "required": ["tools"],
+      "additionalProperties": false
+    },
+    "AgentChatStreamRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": { "$ref": "#/$defs/ShortText" },
+        "modelId": { "$ref": "#/$defs/ShortText" },
+        "messages": { "$ref": "#/$defs/AgentChatMessageList" },
+        "options": { "$ref": "#/$defs/AgentChatOptions" }
+      },
+      "required": ["providerId", "modelId", "messages", "options"],
+      "additionalProperties": false
+    },
+    "AgentChatUsage": {
+      "type": "object",
+      "properties": {
+        "inputTokens": { "$ref": "#/$defs/SafeInteger" },
+        "outputTokens": { "$ref": "#/$defs/SafeInteger" },
+        "totalTokens": { "$ref": "#/$defs/SafeInteger" },
+        "cachedInputTokens": { "$ref": "#/$defs/SafeInteger" },
+        "reasoningTokens": { "$ref": "#/$defs/SafeInteger" }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "AgentChatContent": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 17,
+          "enum": ["reasoning", "text", "tool-call", "tool-result", "usage", "content-reference", "error"]
+        },
+        "text": { "$ref": "#/$defs/Text" },
+        "protectedData": { "$ref": "#/$defs/Text" },
+        "callId": { "$ref": "#/$defs/ShortText" },
+        "name": { "$ref": "#/$defs/ShortText" },
+        "json": { "$ref": "#/$defs/Text" },
+        "informationalOnly": { "type": "boolean" },
+        "mediaType": { "$ref": "#/$defs/ShortText" },
+        "contentUri": { "$ref": "#/$defs/Text" },
+        "contentReference": { "$ref": "#/$defs/SunderRpcContentReference" },
+        "usage": { "$ref": "#/$defs/AgentChatUsage" },
+        "errorCode": { "$ref": "#/$defs/ShortText" },
+        "errorMessage": { "$ref": "#/$defs/Text" }
+      },
+      "required": ["kind", "informationalOnly"],
+      "additionalProperties": false
+    },
+    "AgentChatContentList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/AgentChatContent" },
+      "minItems": 0,
+      "maxItems": 10000
+    },
+    "AgentChatStreamEvent": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 6,
+          "enum": ["update", "error"]
+        },
+        "role": { "$ref": "#/$defs/ShortText" },
+        "responseId": { "$ref": "#/$defs/ShortText" },
+        "messageId": { "$ref": "#/$defs/ShortText" },
+        "conversationId": { "$ref": "#/$defs/ShortText" },
+        "modelId": { "$ref": "#/$defs/ShortText" },
+        "finishReason": { "$ref": "#/$defs/ShortText" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" },
+        "contentItems": { "$ref": "#/$defs/AgentChatContentList" },
+        "continuationHandle": { "$ref": "#/$defs/Text" },
+        "errorCode": { "$ref": "#/$defs/ShortText" },
+        "errorMessage": { "$ref": "#/$defs/Text" },
+        "errorContent": { "$ref": "#/$defs/Text" },
+        "errorFailureKind": { "$ref": "#/$defs/ShortText" }
+      },
+      "required": ["kind"],
+      "additionalProperties": false
+    }
+  }
+}

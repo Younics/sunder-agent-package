@@ -1,6 +1,6 @@
 using System.Text.Json;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
@@ -10,7 +10,7 @@ namespace Sunder.Package.Agent.Subagents.Services;
 internal sealed class SubagentStackContributor(
     SubagentService subagentService,
     IPackageContext packageContext,
-    IPackageExtensionCatalog extensionCatalog) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
+    AgentRpcCatalog rpcCatalog) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
     private const string SchemaId = "sunder.package.agent.subagents/subagent";
     private const string DetailDescription = "description";
@@ -18,11 +18,6 @@ internal sealed class SubagentStackContributor(
     private const string DetailProvider = "provider";
     private const string DetailModel = "model";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
-        extensionCatalog as IPackageExtensionInvocationCatalog
-        ?? throw new InvalidOperationException(
-            "The host extension catalog does not support activation-scoped invocation leases.");
-
     public string ContributorId => "sunder.package.agent.subagents.subagents";
 
     public string DisplayName => "Subagents";
@@ -184,7 +179,7 @@ internal sealed class SubagentStackContributor(
         if (providerIds.Count > 0)
         {
             foreach (var contribution in SnapshotOwnedIdentities(
-                         PackageExtensionPoints.ChatProviders,
+                         AgentRpcServices.ChatProviders,
                          static provider => provider.Descriptor.ProviderId))
             {
                 if (providerIds.Contains(contribution.Identity))
@@ -203,7 +198,7 @@ internal sealed class SubagentStackContributor(
         if (sourceIds.Count > 0)
         {
             foreach (var contribution in SnapshotOwnedIdentities(
-                         PackageExtensionPoints.ProfileSelectableCapabilityProviders,
+                         AgentRpcServices.SelectableCapabilityProviders,
                          static provider => provider.ProviderId))
             {
                 if (sourceIds.Contains(contribution.Identity))
@@ -225,11 +220,12 @@ internal sealed class SubagentStackContributor(
     }
 
     private IReadOnlyList<OwnedIdentity> SnapshotOwnedIdentities<TContract>(
-        PackageExtensionPoint<TContract> extensionPoint,
+        AgentRpcService<TContract> service,
         Func<TContract, string> selectIdentity)
+        where TContract : class
     {
         var identities = new List<OwnedIdentity>();
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(extensionPoint))
+        foreach (var reference in rpcCatalog.GetServiceReferences(service))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -237,7 +233,7 @@ internal sealed class SubagentStackContributor(
             }
             using (lease)
             {
-                var identity = selectIdentity(lease.Contribution);
+                var identity = selectIdentity(lease.Service);
                 if (!lease.RetirementToken.IsCancellationRequested)
                 {
                     identities.Add(new OwnedIdentity(lease.PackageId, identity));

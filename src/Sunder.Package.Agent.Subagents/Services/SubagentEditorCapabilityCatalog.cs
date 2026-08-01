@@ -1,25 +1,20 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Contracts.Services;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
 internal sealed class SubagentEditorCapabilityCatalog : IDisposable
 {
-    private readonly IPackageExtensionCatalog _extensionCatalog;
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog;
+    private readonly AgentRpcCatalog _rpcCatalog;
     private readonly AgentProfileSelectableCapabilityChangeObserver _changeObserver;
     private bool _disposed;
 
-    public SubagentEditorCapabilityCatalog(IPackageExtensionCatalog extensionCatalog)
+    public SubagentEditorCapabilityCatalog(AgentRpcCatalog rpcCatalog)
     {
-        _extensionCatalog = extensionCatalog;
-        _invocationCatalog = extensionCatalog as IPackageExtensionInvocationCatalog
-            ?? throw new InvalidOperationException(
-                "The host extension catalog does not support activation-scoped invocation leases.");
-        _changeObserver = new AgentProfileSelectableCapabilityChangeObserver(extensionCatalog);
+        _rpcCatalog = rpcCatalog;
+        _changeObserver = new AgentProfileSelectableCapabilityChangeObserver(rpcCatalog);
         _changeObserver.Changed += OnChanged;
     }
 
@@ -34,22 +29,7 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
             Workspace: null,
             ExecutionBinding: null);
         var descriptors = new List<AgentToolDescriptor>();
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.Tools))
-        {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-            using (lease)
-            {
-                var descriptor = lease.Contribution.Descriptor;
-                if (!lease.RetirementToken.IsCancellationRequested)
-                {
-                    descriptors.Add(descriptor);
-                }
-            }
-        }
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.ToolSources))
+        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.ToolSources))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var contributed = await InvokeAsync(
@@ -115,8 +95,7 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
     private IReadOnlyList<CapabilityProviderReference> SnapshotCapabilityProviders()
     {
         var providers = new List<CapabilityProviderReference>();
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(
-                     PackageExtensionPoints.ProfileSelectableCapabilityProviders))
+        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.SelectableCapabilityProviders))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -126,7 +105,7 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
             {
                 if (!lease.RetirementToken.IsCancellationRequested)
                 {
-                    providers.Add(new CapabilityProviderReference(reference, lease.Contribution.DisplayName));
+                    providers.Add(new CapabilityProviderReference(reference, lease.Service.DisplayName));
                 }
             }
         }
@@ -135,7 +114,7 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
     }
 
     private static async ValueTask<TResult?> InvokeAsync<TContract, TResult>(
-        IPackageExtensionReference<TContract> reference,
+        AgentRpcReference<TContract> reference,
         CancellationToken cancellationToken,
         Func<TContract, CancellationToken, ValueTask<TResult>> callback)
         where TContract : class
@@ -153,7 +132,7 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
                 retirementToken);
             try
             {
-                var result = await callback(lease.Contribution, invocation.Token).ConfigureAwait(false);
+                var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
                 return retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested
                     ? default
                     : result;
@@ -182,6 +161,6 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
     }
 
     private sealed record CapabilityProviderReference(
-        IPackageExtensionReference<IAgentProfileSelectableCapabilityProvider> Reference,
+        AgentRpcReference<IAgentProfileSelectableCapabilityProvider> Reference,
         string DisplayName);
 }

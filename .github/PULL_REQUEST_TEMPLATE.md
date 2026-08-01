@@ -5,7 +5,7 @@ Describe the change and why it is needed.
 ## Packages Affected
 
 - [ ] `sunder.package.agent`
-- [ ] `Sunder.Package.Agent.Contracts`
+- [ ] `Sunder.Package.Agent.Protocol`
 - [ ] Provider package
 - [ ] Tool package
 - [ ] Execution package
@@ -25,4 +25,4 @@ List the commands you ran, or explain why validation was not practical.
 
 ## Safety And Compatibility
 
-Call out changes involving Agent contracts, package dependencies, permissions, shell/file/web access, execution targets, provider credentials, memory, transcripts, or model/tool behavior.
+Call out changes involving Agent RPC descriptors, package dependencies, permissions, shell/file/web access, execution targets, provider credentials, memory, transcripts, or model/tool behavior.

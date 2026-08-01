@@ -175,15 +175,28 @@ public sealed partial class ProviderArchitectureTests
 
     private static string GetRepositoryRoot()
     {
-        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "Sunder.AgentPackage.slnx")))
+        var startPaths = new[]
             {
-                return directory.FullName;
+                Environment.GetEnvironmentVariable("SUNDER_AGENT_REPOSITORY_ROOT"),
+                AppContext.BaseDirectory,
+                Environment.CurrentDirectory,
+            }
+            .Where(static path => !string.IsNullOrWhiteSpace(path))
+            .Select(static path => path!)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var startPath in startPaths)
+        {
+            for (var directory = new DirectoryInfo(startPath); directory is not null; directory = directory.Parent)
+            {
+                if (File.Exists(Path.Combine(directory.FullName, "Sunder.AgentPackage.slnx")))
+                {
+                    return directory.FullName;
+                }
             }
         }
 
-        throw new DirectoryNotFoundException("Could not locate the Sunder Agent package repository root.");
+        throw new DirectoryNotFoundException(
+            "Could not locate the Sunder Agent package repository root from SUNDER_AGENT_REPOSITORY_ROOT, the test output, or the working directory.");
     }
 
     [GeneratedRegex(@"^\s*public\s+(?:(?:abstract|sealed|static|partial|readonly|ref)\s+)*(?:class|struct|interface|enum|record|delegate)\b")]

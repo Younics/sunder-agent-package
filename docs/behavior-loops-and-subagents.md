@@ -4,7 +4,7 @@ A behavior loop controls one Agent run's provider/tool cycle. It is the most pri
 
 ## Behavior Loop Contract
 
-Implement `IAgentBehaviorLoop` and register it through `PackageExtensionPoints.BehaviorLoops`.
+Implement `IAgentBehaviorLoop`, adapt it with `AgentBehaviorLoopRpc.CreateHandler`, and publish it under `sunder.agent.behavior.loop`.
 
 ```csharp
 public sealed class AcmeBehaviorLoop : IAgentBehaviorLoop
@@ -79,9 +79,17 @@ The base loop performs:
 
 The default loop owns core run budgets and transcript/tool pairing. A custom loop that replaces it must supply equivalent safety rather than assuming the provider SDK does so.
 
+### Session Context Compaction
+
+The default loop does not compact after a fixed number of turns. It normally reuses the active durable continuity checkpoint and lets the raw transcript tail grow. After a successful provider cycle, it advances the checkpoint only when provider-reported context usage reaches the usable input limit: the model context window minus its output reserve.
+
+Compaction preserves the exact active user turn, keeps complete tool call/result exchanges together, and selects a suffix from at most the two most recent user-delimited exchanges within a tail budget of one quarter of the usable context, clamped to 2,000-8,000 estimated tokens. When the older exchange exceeds the remaining budget, only its fitting suffix is retained. The omitted prefix becomes a deterministic durable summary; configured utility-model refinement is optional. The original transcript remains authoritative and unchanged.
+
+Provider usage is preferred because local estimates cannot accurately price provider tokenization, cached content, or media. Independently, the Runtime still rejects oversized serialized payloads, compacts requests whose local estimate exceeds the hard usable limit, and permits one forced compaction/retry when a provider reports a typed context-window overflow before producing content. Missing usage does not trigger speculative compaction.
+
 ## Child Run Service Port
 
-The base Agent publishes one `IAgentChildRunExecutor` through `PackageExtensionPoints.ChildRunExecutors`. Orchestration packages consume it; they must not register a competing executor.
+The base Agent publishes one `sunder.agent.child.run.executor` RPC provider. Orchestration packages discover and invoke that exact endpoint; they must not publish a competing executor.
 
 `AgentChildRunRequest` requires:
 
@@ -101,7 +109,7 @@ Child sessions participate in the permission hierarchy. Session approvals and Un
 
 ## First-Party Subagents
 
-`sunder.package.agent.subagents` composes several public extension points:
+`sunder.package.agent.subagents` composes several public RPC capabilities:
 
 - A selectable `subagent` capability provider.
 - Dynamic `task` and `delegate_tasks` tools.
@@ -131,8 +139,8 @@ If a child waits for approval, the tool result uses `child-waiting-for-approval`
 ## Building An Orchestration Package
 
 1. Register a stable behavior loop only if profile-level selection is required.
-2. Consume the base `RuntimeCatalogs` contribution for immutable profile/session lookup.
-3. Consume the base `ChildRunExecutors` contribution for child state and correlation.
+2. Consume the base `RuntimeCatalogs` RPC capability for immutable profile/session lookup.
+3. Consume the base `ChildRunExecutors` RPC capability for child state and correlation.
 4. Expose delegation through an `IAgentToolSource` so normal profile assignment and tool security apply.
 5. Pass the current `AgentToolExecutionContext` correlation into each child request.
 6. Use structured payloads to retain child session ids/status, but bound content returned to the parent model.

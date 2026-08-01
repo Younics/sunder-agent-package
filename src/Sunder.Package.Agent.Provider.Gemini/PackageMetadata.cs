@@ -8,4 +8,4 @@ using Sunder.Sdk.Packaging;
 
 [assembly: SunderPackageDependency(
     PackageId = "sunder.package.agent",
-    VersionRange = ">=1.1.0 <1.2.0")]
+    VersionRange = ">=2.0.0 <3.0.0")]

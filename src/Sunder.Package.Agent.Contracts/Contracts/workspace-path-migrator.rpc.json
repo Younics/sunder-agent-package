@@ -1,0 +1,301 @@
+{
+  "descriptorVersion": 1,
+  "contractId": "sunder.agent.workspace.path.migrator",
+  "version": "1.0.0",
+  "services": [
+    {
+      "serviceId": "workspace-path-migrator",
+      "methods": [
+        {
+          "methodId": "describe",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentRpcEmpty"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentRpcIdentity"
+          }
+        },
+        {
+          "methodId": "can-migrate",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentWorkspacePathMigrationContext"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/Boolean"
+          }
+        },
+        {
+          "methodId": "list-legacy-paths",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentWorkspacePathMigrationContext"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/ListOfAgentWorkspacePathMigrationItem"
+          }
+        },
+        {
+          "methodId": "complete",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentWorkspacePathMigrationContext"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentRpcEmpty"
+          }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "AgentRpcEmpty": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "String": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "AgentRpcIdentity": {
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "id": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "displayName",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "DateTimeOffset": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "Boolean": {
+      "type": "boolean"
+    },
+    "Int32": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "AgentWorkspaceBindingRecord": {
+      "type": "object",
+      "properties": {
+        "bindingId": {
+          "$ref": "#/$defs/String"
+        },
+        "contributionId": {
+          "$ref": "#/$defs/String"
+        },
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "extensionPointId": {
+          "$ref": "#/$defs/String"
+        },
+        "isEnabled": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "role": {
+          "$ref": "#/$defs/String"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "bindingId",
+        "contributionId",
+        "createdAtUtc",
+        "extensionPointId",
+        "isEnabled",
+        "role",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentWorkspaceDocumentRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "documentId": {
+          "$ref": "#/$defs/String"
+        },
+        "filePath": {
+          "$ref": "#/$defs/String"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "documentId",
+        "filePath",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentWorkspaceDocumentRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentWorkspacePathRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "hostPath": {
+          "$ref": "#/$defs/String"
+        },
+        "isDefault": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "pathId": {
+          "$ref": "#/$defs/String"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "hostPath",
+        "isDefault",
+        "pathId",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentWorkspacePathRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentWorkspacePathRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentWorkspaceRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "documents": {
+          "$ref": "#/$defs/ListOfAgentWorkspaceDocumentRecord"
+        },
+        "paths": {
+          "$ref": "#/$defs/ListOfAgentWorkspacePathRecord"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "displayName",
+        "documents",
+        "paths",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentWorkspacePathMigrationContext": {
+      "type": "object",
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/AgentWorkspaceBindingRecord"
+        },
+        "workspace": {
+          "$ref": "#/$defs/AgentWorkspaceRecord"
+        }
+      },
+      "required": [
+        "binding",
+        "workspace"
+      ],
+      "additionalProperties": false
+    },
+    "AgentWorkspacePathMigrationItem": {
+      "type": "object",
+      "properties": {
+        "hostPath": {
+          "$ref": "#/$defs/String"
+        },
+        "isDefault": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        }
+      },
+      "required": [
+        "hostPath",
+        "isDefault",
+        "sortOrder"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentWorkspacePathMigrationItem": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentWorkspacePathMigrationItem"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    }
+  }
+}

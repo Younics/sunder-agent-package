@@ -171,7 +171,7 @@
           "xunit.extensibility.core": "[2.9.3]"
         }
       },
-      "sunder.package.agent.contracts": {
+      "Sunder.Package.Agent.Protocol": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.AI.Abstractions": "[10.5.2, )",
@@ -184,7 +184,7 @@
           "Avalonia": "[12.0.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "Google.GenAI": "[1.6.1, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
         }

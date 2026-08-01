@@ -47,13 +47,12 @@ public sealed class AgentRuntimeCorrectnessTests
         var workspaces = new AgentWorkspaceService(store, catalog, sessions);
         var executionTargets = new AgentExecutionTargetService(catalog);
         var tools = new AgentToolService(
-            new InstalledPackageToolSource(catalog),
             sessions,
             workspaces,
             executionTargets,
             catalog);
-        using var profiles = new AgentProfileService(store, tools, catalog);
-        var permissions = new AgentPermissionService(store, new ThrowingPermissionCatalog());
+        using var profiles = new AgentProfileService(store, tools, catalog, catalog.BehaviorLoops);
+        var permissions = new AgentPermissionService(store, catalog);
         using var changes = new AgentRuntimeChangeHub(profiles, workspaces, sessions);
         var selections = new AgentChatSelectionStateService(scope.Context);
         var profile = await profiles.CreateProfileAsync("Snapshot profile");
@@ -123,12 +122,11 @@ public sealed class AgentRuntimeCorrectnessTests
         var workspaces = new AgentWorkspaceService(store, catalog, sessions);
         var executionTargets = new AgentExecutionTargetService(catalog);
         var tools = new AgentToolService(
-            new InstalledPackageToolSource(catalog),
             sessions,
             workspaces,
             executionTargets,
             catalog);
-        using var profiles = new AgentProfileService(store, tools, catalog);
+        using var profiles = new AgentProfileService(store, tools, catalog, catalog.BehaviorLoops);
         var permissions = new AgentPermissionService(store, catalog);
         using var changes = new AgentRuntimeChangeHub(profiles, workspaces, sessions);
         var selections = new AgentChatSelectionStateService(scope.Context);
@@ -175,12 +173,11 @@ public sealed class AgentRuntimeCorrectnessTests
         var workspaces = new AgentWorkspaceService(store, catalog, sessions);
         var executionTargets = new AgentExecutionTargetService(catalog);
         var tools = new AgentToolService(
-            new InstalledPackageToolSource(catalog),
             sessions,
             workspaces,
             executionTargets,
             catalog);
-        using var profiles = new AgentProfileService(store, tools, catalog);
+        using var profiles = new AgentProfileService(store, tools, catalog, catalog.BehaviorLoops);
         using var changes = new AgentRuntimeChangeHub(profiles, workspaces, sessions);
         var selections = new AgentChatSelectionStateService(scope.Context);
         var profile = await profiles.CreateProfileAsync("Cached profile");
@@ -216,12 +213,11 @@ public sealed class AgentRuntimeCorrectnessTests
         var workspaces = new AgentWorkspaceService(store, catalog, sessions);
         var executionTargets = new AgentExecutionTargetService(catalog);
         var tools = new AgentToolService(
-            new InstalledPackageToolSource(catalog),
             sessions,
             workspaces,
             executionTargets,
             catalog);
-        using var profiles = new AgentProfileService(store, tools, catalog);
+        using var profiles = new AgentProfileService(store, tools, catalog, catalog.BehaviorLoops);
         using var changes = new AgentRuntimeChangeHub(profiles, workspaces, sessions);
         var selections = new AgentChatSelectionStateService(scope.Context);
         var workspace = workspaces.CreateWorkspace("Selection workspace");
@@ -1751,7 +1747,7 @@ public sealed class AgentRuntimeCorrectnessTests
 
     private static SnapshotRuntime CreateSnapshotRuntime(
         IPackageContext context,
-        IPackageExtensionCatalog? catalog = null)
+        RegressionTestExtensionCatalog? catalog = null)
     {
         catalog ??= new RegressionTestExtensionCatalog();
         var store = new AgentLocalStore(context);
@@ -1759,12 +1755,11 @@ public sealed class AgentRuntimeCorrectnessTests
         var workspaces = new AgentWorkspaceService(store, catalog, sessions);
         var executionTargets = new AgentExecutionTargetService(catalog);
         var tools = new AgentToolService(
-            new InstalledPackageToolSource(catalog),
             sessions,
             workspaces,
             executionTargets,
             catalog);
-        var profiles = new AgentProfileService(store, tools, catalog);
+        var profiles = new AgentProfileService(store, tools, catalog, catalog.BehaviorLoops);
         return new SnapshotRuntime(
             store,
             sessions,
@@ -2058,12 +2053,11 @@ public sealed class AgentRuntimeCorrectnessTests
             var workspaces = new AgentWorkspaceService(store, catalog, sessions);
             var executionTargets = new AgentExecutionTargetService(catalog);
             var tools = new AgentToolService(
-                new InstalledPackageToolSource(catalog),
                 sessions,
                 workspaces,
                 executionTargets,
                 catalog);
-            var profiles = new AgentProfileService(store, tools, catalog);
+            var profiles = new AgentProfileService(store, tools, catalog, catalog.BehaviorLoops);
             return new ChangeHubRuntime(
                 scope,
                 sessions,
@@ -2950,46 +2944,8 @@ public sealed class AgentRuntimeCorrectnessTests
         }
     }
 
-    private sealed class ThrowingPermissionCatalog : IPackageExtensionCatalog, IPackageExtensionInvocationCatalog
+    private sealed class CountingExtensionCatalog : RegressionTestExtensionCatalog
     {
-        public IReadOnlyList<TContract> GetExtensions<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint)
-            => throw new InvalidOperationException("Global permission actions must not be read for Chat snapshots.");
-
-        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint)
-            => throw new InvalidOperationException("Global permission actions must not be read for Chat snapshots.");
-
-        public IReadOnlyList<IPackageExtensionReference<TContract>> GetExtensionReferences<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint)
-            => throw new InvalidOperationException("Global permission actions must not be read for Chat snapshots.");
-    }
-
-    private sealed class CountingExtensionCatalog : IPackageExtensionCatalog, IPackageExtensionInvocationCatalog
-    {
-        private int _invocationCount;
-
-        public int InvocationCount => Volatile.Read(ref _invocationCount);
-
-        public IReadOnlyList<TContract> GetExtensions<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint)
-        {
-            Interlocked.Increment(ref _invocationCount);
-            return [];
-        }
-
-        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint)
-        {
-            Interlocked.Increment(ref _invocationCount);
-            return [];
-        }
-
-        public IReadOnlyList<IPackageExtensionReference<TContract>> GetExtensionReferences<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint)
-        {
-            Interlocked.Increment(ref _invocationCount);
-            return [];
-        }
+        public int InvocationCount => DiscoveryCount;
     }
 }

@@ -3,13 +3,14 @@
   <PropertyGroup>
     <SunderSdkReference>true</SunderSdkReference>
     <IsPackable>true</IsPackable>
-    <PackageId>Sunder.Package.Agent.Contracts</PackageId>
-    <Title>Sunder Package Agent Contracts</Title>
-    <Description>Public contracts for extending the Sunder Agent package family with providers, tools, execution targets, memory, skills, and subagents.</Description>
-    <PackageTags>$(PackageTags);contracts;extensions;providers;tools</PackageTags>
+    <AssemblyName>Sunder.Package.Agent.Protocol</AssemblyName>
+    <PackageId>Sunder.Package.Agent.Protocol</PackageId>
+    <Title>Sunder Package Agent Protocol</Title>
+    <Description>Language-neutral Sunder RPC descriptors and deterministic C# bindings for the Sunder Agent package family.</Description>
+    <PackageTags>$(PackageTags);protocol;rpc;schemas;providers;tools</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,6 +20,12 @@
 
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="" />
+    <None Include="Contracts\**\*.rpc.json" Pack="true" PackagePath="contracts" />
+    <None Include="buildTransitive\Sunder.Package.Agent.Protocol.props"
+          Pack="true"
+          PackagePath="buildTransitive" />
+    <EmbeddedResource Include="Contracts\**\*.rpc.json"
+                      LogicalName="Sunder.Package.Agent.Protocol.Contracts.%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

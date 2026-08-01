@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Sdk.Abstractions;
+using System.Text.Json.Serialization;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Contracts.Models;
 
@@ -20,8 +21,12 @@ public sealed record AgentWorkspaceExecutionResolution(
     AgentWorkspaceBindingRecord Binding,
     AgentExecutionTargetDescriptor Target,
     AgentExecutionScopeDescriptor Scope,
-    IAgentExecutionTarget ExecutionTarget)
+    [property: JsonIgnore] IAgentExecutionTarget ExecutionTarget)
 {
     /// <summary>Gets an opaque reference that acquires only the exact target-owner activation used during resolution.</summary>
-    public IPackageExtensionReference<IAgentExecutionTarget>? ExecutionTargetReference { get; init; }
+    [JsonIgnore]
+    public AgentRpcReference<IAgentExecutionTarget>? ExecutionTargetReference { get; init; }
+
+    /// <summary>Gets the serializable host-stamped handle for the exact execution target activation.</summary>
+    public AgentRpcProviderHandle? ExecutionTargetHandle { get; init; }
 }

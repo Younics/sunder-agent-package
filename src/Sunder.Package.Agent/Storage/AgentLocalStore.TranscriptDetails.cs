@@ -65,9 +65,9 @@ public sealed partial class AgentLocalStore
                              : AgentToolExecutionStatus.Completed);
         var revision = new[]
             {
-                call?.UpdatedAtUtc.UtcDateTime.Ticks ?? 0,
-                result?.UpdatedAtUtc.UtcDateTime.Ticks ?? 0,
-                identity.ExecutionUpdatedAtUtc?.UtcDateTime.Ticks ?? 0,
+                call is null ? 0 : CreateProtocolTimestampRevision(call.UpdatedAtUtc),
+                result is null ? 0 : CreateProtocolTimestampRevision(result.UpdatedAtUtc),
+                identity.ExecutionUpdatedAtUtc is null ? 0 : CreateProtocolTimestampRevision(identity.ExecutionUpdatedAtUtc.Value),
             }
             .Max();
         return new AgentTranscriptToolDetailRecord(

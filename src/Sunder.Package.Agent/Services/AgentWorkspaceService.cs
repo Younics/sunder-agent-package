@@ -1,10 +1,9 @@
 using System.Collections.Concurrent;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Runtime;
-using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -14,18 +13,18 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
     public const string UnassignedSessionsWorkspaceDisplayName = AgentLocalStore.UnassignedSessionsWorkspaceDisplayName;
 
     private readonly AgentLocalStore _store;
-    private readonly IPackageExtensionCatalog? _extensionCatalog;
+    private readonly AgentRpcCatalog? _rpcCatalog;
     private readonly AgentSessionService? _sessionService;
     private readonly ConcurrentDictionary<string, object> _executionContextSyncRoots = new(StringComparer.Ordinal);
     private bool _isMigratingWorkspacePaths;
 
     public AgentWorkspaceService(
         AgentLocalStore store,
-        IPackageExtensionCatalog? extensionCatalog = null,
+        AgentRpcCatalog? rpcCatalog = null,
         AgentSessionService? sessionService = null)
     {
         _store = store;
-        _extensionCatalog = extensionCatalog;
+        _rpcCatalog = rpcCatalog;
         _sessionService = sessionService;
     }
 
@@ -129,7 +128,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                     ? new AgentWorkspaceBindingRecord(
                         BuildPrimaryBindingId(workspaceId),
                         workspaceId,
-                        PackageExtensionPoints.ExecutionTargets.Id,
+                        AgentRpcContractIds.ExecutionTarget,
                         executionTargetId,
                         AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
                         true,
@@ -157,7 +156,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
         lock (GetExecutionContextSyncRoot(workspaceId))
         {
             var cleaners = _sessionService?.SnapshotSessionDataCleaners()
-                ?? AgentSessionService.SnapshotSessionDataCleaners(_extensionCatalog);
+                ?? AgentSessionService.SnapshotSessionDataCleaners(_rpcCatalog);
             deletedSessionIds = _store.DeleteWorkspaceWithSessions(workspaceId, cleaners);
         }
         WorkspacesChanged?.Invoke();
@@ -206,7 +205,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                     ? new AgentWorkspaceBindingRecord(
                         BuildPrimaryBindingId(workspaceId),
                         workspaceId,
-                        PackageExtensionPoints.ExecutionTargets.Id,
+                        AgentRpcContractIds.ExecutionTarget,
                         primaryExecutionTargetId.Trim(),
                         AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
                         IsEnabled: true,
@@ -257,7 +256,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                 ? new AgentWorkspaceBindingRecord(
                     BuildPrimaryBindingId(workspaceId, displayRole),
                     workspaceId,
-                    PackageExtensionPoints.ExecutionTargets.Id,
+                    AgentRpcContractIds.ExecutionTarget,
                     contributionId,
                     displayRole,
                     IsEnabled: true,
@@ -296,15 +295,14 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        if (_isMigratingWorkspacePaths || _extensionCatalog is null)
+        if (_isMigratingWorkspacePaths || _rpcCatalog is null)
         {
             return;
         }
 
-        var invocationCatalog = AgentExtensionInvocation.Require(_extensionCatalog);
-        var migrators = AgentExtensionInvocation.Snapshot(
-            invocationCatalog,
-            PackageExtensionPoints.WorkspacePathMigrationContributors,
+        var migrators = AgentRpcInvocation.Snapshot(
+            _rpcCatalog,
+            AgentRpcServices.WorkspacePathMigrators,
             static contributor => contributor.ContributorId);
         if (migrators.Count == 0)
         {
@@ -330,7 +328,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                 }
 
                 var context = new AgentWorkspacePathMigrationContext(workspace, binding);
-                var completedMigrators = new List<AgentExtensionReference<
+                var completedMigrators = new List<AgentRpcOwnedReference<
                     IAgentWorkspacePathMigrationContributor,
                     string>>();
                 var migrationItems = new List<AgentWorkspacePathMigrationItem>();
@@ -338,7 +336,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                 {
                     try
                     {
-                        var items = (await AgentExtensionInvocation.InvokeAsync(
+                        var items = (await AgentRpcInvocation.InvokeAsync(
                                 migrator,
                                 cancellationToken,
                                 async (contributor, token) => contributor.CanMigrate(context)
@@ -371,7 +369,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                 {
                     try
                     {
-                        await AgentExtensionInvocation.InvokeAsync(
+                        await AgentRpcInvocation.InvokeAsync(
                             migrator,
                             cancellationToken,
                             (contributor, token) => new ValueTask(

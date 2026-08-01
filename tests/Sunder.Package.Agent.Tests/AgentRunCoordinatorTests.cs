@@ -24,6 +24,7 @@ using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Provider.Anthropic;
 using Sunder.Package.Agent.Provider.Gemini;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Services.BehaviorLoops;
@@ -426,8 +427,8 @@ public sealed class AgentRunCoordinatorTests
     public async Task AgentSystemPromptComposer_ComposeAsync_RendersContributorBlocksAndToolInstructions()
     {
         var catalog = new TestExtensionCatalog();
-        catalog.AddExtension(
-            PackageExtensionPoints.SystemPromptContributors,
+        catalog.AddProvider(
+            AgentRpcServices.SystemPromptContributors,
             new TestSystemPromptContributor()
         );
         var composer = new AgentSystemPromptComposer(catalog);
@@ -562,19 +563,20 @@ public sealed class AgentRunCoordinatorTests
     [Fact]
     public async Task FilesToolSource_ContributeContextAsync_IncludesExecutionScopeRoots()
     {
+        using var scope = RegressionTestPackageScope.Create();
         var catalog = new TestExtensionCatalog();
-        catalog.AddExtension(
-            PackageExtensionPoints.ExecutionTargets,
+        catalog.AddProvider(
+            AgentRpcServices.ExecutionTargets,
             new TestScopedExecutionTarget()
         );
-        var files = new FilesToolSource(catalog);
+        var files = new FilesToolSource(scope.Context);
         var now = DateTimeOffset.UtcNow;
         var systemPromptRequest = BuildSystemPromptRequest(
             workspace: new AgentWorkspaceRecord("workspace", "Workspace", null, now, now),
             executionBinding: new AgentWorkspaceBindingRecord(
                 "binding",
                 "workspace",
-                PackageExtensionPoints.ExecutionTargets.Id,
+                AgentRpcContractIds.ExecutionTarget,
                 "test-target",
                 AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
                 IsEnabled: true,
@@ -595,7 +597,10 @@ public sealed class AgentRunCoordinatorTests
             ]
         );
 
-        var request = BuildPromptContextRequest(systemPromptRequest);
+        var request = BuildPromptContextRequest(systemPromptRequest) with
+        {
+            ExecutionTargetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+        };
         var contribution = await files.ContributeContextAsync(request);
         var block = Assert.Single(Assert.IsType<AgentPromptContextContribution>(contribution).Blocks);
 
@@ -625,13 +630,13 @@ public sealed class AgentRunCoordinatorTests
             packageContext,
             configService,
             new LocalShellCatalogService(packageContext));
-        var files = new FilesToolSource(runtime.ExtensionCatalog, packageContext);
-        var shell = new ShellToolSource(runtime.ExtensionCatalog);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target, "sunder.package.agent.execution.local");
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, files, "sunder.package.agent.tools.files");
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PromptContextContributors, files, "sunder.package.agent.tools.files");
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, shell, "sunder.package.agent.tools.shell");
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PromptContextContributors, shell, "sunder.package.agent.tools.shell");
+        var files = new FilesToolSource(packageContext);
+        var shell = new ShellToolSource();
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ExecutionTargets, target, "sunder.package.agent.execution.local");
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, files, "sunder.package.agent.tools.files");
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PromptContextContributors, files, "sunder.package.agent.tools.files");
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, shell, "sunder.package.agent.tools.shell");
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PromptContextContributors, shell, "sunder.package.agent.tools.shell");
         var sessionId = await runtime.CreateSessionAsync("shell");
         var root = Path.Combine(runtime.RootPath, "shell-only-workspace");
         Directory.CreateDirectory(root);
@@ -654,10 +659,12 @@ public sealed class AgentRunCoordinatorTests
             new AgentToolExecutionContext(sessionId, Workspace: workspace, ExecutionBinding: binding)
             {
                 TranscriptEpoch = runtime.SessionService.GetTranscriptEpoch(sessionId),
+                ExecutionTargetReference = runtime.ExtensionCatalog.GetRequiredReference(
+                    AgentRpcServices.ExecutionTargets),
             },
             new AgentToolRequest("write", "{\"path\":\"receipt.txt\",\"content\":\"acknowledged\"}"));
 
-        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.True(checkpoint.Status == AgentRunStatus.Completed, checkpoint.Summary);
         Assert.All(await packageContext.Storage.State.ListKeysAsync(), TestPackageStorageGuards.Key);
         Assert.False(mutation.IsError, mutation.Summary);
         Assert.Equal("acknowledged", await File.ReadAllTextAsync(Path.Combine(root, "receipt.txt")));
@@ -669,8 +676,8 @@ public sealed class AgentRunCoordinatorTests
         using var runtime = AgentTestRuntime.Create(
             new ScriptedProvider((_, _) => Complete("done")),
             new TestTool("noop"));
-        runtime.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.PromptContextContributors,
+        runtime.ExtensionCatalog.AddProvider(
+            AgentRpcServices.PromptContextContributors,
             new SpoofedScopedContextContributor(),
             "example.untrusted.context");
         var sessionId = await runtime.CreateSessionAsync("noop");
@@ -698,8 +705,8 @@ public sealed class AgentRunCoordinatorTests
     {
         var provider = new ScriptedProvider((_, _) => Complete("provider must not run"));
         using var runtime = AgentTestRuntime.Create(provider, new TestTool("noop"));
-        runtime.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.PromptContextContributors,
+        runtime.ExtensionCatalog.AddProvider(
+            AgentRpcServices.PromptContextContributors,
             new FailingRequiredScopedContextContributor(failDuringContribution),
             "sunder.package.agent.tools.files");
         var sessionId = await runtime.CreateSessionAsync("noop");
@@ -906,7 +913,7 @@ public sealed class AgentRunCoordinatorTests
             "Continue after provider overflow.",
             runtime.CurrentWorkspaceId);
 
-        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.True(checkpoint.Status == AgentRunStatus.Completed, checkpoint.Summary);
         Assert.Equal(2, provider.Requests.Count);
         Assert.True(provider.Requests[1].Turns.Count < provider.Requests[0].Turns.Count);
     }
@@ -932,7 +939,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.CurrentWorkspaceId);
 
         Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
-        Assert.Equal(2, provider.Requests.Count);
+        Assert.True(provider.Requests.Count == 2, checkpoint.Summary);
     }
 
     [Fact]
@@ -1072,7 +1079,7 @@ public sealed class AgentRunCoordinatorTests
             turn => turn.Role == AgentMessageRole.Assistant
                     && RenderTurnText(turn).Contains("The provider rejected the request.", StringComparison.Ordinal));
         Assert.Equal(AgentLifecycleEventKind.RunFailed, memoryFeature.LastLifecycleEvent?.Kind);
-        Assert.Equal(checkpoint.CheckpointId, memoryFeature.LastLifecycleEvent?.Checkpoint?.CheckpointId);
+        Assert.Equal(checkpoint.CheckpointId, memoryFeature.LastLifecycleEvent?.Payload.Checkpoint?.CheckpointId);
     }
 
     [Fact]
@@ -1423,9 +1430,7 @@ public sealed class AgentRunCoordinatorTests
         );
         var tool = new ErrorResultTool(toolId, errorCode);
         using var runtime = AgentTestRuntime.Create(provider, tool);
-        runtime.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.BehaviorLoops,
-            new OrchestratedAgentBehaviorLoop(runtime.ExtensionCatalog)
+        runtime.ExtensionCatalog.AddBehaviorLoop(new OrchestratedAgentBehaviorLoop()
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
         var profile = runtime.CurrentProfile;
@@ -1561,15 +1566,20 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task QueueUserMessageAsync_BoundedMemoryContext_OmitsWholeHistoricalToolPairContiguously()
+    public async Task QueueUserMessageAsync_CompactedContextRetainsWholeRecentToolPairContiguously()
     {
         const string toolId = "fetch_page";
         const string historicalCallId = "historical-call";
         var provider = new ScriptedProvider(
             (request, requestIndex) =>
             {
-                Assert.Equal(1, requestIndex);
-                Assert.DoesNotContain(
+                if (requestIndex == 1)
+                {
+                    return Complete("seeded bounded context");
+                }
+
+                Assert.Equal(2, requestIndex);
+                Assert.Contains(
                     request.Turns,
                     turn =>
                         turn.Kind == AgentTurnKind.ToolCall
@@ -1579,7 +1589,7 @@ public sealed class AgentRunCoordinatorTests
                             && item.CallId == historicalCallId
                         )
                 );
-                Assert.DoesNotContain(
+                Assert.Contains(
                     request.Turns,
                     turn =>
                         turn.Kind == AgentTurnKind.ToolResult
@@ -1589,13 +1599,13 @@ public sealed class AgentRunCoordinatorTests
                             && item.CallId == historicalCallId
                         )
                 );
-                Assert.Contains(
-                    request.Turns,
-                    turn => RenderTurnText(turn).Contains("historical result", StringComparison.Ordinal));
                 AssertNoOrphanToolResults(request);
                 return Complete("done");
             }
         );
+        provider.UsageHandler = (_, requestIndex) => requestIndex == 1
+            ? Usage(totalTokens: 200_000)
+            : Usage(totalTokens: 1_000);
 
         using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
         var sessionId = await runtime.CreateSessionAsync(toolId);
@@ -1647,6 +1657,12 @@ public sealed class AgentRunCoordinatorTests
             detailsJson: null
         );
 
+        var seedCheckpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Prepare bounded context.",
+            runtime.CurrentWorkspaceId);
+
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
             runtime.CurrentProfileId,
@@ -1654,7 +1670,8 @@ public sealed class AgentRunCoordinatorTests
             runtime.CurrentWorkspaceId
         );
 
-        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.True(seedCheckpoint.Status == AgentRunStatus.Completed, seedCheckpoint.Summary);
+        Assert.True(checkpoint.Status == AgentRunStatus.Completed, checkpoint.Summary);
     }
 
     [Fact]
@@ -2102,30 +2119,6 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task QueueUserMessageAsync_UsesDurableLifecycleOutboxInsteadOfCancelableInlineObserver()
-    {
-        var provider = new ScriptedProvider((_, _) => Complete("must not execute"));
-        using var runtime = AgentTestRuntime.Create(provider);
-        var observer = new CancelingUserTurnLifecycleObserver();
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.LifecycleObservers, observer);
-        var sessionId = await runtime.CreateSessionAsync("noop");
-
-        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
-            sessionId,
-            runtime.CurrentProfileId,
-            "Persist through the lifecycle outbox.",
-            runtime.CurrentWorkspaceId);
-
-        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
-        Assert.True(observer.ReceivedCancelableToken);
-        Assert.False(runtime.ActiveRunRegistry.IsActive(sessionId));
-        Assert.Contains(
-            runtime.Store.ListLifecycleOutboxEvents(),
-            item => item.Kind == AgentLifecycleEventKind.UserTurnAdded);
-        Assert.NotEmpty(provider.Requests);
-    }
-
-    [Fact]
     public async Task QueueUserMessageAsync_InterruptsOlderRun_WhenItsPreparationFinishesLate()
     {
         var olderPreparationEntered = new TaskCompletionSource(
@@ -2376,25 +2369,27 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task QueueUserMessageAsync_CompactsActiveExchangeAndRetainsLatestToolPair()
+    public async Task QueueUserMessageAsync_ReportedUsageCompactsHistoryAndRetainsLatestToolPair()
     {
         const string toolId = "fetch_page";
         const string currentUserMessage = "Current request: fetch the current page.";
         const int toolLoopCount = 10;
-        var sawCompactedActiveRun = false;
-
         var provider = new ScriptedProvider(
             (request, requestIndex) =>
             {
-                sawCompactedActiveRun |= AssertActiveRunContext(
+                AssertActiveRunContext(
                     request,
                     requestIndex,
                     currentUserMessage);
 
                 if (requestIndex == 1)
                 {
-                    Assert.DoesNotContain(request.Turns, turn => RenderTurnText(turn) == "old-00");
+                    Assert.Contains(request.Turns, turn => RenderTurnText(turn) == "old-00");
                     Assert.Contains(request.Turns, turn => RenderTurnText(turn) == "old-24");
+                }
+                else
+                {
+                    Assert.DoesNotContain(request.Turns, turn => RenderTurnText(turn) == "old-00");
                 }
 
                 return requestIndex <= toolLoopCount
@@ -2402,6 +2397,9 @@ public sealed class AgentRunCoordinatorTests
                     : Complete("All tool results were preserved across the active exchange.");
             }
         );
+        provider.UsageHandler = (_, requestIndex) => requestIndex == 1
+            ? Usage(totalTokens: 200_000)
+            : Usage(totalTokens: 1_000);
 
         using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
         var sessionId = await runtime.CreateSessionAsync(toolId);
@@ -2430,7 +2428,7 @@ public sealed class AgentRunCoordinatorTests
 
         Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
         Assert.Equal(toolLoopCount + 1, provider.Requests.Count);
-        Assert.True(sawCompactedActiveRun);
+        Assert.NotNull(runtime.SessionService.GetLatestSessionContextCheckpoint(sessionId));
     }
 
     [Fact]
@@ -2466,20 +2464,20 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task QueueUserMessageAsync_BoundsProviderPromptHistory_ForLongSessions()
+    public async Task QueueUserMessageAsync_HighReportedUsageCompactsLongSessionAfterResponse()
     {
         const string toolId = "fetch_page";
         const string currentUserMessage = "Current request: summarize the recent context.";
         var provider = new ScriptedProvider(
-            (request, _) =>
+            (request, requestIndex) =>
             {
                 Assert.Contains(request.Turns, turn => RenderTurnText(turn) == currentUserMessage);
                 Assert.Contains(request.Turns, turn => RenderTurnText(turn) == "old-119");
-                Assert.DoesNotContain(request.Turns, turn => RenderTurnText(turn) == "old-000");
-                Assert.InRange(request.Turns.Count, 1, 20);
+                Assert.Contains(request.Turns, turn => RenderTurnText(turn) == "old-000");
                 return Complete("bounded");
             }
         );
+        provider.UsageHandler = (_, _) => Usage(totalTokens: 200_000);
         using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
         var sessionId = await runtime.CreateSessionAsync(toolId);
         for (var index = 0; index < 120; index++)
@@ -2496,6 +2494,44 @@ public sealed class AgentRunCoordinatorTests
         );
 
         Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        var contextCheckpoint = Assert.IsType<AgentSessionContextCheckpointRecord>(
+            runtime.SessionService.GetLatestSessionContextCheckpoint(sessionId));
+        Assert.True(contextCheckpoint.OmittedTurnCount > 0);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(123_903L, false)]
+    [InlineData(123_904L, true)]
+    public async Task QueueUserMessageAsync_ReportedUsageCompactsAtUsableInputLimit(
+        long? reportedTotalTokens,
+        bool shouldCompact)
+    {
+        var provider = new ScriptedProvider((_, _) => Complete("bounded"));
+        if (reportedTotalTokens is not null)
+        {
+            provider.UsageHandler = (_, _) => Usage(reportedTotalTokens.Value);
+        }
+        using var runtime = AgentTestRuntime.Create(provider);
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        for (var index = 0; index < 40; index++)
+        {
+            runtime.SessionService.AppendTextTurn(
+                sessionId,
+                index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant,
+                $"threshold-history-{index:00}");
+        }
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Check the provider usage threshold.",
+            runtime.CurrentWorkspaceId);
+
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(
+            shouldCompact,
+            runtime.SessionService.GetLatestSessionContextCheckpoint(sessionId) is not null);
     }
 
     [Fact]
@@ -2504,8 +2540,14 @@ public sealed class AgentRunCoordinatorTests
         const string toolId = "fetch_page";
         const string currentUserMessage = "Current request: continue from the compacted context.";
         var provider = new ScriptedProvider(
-            (request, _) =>
+            (request, requestIndex) =>
             {
+                if (requestIndex == 1)
+                {
+                    Assert.Contains(request.Turns, turn => RenderTurnText(turn) == "old-000");
+                    return Complete("triggered compaction");
+                }
+
                 var systemInstructions = request.SystemInstructions ?? string.Empty;
                 Assert.DoesNotContain("old-000", systemInstructions, StringComparison.Ordinal);
                 Assert.DoesNotContain("old-023", systemInstructions, StringComparison.Ordinal);
@@ -2522,6 +2564,9 @@ public sealed class AgentRunCoordinatorTests
                 return Complete("continued");
             }
         );
+        provider.UsageHandler = (_, requestIndex) => requestIndex == 1
+            ? Usage(totalTokens: 200_000)
+            : Usage(totalTokens: 1_000);
         using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
         var sessionId = await runtime.CreateSessionAsync(toolId);
         for (var index = 0; index < 40; index++)
@@ -2530,6 +2575,14 @@ public sealed class AgentRunCoordinatorTests
             runtime.SessionService.AppendTextTurn(sessionId, role, $"old-{index:000}");
         }
 
+        var firstCheckpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Trigger context compaction.",
+            runtime.CurrentWorkspaceId);
+        var compactedContext = Assert.IsType<AgentSessionContextCheckpointRecord>(
+            runtime.SessionService.GetLatestSessionContextCheckpoint(sessionId));
+
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
             runtime.CurrentProfileId,
@@ -2537,9 +2590,11 @@ public sealed class AgentRunCoordinatorTests
             runtime.CurrentWorkspaceId
         );
 
+        Assert.Equal(AgentRunStatus.Completed, firstCheckpoint.Status);
         Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
         var checkpointSummary = runtime.SessionService.GetLatestSessionContextCheckpoint(sessionId);
         Assert.NotNull(checkpointSummary);
+        Assert.Equal(compactedContext.ContextCheckpointId, checkpointSummary!.ContextCheckpointId);
         Assert.Contains("old-000", checkpointSummary!.SummaryText, StringComparison.Ordinal);
         Assert.Contains("old-023", checkpointSummary.SummaryText, StringComparison.Ordinal);
     }
@@ -2548,7 +2603,7 @@ public sealed class AgentRunCoordinatorTests
     public async Task QueueUserMessageAsync_RefinesAnchoredContinuityWithUtilityModel()
     {
         var provider = new ScriptedProvider(
-            (request, _) =>
+            (request, requestIndex) =>
             {
                 if ((request.SystemInstructions ?? string.Empty).Contains(
                         "Create a compact session-continuity summary",
@@ -2559,12 +2614,20 @@ public sealed class AgentRunCoordinatorTests
                         """);
                 }
 
+                if (requestIndex == 1)
+                {
+                    return Complete("triggered refined compaction");
+                }
+
                 Assert.Contains(
                     request.Turns,
                     turn => RenderTurnText(turn).Contains("Utility-refined goal", StringComparison.Ordinal));
                 return Complete("continued with refined context");
             },
             utilityModelId: "test-model");
+        provider.UsageHandler = (_, requestIndex) => requestIndex == 1
+            ? Usage(totalTokens: 200_000)
+            : Usage(totalTokens: 1_000);
         using var runtime = AgentTestRuntime.CreateWithContinuityRefinement(provider, new TestTool("noop"));
         var sessionId = await runtime.CreateSessionAsync("noop");
         for (var index = 0; index < 40; index++)
@@ -2575,12 +2638,18 @@ public sealed class AgentRunCoordinatorTests
                 $"refinement-history-{index:000}");
         }
 
+        var trigger = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Trigger refined continuity.",
+            runtime.CurrentWorkspaceId);
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
             runtime.CurrentProfileId,
             "Continue with refined continuity.",
             runtime.CurrentWorkspaceId);
 
+        Assert.Equal(AgentRunStatus.Completed, trigger.Status);
         Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
         Assert.Contains(
             "Utility-refined goal",
@@ -2593,6 +2662,7 @@ public sealed class AgentRunCoordinatorTests
     {
         const string toolId = "fetch_page";
         var provider = new ScriptedProvider((_, _) => Complete("done"));
+        provider.UsageHandler = (_, _) => Usage(totalTokens: 200_000);
         using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
         var sessionId = await runtime.CreateSessionAsync(toolId);
 
@@ -2671,20 +2741,28 @@ public sealed class AgentRunCoordinatorTests
             {
                 if (requestIndex == 1)
                 {
+                    return Complete("triggered attachment compaction");
+                }
+
+                if (requestIndex == 2)
+                {
                     var contextCheckpoint = Assert.IsType<AgentSessionContextCheckpointRecord>(
                         observedRuntime!.SessionService.GetLatestSessionContextCheckpoint(sessionId));
                     var turns = observedRuntime.SessionService.ListTurns(sessionId);
-                    Assert.Contains(
+                    Assert.DoesNotContain(
                         attachmentTurnId,
                         turns.Skip(contextCheckpoint.OmittedTurnCount).Select(turn => turn.TurnId));
                     return ToolRequest("call-1", toolId, "{}");
                 }
 
-                return requestIndex == 2
+                return requestIndex == 3
                     ? AssertAndComplete(request, toolId, "call-1")
                     : throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}.");
             },
             supportsImageInput: true);
+        provider.UsageHandler = (_, requestIndex) => requestIndex == 1
+            ? Usage(totalTokens: 200_000)
+            : Usage(totalTokens: 1_000);
         using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
         observedRuntime = runtime;
         sessionId = await runtime.CreateSessionAsync(toolId);
@@ -2727,15 +2805,22 @@ public sealed class AgentRunCoordinatorTests
             }
         };
 
+        var seedCheckpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Prepare attachment context.",
+            runtime.CurrentWorkspaceId);
+
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
             runtime.CurrentProfileId,
             "Use the tool, then answer.",
             runtime.CurrentWorkspaceId);
 
-        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
-        Assert.Equal(2, provider.Requests.Count);
-        Assert.Equal([0L, 0L], provider.DataContentBytesByRequest);
+        Assert.True(seedCheckpoint.Status == AgentRunStatus.Completed, seedCheckpoint.Summary);
+        Assert.True(checkpoint.Status == AgentRunStatus.Completed, checkpoint.Summary);
+        Assert.Equal(3, provider.Requests.Count);
+        Assert.Equal([0L, 0L], provider.DataContentBytesByRequest.Skip(1));
         Assert.Equal(
             durableTurnBefore,
             JsonSerializer.Serialize(runtime.SessionService.GetTurn(attachmentTurnId)));
@@ -2781,7 +2866,9 @@ public sealed class AgentRunCoordinatorTests
             runtime.CurrentWorkspaceId,
             [new AgentAttachmentUploadRequest("current.png", "image/png", currentBytes)]);
 
-        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.True(
+            checkpoint.Status == AgentRunStatus.Completed,
+            $"{checkpoint.Status}: {checkpoint.Summary}\n{runtime.ExtensionCatalog.LastInvocationFailure}");
         Assert.Equal([(long)currentSize], provider.DataContentBytesByRequest);
         Assert.Equal(
             1,
@@ -2839,18 +2926,25 @@ public sealed class AgentRunCoordinatorTests
         var provider = new ScriptedProvider(
             (request, requestIndex) =>
             {
-                Assert.Equal(1, requestIndex);
+                if (requestIndex == 1)
+                {
+                    return Complete("triggered text attachment compaction");
+                }
+
+                Assert.Equal(2, requestIndex);
                 var renderedRequest = (request.SystemInstructions ?? string.Empty)
                                       + "\n"
                                       + string.Join("\n", request.Turns.Select(RenderTurnText));
                 Assert.Contains("projected-turn-reflection", renderedRequest, StringComparison.Ordinal);
-                Assert.Contains("Historical attachment omitted from AI context", renderedRequest, StringComparison.Ordinal);
                 Assert.DoesNotContain(attachmentBody, renderedRequest, StringComparison.Ordinal);
                 return Complete("done");
             });
+        provider.UsageHandler = (_, requestIndex) => requestIndex == 1
+            ? Usage(totalTokens: 200_000)
+            : Usage(totalTokens: 1_000);
         using var runtime = AgentTestRuntime.Create(provider);
-        runtime.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.PromptContextContributors,
+        runtime.ExtensionCatalog.AddProvider(
+            AgentRpcServices.PromptContextContributors,
             new ProjectedTurnReflectionContributor(),
             "example.projected-turn-reflection");
         var sessionId = await runtime.CreateSessionAsync("noop");
@@ -2882,13 +2976,20 @@ public sealed class AgentRunCoordinatorTests
         }
         var durableTurnBefore = JsonSerializer.Serialize(runtime.SessionService.GetTurn(attachmentTurn.TurnId));
 
+        var seedCheckpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Prepare text attachment context.",
+            runtime.CurrentWorkspaceId);
+
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
             runtime.CurrentProfileId,
             "Which project rule applies?",
             runtime.CurrentWorkspaceId);
 
-        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.True(seedCheckpoint.Status == AgentRunStatus.Completed, seedCheckpoint.Summary);
+        Assert.True(checkpoint.Status == AgentRunStatus.Completed, checkpoint.Summary);
         Assert.Equal(
             durableTurnBefore,
             JsonSerializer.Serialize(runtime.SessionService.GetTurn(attachmentTurn.TurnId)));
@@ -2899,8 +3000,14 @@ public sealed class AgentRunCoordinatorTests
     {
         const string toolId = "fetch_page";
         var provider = new ScriptedProvider(
-            (request, _) =>
+            (request, requestIndex) =>
             {
+                if (requestIndex == 1)
+                {
+                    return Complete("seeded orchestrated context");
+                }
+
+                Assert.Equal(2, requestIndex);
                 Assert.DoesNotContain("orchestrated-old-000", request.SystemInstructions ?? string.Empty, StringComparison.Ordinal);
                 Assert.Contains(
                     request.Turns,
@@ -2911,13 +3018,27 @@ public sealed class AgentRunCoordinatorTests
                 return Complete("orchestrated");
             }
         );
+        provider.UsageHandler = (_, requestIndex) => requestIndex == 1
+            ? Usage(totalTokens: 200_000)
+            : Usage(totalTokens: 1_000);
 
         using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
-        runtime.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.BehaviorLoops,
-            new OrchestratedAgentBehaviorLoop(runtime.ExtensionCatalog)
+        runtime.ExtensionCatalog.AddBehaviorLoop(new OrchestratedAgentBehaviorLoop()
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
+
+        for (var index = 0; index < 40; index++)
+        {
+            var role = index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant;
+            runtime.SessionService.AppendTextTurn(sessionId, role, $"orchestrated-old-{index:000}");
+        }
+
+        var seedCheckpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            sessionId,
+            runtime.CurrentProfileId,
+            "Prepare orchestrated context.",
+            runtime.CurrentWorkspaceId);
+        Assert.Equal(AgentRunStatus.Completed, seedCheckpoint.Status);
         var profile = runtime.CurrentProfile;
         runtime.ProfileService.SaveProfile(
             profile.ProfileId,
@@ -2931,12 +3052,6 @@ public sealed class AgentRunCoordinatorTests
             profile.SelectableCapabilityAssignments,
             behaviorLoopId: SubagentConstants.OrchestratedBehaviorLoopId
         );
-
-        for (var index = 0; index < 40; index++)
-        {
-            var role = index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant;
-            runtime.SessionService.AppendTextTurn(sessionId, role, $"orchestrated-old-{index:000}");
-        }
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
@@ -3019,14 +3134,13 @@ public sealed class AgentRunCoordinatorTests
         const string toolId = "read_file";
         const int toolCallCount = 50;
         const string userMessage = "Inspect many files before answering.";
-        var sawCompactedActiveRun = false;
 
         var provider = new ScriptedProvider(
             (request, requestIndex) =>
             {
                 if (requestIndex <= toolCallCount)
                 {
-                    sawCompactedActiveRun |= AssertActiveRunContext(
+                    AssertActiveRunContext(
                         request,
                         requestIndex,
                         userMessage);
@@ -3059,7 +3173,6 @@ public sealed class AgentRunCoordinatorTests
         Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
         Assert.Equal(toolCallCount, tool.ExecutionCount);
         Assert.Equal(toolCallCount + 1, provider.Requests.Count);
-        Assert.True(sawCompactedActiveRun);
     }
 
     [Fact]
@@ -3323,8 +3436,8 @@ public sealed class AgentRunCoordinatorTests
         var canceledTool = new TestTool(canceledToolId);
         using var runtime = AgentTestRuntime.Create(provider, firstTool, canceledTool);
         var permissionTool = new PermissionedToolSource(permissionToolId);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, permissionTool);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, permissionTool);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, permissionTool);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, permissionTool);
         var sessionId = await runtime.CreateSessionAsync(firstToolId);
         var profile = runtime.CurrentProfile;
         runtime.ProfileService.SaveProfile(
@@ -3385,12 +3498,11 @@ public sealed class AgentRunCoordinatorTests
                     ),
                 }
         );
-
         using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, toolSource);
-        runtime.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.PermissionSurfaces,
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(
+            AgentRpcServices.PermissionSurfaces,
             toolSource
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
@@ -3461,8 +3573,8 @@ public sealed class AgentRunCoordinatorTests
         });
         using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, toolSource);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, toolSource);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, toolSource);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         Task<AgentRunCheckpointRecord?>? approvalTask = null;
         var approvalStarted = 0;
@@ -3510,8 +3622,8 @@ public sealed class AgentRunCoordinatorTests
         });
         using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, toolSource);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, toolSource);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, toolSource);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         var waiting = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
@@ -3551,10 +3663,10 @@ public sealed class AgentRunCoordinatorTests
         using var runtime = AgentTestRuntime.Create(provider);
         var source = new PreflightPermissionedToolSource(toolId, deferInPreflight: false);
         var target = new ReleasingResourceAuthorityExecutionTarget();
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, source);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, source);
-        runtime.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.ExecutionTargets,
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, source);
+        runtime.ExtensionCatalog.AddProvider(
+            AgentRpcServices.ExecutionTargets,
             target,
             "test.execution.target.package");
         var sessionId = await runtime.CreateSessionAsync(toolId);
@@ -3617,9 +3729,9 @@ public sealed class AgentRunCoordinatorTests
             toolId,
             deferInPreflight: true,
             deferredErrorCode: errorCode);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, source);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, source);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PromptContextContributors, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PromptContextContributors, source);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         runtime.PermissionService.SetSessionUnrestrictedMode(sessionId, isEnabled: true);
 
@@ -3655,8 +3767,8 @@ public sealed class AgentRunCoordinatorTests
             });
         using var runtime = AgentTestRuntime.Create(provider);
         var source = new PreflightPermissionedToolSource(toolId, deferInPreflight: false);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, source);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, source);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         runtime.PermissionService.SetSessionUnrestrictedMode(sessionId, isEnabled: true);
 
@@ -3694,8 +3806,8 @@ public sealed class AgentRunCoordinatorTests
             deferInPreflight: false,
             boundaryId: AgentPermissionBoundaryIds.ConfiguredScope,
             resourceReferences: [resourceReference]);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, source);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, source);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         runtime.PermissionService.SetSessionUnrestrictedMode(sessionId, isEnabled: true);
 
@@ -3734,8 +3846,8 @@ public sealed class AgentRunCoordinatorTests
             toolId,
             deferInPreflight: true,
             deferredErrorCode: errorCode);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, source);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, source);
         var sessionId = await runtime.CreateSessionAsync(toolId);
 
         var waiting = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -3774,8 +3886,8 @@ public sealed class AgentRunCoordinatorTests
                 : throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}."));
         using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId, waitsForChild: true);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, toolSource);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, toolSource);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, toolSource);
         var sessionId = await runtime.CreateSessionAsync(toolId);
 
         var waiting = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -3824,8 +3936,8 @@ public sealed class AgentRunCoordinatorTests
             provider,
             new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 1, 10));
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, toolSource);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, toolSource);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, toolSource);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         var waiting = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
@@ -3859,11 +3971,14 @@ public sealed class AgentRunCoordinatorTests
                     _ => throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}."),
                 }
         );
+        provider.UsageHandler = (_, requestIndex) => requestIndex == 1
+            ? Usage(totalTokens: 200_000)
+            : Usage(totalTokens: 1_000);
 
         using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, toolSource);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, toolSource);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, toolSource);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         for (var index = 0; index < 40; index++)
         {
@@ -3891,8 +4006,14 @@ public sealed class AgentRunCoordinatorTests
     {
         const string toolId = "fetch_page";
         var provider = new ScriptedProvider(
-            (request, _) =>
+            (request, requestIndex) =>
             {
+                if (requestIndex == 1)
+                {
+                    return Complete("seeded parent context");
+                }
+
+                Assert.Equal(2, requestIndex);
                 var systemInstructions = request.SystemInstructions ?? string.Empty;
                 Assert.DoesNotContain("parent-old-000", systemInstructions, StringComparison.Ordinal);
                 Assert.True(
@@ -3908,6 +4029,9 @@ public sealed class AgentRunCoordinatorTests
                 return Complete("parent resumed");
             }
         );
+        provider.UsageHandler = (_, requestIndex) => requestIndex == 1
+            ? Usage(totalTokens: 200_000)
+            : Usage(totalTokens: 1_000);
 
         using var runtime = AgentTestRuntime.Create(provider, new TestTool(toolId));
         var parentSessionId = await runtime.CreateSessionAsync(toolId);
@@ -3918,6 +4042,13 @@ public sealed class AgentRunCoordinatorTests
             var role = index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant;
             runtime.SessionService.AppendTextTurn(parentSessionId, role, $"parent-old-{index:000}");
         }
+
+        var seedCheckpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
+            parentSessionId,
+            runtime.CurrentProfileId,
+            "Prepare parent context.",
+            runtime.CurrentWorkspaceId);
+        Assert.Equal(AgentRunStatus.Completed, seedCheckpoint.Status);
 
         var parentUserTurn = runtime.SessionService.AppendTextTurn(
             parentSessionId,
@@ -4273,8 +4404,8 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("done"))
         );
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.PermissionSurfaces,
+        runtime.ExtensionCatalog.AddProvider(
+            AgentRpcServices.PermissionSurfaces,
             toolSource
         );
         var parentSessionId = await runtime.CreateSessionAsync(toolId);
@@ -4480,8 +4611,8 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("done"))
         );
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.PermissionSurfaces,
+        runtime.ExtensionCatalog.AddProvider(
+            AgentRpcServices.PermissionSurfaces,
             toolSource
         );
         var parentSessionId = await runtime.CreateSessionAsync(toolId);
@@ -4697,13 +4828,9 @@ public sealed class AgentRunCoordinatorTests
                 []
             );
             var extensionCatalog = new TestExtensionCatalog();
-            extensionCatalog.AddExtension(
-                PackageExtensionPoints.BehaviorLoops,
-                new TestBehaviorLoop(AgentBehaviorLoopIds.Default, "Default")
+            extensionCatalog.AddBehaviorLoop(new TestBehaviorLoop(AgentBehaviorLoopIds.Default, "Default")
             );
-            extensionCatalog.AddExtension(
-                PackageExtensionPoints.BehaviorLoops,
-                new TestBehaviorLoop("feature-loop", "Feature Loop", [SubagentConstants.FeatureKind])
+            extensionCatalog.AddBehaviorLoop(new TestBehaviorLoop("feature-loop", "Feature Loop", [SubagentConstants.FeatureKind])
             );
             var feature = new SubagentFeature(service, extensionCatalog);
 
@@ -4880,12 +5007,12 @@ public sealed class AgentRunCoordinatorTests
             var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
             var extensionCatalog = new TestExtensionCatalog();
             AddSubagentBehaviorLoop(extensionCatalog);
-            extensionCatalog.AddExtension(
-                PackageExtensionPoints.RuntimeCatalogs,
+            extensionCatalog.AddProvider(
+                AgentRpcServices.RuntimeCatalogs,
                 new TestRuntimeCatalog([profile], [session], [workspace])
             );
-            extensionCatalog.AddExtension(
-                PackageExtensionPoints.ChildRunExecutors,
+            extensionCatalog.AddProvider(
+                AgentRpcServices.ChildRunExecutors,
                 new CapturingChildRunExecutor()
             );
             var feature = new SubagentFeature(service, extensionCatalog);
@@ -5037,8 +5164,8 @@ public sealed class AgentRunCoordinatorTests
         var runtimeCatalog = new TestRuntimeCatalog([profile], [session], [workspace]);
         var extensionCatalog = new TestExtensionCatalog();
         AddSubagentBehaviorLoop(extensionCatalog);
-        extensionCatalog.AddExtension(PackageExtensionPoints.RuntimeCatalogs, runtimeCatalog);
-        extensionCatalog.AddExtension(PackageExtensionPoints.ChildRunExecutors, childExecutor);
+        extensionCatalog.AddProvider(AgentRpcServices.RuntimeCatalogs, runtimeCatalog);
+        extensionCatalog.AddProvider(AgentRpcServices.ChildRunExecutors, childExecutor);
         var feature = new SubagentFeature(service, extensionCatalog);
 
         var result = await feature.ExecuteAsync(
@@ -5155,11 +5282,11 @@ public sealed class AgentRunCoordinatorTests
         var childExecutor = new CapturingChildRunExecutor();
         var extensionCatalog = new TestExtensionCatalog();
         AddSubagentBehaviorLoop(extensionCatalog);
-        extensionCatalog.AddExtension(
-            PackageExtensionPoints.RuntimeCatalogs,
+        extensionCatalog.AddProvider(
+            AgentRpcServices.RuntimeCatalogs,
             new TestRuntimeCatalog([profile], [session], [workspace])
         );
-        extensionCatalog.AddExtension(PackageExtensionPoints.ChildRunExecutors, childExecutor);
+        extensionCatalog.AddProvider(AgentRpcServices.ChildRunExecutors, childExecutor);
         var feature = new SubagentFeature(service, extensionCatalog);
 
         var result = await feature.ExecuteAsync(
@@ -5251,11 +5378,11 @@ public sealed class AgentRunCoordinatorTests
         var childExecutor = new CapturingChildRunExecutor();
         var extensionCatalog = new TestExtensionCatalog();
         AddSubagentBehaviorLoop(extensionCatalog);
-        extensionCatalog.AddExtension(
-            PackageExtensionPoints.RuntimeCatalogs,
+        extensionCatalog.AddProvider(
+            AgentRpcServices.RuntimeCatalogs,
             new TestRuntimeCatalog([profile], [session], [workspace])
         );
-        extensionCatalog.AddExtension(PackageExtensionPoints.ChildRunExecutors, childExecutor);
+        extensionCatalog.AddProvider(AgentRpcServices.ChildRunExecutors, childExecutor);
         var feature = new SubagentFeature(service, extensionCatalog);
 
         var result = await feature.ExecuteAsync(
@@ -5356,11 +5483,11 @@ public sealed class AgentRunCoordinatorTests
             var childExecutor = new CapturingChildRunExecutor();
             var extensionCatalog = new TestExtensionCatalog();
             AddSubagentBehaviorLoop(extensionCatalog);
-            extensionCatalog.AddExtension(
-                PackageExtensionPoints.RuntimeCatalogs,
+            extensionCatalog.AddProvider(
+                AgentRpcServices.RuntimeCatalogs,
                 new TestRuntimeCatalog([profile], [session], [workspace])
             );
-            extensionCatalog.AddExtension(PackageExtensionPoints.ChildRunExecutors, childExecutor);
+            extensionCatalog.AddProvider(AgentRpcServices.ChildRunExecutors, childExecutor);
             var feature = new SubagentFeature(service, extensionCatalog);
             var argumentsJson = JsonSerializer.Serialize(
                 new
@@ -5483,14 +5610,12 @@ public sealed class AgentRunCoordinatorTests
             var childExecutor = new CapturingChildRunExecutor();
             var extensionCatalog = new TestExtensionCatalog();
             AddSubagentBehaviorLoop(extensionCatalog);
-            extensionCatalog.AddExtension(
-                PackageExtensionPoints.RuntimeCatalogs,
+            extensionCatalog.AddProvider(
+                AgentRpcServices.RuntimeCatalogs,
                 new TestRuntimeCatalog([profile], [session], [workspace])
             );
-            extensionCatalog.AddExtension(PackageExtensionPoints.ChildRunExecutors, childExecutor);
-            extensionCatalog.AddExtension(
-                PackageExtensionPoints.Tools,
-                new TestMutableTool(toolId)
+            extensionCatalog.AddProvider(AgentRpcServices.ChildRunExecutors, childExecutor);
+            extensionCatalog.AddTool(new TestMutableTool(toolId)
             );
             var feature = new SubagentFeature(service, extensionCatalog);
             var argumentsJson = JsonSerializer.Serialize(
@@ -5849,9 +5974,9 @@ public sealed class AgentRunCoordinatorTests
 
         using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, toolSource);
-        runtime.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.PermissionSurfaces,
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(
+            AgentRpcServices.PermissionSurfaces,
             toolSource
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
@@ -6827,8 +6952,8 @@ public sealed class AgentRunCoordinatorTests
         Assert.False(viewModel.ShowChatModelSelection);
         Assert.False(viewModel.ShowReasoningOptions);
 
-        runtime.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.ChatProviders,
+        runtime.ExtensionCatalog.AddProvider(
+            AgentRpcServices.ChatProviders,
             new ScriptedProvider((_, _) => Complete("done"))
         );
         await viewModel.ReloadProfileProvidersCommand.ExecuteAsync(null);
@@ -6879,8 +7004,8 @@ public sealed class AgentRunCoordinatorTests
         using var runtime = AgentTestRuntime.Create(
             new ScriptedProvider((_, _) => Complete("done"))
         );
-        runtime.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.ProfileCapabilityConsumers,
+        runtime.ExtensionCatalog.AddProvider(
+            AgentRpcServices.ProfileCapabilityConsumers,
             new TestEmbeddingCapabilityConsumer()
         );
         runtime.AddEmbeddingProvider(new TestEmbeddingProvider("test-embeddings"));
@@ -6904,8 +7029,8 @@ public sealed class AgentRunCoordinatorTests
         using var runtime = AgentTestRuntime.Create(
             new ScriptedProvider((_, _) => Complete("done"))
         );
-        runtime.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.ProfileCapabilityConsumers,
+        runtime.ExtensionCatalog.AddProvider(
+            AgentRpcServices.ProfileCapabilityConsumers,
             new TestEmbeddingCapabilityConsumer()
         );
         runtime.AddEmbeddingProvider(
@@ -7121,8 +7246,8 @@ public sealed class AgentRunCoordinatorTests
             Assert.False(viewModel.ShowChatModelSelection);
             Assert.False(viewModel.ShowReasoningOptions);
 
-            runtime.ExtensionCatalog.AddExtension(
-                PackageExtensionPoints.ChatProviders,
+            runtime.ExtensionCatalog.AddProvider(
+                AgentRpcServices.ChatProviders,
                 new ScriptedProvider((_, _) => Complete("done"))
             );
             await viewModel.ReloadSubagentChatProvidersCommand.ExecuteAsync(null);
@@ -7369,8 +7494,8 @@ public sealed class AgentRunCoordinatorTests
         );
         var store = new MemoryLocalStore(context);
         var feature = CreateSemanticFeature(store, runtime.ExtensionCatalog);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.DurableLifecycleObservers, feature);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.SessionDataCleaners, feature);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, feature);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.SessionCleaners, feature);
 
         var parentMemory = StoreMemoryWithEmbedding(
             store,
@@ -7453,8 +7578,8 @@ public sealed class AgentRunCoordinatorTests
                 null,
                 []
             );
-            runtime.ExtensionCatalog.AddExtension(
-                PackageExtensionPoints.ProfileSelectableCapabilityProviders,
+            runtime.ExtensionCatalog.AddProvider(
+                AgentRpcServices.SelectableCapabilityProviders,
                 new SubagentFeature(subagentService, runtime.ExtensionCatalog)
             );
             using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
@@ -7559,8 +7684,8 @@ public sealed class AgentRunCoordinatorTests
                 null,
                 []
             );
-            runtime.ExtensionCatalog.AddExtension(
-                PackageExtensionPoints.ProfileSelectableCapabilityProviders,
+            runtime.ExtensionCatalog.AddProvider(
+                AgentRpcServices.SelectableCapabilityProviders,
                 new SubagentFeature(subagentService, runtime.ExtensionCatalog)
             );
             using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
@@ -7688,8 +7813,8 @@ public sealed class AgentRunCoordinatorTests
             await using var connectionManager = new McpClientConnectionManager(
                 NullLoggerFactory.Instance
             );
-            runtime.ExtensionCatalog.AddExtension(
-                PackageExtensionPoints.ProfileSelectableCapabilityProviders,
+            runtime.ExtensionCatalog.AddProvider(
+                AgentRpcServices.SelectableCapabilityProviders,
                 new McpToolSource(serverCatalogService, connectionManager)
             );
             using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
@@ -7788,9 +7913,7 @@ public sealed class AgentRunCoordinatorTests
         await WaitUntilAsync(() => viewModel.SelectedProfile is not null);
         Assert.Empty(viewModel.LocalTools);
 
-        runtime.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.Tools,
-            new MetadataTool("dynamic_tool", "Dynamic Tools")
+        runtime.ExtensionCatalog.AddTool(new MetadataTool("dynamic_tool", "Dynamic Tools")
         );
 
         await WaitUntilAsync(
@@ -7844,8 +7967,8 @@ public sealed class AgentRunCoordinatorTests
             await WaitUntilAsync(() => viewModel.SelectedProfile is not null);
             Assert.Empty(viewModel.PackageCapabilities);
 
-            runtime.ExtensionCatalog.AddExtension(
-                PackageExtensionPoints.ProfileSelectableCapabilityProviders,
+            runtime.ExtensionCatalog.AddProvider(
+                AgentRpcServices.SelectableCapabilityProviders,
                 new SubagentFeature(subagentService, runtime.ExtensionCatalog)
             );
 
@@ -7874,23 +7997,25 @@ public sealed class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public void AgentProfileSelectableCapabilityChangeObserver_UnsubscribesWhenDisposed()
+    public async Task AgentProfileSelectableCapabilityChangeObserver_UnsubscribesWhenDisposed()
     {
         var catalog = new TestExtensionCatalog();
         var provider = new MutableSelectableCapabilityProvider();
         using var observer = new AgentProfileSelectableCapabilityChangeObserver(catalog);
         var changeCount = 0;
-        observer.Changed += () => changeCount++;
+        observer.Changed += () => Interlocked.Increment(ref changeCount);
 
-        catalog.AddExtension(PackageExtensionPoints.ProfileSelectableCapabilityProviders, provider);
+        catalog.AddProvider(AgentRpcServices.SelectableCapabilityProviders, provider);
+        await WaitUntilAsync(() => Volatile.Read(ref changeCount) == 1);
         provider.RaiseChanged();
 
-        Assert.Equal(2, changeCount);
+        await WaitUntilAsync(() => Volatile.Read(ref changeCount) == 2);
 
         observer.Dispose();
         provider.RaiseChanged();
+        await Task.Delay(50);
 
-        Assert.Equal(2, changeCount);
+        Assert.Equal(2, Volatile.Read(ref changeCount));
     }
 
     [Fact]
@@ -7926,8 +8051,8 @@ public sealed class AgentRunCoordinatorTests
             await using var connectionManager = new McpClientConnectionManager(
                 NullLoggerFactory.Instance
             );
-            runtime.ExtensionCatalog.AddExtension(
-                PackageExtensionPoints.ProfileSelectableCapabilityProviders,
+            runtime.ExtensionCatalog.AddProvider(
+                AgentRpcServices.SelectableCapabilityProviders,
                 new McpToolSource(serverCatalogService, connectionManager)
             );
             using var viewModel = new SubagentsViewModel(subagentService, runtime.ExtensionCatalog);
@@ -9078,6 +9203,7 @@ public sealed class AgentRunCoordinatorTests
             "Live child update."
         );
 
+        await WaitUntilAsync(() => viewModel.Messages.Count >= 2);
         Assert.Contains(
             viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
             row => row.Content == "Live child update."
@@ -9342,6 +9468,9 @@ public sealed class AgentRunCoordinatorTests
             "Second transcript content."
         );
 
+        await WaitUntilAsync(() => viewModel.Messages
+            .OfType<SubsessionTextTranscriptRowViewModel>()
+            .Count() == 2);
         var textRows = viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>().ToArray();
         Assert.Equal(2, textRows.Length);
         Assert.Same(firstRow, textRows[0]);
@@ -9393,6 +9522,7 @@ public sealed class AgentRunCoordinatorTests
             "Live child update while detached."
         );
 
+        await WaitUntilAsync(() => viewModel.HasNewerTranscriptRows);
         Assert.Same(
             initialRow,
             Assert.Single(viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>())
@@ -9418,6 +9548,9 @@ public sealed class AgentRunCoordinatorTests
             "Live child update after resume."
         );
 
+        await WaitUntilAsync(() => ContainsSubsessionTextRow(
+            viewModel,
+            "Live child update after resume."));
         Assert.Contains(
             viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
             row => row.Content == "Live child update after resume."
@@ -11491,7 +11624,9 @@ public sealed class AgentRunCoordinatorTests
             cancellationToken: CancellationToken.None
         );
 
-        Assert.NotNull(memoryFeature.LastRecallRequest);
+        Assert.True(
+            memoryFeature.LastRecallRequest is not null,
+            runtime.ExtensionCatalog.LastInvocationFailure?.ToString());
         Assert.Equal(8, memoryFeature.LastRecallRequest!.RecentLiveBufferTurns.Count);
         Assert.Equal(
             "older-2",
@@ -11678,37 +11813,44 @@ public sealed class AgentRunCoordinatorTests
 
         var memoryFeature = new CapturingMemoryFeature();
         runtime.AddMemoryFeature(memoryFeature);
+        var run = runtime.SessionService.ReserveRun(
+            sessionId,
+            profile.ProfileId,
+            "Summarize the latest progress.");
+        var running = Assert.IsType<AgentRunTransitionResult>(runtime.Store.TryTransitionRun(
+            run.Key,
+            run.Epoch,
+            AgentRunStatus.Running,
+            "Running."));
+        var completed = Assert.IsType<AgentRunTransitionResult>(runtime.Store.TryTransitionRun(
+            run.Key,
+            running.Run.Epoch,
+            AgentRunStatus.Completed,
+            "done"));
 
         await runtime.MemoryCoordinator.PublishLifecycleEventAsync(
             AgentLifecycleEventKind.AssistantTurnCompleted,
             session,
             profile,
-            Guid.NewGuid(),
-            runRevision: 2,
+            run.Key.RunId,
+            run.Key.RunRevision,
             status: AgentRunStatus.Completed,
-            runStartedAtUtc: DateTimeOffset.UtcNow,
+            runStartedAtUtc: run.StartedAtUtc,
             userMessage: "Summarize the latest progress.",
             triggerTurn: latestTurn,
-            checkpoint: new AgentRunCheckpointRecord(
-                Guid.NewGuid(),
-                sessionId,
-                2,
-                AgentRunStatus.Completed,
-                "done",
-                DateTimeOffset.UtcNow
-            ),
+            checkpoint: completed.Checkpoint,
             cancellationToken: CancellationToken.None
         );
 
         Assert.NotNull(memoryFeature.LastLifecycleEvent);
-        Assert.Equal(8, memoryFeature.LastLifecycleEvent!.RecentLiveBufferTurns.Count);
+        Assert.Equal(8, memoryFeature.LastLifecycleEvent!.Payload.RecentLiveBufferTurns.Count);
         Assert.Equal(
             "turn-1",
-            RenderTurnText(memoryFeature.LastLifecycleEvent.RecentLiveBufferTurns[0])
+            RenderTurnText(memoryFeature.LastLifecycleEvent.Payload.RecentLiveBufferTurns[0])
         );
         Assert.Equal(
             "turn-8",
-            RenderTurnText(memoryFeature.LastLifecycleEvent.RecentLiveBufferTurns[^1])
+            RenderTurnText(memoryFeature.LastLifecycleEvent.Payload.RecentLiveBufferTurns[^1])
         );
     }
 
@@ -12736,8 +12878,8 @@ public sealed class AgentRunCoordinatorTests
     {
         const string embeddingProviderId = "failing-embeddings";
         var extensionCatalog = new TestExtensionCatalog();
-        extensionCatalog.AddExtension(
-            PackageExtensionPoints.EmbeddingProviders,
+        extensionCatalog.AddProvider(
+            AgentRpcServices.EmbeddingProviders,
             new ThrowingEmbeddingProvider(embeddingProviderId)
         );
 
@@ -12776,7 +12918,7 @@ public sealed class AgentRunCoordinatorTests
                 ),
             ]
         );
-        extensionCatalog.AddExtension(PackageExtensionPoints.RuntimeCatalogs, runtimeCatalog);
+        extensionCatalog.AddProvider(AgentRpcServices.RuntimeCatalogs, runtimeCatalog);
 
         var context = new TestPackageContext(
             Path.Combine(Path.GetTempPath(), "sunder-memory-tests", Guid.NewGuid().ToString("N")),
@@ -13352,6 +13494,9 @@ public sealed class AgentRunCoordinatorTests
     private static AgentProviderStreamEvent Complete(string content) =>
         new(AgentProviderStreamEventType.Completed, Response: new AgentProviderResponse(content));
 
+    private static UsageDetails Usage(long totalTokens)
+        => new() { TotalTokenCount = totalTokens };
+
     private static AgentProviderStreamEvent ThrowExecutionFailure(string message) =>
         throw new InvalidOperationException(message);
 
@@ -13443,10 +13588,37 @@ public sealed class AgentRunCoordinatorTests
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan? timeout = null)
     {
         using var timeoutCts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(2));
-        while (!condition())
+        while (!EvaluateWaitCondition(condition))
         {
             timeoutCts.Token.ThrowIfCancellationRequested();
             await Task.Delay(10, timeoutCts.Token);
+        }
+    }
+
+    private static bool EvaluateWaitCondition(Func<bool> condition)
+    {
+        try
+        {
+            return condition();
+        }
+        catch (InvalidOperationException exception) when (
+            exception.Message.StartsWith("Collection was modified", StringComparison.Ordinal))
+        {
+            return false;
+        }
+    }
+
+    private static bool ContainsSubsessionTextRow(SubsessionsViewModel viewModel, string content)
+    {
+        try
+        {
+            return viewModel.Messages
+                .OfType<SubsessionTextTranscriptRowViewModel>()
+                .Any(row => row.Content == content);
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
         }
     }
 
@@ -13485,9 +13657,7 @@ public sealed class AgentRunCoordinatorTests
 
     private static void AddSubagentBehaviorLoop(TestExtensionCatalog extensionCatalog)
     {
-        extensionCatalog.AddExtension(
-            PackageExtensionPoints.BehaviorLoops,
-            new OrchestratedAgentBehaviorLoop(extensionCatalog)
+        extensionCatalog.AddBehaviorLoop(new OrchestratedAgentBehaviorLoop()
         );
     }
 
@@ -13631,8 +13801,8 @@ public sealed class AgentRunCoordinatorTests
         );
         using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.ToolSources, toolSource);
-        runtime.ExtensionCatalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, toolSource);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, toolSource);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         var waiting = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
@@ -14038,15 +14208,15 @@ public sealed class AgentRunCoordinatorTests
             var extensionCatalog = new TestExtensionCatalog();
             if (provider is not null)
             {
-                extensionCatalog.AddExtension(
-                    PackageExtensionPoints.ChatProviders,
+                extensionCatalog.AddProvider(
+                    AgentRpcServices.ChatProviders,
                     provider,
                     provider.Descriptor.PackageId ?? "test.package");
             }
 
             foreach (var tool in tools)
             {
-                extensionCatalog.AddExtension(PackageExtensionPoints.Tools, tool);
+                extensionCatalog.AddTool(tool);
             }
 
             var packageContext = new TestPackageContext(rootPath);
@@ -14055,21 +14225,26 @@ public sealed class AgentRunCoordinatorTests
             var workspaceService = new AgentWorkspaceService(store, extensionCatalog, sessionService);
             var permissionService = new AgentPermissionService(store, extensionCatalog);
             var executionTargetService = new AgentExecutionTargetService(extensionCatalog);
-            var installedPackageToolSource = new InstalledPackageToolSource(extensionCatalog);
             var toolService = new AgentToolService(
-                installedPackageToolSource,
                 sessionService,
                 workspaceService,
                 executionTargetService,
                 extensionCatalog
             );
-            var profileService = new AgentProfileService(store, toolService, extensionCatalog);
+            var profileService = new AgentProfileService(
+                store,
+                toolService,
+                extensionCatalog,
+                extensionCatalog.BehaviorLoops);
             var providerResolver = new AgentRunProviderResolver(profileService, extensionCatalog);
-            extensionCatalog.AddExtension(
-                PackageExtensionPoints.RuntimeCatalogs,
+            extensionCatalog.AddProvider(
+                AgentRpcServices.RuntimeCatalogs,
                 new AgentRuntimeCatalog(sessionService, profileService, workspaceService)
             );
-            var memoryCoordinator = new AgentMemoryCoordinator(sessionService, extensionCatalog);
+            var memoryCoordinator = new AgentMemoryCoordinator(
+                sessionService,
+                extensionCatalog,
+                executionTargetService: executionTargetService);
             var sessionContextProjectionService = useContinuityRefinement
                 ? new AgentSessionContextProjectionService(
                     sessionService,
@@ -14077,8 +14252,8 @@ public sealed class AgentRunCoordinatorTests
                 : new AgentSessionContextProjectionService(sessionService);
             var promptComposer = new AgentSystemPromptComposer(extensionCatalog);
             var attachmentService = new AgentAttachmentService(packageContext);
-            extensionCatalog.AddExtension(
-                PackageExtensionPoints.SessionDataCleaners,
+            extensionCatalog.AddProvider(
+                AgentRpcServices.SessionCleaners,
                 attachmentService
             );
             var terminalHandler = new AgentLoopTerminalHandler();
@@ -14091,9 +14266,7 @@ public sealed class AgentRunCoordinatorTests
                 new AgentToolCycleCoordinator(terminalHandler),
                 terminalHandler,
                 budgetLimits);
-            extensionCatalog.AddExtension(
-                PackageExtensionPoints.BehaviorLoops,
-                defaultBehaviorLoop
+            extensionCatalog.AddBehaviorLoop(defaultBehaviorLoop
             );
             var runAttachmentStore = new AgentRunAttachmentStore(attachmentService);
             var activeRunRegistry = new AgentActiveRunRegistry();
@@ -14108,7 +14281,7 @@ public sealed class AgentRunCoordinatorTests
             );
             var behaviorLoopResolver = new AgentBehaviorLoopResolver(
                 extensionCatalog,
-                defaultBehaviorLoop
+                extensionCatalog.BehaviorLoops
             );
             var stopCoordinator = new AgentRunStopCoordinator(
                 sessionService,
@@ -14225,15 +14398,15 @@ public sealed class AgentRunCoordinatorTests
 
         public void AddMemoryFeature(CapturingMemoryFeature feature)
         {
-            _extensionCatalog.AddExtension(
-                PackageExtensionPoints.PromptContextContributors,
+            _extensionCatalog.AddProvider(
+                AgentRpcServices.PromptContextContributors,
                 feature
             );
-            _extensionCatalog.AddExtension(PackageExtensionPoints.LifecycleObservers, feature);
+            _extensionCatalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, feature);
         }
 
         public void AddEmbeddingProvider(IAgentEmbeddingProvider provider) =>
-            _extensionCatalog.AddExtension(PackageExtensionPoints.EmbeddingProviders, provider);
+            _extensionCatalog.AddProvider(AgentRpcServices.EmbeddingProviders, provider);
 
         public async Task<Guid> CreateSessionAsync(params string[] toolIds)
         {
@@ -14375,6 +14548,8 @@ public sealed class AgentRunCoordinatorTests
         public List<ChatOptions> RequestOptions { get; } = [];
 
         public List<long> DataContentBytesByRequest { get; } = [];
+
+        public Func<AgentProviderRequest, int, UsageDetails?>? UsageHandler { get; set; }
 
         public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(
             CancellationToken cancellationToken = default
@@ -14550,6 +14725,10 @@ public sealed class AgentRunCoordinatorTests
                                 messageId,
                                 modelId
                             );
+                            if (CreateUsageUpdate(capturedRequest, requestIndex, responseId, messageId, modelId) is { } batchUsage)
+                            {
+                                yield return batchUsage;
+                            }
                             yield break;
 
                         case AgentProviderStreamEventType.ToolCallRequested
@@ -14560,6 +14739,10 @@ public sealed class AgentRunCoordinatorTests
                                 messageId,
                                 modelId
                             );
+                            if (CreateUsageUpdate(capturedRequest, requestIndex, responseId, messageId, modelId) is { } toolUsage)
+                            {
+                                yield return toolUsage;
+                            }
                             yield break;
 
                         case AgentProviderStreamEventType.Completed
@@ -14591,6 +14774,11 @@ public sealed class AgentRunCoordinatorTests
                     }
                 }
 
+                if (CreateUsageUpdate(capturedRequest, requestIndex, responseId, messageId, modelId) is { } usage)
+                {
+                    yield return usage;
+                }
+
                 await Task.CompletedTask;
             }
 
@@ -14600,6 +14788,24 @@ public sealed class AgentRunCoordinatorTests
                 : null;
 
             public void Dispose() { }
+
+            private ChatResponseUpdate? CreateUsageUpdate(
+                AgentProviderRequest request,
+                int requestIndex,
+                string responseId,
+                string messageId,
+                string? modelId)
+            {
+                var usage = _provider.UsageHandler?.Invoke(request, requestIndex);
+                return usage is null
+                    ? null
+                    : new ChatResponseUpdate(ChatRole.Assistant, [new UsageContent(usage)])
+                    {
+                        ResponseId = responseId,
+                        MessageId = messageId,
+                        ModelId = modelId,
+                    };
+            }
 
             private static AgentProviderRequest BuildProviderRequest(
                 AgentChatClientContext context,
@@ -15954,119 +16160,7 @@ public sealed class AgentRunCoordinatorTests
         ) => throw new NotSupportedException();
     }
 
-    private sealed class TestExtensionCatalog
-        : IPackageExtensionCatalog,
-            IPackageExtensionInvocationCatalog,
-            IPackageExtensionCatalogMonitor
-    {
-        private readonly Dictionary<string, List<object>> _extensions = new(
-            StringComparer.OrdinalIgnoreCase
-        );
-        private readonly Dictionary<object, string> _owners = new(ReferenceEqualityComparer.Instance);
-
-        private long _revision;
-
-        public event EventHandler<PackageExtensionCatalogChangedEventArgs>? Changed;
-
-        public void AddExtension<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint,
-            TContract extension
-        ) => AddExtension(extensionPoint, extension, "test.package");
-
-        public void AddExtension<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint,
-            TContract extension,
-            string packageId)
-        {
-            if (!_extensions.TryGetValue(extensionPoint.Id, out var entries))
-            {
-                entries = [];
-                _extensions[extensionPoint.Id] = entries;
-            }
-
-            entries.Add(extension!);
-            _owners[extension!] = packageId;
-            var args = new PackageExtensionCatalogChangedEventArgs(
-                Interlocked.Increment(ref _revision),
-                PackageExtensionCatalogChangeReason.PackageActivated,
-                [
-                    new PackageExtensionChange(
-                        packageId,
-                        extensionPoint.Id,
-                        PackageExtensionChangeKind.Added,
-                        extension!.GetType()
-                    ),
-                ]
-            );
-            Changed?.Invoke(this, args);
-        }
-
-        public IReadOnlyList<TContract> GetExtensions<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint
-        ) =>
-            !_extensions.TryGetValue(extensionPoint.Id, out var entries)
-                ? []
-                : entries.Cast<TContract>().ToArray();
-
-        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint
-        ) => GetExtensions(extensionPoint)
-            .Select(extension => new PackageExtensionContribution<TContract>(
-                _owners.GetValueOrDefault(extension!, "test.package"),
-                extension))
-            .ToArray();
-
-        public IReadOnlyList<IPackageExtensionReference<TContract>> GetExtensionReferences<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint
-        ) => GetExtensions(extensionPoint)
-            .Select(extension => (IPackageExtensionReference<TContract>)new TestExtensionReference<TContract>(
-                _owners.GetValueOrDefault(extension!, "test.package"),
-                extension))
-            .ToArray();
-
-        private sealed class TestExtensionReference<TContract>(string packageId, TContract contribution)
-            : IPackageExtensionReference<TContract>
-        {
-            public bool TryAcquire([NotNullWhen(true)] out IPackageExtensionLease<TContract>? lease)
-            {
-                lease = new TestExtensionLease<TContract>(packageId, contribution);
-                return true;
-            }
-        }
-
-        private sealed class TestExtensionLease<TContract>(string packageId, TContract contribution)
-            : IPackageExtensionLease<TContract>
-        {
-            private object? _contribution = contribution;
-
-            public string PackageId
-            {
-                get
-                {
-                    ThrowIfDisposed();
-                    return packageId;
-                }
-            }
-
-            public TContract Contribution
-                => (TContract)(Volatile.Read(ref _contribution)
-                    ?? throw new ObjectDisposedException(nameof(IPackageExtensionLease<TContract>)));
-
-            public CancellationToken RetirementToken
-            {
-                get
-                {
-                    ThrowIfDisposed();
-                    return CancellationToken.None;
-                }
-            }
-
-            public void Dispose() => Interlocked.Exchange(ref _contribution, null);
-
-            private void ThrowIfDisposed()
-                => ObjectDisposedException.ThrowIf(Volatile.Read(ref _contribution) is null, this);
-        }
-    }
+    private sealed class TestExtensionCatalog : RegressionTestExtensionCatalog;
 
     private sealed class ProjectedTurnReflectionContributor : IAgentPromptContextContributor
     {
@@ -16735,7 +16829,7 @@ public sealed class AgentRunCoordinatorTests
 
     private sealed class CapturingMemoryFeature
         : IAgentPromptContextContributor,
-            IAgentLifecycleObserver
+            IAgentDurableLifecycleObserver
     {
         public string FeatureId => "test.memory";
 
@@ -16747,7 +16841,7 @@ public sealed class AgentRunCoordinatorTests
 
         public AgentMemoryRecallRequest? LastRecallRequest { get; private set; }
 
-        public AgentLifecycleEvent? LastLifecycleEvent { get; private set; }
+        public AgentDurableLifecycleEventEnvelope? LastLifecycleEvent { get; private set; }
 
         public AgentMemoryRecallResult? RecallResult { get; init; }
 
@@ -16788,8 +16882,8 @@ public sealed class AgentRunCoordinatorTests
                 );
         }
 
-        public ValueTask HandleLifecycleEventAsync(
-            AgentLifecycleEvent lifecycleEvent,
+        public ValueTask HandleDurableLifecycleEventAsync(
+            AgentDurableLifecycleEventEnvelope lifecycleEvent,
             CancellationToken cancellationToken = default
         )
         {
@@ -16851,27 +16945,4 @@ public sealed class AgentRunCoordinatorTests
         }
     }
 
-    private sealed class CancelingUserTurnLifecycleObserver : IAgentLifecycleObserver
-    {
-        public string ObserverId => "test.canceling-user-turn";
-
-        public string DisplayName => "Canceling User Turn Observer";
-
-        public bool ReceivedCancelableToken { get; private set; }
-
-        public ValueTask HandleLifecycleEventAsync(
-            AgentLifecycleEvent lifecycleEvent,
-            CancellationToken cancellationToken = default)
-        {
-            if (lifecycleEvent.Kind != AgentLifecycleEventKind.UserTurnAdded)
-            {
-                return ValueTask.CompletedTask;
-            }
-
-            ReceivedCancelableToken = cancellationToken.CanBeCanceled;
-            throw new OperationCanceledException(
-                "Start lifecycle canceled by the test observer.",
-                cancellationToken);
-        }
-    }
 }

@@ -206,7 +206,8 @@ internal sealed partial class AgentPromptPreparationPipeline(
         AgentBehaviorLoopContext context,
         int promptOverheadTokens,
         CancellationToken cancellationToken,
-        int minimumOmittedTurnCount = 0)
+        int minimumOmittedTurnCount = 0,
+        bool compactContext = false)
     {
         AgentSessionPromptProjection projection;
         if (_sessionContextProjectionService is null)
@@ -227,7 +228,8 @@ internal sealed partial class AgentPromptPreparationPipeline(
                 context.RunRevision,
                 promptOverheadTokens,
                 cancellationToken,
-                minimumOmittedTurnCount).ConfigureAwait(false);
+                minimumOmittedTurnCount,
+                compactContext).ConfigureAwait(false);
         }
 
         projection = RedactHistoricalAttachmentContent(projection, context.UserTurnId);
@@ -683,20 +685,6 @@ internal sealed record RenderedSupplementaryContext(
 internal sealed record AgentProviderMessages(
     IReadOnlyList<ChatMessage> Messages,
     IReadOnlyList<AgentPromptContextReceiptBlock> ReceiptBlocks);
-
-internal interface IAgentSessionContextSelectionRuntime
-{
-    void SelectSessionContextProjection(AgentSessionPromptProjection projection);
-}
-
-internal interface IAgentPromptContextAcknowledgmentRuntime
-{
-    ValueTask AcknowledgePromptContextAsync(
-        IReadOnlyList<AgentPromptContextReceiptBlock> blocks,
-        CancellationToken cancellationToken);
-
-    void DiscardPromptContextAcknowledgment();
-}
 
 internal sealed class AgentPromptPreparation(
     IReadOnlyList<AgentRuntimeTool> runtimeTools,

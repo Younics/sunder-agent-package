@@ -1,7 +1,7 @@
 using Sunder.Agent.Execution.Common;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Tools.Files;
@@ -12,23 +12,11 @@ public sealed class FilesToolSource
         IAgentPromptContextAcknowledgmentSink
 {
     private const int MaxPostAccessScopePaths = 64;
-    private readonly IPackageExtensionCatalog _extensionCatalog;
-    private readonly IPackageExtensionInvocationCatalog? _invocationCatalog;
     private readonly ScopedInstructionContextService? _scopedInstructions;
 
-    /// <summary>Creates the legacy source shape without scoped-instruction persistence or enforcement.</summary>
-    /// <remarks>First-party composition uses the two-argument constructor. This overload exists for CLR binary compatibility.</remarks>
-    public FilesToolSource(IPackageExtensionCatalog extensionCatalog)
-    {
-        _extensionCatalog = extensionCatalog ?? throw new ArgumentNullException(nameof(extensionCatalog));
-        _invocationCatalog = extensionCatalog as IPackageExtensionInvocationCatalog;
-    }
-
     /// <summary>Creates a Files source with required scoped-instruction persistence and enforcement.</summary>
-    public FilesToolSource(IPackageExtensionCatalog extensionCatalog, IPackageContext packageContext)
+    public FilesToolSource(IPackageContext packageContext)
     {
-        _extensionCatalog = extensionCatalog ?? throw new ArgumentNullException(nameof(extensionCatalog));
-        _invocationCatalog = extensionCatalog as IPackageExtensionInvocationCatalog;
         _scopedInstructions = new ScopedInstructionContextService(
             packageContext ?? throw new ArgumentNullException(nameof(packageContext)));
     }
@@ -90,8 +78,8 @@ public sealed class FilesToolSource
             {
                 if ((toolId.Equals("grep", StringComparison.OrdinalIgnoreCase)
                      || toolId.Equals("glob", StringComparison.OrdinalIgnoreCase))
-                    && target is not IAgentStructuredFileSearchExecutionTarget
-                    && target is not IAgentFileSearchExecutionTarget)
+                    && !AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch)
+                    && !AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.LegacyFileSearch))
                 {
                     return new AgentToolReadiness(
                         toolId,
@@ -100,8 +88,8 @@ public sealed class FilesToolSource
                 }
 
                 if (_scopedInstructions is not null
-                    && (target is not IAgentScopedInstructionDiscoveryTarget
-                        || target is not IAgentExecutionScopeProvider))
+                    && (!AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
+                        || !AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ExecutionScope)))
                 {
                     return new AgentToolReadiness(
                         toolId,
@@ -273,7 +261,8 @@ public sealed class FilesToolSource
                 }
                 finally
                 {
-                    if (target is IAgentResourceAuthorityExecutionTarget authorityTarget)
+                    if (AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
+                        && target is IAgentResourceAuthorityExecutionTarget authorityTarget)
                     {
                         authorityTarget.ReleaseResourceAuthority(targetContext.ApprovedResourceCapabilities);
                     }
@@ -367,7 +356,8 @@ public sealed class FilesToolSource
                     ResourceOperation = context.ResourceOperation,
                     ExpectedConfigurationGeneration = context.ExecutionTargetConfigurationGeneration,
                 };
-                if (target is IAgentResourceAuthorityExecutionTarget authorityTarget)
+                if (AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
+                    && target is IAgentResourceAuthorityExecutionTarget authorityTarget)
                 {
                     var validation = await authorityTarget.ValidateResourceAuthorityAsync(
                         targetContext,
@@ -414,20 +404,19 @@ public sealed class FilesToolSource
                 "Scoped instruction acknowledgment is unavailable because this Files source uses the legacy disabled constructor."))
             : _scopedInstructions.AcknowledgePromptContextAsync(receipt, cancellationToken);
 
-    private bool TryAcquireTarget(
-        IPackageExtensionReference<IAgentExecutionTarget>? selectedReference,
+    private static bool TryAcquireTarget(
+        AgentRpcReference<IAgentExecutionTarget>? selectedReference,
         AgentWorkspaceBindingRecord binding,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-        out IPackageExtensionLease<IAgentExecutionTarget>? lease)
+        out AgentRpcLease<IAgentExecutionTarget>? lease)
     {
-        var reference = selectedReference ?? ResolveCompatibilityTargetReference(binding);
-        if (reference is null || !reference.TryAcquire(out lease))
+        if (selectedReference is null || !selectedReference.TryAcquire(out lease))
         {
             lease = null;
             return false;
         }
         if (lease.RetirementToken.IsCancellationRequested
-            || !IsBindingMatch(lease.Contribution.Descriptor, binding))
+            || !IsBindingMatch(lease.Service.Descriptor, binding))
         {
             lease.Dispose();
             lease = null;
@@ -437,35 +426,6 @@ public sealed class FilesToolSource
         return true;
     }
 
-    private IPackageExtensionReference<IAgentExecutionTarget>? ResolveCompatibilityTargetReference(
-        AgentWorkspaceBindingRecord binding)
-    {
-        if (_invocationCatalog is not null)
-        {
-            foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.ExecutionTargets))
-            {
-                if (!reference.TryAcquire(out var lease))
-                {
-                    continue;
-                }
-                using (lease)
-                {
-                    if (!lease.RetirementToken.IsCancellationRequested
-                        && IsBindingMatch(lease.Contribution.Descriptor, binding))
-                    {
-                        return reference;
-                    }
-                }
-            }
-
-            return null;
-        }
-
-        var target = _extensionCatalog.GetExtensions(PackageExtensionPoints.ExecutionTargets)
-            .FirstOrDefault(candidate => IsBindingMatch(candidate.Descriptor, binding));
-        return target is null ? null : new CompatibilityTargetReference(target);
-    }
-
     private static bool IsBindingMatch(
         AgentExecutionTargetDescriptor descriptor,
         AgentWorkspaceBindingRecord binding)
@@ -473,7 +433,7 @@ public sealed class FilesToolSource
            || string.Equals(descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase);
 
     private static async ValueTask<TResult> InvokeTargetAsync<TResult>(
-        IPackageExtensionLease<IAgentExecutionTarget> lease,
+        AgentRpcLease<IAgentExecutionTarget> lease,
         CancellationToken cancellationToken,
         Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback)
     {
@@ -486,7 +446,7 @@ public sealed class FilesToolSource
                 retirementToken);
             try
             {
-                var result = await callback(lease.Contribution, invocation.Token).ConfigureAwait(false);
+                var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
                 if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
                     throw new InvalidOperationException(
@@ -506,7 +466,7 @@ public sealed class FilesToolSource
     }
 
     private static void ThrowIfExactTargetUnavailable(
-        IPackageExtensionReference<IAgentExecutionTarget>? selectedReference)
+        AgentRpcReference<IAgentExecutionTarget>? selectedReference)
     {
         if (selectedReference is not null)
         {
@@ -697,48 +657,6 @@ public sealed class FilesToolSource
     {
         var normalized = message.Replace('\r', ' ').Replace('\n', ' ').Trim();
         return normalized.Length <= 400 ? normalized : normalized[..400] + "...";
-    }
-
-    private sealed class CompatibilityTargetReference(IAgentExecutionTarget target)
-        : IPackageExtensionReference<IAgentExecutionTarget>
-    {
-        public bool TryAcquire(
-            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-            out IPackageExtensionLease<IAgentExecutionTarget>? lease)
-        {
-            lease = new CompatibilityTargetLease(target);
-            return true;
-        }
-    }
-
-    private sealed class CompatibilityTargetLease(IAgentExecutionTarget target)
-        : IPackageExtensionLease<IAgentExecutionTarget>
-    {
-        private IAgentExecutionTarget? _target = target;
-
-        public string PackageId
-        {
-            get
-            {
-                ObjectDisposedException.ThrowIf(_target is null, this);
-                return "sunder.package.agent.tools.files.compatibility";
-            }
-        }
-
-        public IAgentExecutionTarget Contribution
-            => Volatile.Read(ref _target)
-               ?? throw new ObjectDisposedException(nameof(CompatibilityTargetLease));
-
-        public CancellationToken RetirementToken
-        {
-            get
-            {
-                ObjectDisposedException.ThrowIf(_target is null, this);
-                return CancellationToken.None;
-            }
-        }
-
-        public void Dispose() => Interlocked.Exchange(ref _target, null);
     }
 
 }

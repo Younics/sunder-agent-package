@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Contracts;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Runtime;
 namespace Sunder.Package.Agent.Runtime;
 
@@ -216,7 +217,7 @@ internal sealed partial class AgentAppRuntimeGateway :
         SaveWorkspaceAggregate(workspaceId, workspace.DisplayName, workspace.Description,
             workspace.Paths, workspace.Documents, contributionId);
         return new AgentWorkspaceBindingRecord(AgentWorkspaceService.BuildPrimaryBindingId(workspaceId, displayRole),
-            workspaceId, PackageExtensionPoints.ExecutionTargets.Id, contributionId, displayRole,
+            workspaceId, AgentRpcContractIds.ExecutionTarget, contributionId, displayRole,
             true, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
     }
     public void RemovePrimaryExecutionBinding(string workspaceId)

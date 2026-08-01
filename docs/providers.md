@@ -4,7 +4,7 @@ Provider packages run in the Sunder Runtime. Keep network clients, credentials, 
 
 ## Chat Provider Contract
 
-Implement `IAgentChatProvider` and register it through `PackageExtensionPoints.ChatProviders`.
+Implement `IAgentChatProvider`, adapt it with `AgentChatProviderRpc.CreateHandler`, and publish the handler under `sunder.agent.chat.provider`.
 
 | Member | Author responsibility |
 | --- | --- |
@@ -51,6 +51,7 @@ Model `Variants`, `SpeedOptions`, and `ModeOptions` are persisted as `AgentChatM
 - Preserve function call ids and names. Tool calls must be valid JSON objects and must respect `AgentPayloadLimits`.
 - Do not claim native or multiple tool calling unless translated responses preserve all call/result pairs.
 - Distinguish caller cancellation from provider timeout/transient transport interruption. The default behavior loop can persist an interrupted run for resumable failures.
+- Stream `UsageContent` when upstream usage is available. Populate `TotalTokenCount` when it represents the complete context usage; otherwise populate both `InputTokenCount` and `OutputTokenCount`. The Runtime uses usage from the successful attempt to decide whether session context should be compacted.
 - Never log API keys, bearer tokens, prompt bodies, attachment bytes, or private provider payloads.
 - Use `AgentChatClientContext.LogProviderEventAsync` for best-effort structured package logging. It merges provider/model/correlation attributes and deliberately does not let logging failures break a run.
 
@@ -58,7 +59,7 @@ Use `AgentChatProviderException(message, content, errorCode, innerException)` wh
 
 ## Embedding Provider Contract
 
-Implement `IAgentEmbeddingProvider` and register it through `PackageExtensionPoints.EmbeddingProviders`.
+Implement `IAgentEmbeddingProvider`, adapt it with `AgentEmbeddingProviderRpc.CreateHandler`, and publish the handler under `sunder.agent.embedding.provider`.
 
 | Member | Author responsibility |
 | --- | --- |
@@ -74,7 +75,7 @@ Semantic memory resolves the embedding binding on the profile, checks readiness,
 
 ## Utility Models
 
-A chat provider may additionally implement `IAgentUtilityModelProvider` to expose a provider-specific model used for small internal tasks. This is an optional interface on the selected provider, not a separate `PackageExtensionPoint`. Return `null` when no utility model is configured.
+A chat provider may additionally implement `IAgentUtilityModelProvider` to expose a provider-specific model used for small internal tasks. The chat RPC adapter exposes this through `resolve-utility-model`; it is not a separate provider contract. Return `null` when no utility model is configured.
 
 ## Authentication And Settings
 
@@ -97,16 +98,16 @@ public void RegisterRuntimeContributions(
     ISunderRuntimeContributionRegistry registry,
     IServiceProvider services)
 {
-    registry.RegisterExtension(
-        PackageExtensionPoints.ChatProviders,
-        services.GetRequiredService<AcmeChatProvider>());
-    registry.RegisterExtension(
-        PackageExtensionPoints.EmbeddingProviders,
-        services.GetRequiredService<AcmeEmbeddingProvider>());
+    registry.RegisterRpcProvider(
+        "acme.chat",
+        AgentChatProviderRpc.CreateHandler(services.GetRequiredService<AcmeChatProvider>()));
+    registry.RegisterRpcProvider(
+        "acme.embedding",
+        AgentEmbeddingProviderRpc.CreateHandler(services.GetRequiredService<AcmeEmbeddingProvider>()));
 }
 ```
 
-Register only capabilities actually implemented. A chat-only provider does not need a placeholder embedding provider.
+Declare matching `SunderRpcProvider` items in the project and register only capabilities actually implemented. A chat-only provider does not need a placeholder embedding provider.
 
 ## Provider Test Matrix
 

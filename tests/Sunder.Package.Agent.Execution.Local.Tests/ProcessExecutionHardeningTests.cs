@@ -3,8 +3,9 @@ using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Tests;
 using Sunder.Package.Agent.Tools.Shell;
-using Sunder.Sdk.Abstractions;
 using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
@@ -21,13 +22,15 @@ public sealed class ProcessExecutionHardeningTests : IDisposable
     public async Task ShellTool_RejectsOutOfRangeTimeoutBeforeInvokingTarget(int timeoutSeconds)
     {
         var target = new RecordingExecutionTarget();
-        var source = new ShellToolSource(new TestExtensionCatalog(target));
+        using var catalog = new RegressionTestExtensionCatalog();
+        catalog.AddProvider(AgentRpcServices.ExecutionTargets, target);
+        var source = new ShellToolSource();
         var now = DateTimeOffset.UtcNow;
         var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
-            PackageExtensionPoints.ExecutionTargets.Id,
+            AgentRpcContractIds.ExecutionTarget,
             target.Descriptor.TargetId,
             "primary-execution-target",
             true,
@@ -36,7 +39,10 @@ public sealed class ProcessExecutionHardeningTests : IDisposable
             now);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding),
+            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
+            {
+                ExecutionTargetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+            },
             new AgentToolRequest("shell", $$"""{"command":"echo unsafe","timeoutSeconds":{{timeoutSeconds}}}"""));
 
         Assert.True(result.IsError);
@@ -146,19 +152,6 @@ public sealed class ProcessExecutionHardeningTests : IDisposable
     private sealed class ThrowingProgress : IProgress<string>
     {
         public void Report(string value) => throw new InvalidOperationException("Injected progress failure.");
-    }
-
-    private sealed class TestExtensionCatalog(IAgentExecutionTarget target) : IPackageExtensionCatalog
-    {
-        public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
-            => string.Equals(extensionPoint.Id, PackageExtensionPoints.ExecutionTargets.Id, StringComparison.Ordinal)
-                ? [((TContract)(object)target)]
-                : [];
-
-        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
-            => GetExtensions(extensionPoint)
-                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
-                .ToArray();
     }
 
     private sealed class RecordingExecutionTarget : IAgentExecutionTarget

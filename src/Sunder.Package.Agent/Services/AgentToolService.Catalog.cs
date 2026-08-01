@@ -1,7 +1,7 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -84,55 +84,15 @@ public sealed partial class AgentToolService
         CancellationToken cancellationToken)
     {
         var candidates = new List<OwnedRuntimeToolCandidate>();
-        var installedSource = new AgentToolSourceMetadata(
-            _installedPackageToolSource.SourceId,
-            _installedPackageToolSource.DisplayName,
-            _installedPackageToolSource.SourceKind,
-            SupportsPermission: false,
-            SupportsPreflight: false);
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.Tools))
-        {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-
-            using (lease)
-            {
-                var descriptor = WithSourceIdentity(installedSource, lease.Contribution.Descriptor);
-                if (lease.RetirementToken.IsCancellationRequested)
-                {
-                    continue;
-                }
-
-                var targetSnapshot = SnapshotExecutionTarget(context.ExecutionTargetReference);
-                var invocation = new AgentToolInvocationReference(
-                    lease.PackageId,
-                    descriptor,
-                    reference,
-                    SourceReference: null,
-                    SupportsInstalledPermission: lease.Contribution is IAgentPermissionAwareTool,
-                    SupportsSourcePermission: false,
-                    SupportsPreflight: false,
-                    context.ExecutionTargetReference,
-                    targetSnapshot?.Descriptor,
-                    targetSnapshot?.OwnerPackageId,
-                    Guid.NewGuid().ToString("N"));
-                candidates.Add(new OwnedRuntimeToolCandidate(
-                    CreateRuntimeTool(descriptor),
-                    invocation));
-            }
-        }
-
-        var sourceReferences = AgentExtensionInvocation.Snapshot(
-            _invocationCatalog,
-            PackageExtensionPoints.ToolSources,
+        var sourceReferences = AgentRpcInvocation.Snapshot(
+            _rpcCatalog,
+            AgentRpcServices.ToolSources,
             static source => new AgentToolSourceMetadata(
                 source.SourceId,
                 source.DisplayName,
                 source.SourceKind,
-                source is IAgentPermissionAwareToolSource,
-                source is IAgentToolExecutionPreflightSource));
+                SupportsPermission: true,
+                SupportsPreflight: true));
         foreach (var sourceReference in sourceReferences
                      .OrderBy(source => source.Metadata.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
@@ -142,7 +102,7 @@ public sealed partial class AgentToolService
                 runtimeTools = await InvokeTargetBoundAsync(
                     context.ExecutionTargetReference,
                     cancellationToken,
-                    token => AgentExtensionInvocation.InvokeAsync(
+                    token => AgentRpcInvocation.InvokeAsync(
                         sourceReference,
                         token,
                         (source, invocationToken) => new ValueTask<IReadOnlyList<AgentRuntimeTool>>(
@@ -160,9 +120,7 @@ public sealed partial class AgentToolService
                 var invocation = new AgentToolInvocationReference(
                     sourceReference.PackageId,
                     descriptor,
-                    ToolReference: null,
                     sourceReference.Reference,
-                    SupportsInstalledPermission: false,
                     sourceReference.Metadata.SupportsPermission,
                     sourceReference.Metadata.SupportsPreflight,
                     context.ExecutionTargetReference,
@@ -184,8 +142,6 @@ public sealed partial class AgentToolService
         => InvokeToolAsync<AgentToolReadiness?>(
             candidate.Invocation,
             cancellationToken,
-            static async (installedTool, token) =>
-                await installedTool.GetReadinessAsync(token).ConfigureAwait(false),
             (source, token) => source.GetReadinessAsync(
                 candidate.RuntimeTool.Descriptor.ToolId,
                 context,

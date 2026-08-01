@@ -4,6 +4,7 @@ using Sunder.Package.Agent.Builder;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Xunit;
@@ -421,38 +422,38 @@ public sealed class BuilderViewModelTests
         });
     }
 
-    private sealed class TestExtensionCatalog(IAgentWorkspaceExecutionResolver? resolver) : IPackageExtensionCatalog
+    private sealed class TestExtensionCatalog : RegressionTestExtensionCatalog
     {
-        public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
+        public TestExtensionCatalog(IAgentWorkspaceExecutionResolver? resolver)
         {
-            if (resolver is TContract typedResolver
-                && string.Equals(extensionPoint.Id, PackageExtensionPoints.WorkspaceExecutionResolvers.Id, StringComparison.Ordinal))
+            if (resolver is not null)
             {
-                return [typedResolver];
+                AddProvider(AgentRpcServices.WorkspaceExecutionResolvers, resolver);
             }
-
-            return [];
         }
-
-        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
-            => GetExtensions(extensionPoint)
-                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
-                .ToArray();
     }
 
-    private sealed class TestWorkspaceExecutionResolver(AgentWorkspaceRecord workspace) : IAgentWorkspaceExecutionResolver
+    private sealed class TestWorkspaceExecutionResolver : IAgentWorkspaceExecutionResolver
     {
+        private readonly AgentWorkspaceRecord _workspace;
         private readonly TestExecutionTarget _target = new();
+        private readonly RegressionTestExtensionCatalog _targetCatalog = new();
 
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [workspace];
+        public TestWorkspaceExecutionResolver(AgentWorkspaceRecord workspace)
+        {
+            _workspace = workspace;
+            _targetCatalog.AddProvider(AgentRpcServices.ExecutionTargets, _target);
+        }
+
+        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [_workspace];
 
         public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(string workspaceId, CancellationToken cancellationToken = default)
         {
             var now = DateTimeOffset.UtcNow;
             var binding = new AgentWorkspaceBindingRecord(
                 "binding.local",
-                workspace.WorkspaceId,
-                PackageExtensionPoints.ExecutionTargets.Id,
+                _workspace.WorkspaceId,
+                AgentRpcContractIds.ExecutionTarget,
                 "local",
                 "primary",
                 IsEnabled: true,
@@ -462,16 +463,21 @@ public sealed class BuilderViewModelTests
             );
             var scope = new AgentExecutionScopeDescriptor(
                 "Local",
-                workspace.Paths.OrderBy(path => path.SortOrder).Select(path => path.HostPath).ToArray(),
-                workspace.Paths.OrderBy(path => path.SortOrder).FirstOrDefault(path => path.IsDefault)?.HostPath
+                _workspace.Paths.OrderBy(path => path.SortOrder).Select(path => path.HostPath).ToArray(),
+                _workspace.Paths.OrderBy(path => path.SortOrder).FirstOrDefault(path => path.IsDefault)?.HostPath
             );
+            var targetReference = _targetCatalog.GetRequiredReference(AgentRpcServices.ExecutionTargets);
             return ValueTask.FromResult(new AgentWorkspaceExecutionResolution(
-                workspace,
+                _workspace,
                 binding,
                 _target.Descriptor,
                 scope,
                 _target
-            ));
+            )
+            {
+                ExecutionTargetReference = targetReference,
+                ExecutionTargetHandle = targetReference.ToHandle(),
+            });
         }
     }
 

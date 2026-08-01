@@ -311,6 +311,27 @@ public sealed class ShellViewInitializationTests
     }
 
     [Fact]
+    public async Task SubsessionsViewModel_OrdinaryNavigationPresentsRetryableRuntimeHydrationFailure()
+    {
+        var runtime = new FailOnceSubsessionRuntimeClient();
+        using var gateway = new SubagentAppRuntimeGateway(runtime);
+        using var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway);
+        var context = new PackageViewNavigationContext(
+            "subsessions",
+            new Dictionary<string, string?>());
+
+        Assert.True(await viewModel.PrepareNavigationAsync(context));
+        Assert.True(viewModel.HasLoadError);
+        Assert.Contains("Injected Runtime catalog failure", viewModel.StatusText, StringComparison.Ordinal);
+
+        await viewModel.RetryLoadCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.HasLoadError);
+        Assert.Equal("No sub-sessions have been created yet.", viewModel.StatusText);
+        Assert.Equal(2, runtime.RuntimeCatalogQueryCount);
+    }
+
+    [Fact]
     public async Task RuntimeBackedSubsessions_CallerCancellationKeepsSharedSnapshot()
     {
         var runtime = new BlockingSubsessionRuntimeClient();

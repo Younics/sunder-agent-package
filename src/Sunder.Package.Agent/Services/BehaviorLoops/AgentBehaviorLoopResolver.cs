@@ -1,18 +1,14 @@
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
 public sealed class AgentBehaviorLoopResolver(
-    IPackageExtensionCatalog extensionCatalog,
-    DefaultAgentBehaviorLoop defaultBehaviorLoop)
+    AgentRpcCatalog rpcCatalog,
+    AgentRpcProviderService<IAgentBehaviorLoop> behaviorLoops)
 {
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
-        AgentExtensionInvocation.Require(extensionCatalog);
-    private readonly DefaultAgentBehaviorLoop _defaultBehaviorLoop = defaultBehaviorLoop;
-
     public AgentBehaviorLoopSelection Resolve(AgentProfileRecord profile)
     {
         var requestedLoopId = string.IsNullOrWhiteSpace(profile.BehaviorLoopId)
@@ -22,9 +18,9 @@ public sealed class AgentBehaviorLoopResolver(
             ? null
             : profile.BehaviorLoopSourceId.Trim();
 
-        var loops = AgentExtensionInvocation.Snapshot(
-            _invocationCatalog,
-            PackageExtensionPoints.BehaviorLoops,
+        var loops = AgentRpcInvocation.Snapshot(
+            rpcCatalog,
+            behaviorLoops,
             static loop => loop.Descriptor with
             {
                 FeatureKinds = loop.Descriptor.FeatureKinds?.ToArray(),
@@ -48,33 +44,23 @@ public sealed class AgentBehaviorLoopResolver(
             return new AgentBehaviorLoopSelection(selected.Metadata, selected.PackageId, lease);
         }
 
-        return new AgentBehaviorLoopSelection(_defaultBehaviorLoop);
+        throw AgentRpcInvocation.Unavailable("sunder.package.agent");
     }
 }
 
 public sealed class AgentBehaviorLoopSelection : IDisposable
 {
-    private readonly IAgentBehaviorLoop? _localLoop;
-    private IPackageExtensionLease<IAgentBehaviorLoop>? _lease;
+    private AgentRpcLease<IAgentBehaviorLoop>? _lease;
 
     internal AgentBehaviorLoopSelection(
         AgentBehaviorLoopDescriptor descriptor,
         string ownerPackageId,
-        IPackageExtensionLease<IAgentBehaviorLoop> lease)
+        AgentRpcLease<IAgentBehaviorLoop> lease)
     {
         Descriptor = descriptor;
         OwnerPackageId = ownerPackageId;
         _lease = lease;
         RetirementToken = lease.RetirementToken;
-    }
-
-    internal AgentBehaviorLoopSelection(IAgentBehaviorLoop localLoop)
-    {
-        _localLoop = localLoop;
-        Descriptor = localLoop.Descriptor with
-        {
-            FeatureKinds = localLoop.Descriptor.FeatureKinds?.ToArray(),
-        };
     }
 
     public AgentBehaviorLoopDescriptor Descriptor { get; }
@@ -93,9 +79,7 @@ public sealed class AgentBehaviorLoopSelection : IDisposable
         var lease = Volatile.Read(ref _lease);
         if (lease is null)
         {
-            return await (_localLoop
-                          ?? throw new ObjectDisposedException(nameof(AgentBehaviorLoopSelection)))
-                .RunAsync(context, runtime, cancellationToken).ConfigureAwait(false);
+            throw new ObjectDisposedException(nameof(AgentBehaviorLoopSelection));
         }
 
         using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
@@ -103,11 +87,11 @@ public sealed class AgentBehaviorLoopSelection : IDisposable
             RetirementToken);
         try
         {
-            var result = await lease.Contribution
+            var result = await lease.Service
                 .RunAsync(context, runtime, invocation.Token).ConfigureAwait(false);
             if (IsRetiring && !cancellationToken.IsCancellationRequested)
             {
-                throw AgentExtensionInvocation.Unavailable(OwnerPackageId!);
+                throw AgentRpcInvocation.Unavailable(OwnerPackageId!);
             }
 
             return result;
@@ -120,13 +104,13 @@ public sealed class AgentBehaviorLoopSelection : IDisposable
             IsRetiring
             && !cancellationToken.IsCancellationRequested)
         {
-            throw AgentExtensionInvocation.Unavailable(OwnerPackageId!, exception);
+            throw AgentRpcInvocation.Unavailable(OwnerPackageId!, exception);
         }
         catch (Exception exception) when (
             IsRetiring
             && !cancellationToken.IsCancellationRequested)
         {
-            throw AgentExtensionInvocation.Unavailable(OwnerPackageId!, exception);
+            throw AgentRpcInvocation.Unavailable(OwnerPackageId!, exception);
         }
     }
 

@@ -2,6 +2,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.PackageViews;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
@@ -28,10 +29,7 @@ public sealed class WorkspaceEditorFailureContainmentTests
         Assert.Contains("runtime.editor.discovery", error.DiagnosticText, StringComparison.Ordinal);
         Assert.Contains("discovery-123", error.DiagnosticText, StringComparison.Ordinal);
         Assert.DoesNotContain("sensitive runtime detail", error.ErrorMessage, StringComparison.Ordinal);
-        Assert.Empty(host.Catalog.FaultReports);
-        Assert.Contains(
-            failing,
-            host.Catalog.GetExtensions(PackageExtensionPoints.WorkspaceEditorContributors));
+        Assert.Equal(2, host.Catalog.GetServiceReferences(AgentRpcServices.WorkspaceEditors).Count);
 
         error.RetryCommand!.Execute(null);
         await host.ViewModel.CurrentEditorSectionRetry.WaitAsync(TimeSpan.FromSeconds(2));
@@ -40,7 +38,6 @@ public sealed class WorkspaceEditorFailureContainmentTests
         Assert.Contains(host.ViewModel.EditorSections, section => section.Title == "Local settings");
         Assert.Contains(host.ViewModel.EditorSections, section => section.Title == "Healthy settings");
         Assert.Equal(2, failing.DiscoveryCount);
-        Assert.Empty(host.Catalog.FaultReports);
     }
 
     [Fact]
@@ -62,7 +59,6 @@ public sealed class WorkspaceEditorFailureContainmentTests
         Assert.Same(healthySection, Assert.Single(host.ViewModel.EditorSections, section => section.Title == "Healthy settings"));
         Assert.Equal(1, failing.SaveCount);
         Assert.Equal(1, healthy.SaveCount);
-        Assert.Empty(host.Catalog.FaultReports);
 
         error.RetryCommand!.Execute(null);
         await host.ViewModel.CurrentEditorSectionRetry.WaitAsync(TimeSpan.FromSeconds(2));
@@ -96,7 +92,6 @@ public sealed class WorkspaceEditorFailureContainmentTests
         var error = Assert.Single(host.ViewModel.EditorSections, static section => section.IsError);
         Assert.Contains("runtime.editor.refresh", error.DiagnosticText, StringComparison.Ordinal);
         Assert.Same(healthySection, Assert.Single(host.ViewModel.EditorSections, section => section.Title == "Healthy settings"));
-        Assert.Empty(host.Catalog.FaultReports);
 
         error.RetryCommand!.Execute(null);
         await host.ViewModel.CurrentEditorSectionRetry.WaitAsync(TimeSpan.FromSeconds(2));
@@ -108,7 +103,7 @@ public sealed class WorkspaceEditorFailureContainmentTests
     }
 
     [Fact]
-    public async Task ContributorRetirementCancellation_BecomesUnavailableSectionWithoutFaultingOwner()
+    public async Task ContributorRetirementCancellation_RemovesRetiredSectionWithoutAffectingHealthyContributor()
     {
         var retiring = new BlockingRetirementWorkspaceEditorContributor("local");
         var healthy = new ScriptedWorkspaceEditorContributor("local", "healthy-settings", "Healthy settings");
@@ -117,20 +112,22 @@ public sealed class WorkspaceEditorFailureContainmentTests
             (healthy, "healthy.package"));
         await retiring.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        var retirement = host.Catalog.RetireExtensionAsync(
-            PackageExtensionPoints.WorkspaceEditorContributors,
+        var retirement = host.Catalog.RetireProviderAsync(
+            AgentRpcServices.WorkspaceEditors,
             retiring);
         await host.ViewModel.CurrentEditorSectionRefresh.WaitAsync(TimeSpan.FromSeconds(2));
         await retirement.WaitAsync(TimeSpan.FromSeconds(2));
 
-        var error = Assert.Single(host.ViewModel.EditorSections, static section => section.IsError);
-        Assert.Contains("package-unavailable", error.DiagnosticText, StringComparison.Ordinal);
-        Assert.Equal("Healthy settings", Assert.Single(host.ViewModel.EditorSections, static section => !section.IsError).Title);
-        Assert.Empty(host.Catalog.FaultReports);
+        AgentEditorSectionViewModel[] sections = [];
+        await WaitUntilAsync(() =>
+            TrySnapshot(host.ViewModel.EditorSections, out sections)
+            && sections is [{ IsError: false }]);
+
+        Assert.Equal("Healthy settings", Assert.Single(sections).Title);
     }
 
     [Fact]
-    public async Task UnknownContributorException_FaultsExactOwnerWithoutMisattributingAgent()
+    public async Task UnknownContributorException_IsContainedAsUnavailableWithoutAffectingHealthyContributor()
     {
         var failing = new ScriptedWorkspaceEditorContributor("local", "local-settings", "Local settings");
         var invariant = new InvalidOperationException("local contributor invariant");
@@ -140,12 +137,8 @@ public sealed class WorkspaceEditorFailureContainmentTests
             (failing, "local.package"),
             (healthy, "healthy.package"));
 
-        var report = Assert.Single(host.Catalog.FaultReports);
-        Assert.Equal("local.package", report.PackageId);
-        Assert.Same(invariant, report.Exception);
-        Assert.DoesNotContain(host.Catalog.FaultReports, report => report.PackageId == "sunder.package.agent");
         Assert.Equal("Healthy settings", Assert.Single(host.ViewModel.EditorSections, static section => !section.IsError).Title);
-        Assert.Contains("package-invariant-failure", Assert.Single(host.ViewModel.EditorSections, static section => section.IsError).DiagnosticText);
+        Assert.Contains("package-unavailable", Assert.Single(host.ViewModel.EditorSections, static section => section.IsError).DiagnosticText);
         await host.ViewModel.CurrentEditorSectionRefresh;
     }
 
@@ -154,7 +147,7 @@ public sealed class WorkspaceEditorFailureContainmentTests
     [InlineData("lazy")]
     [InlineData("concurrent-mutation")]
     [InlineData("over-budget")]
-    public async Task MalformedContributorGraph_FaultsOnlyExactOwnerAndKeepsHealthySection(string failureKind)
+    public async Task MalformedContributorGraph_IsolatesOnlyExactOwnerAndKeepsHealthySection(string failureKind)
     {
         var malformed = new ScriptedWorkspaceEditorContributor("local", "malformed-settings", "Malformed settings");
         malformed.EnqueueDiscovery(_ => ValueTask.FromResult(CreateMalformedGraph(failureKind)));
@@ -164,13 +157,11 @@ public sealed class WorkspaceEditorFailureContainmentTests
             (malformed, "malformed.package"),
             (healthy, "healthy.package"));
 
-        var report = Assert.Single(host.Catalog.FaultReports);
-        Assert.Equal("malformed.package", report.PackageId);
         Assert.Equal("Healthy settings", Assert.Single(
             host.ViewModel.EditorSections,
             static section => !section.IsError).Title);
         Assert.Contains(
-            "package-invariant-failure",
+            "package-unavailable",
             Assert.Single(host.ViewModel.EditorSections, static section => section.IsError).DiagnosticText,
             StringComparison.Ordinal);
     }
@@ -215,11 +206,12 @@ public sealed class WorkspaceEditorFailureContainmentTests
     }
 
     [Fact]
-    public async Task Discovery_MaterializesGraphBeforeContributionLeaseIsReleased()
+    public async Task Discovery_MaterializesGraphThroughExactRpcReference()
     {
-        var state = new LeaseTrackingState();
-        var contributor = new LeaseCheckingContributor(state);
-        var reference = new LeaseTrackingReference(contributor, state);
+        var catalog = new RegressionTestExtensionCatalog();
+        var contributor = new ScriptedWorkspaceEditorContributor("local", "leased", "Leased");
+        catalog.AddProvider(AgentRpcServices.WorkspaceEditors, contributor, "leased.package");
+        var reference = catalog.GetRequiredReference(AgentRpcServices.WorkspaceEditors);
         var now = DateTimeOffset.UtcNow;
         var context = new AgentWorkspaceEditorContext(
             new AgentWorkspaceRecord("workspace", "Workspace", null, now, now),
@@ -228,7 +220,7 @@ public sealed class WorkspaceEditorFailureContainmentTests
 
         var result = await AgentWorkspaceEditorInvocation.InvokeAsync(
             reference,
-            RejectingInvocationCatalog.Instance,
+            catalog,
             AgentEditorInvocationOperation.Discovery,
             CancellationToken.None,
             (leasedContributor, token) => AgentWorkspaceEditorInvocation.GetSectionsSnapshotAsync(
@@ -238,7 +230,6 @@ public sealed class WorkspaceEditorFailureContainmentTests
 
         Assert.True(result.Success);
         Assert.Equal("leased", Assert.Single(result.Result).SectionId);
-        Assert.False(state.IsActive);
     }
 
     public static TheoryData<string> RetrySupersessionKinds => new()
@@ -389,14 +380,14 @@ public sealed class WorkspaceEditorFailureContainmentTests
             try
             {
                 var catalog = new RegressionTestExtensionCatalog();
-                catalog.AddExtension(
-                    PackageExtensionPoints.ExecutionTargets,
+                catalog.AddProvider(
+                    AgentRpcServices.ExecutionTargets,
                     new TestExecutionTarget("local"),
                     "local.package");
                 foreach (var (contributor, packageId) in contributors)
                 {
-                    catalog.AddExtension(
-                        PackageExtensionPoints.WorkspaceEditorContributors,
+                    catalog.AddProvider(
+                        AgentRpcServices.WorkspaceEditors,
                         contributor,
                         packageId);
                 }
@@ -411,8 +402,7 @@ public sealed class WorkspaceEditorFailureContainmentTests
                 var viewModel = new AgentWorkspacesViewModel(
                     workspaceService,
                     targetService,
-                    catalog,
-                    extensionInvocationCatalog: catalog);
+                    catalog);
                 await viewModel.InitializeAsync();
                 if (waitForEditor)
                 {
@@ -534,114 +524,16 @@ public sealed class WorkspaceEditorFailureContainmentTests
             }
         }
 
-        public IEnumerator<T> GetEnumerator() => _values.GetEnumerator();
-
-        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
-    }
-
-    private sealed class LeaseTrackingState
-    {
-        public bool IsActive { get; set; }
-    }
-
-    private sealed class LeaseCheckingContributor(LeaseTrackingState state) : IAgentWorkspaceEditorContributor
-    {
-        public string ContributorId => "lease-checking";
-
-        public bool CanEdit(AgentWorkspaceEditorContext context) => true;
-
-        public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
-            AgentWorkspaceEditorContext context,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult<IReadOnlyList<AgentEditorSection>>(
-                new LeaseCheckingReadOnlyList<AgentEditorSection>(
-                    state,
-                    [new AgentEditorSection("leased", "Leased", null, [])]));
-
-        public ValueTask<AgentEditorSaveResult> SaveSectionAsync(
-            AgentWorkspaceEditorContext context,
-            AgentEditorSaveRequest request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(AgentEditorSaveResult.Ok("Saved."));
-    }
-
-    private sealed class LeaseCheckingReadOnlyList<T>(LeaseTrackingState state, IReadOnlyList<T> values)
-        : IReadOnlyList<T>
-    {
-        public int Count
+        public IEnumerator<T> GetEnumerator()
         {
-            get
+            foreach (var value in _values)
             {
-                Assert.True(state.IsActive);
-                return values.Count;
+                _values.Clear();
+                yield return value;
             }
         }
 
-        public T this[int index]
-        {
-            get
-            {
-                Assert.True(state.IsActive);
-                return values[index];
-            }
-        }
-
-        public IEnumerator<T> GetEnumerator() => values.GetEnumerator();
-
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
-    }
-
-    private sealed class LeaseTrackingReference(
-        IAgentWorkspaceEditorContributor contributor,
-        LeaseTrackingState state) : IPackageExtensionReference<IAgentWorkspaceEditorContributor>
-    {
-        public bool TryAcquire(
-            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-            out IPackageExtensionLease<IAgentWorkspaceEditorContributor>? lease)
-        {
-            lease = new LeaseTrackingLease(contributor, state);
-            return true;
-        }
-    }
-
-    private sealed class LeaseTrackingLease : IPackageExtensionLease<IAgentWorkspaceEditorContributor>
-    {
-        private readonly LeaseTrackingState _state;
-        private IAgentWorkspaceEditorContributor? _contributor;
-
-        public LeaseTrackingLease(IAgentWorkspaceEditorContributor contributor, LeaseTrackingState state)
-        {
-            _contributor = contributor;
-            _state = state;
-            _state.IsActive = true;
-        }
-
-        public string PackageId => "leased.package";
-
-        public IAgentWorkspaceEditorContributor Contribution
-            => _contributor ?? throw new ObjectDisposedException(nameof(LeaseTrackingLease));
-
-        public CancellationToken RetirementToken => CancellationToken.None;
-
-        public void Dispose()
-        {
-            _contributor = null;
-            _state.IsActive = false;
-        }
-    }
-
-    private sealed class RejectingInvocationCatalog : IPackageExtensionInvocationCatalog
-    {
-        public static RejectingInvocationCatalog Instance { get; } = new();
-
-        public IReadOnlyList<IPackageExtensionReference<TContract>> GetExtensionReferences<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint)
-            => [];
-
-        public bool TryReportInvariantViolation<TContract>(
-            IPackageExtensionReference<TContract> reference,
-            Exception exception)
-            => false;
     }
 
     private sealed class TestExecutionTarget(string targetId) : IAgentExecutionTarget
@@ -692,5 +584,28 @@ public sealed class WorkspaceEditorFailureContainmentTests
             AgentFileDeleteRequest request,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
+    }
+
+    private static bool TrySnapshot<T>(IEnumerable<T> source, out T[] snapshot)
+    {
+        try
+        {
+            snapshot = source.ToArray();
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            snapshot = [];
+            return false;
+        }
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (!condition())
+        {
+            await Task.Delay(10, timeout.Token);
+        }
     }
 }

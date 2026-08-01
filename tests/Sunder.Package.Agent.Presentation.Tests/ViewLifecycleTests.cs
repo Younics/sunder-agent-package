@@ -11,6 +11,7 @@ using Avalonia.VisualTree;
 using LiveMarkdown.Avalonia;
 using System.Text.Json;
 using System.Collections.Specialized;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sunder.Package.Agent.Contracts;
@@ -26,6 +27,7 @@ using Sunder.Package.Agent.Memory.Semantic.PackageViews;
 using Sunder.Package.Agent.Memory.Semantic.Services;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.PackageViews;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Shared.PackageViews;
@@ -41,6 +43,7 @@ using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
+using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Runtime;
 using Xunit;
 
@@ -1286,7 +1289,7 @@ public sealed class ViewLifecycleTests
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(scope.Context);
         services.AddSingleton<IPackageRuntimeClient>(runtime);
-        services.AddSingleton<IPackageExtensionCatalog>(new RegressionTestExtensionCatalog());
+        services.AddSingleton<AgentRpcCatalog>(new RegressionTestExtensionCatalog());
         services.AddSingleton<IPackageShellViewService, NoOpPackageShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
         services.AddSingleton<IBackgroundProcessQueue, NoOpBackgroundProcessQueue>();
@@ -1414,8 +1417,8 @@ public sealed class ViewLifecycleTests
             workspaceId: workspace.WorkspaceId);
         var firstChild = services.SessionService.CreateSession("First child", parentSessionId: parent.SessionId);
         var secondChild = services.SessionService.CreateSession("Second child", parentSessionId: parent.SessionId);
-        services.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.RuntimeCatalogs,
+        services.ExtensionCatalog.AddProvider(
+            AgentRpcServices.RuntimeCatalogs,
             new AgentRuntimeCatalog(services.SessionService, profileService, services.WorkspaceService));
 
         using var profiles = new AgentProfilesView(profileService);
@@ -2663,7 +2666,7 @@ public sealed class ViewLifecycleTests
             [profile],
             [parallelTurn]);
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddExtension(PackageExtensionPoints.RuntimeCatalogs, runtime, "test.runtime");
+        catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, runtime, "test.runtime");
         var viewModel = new SubsessionsViewModel(catalog);
         using var view = new SubsessionsView(viewModel);
         var source = new Border { Background = Avalonia.Media.Brushes.DimGray };
@@ -2946,7 +2949,7 @@ public sealed class ViewLifecycleTests
             [profile],
             turns);
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddExtension(PackageExtensionPoints.RuntimeCatalogs, runtime, "test.runtime");
+        catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, runtime, "test.runtime");
         var viewModel = new SubsessionsViewModel(catalog);
         using var view = new SubsessionsView(viewModel);
         var window = new Window { Width = 900, Height = 500, Content = view };
@@ -3072,8 +3075,8 @@ public sealed class ViewLifecycleTests
                 AgentMessageRole.Assistant,
                 $"After tool {index}: {new string('y', 80)}");
         }
-        services.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.RuntimeCatalogs,
+        services.ExtensionCatalog.AddProvider(
+            AgentRpcServices.RuntimeCatalogs,
             new AgentRuntimeCatalog(services.SessionService, profileService, services.WorkspaceService));
 
         var viewModel = new SubsessionsViewModel(services.ExtensionCatalog);
@@ -3252,6 +3255,13 @@ public sealed class ViewLifecycleTests
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             await Dispatcher.UIThread.InvokeAsync(static () => { }, DispatcherPriority.Background);
             await GetPendingCoordinatorOperations(view);
+            await WaitUntilAsync(
+                () => viewModel.HasNewerTranscriptRows,
+                () => DescribeSubsessionTranscriptState(
+                    view,
+                    transcript,
+                    coordinator,
+                    "waiting-for-live-detached-row"));
             Assert.True(viewModel.HasNewerTranscriptRows);
             Assert.DoesNotContain(
                 viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
@@ -3561,11 +3571,11 @@ public sealed class ViewLifecycleTests
             "Memory session",
             profileId: profile.ProfileId,
             workspaceId: workspace.WorkspaceId);
-        services.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.RuntimeCatalogs,
+        services.ExtensionCatalog.AddProvider(
+            AgentRpcServices.RuntimeCatalogs,
             new AgentRuntimeCatalog(services.SessionService, profileService, services.WorkspaceService));
         var embeddingProvider = new BlockingEmbeddingProvider();
-        services.ExtensionCatalog.AddExtension(PackageExtensionPoints.EmbeddingProviders, embeddingProvider);
+        services.ExtensionCatalog.AddProvider(AgentRpcServices.EmbeddingProviders, embeddingProvider);
         var inspector = CreateMemoryInspector(scope.Context, services.ExtensionCatalog);
         var viewModel = (MemoryInspectorViewModel)Activator.CreateInstance(
             typeof(MemoryInspectorViewModel),
@@ -3658,8 +3668,8 @@ public sealed class ViewLifecycleTests
         var workspace = services.WorkspaceService.CreateWorkspace("Subsession workspace");
         var parent = services.SessionService.CreateSession("Parent", workspaceId: workspace.WorkspaceId);
         services.SessionService.CreateSession("Initial child", parentSessionId: parent.SessionId);
-        services.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.RuntimeCatalogs,
+        services.ExtensionCatalog.AddProvider(
+            AgentRpcServices.RuntimeCatalogs,
             new AgentRuntimeCatalog(services.SessionService, profileService, services.WorkspaceService));
         var viewModel = new SubsessionsViewModel(services.ExtensionCatalog);
         await viewModel.InitializeAsync();
@@ -3715,7 +3725,8 @@ public sealed class ViewLifecycleTests
     [AvaloniaFact]
     public async Task SubsessionInitialization_CatalogFailureIsPresented()
     {
-        var viewModel = new SubsessionsViewModel(new ThrowingExtensionCatalog());
+        using var catalog = new AgentRpcCatalog(new ThrowingRpcClient());
+        var viewModel = new SubsessionsViewModel(catalog);
 
         await viewModel.InitializeAsync();
 
@@ -3724,9 +3735,32 @@ public sealed class ViewLifecycleTests
     }
 
     [AvaloniaFact]
+    public async Task SubsessionsView_OrdinaryInitializationFailureOpensWithVisibleRetry()
+    {
+        using var catalog = new AgentRpcCatalog(new ThrowingRpcClient());
+        var viewModel = new SubsessionsViewModel(catalog);
+        using var view = new SubsessionsView(viewModel);
+        var window = new Window { Width = 800, Height = 500, Content = view };
+        window.Show();
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+
+        var prepared = await view.PrepareNavigationAsync(new PackageViewNavigationContext(
+            SubagentConstants.SubsessionsViewId,
+            new Dictionary<string, string?>()));
+
+        Assert.True(prepared);
+        Assert.True(viewModel.HasLoadError);
+        Assert.True(Assert.IsType<Border>(view.FindControl<Border>("SubsessionLoadError")).IsVisible);
+        Assert.True(viewModel.RetryLoadCommand.CanExecute(null));
+        Assert.Contains("Injected catalog failure", viewModel.StatusText, StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public async Task SubsessionsView_AnchoredInitializationFailureCompletesVisibleFallbackPlacement()
     {
-        var viewModel = new SubsessionsViewModel(new ThrowingExtensionCatalog());
+        using var catalog = new AgentRpcCatalog(new ThrowingRpcClient());
+        var viewModel = new SubsessionsViewModel(catalog);
         using var view = new SubsessionsView(viewModel);
         var window = new Window { Width = 800, Height = 500, Content = view };
         window.Show();
@@ -3773,8 +3807,8 @@ public sealed class ViewLifecycleTests
             child.SessionId,
             AgentMessageRole.Assistant,
             "Child response.");
-        services.ExtensionCatalog.AddExtension(
-            PackageExtensionPoints.RuntimeCatalogs,
+        services.ExtensionCatalog.AddProvider(
+            AgentRpcServices.RuntimeCatalogs,
             new AgentRuntimeCatalog(services.SessionService, profileService, services.WorkspaceService));
         var viewModel = new SubsessionsViewModel(services.ExtensionCatalog);
         using var view = new SubsessionsView(viewModel);
@@ -3854,7 +3888,6 @@ public sealed class ViewLifecycleTests
         var workspaceService = new AgentWorkspaceService(store, extensionCatalog, sessionService);
         var targetService = new AgentExecutionTargetService(extensionCatalog);
         var toolService = new AgentToolService(
-            new InstalledPackageToolSource(extensionCatalog),
             sessionService,
             workspaceService,
             targetService,
@@ -3864,7 +3897,11 @@ public sealed class ViewLifecycleTests
             sessionService,
             workspaceService,
             targetService,
-            new AgentProfileService(store, toolService, extensionCatalog));
+            new AgentProfileService(
+                store,
+                toolService,
+                extensionCatalog,
+                extensionCatalog.BehaviorLoops));
     }
 
     private static ServiceCollection CreateHistoryAppServices(
@@ -3875,7 +3912,7 @@ public sealed class ViewLifecycleTests
         services.AddSingleton<IPackageContext>(scope.Context);
         services.AddSingleton(runtime);
         services.AddSingleton<IPackageRuntimeClient>(runtime);
-        services.AddSingleton<IPackageExtensionCatalog>(new RegressionTestExtensionCatalog());
+        services.AddSingleton<AgentRpcCatalog>(new RegressionTestExtensionCatalog());
         services.AddSingleton<IPackageShellViewService, NoOpPackageShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
         services.AddSingleton<IBackgroundProcessQueue, NoOpBackgroundProcessQueue>();
@@ -3945,7 +3982,7 @@ public sealed class ViewLifecycleTests
 
     private static MemoryInspectorService CreateMemoryInspector(
         IPackageContext context,
-        IPackageExtensionCatalog extensionCatalog)
+        AgentRpcCatalog extensionCatalog)
     {
         var store = new MemoryLocalStore(context);
         var settings = new MemorySemanticSettingsService(context);
@@ -4862,7 +4899,7 @@ public sealed class ViewLifecycleTests
             .ToArray();
         var runtime = new TestSubsessionRuntimeCatalog([parent, child], [], turns);
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddExtension(PackageExtensionPoints.RuntimeCatalogs, runtime, "test.runtime");
+        catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, runtime, "test.runtime");
         var viewModel = new SubsessionsViewModel(catalog);
         var view = new SubsessionsView(viewModel);
         var window = new Window { Width = 900, Height = 500, Content = view };
@@ -5875,20 +5912,53 @@ public sealed class ViewLifecycleTests
             => Task.FromResult(Array.Empty<byte>());
     }
 
-    private sealed class ThrowingExtensionCatalog :
-        IPackageExtensionCatalog,
-        IPackageExtensionInvocationCatalog
+    private sealed class ThrowingRpcClient : ISunderRpcClient
     {
-        public IReadOnlyList<TContract> GetExtensions<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint)
-            => throw new InvalidOperationException("Injected catalog failure.");
+        public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(
+            SunderRpcEndpointReference endpoint,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SunderRpcProviderSnapshot?>(Failure());
 
-        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint)
-            => throw new InvalidOperationException("Injected catalog failure.");
+        public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(
+            string contractId,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SunderRpcCatalogSnapshot>(Failure());
 
-        public IReadOnlyList<IPackageExtensionReference<TContract>> GetExtensionReferences<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint)
-            => throw new InvalidOperationException("Injected catalog failure.");
+        public async IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(
+            long afterRevision,
+            long afterSequence,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
+
+        public ValueTask<JsonElement> InvokeAsync(
+            SunderRpcEndpointReference endpoint,
+            string serviceId,
+            string methodId,
+            JsonElement request,
+            SunderRpcCallOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<JsonElement>(Failure());
+
+        public async IAsyncEnumerable<JsonElement> SubscribeAsync(
+            SunderRpcEndpointReference endpoint,
+            string serviceId,
+            string methodId,
+            JsonElement request,
+            SunderRpcCallOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                throw Failure();
+            }
+            yield break;
+        }
+
+        private static InvalidOperationException Failure()
+            => new("Injected catalog failure.");
     }
 }

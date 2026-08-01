@@ -1,6 +1,11 @@
 using System.Collections.Concurrent;
-using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Threading.Channels;
+using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -46,227 +51,459 @@ internal sealed class RegressionTestPackageScope : IDisposable
     }
 }
 
-internal sealed class RegressionTestExtensionCatalog :
-    IPackageExtensionCatalog,
-    IPackageExtensionInvocationCatalog
+internal class RegressionTestExtensionCatalog : AgentRpcCatalog
 {
-    private readonly object _syncRoot = new();
-    private readonly Dictionary<string, List<OwnedExtension>> _extensions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly RegressionTestRpcClient _client;
 
-    public List<(string PackageId, Exception Exception)> FaultReports { get; } = [];
-
-    public void AddExtension<TContract>(PackageExtensionPoint<TContract> extensionPoint, TContract extension)
-        => AddExtension(extensionPoint, extension, "test.package");
-
-    public void AddExtension<TContract>(
-        PackageExtensionPoint<TContract> extensionPoint,
-        TContract extension,
-        string packageId)
+    public RegressionTestExtensionCatalog()
+        : this(new RegressionTestRpcClient(new RegressionTestRpcState(), "test.consumer"))
     {
-        lock (_syncRoot)
-        {
-            if (!_extensions.TryGetValue(extensionPoint.Id, out var entries))
-            {
-                entries = [];
-                _extensions[extensionPoint.Id] = entries;
-            }
+    }
 
-            entries.Add(new OwnedExtension(packageId, extension!));
+    private RegressionTestExtensionCatalog(RegressionTestRpcClient client)
+        : base(client)
+    {
+        _client = client;
+        RunControls = new AgentRunControlRegistry();
+        BehaviorLoops = AgentRpcServices.CreateBehaviorLoops(RunControls, this);
+        AddProvider(
+            AgentRpcContractIds.RunControl,
+            RunControls,
+            "sunder.package.agent",
+            providerId: AgentRunControlRpc.ProviderId);
+    }
+
+    public AgentRunControlRegistry RunControls { get; }
+
+    public AgentRpcProviderService<IAgentBehaviorLoop> BehaviorLoops { get; }
+
+    public int DiscoveryCount => _client.State.DiscoveryCount;
+
+    public Exception? LastInvocationFailure => _client.State.LastInvocationFailure;
+
+    public AgentRpcReference<TService> GetRequiredReference<TService>(AgentRpcService<TService> service)
+        where TService : class
+        => Assert.Single(GetServiceReferences(service));
+
+    public void AddProvider<TService>(
+        AgentRpcService<TService> service,
+        TService implementation,
+        string packageId = "test.package")
+        where TService : class
+        => AddProvider(service.ContractId, implementation, packageId);
+
+    public void AddProvider<TService>(
+        AgentRpcProviderService<TService> service,
+        TService implementation,
+        string packageId = "test.package")
+        where TService : class
+        => AddProvider(service.ContractId, implementation, packageId);
+
+    public void AddTool(IAgentTool tool, string packageId = "test.package")
+    {
+        var source = new AgentStaticToolSourceAdapter(
+            "installed-packages",
+            "Installed packages",
+            "test",
+            [tool]);
+        AddProvider(AgentRpcContractIds.ToolSource, source, packageId, tool);
+    }
+
+    public void AddBehaviorLoop(IAgentBehaviorLoop implementation, string packageId = "test.package")
+        => AddProvider(AgentRpcContractIds.BehaviorLoop, implementation, packageId);
+
+    public Task RetireProviderAsync(object implementation)
+        => _client.State.RetireAsync(implementation);
+
+    public Task RetireProviderAsync<TService>(AgentRpcService<TService> _, TService implementation)
+        where TService : class
+        => RetireProviderAsync(implementation);
+
+    public void RemoveProvider(object implementation)
+        => _ = RetireProviderAsync(implementation);
+
+    public void RemoveProvider<TService>(AgentRpcService<TService> _, TService implementation)
+        where TService : class
+        => RemoveProvider(implementation);
+
+    public new void Dispose()
+    {
+        base.Dispose();
+        _client.State.Dispose();
+    }
+
+    private void AddProvider(
+        string contractId,
+        object implementation,
+        string packageId,
+        object? registrationIdentity = null,
+        string? providerId = null)
+    {
+        var providerCatalog = new AgentRpcCatalog(_client.ForCaller(packageId));
+        var handler = contractId switch
+        {
+            AgentRpcContractIds.ChatProvider when implementation is IAgentChatProvider service => AgentChatProviderRpc.CreateHandler(service),
+            AgentRpcContractIds.EmbeddingProvider when implementation is IAgentEmbeddingProvider service => AgentEmbeddingProviderRpc.CreateHandler(service),
+            AgentRpcContractIds.RuntimeCatalog when implementation is IAgentRuntimeCatalog service => AgentRuntimeCatalogRpc.CreateHandler(service),
+            AgentRpcContractIds.WorkspaceExecutionResolver when implementation is IAgentWorkspaceExecutionResolver service => AgentWorkspaceExecutionResolverRpc.CreateHandler(service),
+            AgentRpcContractIds.ChildRunExecutor when implementation is IAgentChildRunExecutor service => AgentChildRunExecutorRpc.CreateHandler(service),
+            AgentRpcContractIds.SessionCleaner when implementation is IAgentSessionDataCleaner service => AgentSessionCleanerRpc.CreateHandler(service),
+            AgentRpcContractIds.SystemPromptContributor when implementation is IAgentSystemPromptContributor service => AgentSystemPromptContributorRpc.CreateHandler(service),
+            AgentRpcContractIds.ToolSource when implementation is IAgentToolSource service => AgentToolSourceRpc.CreateHandler(service, providerCatalog),
+            AgentRpcContractIds.PermissionSurface when implementation is IAgentPermissionSurface service => AgentPermissionSurfaceRpc.CreateHandler(service),
+            AgentRpcContractIds.PromptContextContributor when implementation is IAgentPromptContextContributor service => AgentPromptContextContributorRpc.CreateHandler(service, providerCatalog),
+            AgentRpcContractIds.DurableLifecycleObserver when implementation is IAgentDurableLifecycleObserver service => AgentDurableLifecycleObserverRpc.CreateHandler(service),
+            AgentRpcContractIds.ProfileCapabilityConsumer when implementation is IAgentProfileCapabilityConsumer service => AgentProfileCapabilityConsumerRpc.CreateHandler(service),
+            AgentRpcContractIds.SelectableCapabilityProvider when implementation is IAgentProfileSelectableCapabilityProvider service => AgentSelectableCapabilityProviderRpc.CreateHandler(service),
+            AgentRpcContractIds.BehaviorLoop when implementation is IAgentBehaviorLoop service => AgentBehaviorLoopRpc.CreateHandler(service, providerCatalog),
+            AgentRpcContractIds.ExecutionTarget when implementation is IAgentExecutionTarget service => AgentExecutionTargetRpc.CreateHandler(service),
+            AgentRpcContractIds.WorkspacePathMigrator when implementation is IAgentWorkspacePathMigrationContributor service => AgentWorkspacePathMigratorRpc.CreateHandler(service),
+            AgentRpcContractIds.WorkspaceEditor when implementation is IAgentWorkspaceEditorContributor service => AgentWorkspaceEditorRpc.CreateHandler(service),
+            AgentRpcContractIds.RunControl when implementation is AgentRunControlRegistry service => AgentRunControlRpc.CreateHandler(service),
+            _ => throw new ArgumentException($"No test RPC handler is available for contract '{contractId}'.", nameof(implementation)),
+        };
+        _client.State.Add(
+            packageId,
+            contractId,
+            registrationIdentity ?? implementation,
+            handler,
+            providerCatalog,
+            providerId);
+    }
+}
+
+internal sealed class RegressionTestRpcClient(RegressionTestRpcState state, string callerPackageId) : ISunderRpcClient
+{
+    public RegressionTestRpcState State { get; } = state;
+
+    public RegressionTestRpcClient ForCaller(string packageId) => new(State, packageId);
+
+    public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(SunderRpcEndpointReference endpoint, CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(State.GetProvider(endpoint));
+
+    public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(string contractId, CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(State.Discover(contractId));
+
+    public IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(long afterRevision, long afterSequence, CancellationToken cancellationToken = default)
+        => State.WatchAsync(afterRevision, afterSequence, cancellationToken);
+
+    public ValueTask<JsonElement> InvokeAsync(
+        SunderRpcEndpointReference endpoint,
+        string serviceId,
+        string methodId,
+        JsonElement request,
+        SunderRpcCallOptions? options = null,
+        CancellationToken cancellationToken = default)
+        => State.InvokeAsync(callerPackageId, endpoint, serviceId, methodId, request, cancellationToken);
+
+    public IAsyncEnumerable<JsonElement> SubscribeAsync(
+        SunderRpcEndpointReference endpoint,
+        string serviceId,
+        string methodId,
+        JsonElement request,
+        SunderRpcCallOptions? options = null,
+        CancellationToken cancellationToken = default)
+        => State.SubscribeAsync(callerPackageId, endpoint, serviceId, methodId, request, cancellationToken);
+}
+
+internal sealed class RegressionTestRpcState : IDisposable
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
+    private readonly List<ChannelWriter<SunderRpcCatalogEvent>> _watchers = [];
+    private readonly List<SunderRpcCatalogEvent> _events = [];
+    private long _revision;
+    private long _sequence;
+    private int _providerSequence;
+    private int _discoveryCount;
+    private Exception? _lastInvocationFailure;
+
+    public int DiscoveryCount => Volatile.Read(ref _discoveryCount);
+
+    public Exception? LastInvocationFailure => Volatile.Read(ref _lastInvocationFailure);
+
+    public void Add(
+        string packageId,
+        string contractId,
+        object implementation,
+        ISunderRpcServiceHandler handler,
+        IDisposable ownedCatalog,
+        string? providerId = null)
+    {
+        lock (_gate)
+        {
+            var sequence = ++_providerSequence;
+            var endpoint = new SunderRpcEndpointReference($"test.rpc.{Guid.NewGuid():N}");
+            var descriptor = AgentRpcContractDescriptors.Get(contractId);
+            var snapshot = new SunderRpcProviderSnapshot(
+                packageId,
+                "1.0.0",
+                providerId ?? $"test.provider.{sequence}",
+                contractId,
+                descriptor.Version,
+                descriptor.Sha256,
+                Guid.NewGuid(),
+                sequence,
+                1,
+                endpoint,
+                ++_revision,
+                SunderRpcProviderState.Active);
+            var entry = new Entry(implementation, handler, snapshot, descriptor, ownedCatalog);
+            _entries.Add(endpoint.Value, entry);
+            Publish(new SunderRpcCatalogEvent(_revision, ++_sequence, SunderRpcCatalogEventKind.Activated, snapshot));
         }
     }
 
-    public void RemoveExtension<TContract>(PackageExtensionPoint<TContract> extensionPoint, TContract extension)
-        => _ = RetireExtensionAsync(extensionPoint, extension);
-
-    public async Task RetireExtensionAsync<TContract>(
-        PackageExtensionPoint<TContract> extensionPoint,
-        TContract extension)
+    public SunderRpcProviderSnapshot? GetProvider(SunderRpcEndpointReference endpoint)
     {
-        OwnedExtension[] removed;
-        lock (_syncRoot)
+        lock (_gate)
         {
-            if (!_extensions.TryGetValue(extensionPoint.Id, out var entries))
-            {
-                return;
-            }
+            return _entries.TryGetValue(endpoint.Value, out var entry) && entry.Active
+                ? entry.Snapshot
+                : null;
+        }
+    }
 
-            removed = entries.Where(entry => ReferenceEquals(entry.Extension, extension)).ToArray();
+    public SunderRpcCatalogSnapshot Discover(string contractId)
+    {
+        Interlocked.Increment(ref _discoveryCount);
+        lock (_gate)
+        {
+            return new SunderRpcCatalogSnapshot(
+                _revision,
+                _sequence,
+                _entries.Values
+                    .Where(entry => entry.Active && string.Equals(entry.Snapshot.ContractId, contractId, StringComparison.Ordinal))
+                    .Select(static entry => entry.Snapshot));
+        }
+    }
+
+    public async Task RetireAsync(object implementation)
+    {
+        Entry[] removed;
+        lock (_gate)
+        {
+            removed = _entries.Values
+                .Where(entry => entry.Active && ReferenceEquals(entry.Implementation, implementation))
+                .ToArray();
             foreach (var entry in removed)
             {
                 entry.Active = false;
+                entry.Retirement.Cancel();
+                var snapshot = entry.Snapshot with
+                {
+                    CatalogRevision = ++_revision,
+                    State = SunderRpcProviderState.Inactive,
+                };
+                Publish(new SunderRpcCatalogEvent(_revision, ++_sequence, SunderRpcCatalogEventKind.Deactivated, snapshot));
+                if (entry.ActiveCalls == 0) entry.Drained.TrySetResult();
             }
-            entries.RemoveAll(entry => !entry.Active);
         }
+        await Task.WhenAll(removed.Select(static entry => entry.Drained.Task)).ConfigureAwait(false);
+        foreach (var entry in removed) entry.OwnedCatalog.Dispose();
+    }
 
-        var cancellations = new Task[removed.Length];
-        for (var index = 0; index < removed.Length; index++)
+    public async IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(
+        long afterRevision,
+        long afterSequence,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var channel = Channel.CreateUnbounded<SunderRpcCatalogEvent>(new UnboundedChannelOptions
         {
-            var entry = removed[index];
-            cancellations[index] = entry.Retirement.CancelAsync();
-            lock (_syncRoot)
+            SingleReader = true,
+            SingleWriter = false,
+        });
+        lock (_gate)
+        {
+            foreach (var item in _events.Where(item =>
+                         item.Revision > afterRevision
+                         || (item.Revision == afterRevision && item.Sequence > afterSequence)))
             {
-                CompleteRetirementIfDrained(entry);
+                channel.Writer.TryWrite(item);
             }
+            _watchers.Add(channel.Writer);
         }
-
         try
         {
-            await Task.WhenAll(cancellations).ConfigureAwait(false);
+            await foreach (var item in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false)) yield return item;
         }
         finally
         {
-            await Task.WhenAll(removed.Select(static entry => entry.RetirementCompleted.Task)).ConfigureAwait(false);
+            lock (_gate) _watchers.Remove(channel.Writer);
         }
     }
 
-    public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
+    public async ValueTask<JsonElement> InvokeAsync(
+        string callerPackageId,
+        SunderRpcEndpointReference endpoint,
+        string serviceId,
+        string methodId,
+        JsonElement request,
+        CancellationToken cancellationToken)
     {
-        lock (_syncRoot)
+        var entry = Acquire(endpoint);
+        using var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, entry.Retirement.Token);
+        try
         {
-            return !_extensions.TryGetValue(extensionPoint.Id, out var entries)
-                ? []
-                : entries.Select(static entry => entry.Extension).Cast<TContract>().ToArray();
+            ValidatePayload(entry, serviceId, methodId, request, output: false);
+            var response = await entry.Handler.InvokeUnaryAsync(
+                CreateContext(callerPackageId, entry.Snapshot, invocation.Token),
+                serviceId,
+                methodId,
+                request,
+                invocation.Token).ConfigureAwait(false);
+            ValidatePayload(entry, serviceId, methodId, response, output: true);
+            return response;
+        }
+        catch (OperationCanceledException) when (entry.Retirement.IsCancellationRequested)
+        {
+            var exception = new SunderRpcException(new SunderRpcError(
+                SunderRpcErrorKind.StaleEndpoint,
+                "test.rpc.stale-endpoint",
+                "The test RPC provider activation is stale."));
+            Volatile.Write(ref _lastInvocationFailure, exception);
+            throw exception;
+        }
+        catch (Exception exception)
+        {
+            Volatile.Write(ref _lastInvocationFailure, exception);
+            throw;
+        }
+        finally
+        {
+            Release(entry);
         }
     }
 
-    public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
+    public async IAsyncEnumerable<JsonElement> SubscribeAsync(
+        string callerPackageId,
+        SunderRpcEndpointReference endpoint,
+        string serviceId,
+        string methodId,
+        JsonElement request,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        lock (_syncRoot)
+        var entry = Acquire(endpoint);
+        using var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, entry.Retirement.Token);
+        try
         {
-            return !_extensions.TryGetValue(extensionPoint.Id, out var entries)
-                ? []
-                : entries.Select(entry => new PackageExtensionContribution<TContract>(
-                    entry.PackageId,
-                    (TContract)entry.Extension))
-                .ToArray();
-        }
-    }
-
-    public IReadOnlyList<IPackageExtensionReference<TContract>> GetExtensionReferences<TContract>(
-        PackageExtensionPoint<TContract> extensionPoint)
-    {
-        lock (_syncRoot)
-        {
-            return !_extensions.TryGetValue(extensionPoint.Id, out var entries)
-                ? []
-                : entries
-                    .Select(entry => (IPackageExtensionReference<TContract>)new ExtensionReference<TContract>(this, entry))
-                    .ToArray();
-        }
-    }
-
-    public bool TryReportInvariantViolation<TContract>(
-        IPackageExtensionReference<TContract> reference,
-        Exception exception)
-    {
-        lock (_syncRoot)
-        {
-            if (reference is not ExtensionReference<TContract> ownedReference
-                || !ReferenceEquals(ownedReference.Catalog, this)
-                || !ownedReference.Entry.Active)
+            ValidatePayload(entry, serviceId, methodId, request, output: false);
+            await foreach (var item in entry.Handler.InvokeServerStreamAsync(
+                               CreateContext(callerPackageId, entry.Snapshot, invocation.Token),
+                               serviceId,
+                               methodId,
+                               request,
+                               invocation.Token).WithCancellation(invocation.Token).ConfigureAwait(false))
             {
-                return false;
-            }
-
-            FaultReports.Add((ownedReference.Entry.PackageId, exception));
-            return true;
-        }
-    }
-
-    private bool TryAcquire<TContract>(OwnedExtension entry, out IPackageExtensionLease<TContract>? lease)
-    {
-        lock (_syncRoot)
-        {
-            if (!entry.Active || entry.Extension is not TContract contribution)
-            {
-                lease = null;
-                return false;
-            }
-
-            entry.LeaseCount++;
-            lease = new ExtensionLease<TContract>(this, entry, contribution);
-            return true;
-        }
-    }
-
-    private void Release(OwnedExtension entry)
-    {
-        lock (_syncRoot)
-        {
-            entry.LeaseCount--;
-            CompleteRetirementIfDrained(entry);
-        }
-    }
-
-    private static void CompleteRetirementIfDrained(OwnedExtension entry)
-    {
-        if (!entry.Active && entry.LeaseCount == 0)
-        {
-            entry.RetirementCompleted.TrySetResult();
-        }
-    }
-
-    private sealed class ExtensionReference<TContract>(
-        RegressionTestExtensionCatalog catalog,
-        OwnedExtension entry) : IPackageExtensionReference<TContract>
-    {
-        internal RegressionTestExtensionCatalog Catalog { get; } = catalog;
-
-        internal OwnedExtension Entry { get; } = entry;
-
-        public bool TryAcquire([NotNullWhen(true)] out IPackageExtensionLease<TContract>? lease)
-            => Catalog.TryAcquire(Entry, out lease);
-    }
-
-    private sealed class ExtensionLease<TContract>(
-        RegressionTestExtensionCatalog catalog,
-        OwnedExtension entry,
-        TContract contribution)
-        : IPackageExtensionLease<TContract>
-    {
-        private object? _contribution = contribution;
-
-        public string PackageId
-        {
-            get
-            {
-                ThrowIfDisposed();
-                return entry.PackageId;
+                ValidatePayload(entry, serviceId, methodId, item, output: true);
+                yield return item;
             }
         }
-
-        public TContract Contribution
-            => (TContract)(Volatile.Read(ref _contribution)
-                ?? throw new ObjectDisposedException(nameof(IPackageExtensionLease<TContract>)));
-
-        public CancellationToken RetirementToken
+        finally
         {
-            get
-            {
-                ThrowIfDisposed();
-                return entry.Retirement.Token;
-            }
+            Release(entry);
         }
-
-        public void Dispose()
-        {
-            if (Interlocked.Exchange(ref _contribution, null) is not null)
-            {
-                catalog.Release(entry);
-            }
-        }
-
-        private void ThrowIfDisposed()
-            => ObjectDisposedException.ThrowIf(Volatile.Read(ref _contribution) is null, this);
     }
 
-    private sealed class OwnedExtension(string packageId, object extension)
+    public void Dispose()
     {
-        public string PackageId { get; } = packageId;
-        public object Extension { get; } = extension;
+        Entry[] entries;
+        ChannelWriter<SunderRpcCatalogEvent>[] watchers;
+        lock (_gate)
+        {
+            entries = _entries.Values.ToArray();
+            _entries.Clear();
+            watchers = _watchers.ToArray();
+            _watchers.Clear();
+        }
+        foreach (var entry in entries)
+        {
+            entry.Retirement.Cancel();
+            entry.Retirement.Dispose();
+            entry.OwnedCatalog.Dispose();
+        }
+        foreach (var watcher in watchers) watcher.TryComplete();
+    }
+
+    private Entry Acquire(SunderRpcEndpointReference endpoint)
+    {
+        lock (_gate)
+        {
+            if (!_entries.TryGetValue(endpoint.Value, out var entry) || !entry.Active)
+            {
+                throw new SunderRpcException(new SunderRpcError(
+                    SunderRpcErrorKind.StaleEndpoint,
+                    "test.rpc.stale-endpoint",
+                    "The test RPC provider activation is stale."));
+            }
+            entry.ActiveCalls++;
+            return entry;
+        }
+    }
+
+    private void Release(Entry entry)
+    {
+        lock (_gate)
+        {
+            entry.ActiveCalls--;
+            if (!entry.Active && entry.ActiveCalls == 0) entry.Drained.TrySetResult();
+        }
+    }
+
+    private void Publish(SunderRpcCatalogEvent item)
+    {
+        _events.Add(item);
+        foreach (var watcher in _watchers.ToArray()) watcher.TryWrite(item);
+    }
+
+    private static SunderRpcInvocationContext CreateContext(
+        string callerPackageId,
+        SunderRpcProviderSnapshot provider,
+        CancellationToken cancellationToken)
+        => new(
+            callerPackageId,
+            "1.0.0",
+            provider,
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            1,
+            cancellationToken);
+
+    private static void ValidatePayload(
+        Entry entry,
+        string serviceId,
+        string methodId,
+        JsonElement payload,
+        bool output)
+    {
+        var method = entry.Descriptor.FindService(serviceId)?.FindMethod(methodId);
+        var schemaReference = output ? method?.OutputSchemaReference : method?.RequestSchemaReference;
+        string? error = null;
+        if (schemaReference is null
+            || !entry.Descriptor.IsValid(schemaReference, payload, out error))
+        {
+            throw new SunderRpcException(new SunderRpcError(
+                SunderRpcErrorKind.Validation,
+                "test.rpc.schema-validation",
+                $"The RPC {(output ? "output" : "request")} does not match "
+                + $"'{entry.Descriptor.ContractId}/{serviceId}/{methodId}': {error ?? "method not found"}"));
+        }
+    }
+
+    private sealed class Entry(
+        object implementation,
+        ISunderRpcServiceHandler handler,
+        SunderRpcProviderSnapshot snapshot,
+        SunderRpcContractDescriptor descriptor,
+        IDisposable ownedCatalog)
+    {
+        public object Implementation { get; } = implementation;
+        public ISunderRpcServiceHandler Handler { get; } = handler;
+        public SunderRpcProviderSnapshot Snapshot { get; } = snapshot;
+        public SunderRpcContractDescriptor Descriptor { get; } = descriptor;
+        public IDisposable OwnedCatalog { get; } = ownedCatalog;
         public CancellationTokenSource Retirement { get; } = new();
-        public TaskCompletionSource RetirementCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public int LeaseCount { get; set; }
+        public TaskCompletionSource Drained { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int ActiveCalls { get; set; }
         public bool Active { get; set; } = true;
     }
 }

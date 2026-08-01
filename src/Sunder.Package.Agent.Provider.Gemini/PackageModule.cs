@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Provider.Shared;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
@@ -28,8 +29,8 @@ public sealed class PackageModule : ISunderRuntimePackageModule
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterSettingsSchema(GeminiProviderConfiguration.Schema);
-        registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<GeminiAgentProvider>());
-        registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<GeminiEmbeddingProvider>());
+        registry.RegisterRpcProvider("gemini.chat", AgentChatProviderRpc.CreateHandler(services.GetRequiredService<GeminiAgentProvider>()));
+        registry.RegisterRpcProvider("gemini.embedding", AgentEmbeddingProviderRpc.CreateHandler(services.GetRequiredService<GeminiEmbeddingProvider>()));
     }
 }
 

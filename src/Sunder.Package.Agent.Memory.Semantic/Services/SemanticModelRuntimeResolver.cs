@@ -1,9 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Memory.Semantic.Services;
 
@@ -11,8 +10,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
 {
     private static readonly TimeSpan DefaultConfigurationCacheDuration = TimeSpan.FromMinutes(5);
 
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog;
-    private readonly IPackageExtensionCatalogMonitor? _catalogMonitor;
+    private readonly AgentRpcCatalog _rpcCatalog;
     private readonly MemorySemanticSettingsService _settingsService;
     private readonly TimeSpan _configurationCacheDuration;
     private readonly object _configurationCacheSync = new();
@@ -21,24 +19,18 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
     private bool _disposed;
 
     public SemanticModelRuntimeResolver(
-        IPackageExtensionCatalog extensionCatalog,
+        AgentRpcCatalog rpcCatalog,
         MemorySemanticSettingsService settingsService,
         TimeSpan? configurationCacheDuration = null)
     {
-        _invocationCatalog = extensionCatalog as IPackageExtensionInvocationCatalog
-            ?? throw new InvalidOperationException(
-                "The host extension catalog does not support activation-scoped invocation leases.");
-        _catalogMonitor = extensionCatalog as IPackageExtensionCatalogMonitor;
+        _rpcCatalog = rpcCatalog;
         _settingsService = settingsService;
         _configurationCacheDuration = configurationCacheDuration ?? DefaultConfigurationCacheDuration;
         if (_configurationCacheDuration <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(configurationCacheDuration));
         }
-        if (_catalogMonitor is not null)
-        {
-            _catalogMonitor.Changed += OnExtensionCatalogChanged;
-        }
+        _rpcCatalog.Changed += OnCatalogChanged;
     }
 
     public Task<ResolvedEmbeddingProvider?> ResolveForProfileAsync(
@@ -205,7 +197,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
         Func<IAgentRuntimeCatalog, TResult> callback,
         TResult fallback)
     {
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.RuntimeCatalogs))
+        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -216,7 +208,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
             {
                 if (!lease.RetirementToken.IsCancellationRequested)
                 {
-                    return callback(lease.Contribution);
+                    return callback(lease.Service);
                 }
             }
         }
@@ -233,7 +225,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
         Action<IAgentRuntimeCatalog> subscribe,
         Action<IAgentRuntimeCatalog> unsubscribe)
     {
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.RuntimeCatalogs))
+        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs))
         {
             if (reference.TryAcquire(out var lease))
             {
@@ -252,10 +244,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
         }
 
         _disposed = true;
-        if (_catalogMonitor is not null)
-        {
-            _catalogMonitor.Changed -= OnExtensionCatalogChanged;
-        }
+        _rpcCatalog.Changed -= OnCatalogChanged;
         lock (_configurationCacheSync)
         {
             _configurationCache.Clear();
@@ -280,7 +269,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
         var providerId = NormalizeProviderId(binding.ProviderId);
         var bindingFingerprint = BuildBindingFingerprint(binding, providerId);
         var catalogRevision = Volatile.Read(ref _catalogRevision);
-        if (_catalogMonitor is not null && !forceProviderIdentityRefresh)
+        if (!forceProviderIdentityRefresh)
         {
             lock (_configurationCacheSync)
             {
@@ -294,7 +283,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
             }
         }
 
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.EmbeddingProviders))
+        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.EmbeddingProviders))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -312,7 +301,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
                 {
                     return null;
                 }
-                var descriptor = lease.Contribution.Descriptor;
+                var descriptor = lease.Service.Descriptor;
                 if (!string.Equals(descriptor.ProviderId, providerId, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
@@ -324,12 +313,12 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
                 string providerSpaceIdentity;
                 try
                 {
-                    if (lease.Contribution is IAgentEmbeddingSpaceIdentityProvider
+                    if (lease.Service is IAgentEmbeddingSpaceIdentityProvider
                         && !await CanInvokeProviderAsync(canInvokeProvider, cancellationToken).ConfigureAwait(false))
                     {
                         return null;
                     }
-                    providerSpaceIdentity = lease.Contribution is IAgentEmbeddingSpaceIdentityProvider identityProvider
+                    providerSpaceIdentity = lease.Service is IAgentEmbeddingSpaceIdentityProvider identityProvider
                         ? await identityProvider.GetEmbeddingSpaceIdentityAsync(binding.ModelId, invocation.Token).ConfigureAwait(false)
                         : string.Empty;
                 }
@@ -348,18 +337,15 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
                         binding,
                         lease.PackageId,
                         providerId,
-                        lease.Contribution,
+                        reference.Provider,
                         providerSpaceIdentity));
-                if (_catalogMonitor is not null)
+                lock (_configurationCacheSync)
                 {
-                    lock (_configurationCacheSync)
-                    {
-                        _configurationCache[profileId] = new CachedEmbeddingConfiguration(
-                            bindingFingerprint,
-                            catalogRevision,
-                            DateTimeOffset.UtcNow,
-                            resolved);
-                    }
+                    _configurationCache[profileId] = new CachedEmbeddingConfiguration(
+                        bindingFingerprint,
+                        catalogRevision,
+                        DateTimeOffset.UtcNow,
+                        resolved);
                 }
                 return resolved;
             }
@@ -372,10 +358,9 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
         AgentProfileModelBindingRecord binding,
         string ownerPackageId,
         string providerId,
-        IAgentEmbeddingProvider provider,
+        Sunder.Sdk.Rpc.SunderRpcProviderSnapshot provider,
         string? providerSpaceIdentity)
     {
-        var providerType = provider.GetType();
         var source = string.Join('\n',
             "semantic-memory-embedding-space-v1",
             ownerPackageId.Trim().ToLowerInvariant(),
@@ -383,9 +368,10 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
             binding.ModelId!.Trim(),
             binding.SettingsJson?.Trim() ?? string.Empty,
             providerSpaceIdentity?.Trim() ?? string.Empty,
-            providerType.Assembly.FullName,
-            providerType.FullName,
-            providerType.Module.ModuleVersionId.ToString("D"));
+            provider.PackageVersion,
+            provider.ContractVersion,
+            provider.ContractSha256,
+            provider.ProviderId);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source))).ToLowerInvariant();
     }
 
@@ -399,15 +385,15 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source))).ToLowerInvariant();
     }
 
-    private void OnExtensionCatalogChanged(object? sender, PackageExtensionCatalogChangedEventArgs e)
+    private void OnCatalogChanged(object? sender, AgentRpcCatalogChangedEventArgs e)
     {
-        if (!e.IncludesExtensionPoint(PackageExtensionPoints.EmbeddingProviders.Id)
-            && !e.IncludesExtensionPoint(PackageExtensionPoints.RuntimeCatalogs.Id))
+        if (!e.IncludesContract(AgentRpcContractIds.EmbeddingProvider)
+            && !e.IncludesContract(AgentRpcContractIds.RuntimeCatalog))
         {
             return;
         }
 
-        Volatile.Write(ref _catalogRevision, e.Revision);
+        Interlocked.Increment(ref _catalogRevision);
         lock (_configurationCacheSync)
         {
             _configurationCache.Clear();
@@ -445,18 +431,18 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
     private sealed class RuntimeCatalogSubscription : IDisposable
     {
         private readonly Action<IAgentRuntimeCatalog> _unsubscribe;
-        private IPackageExtensionLease<IAgentRuntimeCatalog>? _lease;
+        private AgentRpcLease<IAgentRuntimeCatalog>? _lease;
         private CancellationTokenRegistration _retirementRegistration;
         private int _disposed;
 
         public RuntimeCatalogSubscription(
-            IPackageExtensionLease<IAgentRuntimeCatalog> lease,
+            AgentRpcLease<IAgentRuntimeCatalog> lease,
             Action<IAgentRuntimeCatalog> subscribe,
             Action<IAgentRuntimeCatalog> unsubscribe)
         {
             _lease = lease;
             _unsubscribe = unsubscribe;
-            subscribe(lease.Contribution);
+            subscribe(lease.Service);
             _retirementRegistration = lease.RetirementToken.UnsafeRegister(
                 static state => ((RuntimeCatalogSubscription)state!).DisposeFromRetirement(),
                 this);
@@ -482,7 +468,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
             {
                 try
                 {
-                    _unsubscribe(lease.Contribution);
+                    _unsubscribe(lease.Service);
                 }
                 finally
                 {
@@ -508,10 +494,10 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
 
 public sealed class ResolvedEmbeddingProvider
 {
-    private readonly IPackageExtensionReference<IAgentEmbeddingProvider> _reference;
+    private readonly AgentRpcReference<IAgentEmbeddingProvider> _reference;
 
     internal ResolvedEmbeddingProvider(
-        IPackageExtensionReference<IAgentEmbeddingProvider> reference,
+        AgentRpcReference<IAgentEmbeddingProvider> reference,
         string ownerPackageId,
         string providerId,
         string modelId,
@@ -574,7 +560,8 @@ public sealed class ResolvedEmbeddingProvider
             {
                 return !leftLease.RetirementToken.IsCancellationRequested
                        && !rightLease.RetirementToken.IsCancellationRequested
-                       && ReferenceEquals(leftLease.Contribution, rightLease.Contribution);
+                        && _reference.Provider.ActivationId == other._reference.Provider.ActivationId
+                        && string.Equals(_reference.Endpoint.Value, other._reference.Endpoint.Value, StringComparison.Ordinal);
             }
         }
     }
@@ -602,7 +589,7 @@ public sealed class ResolvedEmbeddingProvider
                 retirementToken);
             try
             {
-                return await callback(lease.Contribution, state, invocation.Token).ConfigureAwait(false);
+                return await callback(lease.Service, state, invocation.Token).ConfigureAwait(false);
             }
             catch (Exception ex) when (retirementToken.IsCancellationRequested
                                        && !cancellationToken.IsCancellationRequested)

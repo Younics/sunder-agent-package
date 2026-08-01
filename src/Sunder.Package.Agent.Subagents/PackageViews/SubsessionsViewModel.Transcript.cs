@@ -123,7 +123,7 @@ public sealed partial class SubsessionsViewModel
                 {
                     if (_timeline.TryFailInitialLoad(ticket))
                     {
-                        StatusText = $"Unable to load subsession transcript: {ex.Message}";
+                        SetLoadFailure($"Unable to load subsession transcript: {ex.Message}");
                     }
                 },
                 CancellationToken.None);

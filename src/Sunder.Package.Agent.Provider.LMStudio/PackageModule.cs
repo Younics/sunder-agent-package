@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Provider.Shared;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
@@ -35,8 +36,8 @@ public sealed class PackageModule : ISunderRuntimePackageModule
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterSettingsSchema(LMStudioProviderConfiguration.Schema);
-        registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<LMStudioAgentProvider>());
-        registry.RegisterExtension(PackageExtensionPoints.EmbeddingProviders, services.GetRequiredService<LMStudioEmbeddingProvider>());
+        registry.RegisterRpcProvider("lmstudio.chat", AgentChatProviderRpc.CreateHandler(services.GetRequiredService<LMStudioAgentProvider>()));
+        registry.RegisterRpcProvider("lmstudio.embedding", AgentEmbeddingProviderRpc.CreateHandler(services.GetRequiredService<LMStudioEmbeddingProvider>()));
     }
 }
 

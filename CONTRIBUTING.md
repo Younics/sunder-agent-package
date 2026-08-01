@@ -1,12 +1,12 @@
 # Contributing to Sunder Agent Packages
 
-Thanks for helping improve the Sunder Agent package family. This repository contains the first-party Agent package, Agent contracts, providers, tools, execution targets, memory, MCP, skills, subagents, and package builder integration.
+Thanks for helping improve the Sunder Agent package family. This repository contains the first-party Agent package, Agent Protocol, providers, tools, execution targets, memory, MCP, skills, subagents, and package builder integration.
 
 ## Before You Start
 
 For small fixes, documentation improvements, and tests, open a pull request directly.
 
-For larger changes, open an issue first. Please discuss changes to `Sunder.Package.Agent.Contracts`, package dependencies, permission surfaces, execution behavior, provider behavior, and package architecture before implementation.
+For larger changes, open an issue first. Please discuss changes to `Sunder.Package.Agent.Protocol`, package dependencies, permission surfaces, execution behavior, provider behavior, and package architecture before implementation.
 
 ## Local Development
 
@@ -40,7 +40,7 @@ Package projects must not reference `Sunder.App` or `Sunder.Runtime.Host` direct
 | Area | Owns |
 | --- | --- |
 | `Sunder.Package.Agent` | Core sessions, chat, profiles, workspaces, permissions, orchestration |
-| `Sunder.Package.Agent.Contracts` | Public contracts used by Agent extension packages |
+| `Sunder.Package.Agent.Protocol` | Public RPC descriptors and generated bindings used by Agent extension packages |
 | Provider packages | Chat and embedding provider integrations |
 | Tool packages | File, shell, web, MCP, and native tool capabilities |
 | Execution packages | Local and Docker execution targets |
@@ -53,7 +53,7 @@ Before opening a PR, please check:
 
 - The change is scoped to the smallest useful fix or feature.
 - Package boundaries remain clear.
-- New capabilities are registered through Agent contracts where appropriate.
+- New capabilities use exact Agent RPC descriptors and activation-owned providers where appropriate.
 - Provider secrets and configuration use Sunder package abstractions.
 - File, shell, web, and execution changes consider permissions and user control.
 - Relevant tests were added or updated.

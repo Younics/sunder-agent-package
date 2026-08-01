@@ -1,6 +1,6 @@
 # Execution Targets, Paths, And Security
 
-An execution target implements shell and file operations for an Agent workspace. Register `IAgentExecutionTarget` through `PackageExtensionPoints.ExecutionTargets` in the Runtime role.
+An execution target implements shell and file operations for an Agent workspace. Publish `AgentExecutionTargetRpc.CreateHandler(target)` under the Runtime `sunder.agent.execution.target` contract.
 
 Execution targets are authorities, not presentation adapters. They own path interpretation, process/container/remote lifecycle, output bounds, timeout enforcement, and final scope checks.
 

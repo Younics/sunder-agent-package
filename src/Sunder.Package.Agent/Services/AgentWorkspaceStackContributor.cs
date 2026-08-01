@@ -1,6 +1,6 @@
 using System.Text.Json;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
 
@@ -9,7 +9,7 @@ namespace Sunder.Package.Agent.Services;
 public sealed class AgentWorkspaceStackContributor(
     AgentWorkspaceService workspaceService,
     IPackageContext packageContext,
-    IPackageExtensionCatalog extensionCatalog) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
+    AgentRpcCatalog rpcCatalog) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
     private const string PackageId = "sunder.package.agent";
     private const string SchemaId = "sunder.package.agent/workspace";
@@ -18,9 +18,6 @@ public sealed class AgentWorkspaceStackContributor(
     private const string DetailDocuments = "documents";
     private const string DetailPrimaryExecutionTarget = "primary-execution-target";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
-        AgentExtensionInvocation.Require(extensionCatalog);
-
     public string ContributorId => "sunder.package.agent.workspaces";
 
     public string DisplayName => "Agent Workspaces";
@@ -194,9 +191,9 @@ public sealed class AgentWorkspaceStackContributor(
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (targetIds.Count > 0)
         {
-            foreach (var contribution in AgentExtensionInvocation.Snapshot(
-                         _invocationCatalog,
-                         PackageExtensionPoints.ExecutionTargets,
+            foreach (var contribution in AgentRpcInvocation.Snapshot(
+                         rpcCatalog,
+                         AgentRpcServices.ExecutionTargets,
                          static target => target.Descriptor))
             {
                 var descriptor = contribution.Metadata;
@@ -263,7 +260,7 @@ public sealed class AgentWorkspaceStackContributor(
         }
 
         var primaryBinding = bindings.FirstOrDefault(binding => binding.IsEnabled
-                                                               && string.Equals(binding.ExtensionPointId, PackageExtensionPoints.ExecutionTargets.Id, StringComparison.OrdinalIgnoreCase)
+                                                                && string.Equals(binding.ExtensionPointId, AgentRpcContractIds.ExecutionTarget, StringComparison.OrdinalIgnoreCase)
                                                                && string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase));
         if (primaryBinding is not null)
         {
@@ -462,7 +459,7 @@ public sealed class AgentWorkspaceStackContributor(
         {
             var primaryBinding = bindings
                 .FirstOrDefault(binding => binding.IsEnabled
-                                           && string.Equals(binding.ExtensionPointId, PackageExtensionPoints.ExecutionTargets.Id, StringComparison.OrdinalIgnoreCase)
+                                           && string.Equals(binding.ExtensionPointId, AgentRpcContractIds.ExecutionTarget, StringComparison.OrdinalIgnoreCase)
                                            && string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase));
             return new AgentWorkspaceStackPayload(
                 workspace.WorkspaceId,

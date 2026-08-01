@@ -7,6 +7,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.PackageViews;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Tests;
@@ -20,11 +21,11 @@ public sealed class ProfileHydrationTests
     public async Task HydrationDisablesSaveAndNeverMarksConcurrentEditClean()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var extensions = new RegressionTestExtensionCatalog();
+        using var extensions = new RegressionTestExtensionCatalog();
         var provider = new DelayedChatProvider();
         using var profileService = CreateProfileService(scope, extensions);
         var profile = await profileService.CreateProfileAsync("Profile");
-        extensions.AddExtension(PackageExtensionPoints.ChatProviders, provider);
+        extensions.AddProvider(AgentRpcServices.ChatProviders, provider);
         profileService.SaveProfile(
             profile.ProfileId,
             profile.DisplayName,
@@ -56,11 +57,11 @@ public sealed class ProfileHydrationTests
     public async Task CompactLayout_NullSelectionClearsInflightHydrationState()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var extensions = new RegressionTestExtensionCatalog();
+        using var extensions = new RegressionTestExtensionCatalog();
         var provider = new DelayedChatProvider();
         using var profileService = CreateProfileService(scope, extensions);
         var profile = await profileService.CreateProfileAsync("Profile");
-        extensions.AddExtension(PackageExtensionPoints.ChatProviders, provider);
+        extensions.AddProvider(AgentRpcServices.ChatProviders, provider);
         profileService.SaveProfile(
             profile.ProfileId,
             profile.DisplayName,
@@ -96,7 +97,7 @@ public sealed class ProfileHydrationTests
     public async Task RuntimeOutageBanner_IsSharedByCompactListAndEditorAndClearsOnRecovery()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var extensions = new RegressionTestExtensionCatalog();
+        using var extensions = new RegressionTestExtensionCatalog();
         using var profileService = CreateProfileService(scope, extensions);
         var profile = await profileService.CreateProfileAsync("Profile");
         using var viewModel = new AgentProfilesViewModel(profileService);
@@ -142,12 +143,15 @@ public sealed class ProfileHydrationTests
         var sessionService = new AgentSessionService(store, extensionCatalog);
         var workspaceService = new AgentWorkspaceService(store, extensionCatalog, sessionService);
         var toolService = new AgentToolService(
-            new InstalledPackageToolSource(extensionCatalog),
             sessionService,
             workspaceService,
             new AgentExecutionTargetService(extensionCatalog),
             extensionCatalog);
-        return new AgentProfileService(store, toolService, extensionCatalog);
+        return new AgentProfileService(
+            store,
+            toolService,
+            extensionCatalog,
+            extensionCatalog.BehaviorLoops);
     }
 
     private sealed class DelayedChatProvider : IAgentChatProvider

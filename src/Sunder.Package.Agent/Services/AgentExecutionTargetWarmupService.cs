@@ -29,12 +29,18 @@ public sealed class AgentExecutionTargetWarmupService(
 
         try
         {
-            var readiness = await AgentExtensionInvocation.InvokeAsync(
-                target,
-                cancellationToken,
-                (instance, token) => instance.GetReadinessAsync(
+            if (!target.TryAcquire(out var lease))
+            {
+                return AgentExecutionTargetWarmupResult.Failed("The selected execution target is unavailable.");
+            }
+            AgentExecutionTargetReadiness readiness;
+            using (lease)
+            using (var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.RetirementToken))
+            {
+                readiness = await lease.Service.GetReadinessAsync(
                     new AgentExecutionTargetContext(null, null, workspace, binding),
-                    token));
+                    invocation.Token).ConfigureAwait(false);
+            }
             return readiness.Status == AgentExecutionTargetReadinessStatus.Ready
                 ? AgentExecutionTargetWarmupResult.Ready(readiness.Message)
                 : AgentExecutionTargetWarmupResult.Failed(readiness.Message);

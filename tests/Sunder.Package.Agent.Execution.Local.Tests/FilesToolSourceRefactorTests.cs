@@ -7,6 +7,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Execution.Docker;
 using Sunder.Package.Agent.Execution.Local;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tests;
 using Sunder.Package.Agent.Tools.Files;
 using Sunder.Package.Agent.Tools.Shell;
@@ -18,24 +19,19 @@ using Xunit.Sdk;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
-public sealed class FilesToolSourceRefactorTests
+public sealed class FilesToolSourceRefactorTests : IDisposable
 {
+    private readonly RegressionTestPackageScope _packageScope = RegressionTestPackageScope.Create();
+    private readonly List<RegressionTestExtensionCatalog> _catalogs = [];
+
     [Fact]
-    public async Task LegacyOneArgumentConstructor_RemainsExplicitAndDiagnosesDisabledEnforcement()
+    public void PackageContextConstructor_EnablesScopedInstructionEnforcement()
     {
-        var constructor = typeof(FilesToolSource).GetConstructor([typeof(IPackageExtensionCatalog)]);
-        var (source, _, context) = CreateSource(new MemoryExecutionTarget());
-        var readiness = await source.GetReadinessAsync(
-            "read",
-            new AgentToolSourceContext(
-                SessionId: context.SessionId,
-                Profile: null,
-                Workspace: context.Workspace,
-                ExecutionBinding: context.ExecutionBinding));
+        var constructor = typeof(FilesToolSource).GetConstructor([typeof(IPackageContext)]);
+        var source = new FilesToolSource(_packageScope.Context);
 
         Assert.NotNull(constructor);
-        Assert.False(source.IsScopedInstructionEnforcementEnabled);
-        Assert.Contains("disabled by legacy", readiness!.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(source.IsScopedInstructionEnforcementEnabled);
     }
 
     [Theory]
@@ -471,11 +467,12 @@ public sealed class FilesToolSourceRefactorTests
         }
 
         var target = new FailSecondMutationExecutionTarget(strictTarget);
-        var source = new FilesToolSource(new TestExtensionCatalog(target));
+        var catalog = CreateTargetCatalog(target);
+        var source = new FilesToolSource(scope.Context);
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
-            PackageExtensionPoints.ExecutionTargets.Id,
+            AgentRpcContractIds.ExecutionTarget,
             target.Descriptor.TargetId,
             "primary-execution-target",
             true,
@@ -538,6 +535,7 @@ public sealed class FilesToolSourceRefactorTests
             ToolCallId: operation.ToolCallId)
         {
             ResourceOperation = operation,
+            ExecutionTargetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
         };
         var permission = Assert.IsType<AgentPermissionRequest>(
             await source.BuildPermissionRequestAsync(planningContext, request));
@@ -700,7 +698,7 @@ public sealed class FilesToolSourceRefactorTests
         var target = new MemoryExecutionTarget
         {
             ProcessOutput = string.Join('\n', Enumerable.Range(1, 1005).Select(index =>
-                Path.Combine(MemoryExecutionTarget.SearchRoot, $"file-{index:D4}.txt"))),
+                Path.Combine(MemoryExecutionTarget.SearchRoot, $"file-{((index - 1) % 64) + 1:D4}.txt"))),
         };
         var (source, _, context) = CreateSource(target);
 
@@ -711,7 +709,7 @@ public sealed class FilesToolSourceRefactorTests
         Assert.Contains("truncated", result.Summary, StringComparison.OrdinalIgnoreCase);
         using var payload = JsonDocument.Parse(result.StructuredPayloadJson!);
         Assert.Equal(1000, payload.RootElement.GetArrayLength());
-        Assert.DoesNotContain("file-1001.txt", result.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("file-0065.txt", result.Content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -835,7 +833,7 @@ public sealed class FilesToolSourceRefactorTests
     {
         const string malformedJson = "{";
         var (files, _, _) = CreateSource(new MemoryExecutionTarget());
-        var shell = new ShellToolSource(new TestExtensionCatalog(new MemoryExecutionTarget()));
+        var shell = new ShellToolSource();
         var web = new WebFetchTool(new WebFetchService());
 
         var filesDetail = files.ResolveToolPresentation(PresentationRequest("read", malformedJson))!.DetailMarkdown!;
@@ -862,7 +860,7 @@ public sealed class FilesToolSourceRefactorTests
         var result = sourceKind switch
         {
             "files" => await files.ExecuteAsync(context, new AgentToolRequest("read", "{\"path\":\"file.txt\"}")),
-            "shell" => await new ShellToolSource(new TestExtensionCatalog(target)).ExecuteAsync(
+            "shell" => await new ShellToolSource().ExecuteAsync(
                 context,
                 new AgentToolRequest("shell", "{\"command\":\"test\"}")),
             _ => throw new ArgumentOutOfRangeException(nameof(sourceKind)),
@@ -886,33 +884,15 @@ public sealed class FilesToolSourceRefactorTests
         Assert.Equal("web-fetch-args", result.ErrorCode);
     }
 
-    private static (FilesToolSource Source, MemoryExecutionTarget Target, AgentToolExecutionContext Context) CreateSource(MemoryExecutionTarget target)
+    private (FilesToolSource Source, MemoryExecutionTarget Target, AgentToolExecutionContext Context) CreateSource(MemoryExecutionTarget target)
     {
-        var catalog = new TestExtensionCatalog(target);
+        var catalog = CreateTargetCatalog(target);
         var now = DateTimeOffset.UtcNow;
         var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
-            PackageExtensionPoints.ExecutionTargets.Id,
-            target.Descriptor.TargetId,
-            "primary-execution-target",
-            true,
-            0,
-            now,
-            now);
-        return (new FilesToolSource(catalog), target, new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding));
-    }
-
-    private static (FilesToolSource Source, AgentToolExecutionContext Context) CreateSourceForTarget(IAgentExecutionTarget target)
-    {
-        var catalog = new TestExtensionCatalog(target);
-        var now = DateTimeOffset.UtcNow;
-        var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
-        var binding = new AgentWorkspaceBindingRecord(
-            "binding",
-            workspace.WorkspaceId,
-            PackageExtensionPoints.ExecutionTargets.Id,
+            AgentRpcContractIds.ExecutionTarget,
             target.Descriptor.TargetId,
             "primary-execution-target",
             true,
@@ -920,11 +900,38 @@ public sealed class FilesToolSourceRefactorTests
             now,
             now);
         return (
-            new FilesToolSource(catalog),
-            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding));
+            new FilesToolSource(_packageScope.Context),
+            target,
+            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
+            {
+                ExecutionTargetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+            });
     }
 
-    private static async Task<(FilesToolSource Source, AgentToolExecutionContext Context)> CreateLocalSourceAsync(
+    private (FilesToolSource Source, AgentToolExecutionContext Context) CreateSourceForTarget(IAgentExecutionTarget target)
+    {
+        var catalog = CreateTargetCatalog(target);
+        var now = DateTimeOffset.UtcNow;
+        var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
+        var binding = new AgentWorkspaceBindingRecord(
+            "binding",
+            workspace.WorkspaceId,
+            AgentRpcContractIds.ExecutionTarget,
+            target.Descriptor.TargetId,
+            "primary-execution-target",
+            true,
+            0,
+            now,
+            now);
+        return (
+            new FilesToolSource(_packageScope.Context),
+            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
+            {
+                ExecutionTargetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+            });
+    }
+
+    private async Task<(FilesToolSource Source, AgentToolExecutionContext Context)> CreateLocalSourceAsync(
         RegressionTestPackageScope scope,
         string root,
         IReadOnlyList<string>? pathEntries = null)
@@ -946,7 +953,7 @@ public sealed class FilesToolSourceRefactorTests
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
-            PackageExtensionPoints.ExecutionTargets.Id,
+            AgentRpcContractIds.ExecutionTarget,
             target.Descriptor.TargetId,
             "primary-execution-target",
             true,
@@ -956,9 +963,30 @@ public sealed class FilesToolSourceRefactorTests
         await configService.SaveConfigAsync(
             binding.BindingId,
             new LocalExecutionWorkspaceConfig(null, pathEntries));
+        var catalog = CreateTargetCatalog(target);
         return (
-            new FilesToolSource(new TestExtensionCatalog(target)),
-            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding));
+            new FilesToolSource(scope.Context),
+            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
+            {
+                ExecutionTargetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+            });
+    }
+
+    private RegressionTestExtensionCatalog CreateTargetCatalog(IAgentExecutionTarget target)
+    {
+        var catalog = new RegressionTestExtensionCatalog();
+        catalog.AddProvider(AgentRpcServices.ExecutionTargets, target);
+        _catalogs.Add(catalog);
+        return catalog;
+    }
+
+    public void Dispose()
+    {
+        foreach (var catalog in _catalogs)
+        {
+            catalog.Dispose();
+        }
+        _packageScope.Dispose();
     }
 
     private static void CreateDirectorySymlinkOrSkip(string linkPath, string targetPath)
@@ -996,19 +1024,6 @@ public sealed class FilesToolSourceRefactorTests
         var fence = markdown.IndexOf("```json", StringComparison.Ordinal);
         Assert.True(fence >= 0);
         return markdown[fence..];
-    }
-
-    private sealed class TestExtensionCatalog(IAgentExecutionTarget target) : IPackageExtensionCatalog
-    {
-        public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
-            => string.Equals(extensionPoint.Id, PackageExtensionPoints.ExecutionTargets.Id, StringComparison.Ordinal)
-                ? [((TContract)(object)target)]
-                : [];
-
-        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
-            => GetExtensions(extensionPoint)
-                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
-                .ToArray();
     }
 
     private class MemoryExecutionTarget : IAgentProcessExecutionTarget, IAgentFileSearchExecutionTarget

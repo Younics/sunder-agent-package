@@ -5,7 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -19,23 +19,15 @@ public enum AgentWorkspaceStatusKind
 
 public sealed class AgentEditorSectionViewModel : ObservableObject
 {
-    private readonly IPackageExtensionReference<IAgentWorkspaceEditorContributor> _contributorReference;
+    private readonly AgentRpcReference<IAgentWorkspaceEditorContributor> _contributorReference;
     private readonly AgentEditorRetryState? _retryState;
     private readonly RelayCommand? _retryCommand;
     private bool _isRetrying;
 
     internal event Action? Changed;
 
-    public AgentEditorSectionViewModel(
-        IAgentWorkspaceEditorContributor contributor,
-        AgentWorkspaceEditorContext context,
-        AgentEditorSection section)
-        : this(new CompatibilityContributorReference(contributor), context, section)
-    {
-    }
-
     internal AgentEditorSectionViewModel(
-        IPackageExtensionReference<IAgentWorkspaceEditorContributor> contributorReference,
+        AgentRpcReference<IAgentWorkspaceEditorContributor> contributorReference,
         AgentWorkspaceEditorContext context,
         AgentEditorSection section)
     {
@@ -48,7 +40,7 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
     }
 
     private AgentEditorSectionViewModel(
-        IPackageExtensionReference<IAgentWorkspaceEditorContributor> contributorReference,
+        AgentRpcReference<IAgentWorkspaceEditorContributor> contributorReference,
         AgentWorkspaceEditorContext context,
         AgentEditorInvocationFailure failure,
         AgentEditorRetryState retryState,
@@ -70,7 +62,7 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
     }
 
     internal static AgentEditorSectionViewModel CreateError(
-        IPackageExtensionReference<IAgentWorkspaceEditorContributor> contributorReference,
+        AgentRpcReference<IAgentWorkspaceEditorContributor> contributorReference,
         AgentWorkspaceEditorContext context,
         AgentEditorInvocationFailure failure,
         AgentEditorRetryState retryState,
@@ -79,7 +71,7 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
 
     internal AgentWorkspaceEditorContext Context { get; }
 
-    internal IPackageExtensionReference<IAgentWorkspaceEditorContributor> ContributorReference
+    internal AgentRpcReference<IAgentWorkspaceEditorContributor> ContributorReference
         => _contributorReference;
 
     internal AgentEditorRetryState RetryState
@@ -123,11 +115,11 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
     internal void SetRetrying(bool value) => IsRetrying = value;
 
     internal ValueTask<AgentEditorInvocationResult<AgentEditorSaveResult>> TrySaveAsync(
-        IPackageExtensionInvocationCatalog invocationCatalog,
+        AgentRpcCatalog rpcCatalog,
         CancellationToken cancellationToken = default)
         => AgentWorkspaceEditorInvocation.InvokeAsync(
             _contributorReference,
-            invocationCatalog,
+            rpcCatalog,
             AgentEditorInvocationOperation.Save,
             cancellationToken,
             (contributor, token) => contributor.SaveSectionAsync(
@@ -139,25 +131,25 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
 
     internal ValueTask<AgentEditorInvocationResult<IReadOnlyList<AgentEditorSection>>> TryGetApplicableSectionsAsync(
         AgentWorkspaceEditorContext context,
-        IPackageExtensionInvocationCatalog invocationCatalog,
+        AgentRpcCatalog rpcCatalog,
         AgentEditorInvocationOperation operation,
         CancellationToken cancellationToken = default)
         => TryGetApplicableSectionsAsync(
             _contributorReference,
             context,
-            invocationCatalog,
+            rpcCatalog,
             operation,
             cancellationToken);
 
     internal static ValueTask<AgentEditorInvocationResult<IReadOnlyList<AgentEditorSection>>> TryGetApplicableSectionsAsync(
-        IPackageExtensionReference<IAgentWorkspaceEditorContributor> contributorReference,
+        AgentRpcReference<IAgentWorkspaceEditorContributor> contributorReference,
         AgentWorkspaceEditorContext context,
-        IPackageExtensionInvocationCatalog invocationCatalog,
+        AgentRpcCatalog rpcCatalog,
         AgentEditorInvocationOperation operation,
         CancellationToken cancellationToken = default)
         => AgentWorkspaceEditorInvocation.InvokeAsync(
             contributorReference,
-            invocationCatalog,
+            rpcCatalog,
             operation,
             cancellationToken,
             (contributor, token) => AgentWorkspaceEditorInvocation.GetSectionsSnapshotAsync(
@@ -210,47 +202,6 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
     private void OnPathListItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
         => Changed?.Invoke();
 
-    private sealed class CompatibilityContributorReference(IAgentWorkspaceEditorContributor contributor)
-        : IPackageExtensionReference<IAgentWorkspaceEditorContributor>
-    {
-        public bool TryAcquire(
-            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-            out IPackageExtensionLease<IAgentWorkspaceEditorContributor>? lease)
-        {
-            lease = new CompatibilityContributorLease(contributor);
-            return true;
-        }
-    }
-
-    private sealed class CompatibilityContributorLease(IAgentWorkspaceEditorContributor contributor)
-        : IPackageExtensionLease<IAgentWorkspaceEditorContributor>
-    {
-        private IAgentWorkspaceEditorContributor? _contributor = contributor;
-
-        public string PackageId
-        {
-            get
-            {
-                ObjectDisposedException.ThrowIf(_contributor is null, this);
-                return "sunder.package.agent.workspace-editor.compatibility";
-            }
-        }
-
-        public IAgentWorkspaceEditorContributor Contribution
-            => Volatile.Read(ref _contributor)
-               ?? throw new ObjectDisposedException(nameof(CompatibilityContributorLease));
-
-        public CancellationToken RetirementToken
-        {
-            get
-            {
-                ObjectDisposedException.ThrowIf(_contributor is null, this);
-                return CancellationToken.None;
-            }
-        }
-
-        public void Dispose() => Interlocked.Exchange(ref _contributor, null);
-    }
 }
 
 public abstract partial class AgentEditorFieldViewModel : ObservableObject

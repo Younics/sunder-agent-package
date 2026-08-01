@@ -1,0 +1,1669 @@
+{
+  "descriptorVersion": 1,
+  "contractId": "sunder.agent.execution.target",
+  "version": "1.0.0",
+  "services": [
+    {
+      "serviceId": "execution-target",
+      "methods": [
+        {
+          "methodId": "describe",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentRpcEmpty"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentExecutionTargetDescriptor"
+          }
+        },
+        {
+          "methodId": "configuration-generation",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentExecutionTargetContextWire"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentRpcOptionalOfString"
+          }
+        },
+        {
+          "methodId": "readiness",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentExecutionTargetContextWire"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentExecutionTargetReadiness"
+          }
+        },
+        {
+          "methodId": "shell",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentExecutionTargetContextWire"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentExecutionShellDescriptor"
+          }
+        },
+        {
+          "methodId": "resolve-file",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/ExecutionPathRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentResolvedResourceWire"
+          }
+        },
+        {
+          "methodId": "execute-shell",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/ExecutionShellRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentShellCommandResult"
+          }
+        },
+        {
+          "methodId": "read-file",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/ExecutionFileReadRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentFileReadResult"
+          }
+        },
+        {
+          "methodId": "write-file",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/ExecutionFileWriteRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentFileMutationResultWire"
+          }
+        },
+        {
+          "methodId": "delete-file",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/ExecutionFileDeleteRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentFileMutationResultWire"
+          }
+        },
+        {
+          "methodId": "execute-process",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/ExecutionProcessRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentShellCommandResult"
+          }
+        },
+        {
+          "methodId": "resolve-resources",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/ExecutionResourcesRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/ListOfAgentResolvedExecutionResource"
+          }
+        },
+        {
+          "methodId": "validate-resource-authority",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentExecutionTargetContextWire"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentResourceAuthorityValidation"
+          }
+        },
+        {
+          "methodId": "release-resource-authority",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/ResourceCapabilitiesRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentRpcEmpty"
+          }
+        },
+        {
+          "methodId": "execution-scope",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentExecutionTargetContextWire"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentExecutionScopeDescriptor"
+          }
+        },
+        {
+          "methodId": "map-path",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/ExecutionPathRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentExecutionPathMapping"
+          }
+        },
+        {
+          "methodId": "list-path",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentExecutionTargetContextWire"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/ListOfString"
+          }
+        },
+        {
+          "methodId": "add-path",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/ExecutionPathRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentRpcEmpty"
+          }
+        },
+        {
+          "methodId": "legacy-file-search",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/ExecutionFileSearchProcessRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentFileSearchProcessResult"
+          }
+        },
+        {
+          "methodId": "structured-file-search",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/ExecutionFileSearchRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentFileSearchResult"
+          }
+        },
+        {
+          "methodId": "discover-instructions",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/ExecutionInstructionDiscoveryRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentScopedInstructionDiscoveryResult"
+          }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "AgentRpcEmpty": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "String": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "ListOfString": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/String"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "Boolean": {
+      "type": "boolean"
+    },
+    "AgentExecutionTargetDescriptor": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "facets": {
+          "$ref": "#/$defs/ListOfString"
+        },
+        "supportsFiles": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "supportsShell": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "targetId": {
+          "$ref": "#/$defs/String"
+        },
+        "targetKind": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "displayName",
+        "facets",
+        "supportsFiles",
+        "supportsShell",
+        "targetId",
+        "targetKind"
+      ],
+      "additionalProperties": false
+    },
+    "Int32": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "AgentResourceClaim": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "$ref": "#/$defs/String"
+        },
+        "bindingGeneration": {
+          "$ref": "#/$defs/String"
+        },
+        "bindingId": {
+          "$ref": "#/$defs/String"
+        },
+        "caseSensitivePath": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "configuredRoot": {
+          "$ref": "#/$defs/String"
+        },
+        "executionTargetOwnerPackageId": {
+          "$ref": "#/$defs/String"
+        },
+        "logicalPath": {
+          "$ref": "#/$defs/String"
+        },
+        "namespaceId": {
+          "$ref": "#/$defs/String"
+        },
+        "resourceIndex": {
+          "$ref": "#/$defs/Int32"
+        },
+        "rootIdentityChainFingerprint": {
+          "$ref": "#/$defs/String"
+        },
+        "targetExists": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "targetIdentity": {
+          "$ref": "#/$defs/String"
+        },
+        "targetIsAuthorityRoot": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "targetKind": {
+          "$ref": "#/$defs/String"
+        },
+        "toolCallId": {
+          "$ref": "#/$defs/String"
+        },
+        "toolOwnerPackageId": {
+          "$ref": "#/$defs/String"
+        },
+        "version": {
+          "$ref": "#/$defs/Int32"
+        },
+        "workspaceGeneration": {
+          "$ref": "#/$defs/String"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "actionId",
+        "bindingGeneration",
+        "bindingId",
+        "caseSensitivePath",
+        "executionTargetOwnerPackageId",
+        "logicalPath",
+        "namespaceId",
+        "resourceIndex",
+        "rootIdentityChainFingerprint",
+        "targetExists",
+        "targetIsAuthorityRoot",
+        "toolCallId",
+        "toolOwnerPackageId",
+        "version",
+        "workspaceGeneration",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentResourceClaim": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentResourceClaim"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "DateTimeOffset": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "AgentWorkspaceBindingRecord": {
+      "type": "object",
+      "properties": {
+        "bindingId": {
+          "$ref": "#/$defs/String"
+        },
+        "contributionId": {
+          "$ref": "#/$defs/String"
+        },
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "extensionPointId": {
+          "$ref": "#/$defs/String"
+        },
+        "isEnabled": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "role": {
+          "$ref": "#/$defs/String"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "bindingId",
+        "contributionId",
+        "createdAtUtc",
+        "extensionPointId",
+        "isEnabled",
+        "role",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "Guid": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "Nullable": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "AgentWorkspaceDocumentRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "documentId": {
+          "$ref": "#/$defs/String"
+        },
+        "filePath": {
+          "$ref": "#/$defs/String"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "documentId",
+        "filePath",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentWorkspaceDocumentRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentWorkspacePathRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "hostPath": {
+          "$ref": "#/$defs/String"
+        },
+        "isDefault": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "pathId": {
+          "$ref": "#/$defs/String"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "hostPath",
+        "isDefault",
+        "pathId",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentWorkspacePathRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentWorkspacePathRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentWorkspaceRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "documents": {
+          "$ref": "#/$defs/ListOfAgentWorkspaceDocumentRecord"
+        },
+        "paths": {
+          "$ref": "#/$defs/ListOfAgentWorkspacePathRecord"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "displayName",
+        "documents",
+        "paths",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentExecutionTargetContext": {
+      "type": "object",
+      "properties": {
+        "allowOutsideConfiguredScope": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "approvedResourceClaims": {
+          "$ref": "#/$defs/ListOfAgentResourceClaim"
+        },
+        "approvedResourceReferences": {
+          "$ref": "#/$defs/ListOfString"
+        },
+        "binding": {
+          "$ref": "#/$defs/AgentWorkspaceBindingRecord"
+        },
+        "profileId": {
+          "$ref": "#/$defs/String"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Nullable"
+        },
+        "workspace": {
+          "$ref": "#/$defs/AgentWorkspaceRecord"
+        }
+      },
+      "required": [
+        "allowOutsideConfiguredScope",
+        "approvedResourceClaims",
+        "approvedResourceReferences",
+        "binding",
+        "workspace"
+      ],
+      "additionalProperties": false
+    },
+    "Int64": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "AgentResourceOperationContextWire": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "$ref": "#/$defs/String"
+        },
+        "authorityActivationId": {
+          "$ref": "#/$defs/String"
+        },
+        "authorityUseCount": {
+          "$ref": "#/$defs/Int32"
+        },
+        "bindingGeneration": {
+          "$ref": "#/$defs/String"
+        },
+        "canIssueOutsideAuthority": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "executionTargetOwnerPackageId": {
+          "$ref": "#/$defs/String"
+        },
+        "resourceIndex": {
+          "$ref": "#/$defs/Int32"
+        },
+        "runId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "runRevision": {
+          "$ref": "#/$defs/Int64"
+        },
+        "toolCallId": {
+          "$ref": "#/$defs/String"
+        },
+        "toolOwnerPackageId": {
+          "$ref": "#/$defs/String"
+        },
+        "workspaceGeneration": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "actionId",
+        "authorityActivationId",
+        "authorityUseCount",
+        "bindingGeneration",
+        "canIssueOutsideAuthority",
+        "executionTargetOwnerPackageId",
+        "resourceIndex",
+        "runId",
+        "runRevision",
+        "toolCallId",
+        "toolOwnerPackageId",
+        "workspaceGeneration"
+      ],
+      "additionalProperties": false
+    },
+    "AgentExecutionTargetContextWire": {
+      "type": "object",
+      "properties": {
+        "approvedResourceCapabilities": {
+          "$ref": "#/$defs/ListOfString"
+        },
+        "capturePostMutationResource": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "context": {
+          "$ref": "#/$defs/AgentExecutionTargetContext"
+        },
+        "expectedConfigurationGeneration": {
+          "$ref": "#/$defs/String"
+        },
+        "resourceOperation": {
+          "$ref": "#/$defs/AgentResourceOperationContextWire"
+        }
+      },
+      "required": [
+        "approvedResourceCapabilities",
+        "capturePostMutationResource",
+        "context"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRpcOptionalOfString": {
+      "type": "object",
+      "properties": {
+        "hasValue": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "value": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "hasValue"
+      ],
+      "additionalProperties": false
+    },
+    "AgentExecutionTargetReadinessStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "enum": [
+        0,
+        1,
+        3
+      ]
+    },
+    "AgentExecutionTargetReadiness": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "$ref": "#/$defs/String"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentExecutionTargetReadinessStatus"
+        },
+        "targetId": {
+          "$ref": "#/$defs/String"
+        },
+        "targetKind": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "message",
+        "status",
+        "targetId",
+        "targetKind"
+      ],
+      "additionalProperties": false
+    },
+    "AgentExecutionShellDescriptor": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "executablePath": {
+          "$ref": "#/$defs/String"
+        },
+        "shellId": {
+          "$ref": "#/$defs/String"
+        },
+        "syntaxKind": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "description",
+        "displayName",
+        "executablePath",
+        "shellId",
+        "syntaxKind"
+      ],
+      "additionalProperties": false
+    },
+    "ExecutionPathRequest": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/AgentExecutionTargetContextWire"
+        },
+        "path": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "context",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "AgentPermissionScopeClassificationBasis": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    "AgentResolvedResource": {
+      "type": "object",
+      "properties": {
+        "canonicalReference": {
+          "$ref": "#/$defs/String"
+        },
+        "deleteCanonicalReference": {
+          "$ref": "#/$defs/String"
+        },
+        "deletePermissionBoundaryId": {
+          "$ref": "#/$defs/String"
+        },
+        "deleteResourceClaim": {
+          "$ref": "#/$defs/AgentResourceClaim"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "exists": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "isScopedInstructionDocument": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "permissionBoundaryId": {
+          "$ref": "#/$defs/String"
+        },
+        "resourceClaim": {
+          "$ref": "#/$defs/AgentResourceClaim"
+        },
+        "resourceKind": {
+          "$ref": "#/$defs/String"
+        },
+        "scopeClassificationBasis": {
+          "$ref": "#/$defs/AgentPermissionScopeClassificationBasis"
+        }
+      },
+      "required": [
+        "canonicalReference",
+        "displayName",
+        "exists",
+        "isScopedInstructionDocument",
+        "permissionBoundaryId",
+        "resourceKind",
+        "scopeClassificationBasis"
+      ],
+      "additionalProperties": false
+    },
+    "AgentResolvedResourceWire": {
+      "type": "object",
+      "properties": {
+        "authorityReferences": {
+          "$ref": "#/$defs/ListOfString"
+        },
+        "deleteAuthorityReferences": {
+          "$ref": "#/$defs/ListOfString"
+        },
+        "resource": {
+          "$ref": "#/$defs/AgentResolvedResource"
+        }
+      },
+      "required": [
+        "authorityReferences",
+        "deleteAuthorityReferences",
+        "resource"
+      ],
+      "additionalProperties": false
+    },
+    "Nullable2": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "AgentShellCommandRequest": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/String"
+        },
+        "timeoutSeconds": {
+          "$ref": "#/$defs/Nullable2"
+        },
+        "workingDirectory": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    "ExecutionShellRequest": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/AgentExecutionTargetContextWire"
+        },
+        "request": {
+          "$ref": "#/$defs/AgentShellCommandRequest"
+        }
+      },
+      "required": [
+        "context",
+        "request"
+      ],
+      "additionalProperties": false
+    },
+    "AgentShellCommandResult": {
+      "type": "object",
+      "properties": {
+        "exitCode": {
+          "$ref": "#/$defs/Int32"
+        },
+        "output": {
+          "$ref": "#/$defs/String"
+        },
+        "timedOut": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "wasTruncated": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "workingDirectory": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "exitCode",
+        "output",
+        "timedOut",
+        "wasTruncated"
+      ],
+      "additionalProperties": false
+    },
+    "AgentFileReadRequest": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "$ref": "#/$defs/Nullable2"
+        },
+        "offset": {
+          "$ref": "#/$defs/Nullable2"
+        },
+        "path": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "ExecutionFileReadRequest": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/AgentExecutionTargetContextWire"
+        },
+        "request": {
+          "$ref": "#/$defs/AgentFileReadRequest"
+        }
+      },
+      "required": [
+        "context",
+        "request"
+      ],
+      "additionalProperties": false
+    },
+    "AgentFileReadResult": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/String"
+        },
+        "endLine": {
+          "$ref": "#/$defs/Nullable2"
+        },
+        "errorCode": {
+          "$ref": "#/$defs/String"
+        },
+        "errorMessage": {
+          "$ref": "#/$defs/String"
+        },
+        "isDirectory": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "isError": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "path": {
+          "$ref": "#/$defs/String"
+        },
+        "startLine": {
+          "$ref": "#/$defs/Nullable2"
+        },
+        "totalLines": {
+          "$ref": "#/$defs/Nullable2"
+        },
+        "wasTruncated": {
+          "$ref": "#/$defs/Boolean"
+        }
+      },
+      "required": [
+        "content",
+        "isDirectory",
+        "isError",
+        "path",
+        "wasTruncated"
+      ],
+      "additionalProperties": false
+    },
+    "AgentFileWriteRequest": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/String"
+        },
+        "expectedContentHash": {
+          "$ref": "#/$defs/String"
+        },
+        "overwrite": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "path": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "content",
+        "overwrite",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "ExecutionFileWriteRequest": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/AgentExecutionTargetContextWire"
+        },
+        "request": {
+          "$ref": "#/$defs/AgentFileWriteRequest"
+        }
+      },
+      "required": [
+        "context",
+        "request"
+      ],
+      "additionalProperties": false
+    },
+    "AgentFileMutationResult": {
+      "type": "object",
+      "properties": {
+        "errorCode": {
+          "$ref": "#/$defs/String"
+        },
+        "isError": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "path": {
+          "$ref": "#/$defs/String"
+        },
+        "summary": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "isError",
+        "path",
+        "summary"
+      ],
+      "additionalProperties": false
+    },
+    "AgentFileMutationResultWire": {
+      "type": "object",
+      "properties": {
+        "postMutationResource": {
+          "$ref": "#/$defs/AgentResolvedResourceWire"
+        },
+        "result": {
+          "$ref": "#/$defs/AgentFileMutationResult"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "AgentFileDeleteRequest": {
+      "type": "object",
+      "properties": {
+        "expectedContentHash": {
+          "$ref": "#/$defs/String"
+        },
+        "path": {
+          "$ref": "#/$defs/String"
+        },
+        "recursive": {
+          "$ref": "#/$defs/Boolean"
+        }
+      },
+      "required": [
+        "path",
+        "recursive"
+      ],
+      "additionalProperties": false
+    },
+    "ExecutionFileDeleteRequest": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/AgentExecutionTargetContextWire"
+        },
+        "request": {
+          "$ref": "#/$defs/AgentFileDeleteRequest"
+        }
+      },
+      "required": [
+        "context",
+        "request"
+      ],
+      "additionalProperties": false
+    },
+    "AgentProcessCommandRequest": {
+      "type": "object",
+      "properties": {
+        "arguments": {
+          "$ref": "#/$defs/ListOfString"
+        },
+        "fileName": {
+          "$ref": "#/$defs/String"
+        },
+        "timeoutSeconds": {
+          "$ref": "#/$defs/Nullable2"
+        },
+        "workingDirectory": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "arguments",
+        "fileName"
+      ],
+      "additionalProperties": false
+    },
+    "ExecutionProcessRequest": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/AgentExecutionTargetContextWire"
+        },
+        "request": {
+          "$ref": "#/$defs/AgentProcessCommandRequest"
+        }
+      },
+      "required": [
+        "context",
+        "request"
+      ],
+      "additionalProperties": false
+    },
+    "AgentExecutionResourceAccessMode": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1,
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "MapOfStringToString": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/String"
+      },
+      "propertyNames": {
+        "type": "string",
+        "minLength": 0,
+        "maxLength": 1000000
+      },
+      "minProperties": 0,
+      "maxProperties": 1000000
+    },
+    "AgentExecutionResourceDescriptor": {
+      "type": "object",
+      "properties": {
+        "accessMode": {
+          "$ref": "#/$defs/AgentExecutionResourceAccessMode"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "hostPath": {
+          "$ref": "#/$defs/String"
+        },
+        "metadata": {
+          "$ref": "#/$defs/MapOfStringToString"
+        },
+        "preferredExecutionPath": {
+          "$ref": "#/$defs/String"
+        },
+        "resourceId": {
+          "$ref": "#/$defs/String"
+        },
+        "resourceKind": {
+          "$ref": "#/$defs/String"
+        },
+        "sourceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "accessMode",
+        "displayName",
+        "hostPath",
+        "preferredExecutionPath",
+        "resourceId",
+        "resourceKind",
+        "sourceId"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentExecutionResourceDescriptor": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentExecutionResourceDescriptor"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "ExecutionResourcesRequest": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/AgentExecutionTargetContextWire"
+        },
+        "resources": {
+          "$ref": "#/$defs/ListOfAgentExecutionResourceDescriptor"
+        }
+      },
+      "required": [
+        "context",
+        "resources"
+      ],
+      "additionalProperties": false
+    },
+    "AgentResolvedExecutionResource": {
+      "type": "object",
+      "properties": {
+        "accessMode": {
+          "$ref": "#/$defs/AgentExecutionResourceAccessMode"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "executionPath": {
+          "$ref": "#/$defs/String"
+        },
+        "hostPath": {
+          "$ref": "#/$defs/String"
+        },
+        "metadata": {
+          "$ref": "#/$defs/MapOfStringToString"
+        },
+        "resourceId": {
+          "$ref": "#/$defs/String"
+        },
+        "resourceKind": {
+          "$ref": "#/$defs/String"
+        },
+        "sourceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "accessMode",
+        "displayName",
+        "executionPath",
+        "hostPath",
+        "resourceId",
+        "resourceKind",
+        "sourceId"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentResolvedExecutionResource": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentResolvedExecutionResource"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentResourceAuthorityValidation": {
+      "type": "object",
+      "properties": {
+        "errorCode": {
+          "$ref": "#/$defs/String"
+        },
+        "errorMessage": {
+          "$ref": "#/$defs/String"
+        },
+        "isValid": {
+          "$ref": "#/$defs/Boolean"
+        }
+      },
+      "required": [
+        "isValid"
+      ],
+      "additionalProperties": false
+    },
+    "ResourceCapabilitiesRequest": {
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/ListOfString"
+        }
+      },
+      "required": [
+        "capabilities"
+      ],
+      "additionalProperties": false
+    },
+    "AgentExecutionScopeDescriptor": {
+      "type": "object",
+      "properties": {
+        "defaultWorkingDirectory": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "pathStyleDescription": {
+          "$ref": "#/$defs/String"
+        },
+        "workspacePaths": {
+          "$ref": "#/$defs/ListOfString"
+        }
+      },
+      "required": [
+        "displayName",
+        "workspacePaths"
+      ],
+      "additionalProperties": false
+    },
+    "AgentExecutionPathMapping": {
+      "type": "object",
+      "properties": {
+        "executionPath": {
+          "$ref": "#/$defs/String"
+        },
+        "hostPath": {
+          "$ref": "#/$defs/String"
+        },
+        "isInsideAllowedRoot": {
+          "$ref": "#/$defs/Boolean"
+        }
+      },
+      "required": [
+        "executionPath",
+        "hostPath",
+        "isInsideAllowedRoot"
+      ],
+      "additionalProperties": false
+    },
+    "AgentFileSearchProcessRequest": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/AgentProcessCommandRequest"
+        },
+        "path": {
+          "$ref": "#/$defs/String"
+        },
+        "pathArgumentIndex": {
+          "$ref": "#/$defs/Int32"
+        }
+      },
+      "required": [
+        "command",
+        "path",
+        "pathArgumentIndex"
+      ],
+      "additionalProperties": false
+    },
+    "ExecutionFileSearchProcessRequest": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/AgentExecutionTargetContextWire"
+        },
+        "request": {
+          "$ref": "#/$defs/AgentFileSearchProcessRequest"
+        }
+      },
+      "required": [
+        "context",
+        "request"
+      ],
+      "additionalProperties": false
+    },
+    "AgentFileSearchPathStyle": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1,
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "AgentFileSearchProcessResult": {
+      "type": "object",
+      "properties": {
+        "canonicalPath": {
+          "$ref": "#/$defs/String"
+        },
+        "expectedPath": {
+          "$ref": "#/$defs/String"
+        },
+        "pathStyle": {
+          "$ref": "#/$defs/AgentFileSearchPathStyle"
+        },
+        "processResult": {
+          "$ref": "#/$defs/AgentShellCommandResult"
+        }
+      },
+      "required": [
+        "canonicalPath",
+        "expectedPath",
+        "pathStyle",
+        "processResult"
+      ],
+      "additionalProperties": false
+    },
+    "AgentFileSearchKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1,
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "AgentFileSearchRequest": {
+      "type": "object",
+      "properties": {
+        "include": {
+          "$ref": "#/$defs/String"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentFileSearchKind"
+        },
+        "path": {
+          "$ref": "#/$defs/String"
+        },
+        "pattern": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "kind",
+        "path",
+        "pattern"
+      ],
+      "additionalProperties": false
+    },
+    "ExecutionFileSearchRequest": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/AgentExecutionTargetContextWire"
+        },
+        "request": {
+          "$ref": "#/$defs/AgentFileSearchRequest"
+        }
+      },
+      "required": [
+        "context",
+        "request"
+      ],
+      "additionalProperties": false
+    },
+    "AgentFileSearchMatch": {
+      "type": "object",
+      "properties": {
+        "lineNumber": {
+          "$ref": "#/$defs/Nullable2"
+        },
+        "path": {
+          "$ref": "#/$defs/String"
+        },
+        "text": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentFileSearchMatch": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentFileSearchMatch"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentFileSearchResult": {
+      "type": "object",
+      "properties": {
+        "errorCode": {
+          "$ref": "#/$defs/String"
+        },
+        "errorMessage": {
+          "$ref": "#/$defs/String"
+        },
+        "isError": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "matches": {
+          "$ref": "#/$defs/ListOfAgentFileSearchMatch"
+        },
+        "wasTruncated": {
+          "$ref": "#/$defs/Boolean"
+        }
+      },
+      "required": [
+        "isError",
+        "matches",
+        "wasTruncated"
+      ],
+      "additionalProperties": false
+    },
+    "AgentScopedInstructionProbe": {
+      "type": "object",
+      "properties": {
+        "followFinalSymbolicLink": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "isDirectory": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "path": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "followFinalSymbolicLink",
+        "isDirectory",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentScopedInstructionProbe": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentScopedInstructionProbe"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentScopedInstructionDiscoveryRequest": {
+      "type": "object",
+      "properties": {
+        "probes": {
+          "$ref": "#/$defs/ListOfAgentScopedInstructionProbe"
+        }
+      },
+      "required": [
+        "probes"
+      ],
+      "additionalProperties": false
+    },
+    "ExecutionInstructionDiscoveryRequest": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/AgentExecutionTargetContextWire"
+        },
+        "request": {
+          "$ref": "#/$defs/AgentScopedInstructionDiscoveryRequest"
+        }
+      },
+      "required": [
+        "context",
+        "request"
+      ],
+      "additionalProperties": false
+    },
+    "AgentScopedInstructionDocument": {
+      "type": "object",
+      "properties": {
+        "appliesToDirectory": {
+          "$ref": "#/$defs/String"
+        },
+        "content": {
+          "$ref": "#/$defs/String"
+        },
+        "contentHash": {
+          "$ref": "#/$defs/String"
+        },
+        "path": {
+          "$ref": "#/$defs/String"
+        },
+        "scopeRoot": {
+          "$ref": "#/$defs/String"
+        },
+        "wasTruncated": {
+          "$ref": "#/$defs/Boolean"
+        }
+      },
+      "required": [
+        "appliesToDirectory",
+        "content",
+        "contentHash",
+        "path",
+        "scopeRoot",
+        "wasTruncated"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentScopedInstructionDocument": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentScopedInstructionDocument"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentScopedInstructionScope": {
+      "type": "object",
+      "properties": {
+        "documents": {
+          "$ref": "#/$defs/ListOfAgentScopedInstructionDocument"
+        },
+        "omittedAncestorCount": {
+          "$ref": "#/$defs/Int32"
+        },
+        "requestedPath": {
+          "$ref": "#/$defs/String"
+        },
+        "scopeRoot": {
+          "$ref": "#/$defs/String"
+        },
+        "targetDirectory": {
+          "$ref": "#/$defs/String"
+        },
+        "wasTruncated": {
+          "$ref": "#/$defs/Boolean"
+        }
+      },
+      "required": [
+        "documents",
+        "omittedAncestorCount",
+        "requestedPath",
+        "scopeRoot",
+        "targetDirectory",
+        "wasTruncated"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentScopedInstructionScope": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentScopedInstructionScope"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentScopedInstructionDiscoveryResult": {
+      "type": "object",
+      "properties": {
+        "processedProbeCount": {
+          "$ref": "#/$defs/Int32"
+        },
+        "scopeFingerprint": {
+          "$ref": "#/$defs/String"
+        },
+        "scopes": {
+          "$ref": "#/$defs/ListOfAgentScopedInstructionScope"
+        },
+        "targetFingerprint": {
+          "$ref": "#/$defs/String"
+        },
+        "wasTruncated": {
+          "$ref": "#/$defs/Boolean"
+        }
+      },
+      "required": [
+        "processedProbeCount",
+        "scopeFingerprint",
+        "scopes",
+        "targetFingerprint",
+        "wasTruncated"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

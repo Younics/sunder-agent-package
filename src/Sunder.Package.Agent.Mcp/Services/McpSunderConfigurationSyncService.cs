@@ -1,18 +1,17 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
 public sealed class McpSunderConfigurationSyncService(
     McpEcosystemConfigurationImporter importer,
-    IPackageExtensionCatalog? extensionCatalog = null,
+    AgentRpcCatalog? rpcCatalog = null,
     string? userProfilePath = null,
     string? applicationDataPath = null)
 {
     private readonly McpEcosystemConfigurationImporter _importer = importer;
-    private readonly IPackageExtensionCatalog? _extensionCatalog = extensionCatalog;
+    private readonly AgentRpcCatalog? _rpcCatalog = rpcCatalog;
     private readonly string? _userProfilePath = userProfilePath;
     private readonly string? _applicationDataPath = applicationDataPath;
     private readonly SemaphoreSlim _syncGate = new(1, 1);
@@ -128,13 +127,13 @@ public sealed class McpSunderConfigurationSyncService(
 
     private IReadOnlyList<AgentWorkspaceRecord> ListKnownWorkspaces()
     {
-        if (_extensionCatalog is not IPackageExtensionInvocationCatalog invocationCatalog)
+        if (_rpcCatalog is null)
         {
             return [];
         }
 
         var result = new List<AgentWorkspaceRecord>();
-        foreach (var reference in invocationCatalog.GetExtensionReferences(PackageExtensionPoints.RuntimeCatalogs))
+        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -144,7 +143,7 @@ public sealed class McpSunderConfigurationSyncService(
             using (lease)
                 try
                 {
-                    workspaces = lease.Contribution.ListWorkspaces().ToArray();
+                    workspaces = lease.Service.ListWorkspaces().ToArray();
                     if (lease.RetirementToken.IsCancellationRequested)
                     {
                         continue;

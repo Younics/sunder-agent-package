@@ -8,6 +8,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.HistorySearch;
 using Sunder.Package.Agent.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
@@ -24,12 +25,12 @@ public sealed class AgentRuntimeStartupServiceTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddExtension(
-            PackageExtensionPoints.DurableLifecycleObservers,
+        catalog.AddProvider(
+            AgentRpcServices.DurableLifecycleObservers,
             new NoOpDurableObserver());
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton<IPackageExtensionCatalog>(catalog);
+        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(catalog);
         new PackageModule().ConfigureRuntimeServices(services, scope.Context);
         await using var provider = services.BuildServiceProvider();
         var projection = provider.GetRequiredService<HistorySearchStore>();
@@ -98,7 +99,7 @@ public sealed class AgentRuntimeStartupServiceTests
         using var scope = RegressionTestPackageScope.Create();
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton<IPackageExtensionCatalog>(new RegressionTestExtensionCatalog());
+        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(new RegressionTestExtensionCatalog());
         new PackageModule().ConfigureRuntimeServices(services, scope.Context);
         await using var provider = services.BuildServiceProvider();
         var startup = provider.GetRequiredService<AgentRuntimeStartupService>();
@@ -699,7 +700,7 @@ public sealed class AgentRuntimeStartupServiceTests
     {
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(context);
-        services.AddSingleton<IPackageExtensionCatalog>(new RegressionTestExtensionCatalog());
+        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(new RegressionTestExtensionCatalog());
         new PackageModule().ConfigureRuntimeServices(services, context);
         if (generationOptions is not null)
         {

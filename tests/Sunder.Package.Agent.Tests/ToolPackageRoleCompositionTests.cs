@@ -15,26 +15,25 @@ public sealed class ToolPackageRoleCompositionTests
         {
             "Sunder.Package.Agent.Tools.Files",
             [
-                Extension("sunder.package.agent:tool-sources", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
-                Extension("sunder.package.agent:permission-surfaces", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
-                Extension("sunder.package.agent:prompt-context-contributors", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
-                Extension("sunder.package.agent:session-data-cleaners", "Sunder.Package.Agent.Tools.Files.FilesToolSource"),
+                "rpc-provider:files.tools",
+                "rpc-provider:files.permissions",
+                "rpc-provider:files.prompt.context",
+                "rpc-provider:files.session.cleaner",
             ]
         },
         {
             "Sunder.Package.Agent.Tools.Shell",
             [
-                Extension("sunder.package.agent:tool-sources", "Sunder.Package.Agent.Tools.Shell.ShellToolSource"),
-                Extension("sunder.package.agent:permission-surfaces", "Sunder.Package.Agent.Tools.Shell.ShellToolSource"),
-                Extension("sunder.package.agent:prompt-context-contributors", "Sunder.Package.Agent.Tools.Shell.ShellToolSource"),
+                "rpc-provider:shell.tools",
+                "rpc-provider:shell.permissions",
+                "rpc-provider:shell.prompt.context",
             ]
         },
         {
             "Sunder.Package.Agent.Tools.Web",
             [
                 "settings-schema",
-                Extension("sunder.package.agent:tools", "Sunder.Package.Agent.Tools.Web.WebFetchTool"),
-                Extension("sunder.package.agent:tools", "Sunder.Package.Agent.Tools.Web.WebSearchTool"),
+                "rpc-provider:web.tools",
             ]
         },
     };
@@ -60,7 +59,7 @@ public sealed class ToolPackageRoleCompositionTests
         using var packageScope = RegressionTestPackageScope.Create();
         var services = new ServiceCollection();
         services.AddSingleton(packageScope.Context);
-        services.AddSingleton<IPackageExtensionCatalog, RegressionTestExtensionCatalog>();
+        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(new RegressionTestExtensionCatalog());
 
         var moduleType = Assert.Single(
             Assembly.Load(assemblyName).GetTypes(),
@@ -96,9 +95,6 @@ public sealed class ToolPackageRoleCompositionTests
         Assert.Equal(["search.maxResults.default"], settings.ReadKeys);
         Assert.Equal(["search.exa.apiKey"], secrets.ReadKeys);
     }
-
-    private static string Extension(string extensionPoint, string implementationType)
-        => $"extension:{extensionPoint}:{implementationType}";
 
     private sealed class TestPackageContext(
         IPackageContext inner,

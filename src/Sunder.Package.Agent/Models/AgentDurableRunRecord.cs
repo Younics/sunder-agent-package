@@ -32,16 +32,6 @@ internal sealed record AgentDurableRunRecord(
         => new(ProviderCycleCount, ToolCallCount, SubmittedContextTokenCount);
 }
 
-internal readonly record struct AgentRunBudgetState(
-    long ProviderCycles,
-    long ToolCalls,
-    long SubmittedContextTokens);
-
-internal readonly record struct AgentRunBudgetCharge(
-    long ProviderCycles = 0,
-    long ToolCalls = 0,
-    long SubmittedContextTokens = 0);
-
 internal sealed class AgentDurableRunLease(AgentDurableRunRecord run)
 {
     private readonly Queue<Action> _notificationQueue = [];

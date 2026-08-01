@@ -3,6 +3,7 @@ using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Package.Agent.Subagents.Runtime;
@@ -39,10 +40,10 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     public SubagentsViewModel(
         SubagentService subagentService,
-        IPackageExtensionCatalog extensionCatalog,
+        AgentRpcCatalog rpcCatalog,
         IPackageSettingsNavigationService? settingsNavigationService = null)
         : this(
-            new SubagentLocalManagementGateway(subagentService, extensionCatalog),
+            new SubagentLocalManagementGateway(subagentService, rpcCatalog),
             settingsNavigationService,
             PresentationDispatcher.Capture())
     {

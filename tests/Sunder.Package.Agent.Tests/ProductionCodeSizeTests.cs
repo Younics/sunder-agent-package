@@ -14,6 +14,7 @@ public sealed class ProductionCodeSizeTests
         var violations = new List<string>();
         var sourceFiles = Directory.EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
             .Where(AgentPackageRepositoryInventory.IsSourceFile)
+            .Where(static path => !path.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase))
             .ToDictionary(NormalizeRepositoryPath, static path => File.ReadLines(path).Count(), StringComparer.OrdinalIgnoreCase);
 
         foreach (var (relativePath, recordedLineCount) in baseline)

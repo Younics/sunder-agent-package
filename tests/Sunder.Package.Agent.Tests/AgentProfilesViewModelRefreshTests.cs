@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.PackageViews;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Xunit;
@@ -77,17 +78,16 @@ public sealed class AgentProfilesViewModelRefreshTests
     {
         var extensionCatalog = new RegressionTestExtensionCatalog();
         provider = new OptionProvider();
-        extensionCatalog.AddExtension(PackageExtensionPoints.ChatProviders, provider);
+        extensionCatalog.AddProvider(AgentRpcServices.ChatProviders, provider);
         var store = new AgentLocalStore(scope.Context);
         var sessionService = new AgentSessionService(store, extensionCatalog);
         var workspaceService = new AgentWorkspaceService(store, extensionCatalog, sessionService);
         var toolService = new AgentToolService(
-            new InstalledPackageToolSource(extensionCatalog),
             sessionService,
             workspaceService,
             new AgentExecutionTargetService(extensionCatalog),
             extensionCatalog);
-        return new AgentProfileService(store, toolService, extensionCatalog);
+        return new AgentProfileService(store, toolService, extensionCatalog, extensionCatalog.BehaviorLoops);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

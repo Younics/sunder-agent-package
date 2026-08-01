@@ -1,6 +1,6 @@
 # Prompts, Context, Lifecycle, And Trust
 
-Agent 1.1 has a hard boundary between privileged system policy, host-reserved user-role instructions, and reference data:
+Agent 2.x has a hard boundary between privileged system policy, host-reserved user-role instructions, and reference data:
 
 | Channel | Contract | Intended content |
 | --- | --- | --- |
@@ -12,7 +12,7 @@ Supplementary context is always serialized into a user-role JSON message. The Ru
 
 ## System Prompt Contributors
 
-Implement `IAgentSystemPromptContributor` and register it through `PackageExtensionPoints.SystemPromptContributors`.
+Implement `IAgentSystemPromptContributor`, adapt it with `AgentSystemPromptContributorRpc.CreateHandler`, and publish it under `sunder.agent.system.prompt.contributor`.
 
 ```csharp
 public ValueTask<IReadOnlyList<AgentSystemPromptBlock>> ContributeAsync(
@@ -61,7 +61,7 @@ The base Agent also adds mandatory trust-boundary, visible-response, tool-priori
 
 ## Prompt Context Contributors
 
-Implement `IAgentPromptContextContributor` and register it through `PackageExtensionPoints.PromptContextContributors`.
+Implement `IAgentPromptContextContributor`, adapt it with `AgentPromptContextContributorRpc.CreateHandler`, and publish it under `sunder.agent.prompt.context.contributor`.
 
 `AgentPromptContextRequest` exposes bounded snapshots:
 
@@ -133,7 +133,7 @@ Non-cancellation failures from optional reference contributors are ignored. The 
 
 ## Lifecycle Observers
 
-Use `IAgentDurableLifecycleObserver` through `PackageExtensionPoints.DurableLifecycleObservers` for durable package-owned effects. `IAgentLifecycleObserver` remains a compatibility projection for the original six run-scoped events; it does not receive rollback, session-deletion, or workspace-deletion payloads.
+Use `AgentDurableLifecycleObserverRpc.CreateHandler(observer)` under `sunder.agent.durable.lifecycle.observer` for durable package-owned effects. Agent 2.x does not retain the old process-local lifecycle projection.
 
 Durable events are:
 
@@ -176,7 +176,7 @@ For substantial indexing, commit bounded package-owned work with the event recei
 
 ## Session Data Cleanup
 
-An extension that stores session-keyed data should also implement `IAgentSessionDataCleaner` and register it through `PackageExtensionPoints.SessionDataCleaners`.
+An extension that stores session-keyed data should also implement `IAgentSessionDataCleaner` and publish `AgentSessionCleanerRpc.CreateHandler(cleaner)` under `sunder.agent.session.cleaner`.
 
 `DeleteSessionData(Guid sessionId)` must be synchronous, bounded, idempotent, and limited to package-owned state. Agent persists one ids-only job per owning package id, stable `CleanerId`, and deleted session in the same transaction as authoritative deletion. A worker acquires the exact package activation before invocation. Failure or package retirement leaves the job pending with redacted diagnostics; startup and package reactivation retry it until success without rolling back or surfacing an error from the already-committed Agent deletion. If cleanup requires remote work, delete or tombstone local authority in this callback and schedule best-effort remote cleanup separately.
 

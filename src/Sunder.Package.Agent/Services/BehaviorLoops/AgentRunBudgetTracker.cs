@@ -1,3 +1,4 @@
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
@@ -131,11 +132,4 @@ internal sealed class AgentRunBudgetTracker
             return state;
         }
     }
-}
-
-internal interface IAgentRunBudgetRuntime
-{
-    AgentRunBudgetState GetRunBudgetState();
-
-    AgentRunBudgetState ChargeRunBudget(AgentRunBudgetCharge charge);
 }

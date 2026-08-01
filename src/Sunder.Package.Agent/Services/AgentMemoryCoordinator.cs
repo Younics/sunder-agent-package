@@ -3,26 +3,25 @@ using System.Text.RegularExpressions;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Services;
 
 public sealed class AgentMemoryCoordinator(
     AgentSessionService sessionService,
-    IPackageExtensionCatalog extensionCatalog,
-    AgentLifecycleDispatcher? lifecycleDispatcher = null)
+    AgentRpcCatalog rpcCatalog,
+    AgentLifecycleDispatcher? lifecycleDispatcher = null,
+    AgentExecutionTargetService? executionTargetService = null)
 {
     private const int MaxRecentLiveBufferTurns = 8;
     private const int MaxPromptContextTurns = 64;
 
     private readonly AgentSessionService _sessionService = sessionService;
-    private readonly IPackageExtensionCatalog _extensionCatalog = extensionCatalog;
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
-        AgentExtensionInvocation.Require(extensionCatalog);
     private readonly AgentLifecycleDispatcher _lifecycleDispatcher =
-        lifecycleDispatcher ?? new AgentLifecycleDispatcher(sessionService.Store, extensionCatalog);
+        lifecycleDispatcher ?? new AgentLifecycleDispatcher(sessionService.Store, rpcCatalog);
+    private readonly AgentExecutionTargetService? _executionTargetService = executionTargetService;
     private readonly ConcurrentDictionary<PromptContextAcknowledgmentKey,
-        IReadOnlyList<AgentExtensionReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>>
+        IReadOnlyList<AgentRpcOwnedReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>>
         _promptContextAcknowledgments = new();
 
     public Task<AgentInstructionContext> BuildInstructionContextAsync(
@@ -185,71 +184,14 @@ public sealed class AgentMemoryCoordinator(
         bool isInterrupted = false,
         CancellationToken cancellationToken = default)
     {
-        var isDurablyCaptured = _sessionService.Store.ContainsRunLifecycleEvent(kind, runId);
         await _lifecycleDispatcher.FlushAsync(cancellationToken).ConfigureAwait(false);
-        if (isDurablyCaptured)
-        {
-            return;
-        }
-
-        var turns = _sessionService.ListRecentTurns(session.SessionId, MaxPromptContextTurns);
-        var recentLiveBufferTurns = BuildRecentLiveBufferTurns(turns);
-        var workingSummary = _sessionService.GetLatestSessionContextCheckpoint(session.SessionId)?.SummaryText;
-        var sessionContext = CreateSessionContext(session, profile, workingSummary);
-        var runContext = new AgentRunContextRecord(runId, runRevision, status, isInterrupted, runStartedAtUtc);
-        var turnContext = new AgentTurnContextRecord(sessionContext, runContext, userMessage, workingSummary);
-        var lifecycleEvent = new AgentLifecycleEvent(
-            kind,
-            sessionContext,
-            runContext,
-            turnContext,
-            turns,
-            recentLiveBufferTurns,
-            triggerTurn,
-            checkpoint);
-
-        foreach (var observerReference in GetLifecycleObserverReferences())
-        {
-            if (!observerReference.Reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-            using (lease)
-            {
-                using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-                    cancellationToken,
-                    lease.RetirementToken);
-                try
-                {
-                    await lease.Contribution.HandleLifecycleEventAsync(lifecycleEvent, invocation.Token);
-                }
-                catch (OperationCanceledException) when (
-                    lease.RetirementToken.IsCancellationRequested
-                    && !cancellationToken.IsCancellationRequested)
-                {
-                    // Owner retirement makes this optional compatibility callback unavailable.
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception) when (lease.RetirementToken.IsCancellationRequested)
-                {
-                    // Do not attribute a concurrent owner retirement as an observer failure.
-                }
-                catch
-                {
-                    // Optional runtime observers must not block the base chat flow.
-                }
-            }
-        }
     }
 
-    private IReadOnlyList<AgentExtensionReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>
+    private IReadOnlyList<AgentRpcOwnedReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>
         GetPromptContextContributors()
-        => AgentExtensionInvocation.Snapshot(
-                _invocationCatalog,
-                PackageExtensionPoints.PromptContextContributors,
+        => AgentRpcInvocation.Snapshot(
+                rpcCatalog,
+                AgentRpcServices.PromptContextContributors,
                 static contributor => new PromptContextContributorMetadata(
                     contributor.ContributorId,
                     contributor.DisplayName,
@@ -258,52 +200,10 @@ public sealed class AgentMemoryCoordinator(
             .ThenBy(contributor => contributor.PackageId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-    private IReadOnlyList<LifecycleObserverReference> GetLifecycleObserverReferences()
-    {
-        var references = new List<LifecycleObserverReference>();
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.LifecycleObservers))
-        {
-            if (reference.TryAcquire(out var lease))
-            {
-                using (lease)
-                {
-                    references.Add(new LifecycleObserverReference(reference, lease.Contribution.DisplayName));
-                }
-            }
-        }
-
-        return references
-            .OrderBy(observer => observer.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-    }
-
-    private IPackageExtensionReference<IAgentExecutionTarget>? ResolveExecutionTargetReference(
+    private AgentRpcReference<IAgentExecutionTarget>? ResolveExecutionTargetReference(
         AgentWorkspaceBindingRecord? binding)
     {
-        if (binding is null || !binding.IsEnabled)
-        {
-            return null;
-        }
-
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.ExecutionTargets))
-        {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-            using (lease)
-            {
-                var descriptor = lease.Contribution.Descriptor;
-                if (!lease.RetirementToken.IsCancellationRequested
-                    && (string.Equals(descriptor.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase)))
-                {
-                    return reference;
-                }
-            }
-        }
-
-        return null;
+        return _executionTargetService?.ResolveTargetReference(binding);
     }
 
     private static AgentSessionContextRecord CreateSessionContext(
@@ -324,7 +224,7 @@ public sealed class AgentMemoryCoordinator(
     {
         var blocks = new List<AgentPromptContextBlock>();
         var acknowledgmentSinks = new List<
-            AgentExtensionReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>();
+            AgentRpcOwnedReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>();
         foreach (var ownedContributor in GetPromptContextContributors())
         {
             var required = AgentPromptContextHostPolicy.IsRequiredScopedInstructionContributor(ownedContributor);
@@ -338,7 +238,7 @@ public sealed class AgentMemoryCoordinator(
             }
             try
             {
-                var contribution = await AgentExtensionInvocation.InvokeAsync(
+                var contribution = await AgentRpcInvocation.InvokeAsync(
                     ownedContributor,
                     cancellationToken,
                     (contributor, token) => contributor.ContributeContextAsync(request, token));
@@ -399,7 +299,7 @@ public sealed class AgentMemoryCoordinator(
 
         try
         {
-            await AgentExtensionInvocation.InvokeAsync(
+            await AgentRpcInvocation.InvokeAsync(
                 sinks[0],
                 cancellationToken,
                 (contributor, token) =>
@@ -564,10 +464,6 @@ public sealed class AgentMemoryCoordinator(
     private static string NormalizeRecallText(string text)
         => Regex.Replace(text.Trim().ToLowerInvariant(), "[^a-z0-9]+", " ").Trim();
 
-    private sealed record LifecycleObserverReference(
-        IPackageExtensionReference<IAgentLifecycleObserver> Reference,
-        string DisplayName);
-
     internal sealed record PromptContextContributorMetadata(
         string ContributorId,
         string DisplayName,
@@ -580,7 +476,7 @@ public sealed class AgentMemoryCoordinator(
 
     private sealed record CollectedPromptContext(
         IReadOnlyList<AgentPromptContextBlock> Blocks,
-        IReadOnlyList<AgentExtensionReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>
+        IReadOnlyList<AgentRpcOwnedReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>
             AcknowledgmentSinks);
 }
 
@@ -592,7 +488,7 @@ internal static class AgentPromptContextHostPolicy
     internal const string ProfileInstructionIdentity = "sunder.host.profile-standing-instruction.v1";
 
     public static bool IsRequiredScopedInstructionContributor(
-        AgentExtensionReference<IAgentPromptContextContributor, AgentMemoryCoordinator.PromptContextContributorMetadata>
+        AgentRpcOwnedReference<IAgentPromptContextContributor, AgentMemoryCoordinator.PromptContextContributorMetadata>
             contribution)
         => string.Equals(contribution.PackageId, ScopedInstructionPackageId, StringComparison.OrdinalIgnoreCase)
            && string.Equals(

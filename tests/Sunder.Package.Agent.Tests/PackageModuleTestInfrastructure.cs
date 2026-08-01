@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 using Sunder.Sdk.Runtime;
+using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Tests;
@@ -9,11 +10,8 @@ namespace Sunder.Package.Agent.Tests;
 internal sealed class RecordingPackageContributionRegistry : ISunderRuntimeContributionRegistry, IAvaloniaPackageContributionRegistry
 {
     private readonly List<string> _registrations = [];
-    private readonly List<object> _activatedContributions = [];
 
     public IReadOnlyList<string> Registrations => _registrations;
-
-    public IReadOnlyList<object> ActivatedContributions => _activatedContributions;
 
     public void RegisterPackageView<TView>(PackageViewRegistration registration) where TView : Control
         => Record($"package-view:{registration.Id}", typeof(TView));
@@ -24,21 +22,17 @@ internal sealed class RecordingPackageContributionRegistry : ISunderRuntimeContr
     public void RegisterBackgroundService<TService>() where TService : class, IPackageBackgroundService
         => Record("background-service", typeof(TService));
 
-    public void RegisterExtension<TContract>(PackageExtensionPoint<TContract> extensionPoint, TContract contribution)
-    {
-        ArgumentNullException.ThrowIfNull(contribution);
-        var registration = $"extension:{extensionPoint.Id}:{contribution.GetType().FullName}";
-        if (!_registrations.Contains(registration, StringComparer.Ordinal))
-        {
-            _registrations.Add(registration);
-            _activatedContributions.Add(contribution);
-        }
-    }
-
     public void RegisterSettingsSchema(PackageSettingsSchema schema)
     {
         ArgumentNullException.ThrowIfNull(schema);
         _registrations.Add("settings-schema");
+    }
+
+    public void RegisterRpcProvider(string providerId, ISunderRpcServiceHandler handler)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerId);
+        ArgumentNullException.ThrowIfNull(handler);
+        _registrations.Add($"rpc-provider:{providerId}");
     }
 
     public void RegisterRuntimeOperation<TRequest, TResponse>(
@@ -87,4 +81,29 @@ internal sealed class CompositionBackgroundProcessQueue : IBackgroundProcessQueu
     public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null) => [];
 
     public bool Cancel(Guid processId) => false;
+}
+
+internal sealed class TestRpcContentClient : ISunderRpcContentClient
+{
+    public static TestRpcContentClient Instance { get; } = new();
+
+    public ValueTask<SunderRpcContentReference> RegisterAsync(
+        SunderRpcInvocationContext context,
+        Stream source,
+        SunderRpcContentRegistrationOptions options,
+        CancellationToken cancellationToken = default)
+        => ValueTask.FromException<SunderRpcContentReference>(new NotSupportedException());
+
+    public ValueTask<SunderRpcContentReference> RegisterFileAsync(
+        SunderRpcInvocationContext context,
+        string filePath,
+        SunderRpcContentRegistrationOptions options,
+        CancellationToken cancellationToken = default)
+        => ValueTask.FromException<SunderRpcContentReference>(new NotSupportedException());
+
+    public ValueTask<Stream> OpenReadAsync(
+        SunderRpcInvocationContext context,
+        SunderRpcContentReference reference,
+        CancellationToken cancellationToken = default)
+        => ValueTask.FromException<Stream>(new NotSupportedException());
 }

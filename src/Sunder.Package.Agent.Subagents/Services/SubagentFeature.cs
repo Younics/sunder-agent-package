@@ -1,7 +1,7 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Subagents.Models;
-using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
@@ -20,15 +20,15 @@ public sealed class SubagentFeature :
 
     public SubagentFeature(
         SubagentService subagentService,
-        IPackageExtensionCatalog extensionCatalog)
+        AgentRpcCatalog rpcCatalog)
     {
         _subagentService = subagentService;
-        var permissionStatusAdapter = new SubagentPermissionStatusAdapter(extensionCatalog);
-        _descriptors = new SubagentDescriptorSchema(subagentService, extensionCatalog, permissionStatusAdapter);
+        var permissionStatusAdapter = new SubagentPermissionStatusAdapter(rpcCatalog);
+        _descriptors = new SubagentDescriptorSchema(subagentService, rpcCatalog, permissionStatusAdapter);
         _requestParser = new SubagentRequestParser();
         _resultRenderer = new SubagentBatchResultRenderer(subagentService, _requestParser, permissionStatusAdapter);
         var childRunCoordinator = new SubagentChildRunCoordinator(
-            extensionCatalog,
+            rpcCatalog,
             _descriptors,
             permissionStatusAdapter,
             _resultRenderer);

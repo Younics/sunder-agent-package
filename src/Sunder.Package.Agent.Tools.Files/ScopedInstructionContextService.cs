@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Tools.Files;
@@ -30,7 +31,9 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         {
             return [];
         }
-        if (target is not IAgentScopedInstructionDiscoveryTarget discoveryTarget
+        if (!AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
+            || target is not IAgentScopedInstructionDiscoveryTarget discoveryTarget
+            || !AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ExecutionScope)
             || target is not IAgentExecutionScopeProvider scopeProvider)
         {
             throw new InvalidOperationException("The selected execution target does not provide the scoped-instruction discovery required by first-party Files enforcement.");
@@ -181,7 +184,8 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         {
             return null;
         }
-        if (target is not IAgentScopedInstructionDiscoveryTarget discoveryTarget)
+        if (!AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
+            || target is not IAgentScopedInstructionDiscoveryTarget discoveryTarget)
         {
             return DeferredError(
                 request.ToolId,
@@ -325,7 +329,8 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         {
             throw new InvalidOperationException($"Scoped instruction discovery supports at most {MaxMutationPaths} probes per batch.");
         }
-        if (target is not IAgentScopedInstructionDiscoveryTarget discoveryTarget)
+        if (!AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
+            || target is not IAgentScopedInstructionDiscoveryTarget discoveryTarget)
         {
             throw new InvalidOperationException("The selected execution target does not support required scoped-instruction discovery.");
         }

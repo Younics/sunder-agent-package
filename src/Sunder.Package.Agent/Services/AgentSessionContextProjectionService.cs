@@ -7,13 +7,12 @@ namespace Sunder.Package.Agent.Services;
 
 public sealed class AgentSessionContextProjectionService
 {
-    public const int DefaultHistoricalTailTurnCount = 16;
-
     private const string CompactionRunningActivity = "Running session compaction";
     private const string CompactionCompletedActivity = "Session compaction completed";
     private const string CompactionInterruptedActivity = "Session compaction interrupted";
-    private const int ActiveRunTailHighWaterTurnCount = 24;
-    private const int ActiveRunTailTargetTurnCount = 16;
+    private const int RecentTailUserTurnCount = 2;
+    private const int MinimumRecentTailTokens = 2_000;
+    private const int MaximumRecentTailTokens = 8_000;
     private const int MaxSummaryTurnChars = 520;
     private const int MaxCompactedToolResultChars = 2_000;
     private const int MaxCompactedHistoricalTextChars = 1_200;
@@ -49,16 +48,8 @@ public sealed class AgentSessionContextProjectionService
         }
 
         var activeCheckpoint = _sessionService.GetActiveAnchoredSessionContextCheckpoint(sessionId);
-        var boundary = SelectOmittedPrefixCount(
-            turns,
-            activeUserTurnId,
-            EstimatePromptBudgetTokens(runCapabilities, promptOverheadTokens),
-            activeCheckpoint);
-        if (!IsExactCheckpointForBoundary(activeCheckpoint, turns, boundary))
-        {
-            activeCheckpoint = null;
-            boundary = 0;
-        }
+        var boundary = GetActiveBoundary(activeCheckpoint, turns);
+        activeCheckpoint = boundary == 0 ? null : activeCheckpoint;
         return BuildProjectionForBoundary(
             turns,
             activeUserTurnId,
@@ -77,7 +68,8 @@ public sealed class AgentSessionContextProjectionService
         long sourceRunRevision,
         int promptOverheadTokens,
         CancellationToken cancellationToken,
-        int minimumOmittedTurnCount = 0)
+        int minimumOmittedTurnCount = 0,
+        bool compactContext = false)
     {
         var snapshot = _sessionService.ReadSessionContinuitySnapshot(
             sessionId,
@@ -92,12 +84,14 @@ public sealed class AgentSessionContextProjectionService
         EnsureActiveUserTurn(turns, activeUserTurnId, snapshot.SourceRun, snapshot.SourceUserTurnId);
         var promptBudgetTokens = EstimatePromptBudgetTokens(runCapabilities, promptOverheadTokens);
         var activeCheckpoint = snapshot.ActiveCheckpoint;
-        var boundary = SelectOmittedPrefixCount(
-            turns,
-            activeUserTurnId,
-            promptBudgetTokens,
-            activeCheckpoint,
-            minimumOmittedTurnCount);
+        var boundary = compactContext
+            ? SelectOmittedPrefixCount(
+                turns,
+                activeUserTurnId,
+                EstimateRecentTailBudgetTokens(runCapabilities),
+                activeCheckpoint,
+                minimumOmittedTurnCount)
+            : GetActiveBoundary(activeCheckpoint, turns);
         if (boundary == 0)
         {
             return BuildProjectionForBoundary(
@@ -372,7 +366,7 @@ public sealed class AgentSessionContextProjectionService
     private static int SelectOmittedPrefixCount(
         IReadOnlyList<AgentTurnRecord> turns,
         Guid activeUserTurnId,
-        int promptBudgetTokens,
+        int recentTailBudgetTokens,
         AgentAnchoredSessionContextCheckpoint? activeCheckpoint,
         int minimumOmittedTurnCount = 0)
     {
@@ -382,34 +376,18 @@ public sealed class AgentSessionContextProjectionService
             return 0;
         }
 
-        var activeBoundary = IsExactCheckpointForBoundary(
-            activeCheckpoint,
-            turns,
-            activeCheckpoint?.Record.OmittedTurnCount ?? 0)
-            ? activeCheckpoint!.Record.OmittedTurnCount
-            : 0;
-        if (activeBoundary > turns.Count)
-        {
-            activeBoundary = 0;
-        }
-
-        var boundary = Math.Max(
-            activeBoundary,
-            Math.Max(0, activeTurnIndex - DefaultHistoricalTailTurnCount));
+        var activeBoundary = GetActiveBoundary(activeCheckpoint, turns);
         var maximumBoundary = FindMaximumStableBoundary(turns, activeTurnIndex);
-        boundary = Math.Max(
-            boundary,
-            Math.Min(Math.Max(0, minimumOmittedTurnCount), maximumBoundary));
-        if (maximumBoundary > activeTurnIndex
-            && turns.Count - boundary > ActiveRunTailHighWaterTurnCount)
-        {
-            boundary = Math.Min(
-                maximumBoundary,
-                Math.Max(boundary, turns.Count - ActiveRunTailTargetTurnCount));
-        }
+        var boundary = Math.Min(
+            maximumBoundary,
+            Math.Max(
+                activeBoundary,
+                Math.Max(
+                    FindRecentUserTailStart(turns),
+                    Math.Max(0, minimumOmittedTurnCount))));
 
         while (boundary < maximumBoundary
-               && EstimateTokens(turns, Enumerable.Range(boundary, turns.Count - boundary)) > promptBudgetTokens)
+               && EstimateRetainedTailTokens(turns, boundary, activeTurnIndex) > recentTailBudgetTokens)
         {
             boundary++;
         }
@@ -419,6 +397,47 @@ public sealed class AgentSessionContextProjectionService
             boundary,
             maximumBoundary,
             activeBoundary);
+    }
+
+    private static int GetActiveBoundary(
+        AgentAnchoredSessionContextCheckpoint? activeCheckpoint,
+        IReadOnlyList<AgentTurnRecord> turns)
+    {
+        var boundary = activeCheckpoint?.Record.OmittedTurnCount ?? 0;
+        return boundary <= turns.Count && IsExactCheckpointForBoundary(activeCheckpoint, turns, boundary)
+            ? boundary
+            : 0;
+    }
+
+    private static int FindRecentUserTailStart(IReadOnlyList<AgentTurnRecord> turns)
+    {
+        var userTurnCount = 0;
+        for (var index = turns.Count - 1; index >= 0; index--)
+        {
+            if (turns[index].Role != AgentMessageRole.User)
+            {
+                continue;
+            }
+            userTurnCount++;
+            if (userTurnCount == RecentTailUserTurnCount)
+            {
+                return index;
+            }
+        }
+        return 0;
+    }
+
+    private static int EstimateRetainedTailTokens(
+        IReadOnlyList<AgentTurnRecord> turns,
+        int boundary,
+        int activeUserTurnIndex)
+    {
+        var retainedTokens = EstimateTokens(
+            turns,
+            Enumerable.Range(boundary, turns.Count - boundary));
+        return boundary > activeUserTurnIndex
+            ? checked(retainedTokens + EstimateTokens(turns[activeUserTurnIndex]))
+            : retainedTokens;
     }
 
     private static int FindMaximumStableBoundary(
@@ -654,7 +673,16 @@ public sealed class AgentSessionContextProjectionService
     private static int EstimatePromptBudgetTokens(AgentProviderRunCapabilities runCapabilities, int promptOverheadTokens)
     {
         var limits = AgentProviderRequestLimits.Resolve(runCapabilities);
-        return Math.Max(1, limits.ProactiveInputLimitTokens - Math.Max(0, promptOverheadTokens));
+        return Math.Max(1, limits.HardInputLimitTokens - Math.Max(0, promptOverheadTokens));
+    }
+
+    internal static int EstimateRecentTailBudgetTokens(AgentProviderRunCapabilities runCapabilities)
+    {
+        var usableTokens = AgentProviderRequestLimits.Resolve(runCapabilities).HardInputLimitTokens;
+        return Math.Clamp(
+            usableTokens / 4,
+            MinimumRecentTailTokens,
+            MaximumRecentTailTokens);
     }
 
     private static int EstimateTokens(IReadOnlyList<AgentTurnRecord> turns, IEnumerable<int> indexes)
@@ -743,9 +771,3 @@ public sealed class AgentSessionContextProjectionService
             ? text
             : text[..maxChars].TrimEnd() + "\n[truncated]";
 }
-
-public sealed record AgentSessionPromptProjection(
-    IReadOnlyList<AgentTurnRecord> PromptTurns,
-    bool SummaryUpdated,
-    int OmittedHistoricalTurnCount,
-    AgentSessionContextCheckpointRecord? ContextCheckpoint = null);

@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Builder;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Runtime;
 using Xunit;
@@ -732,73 +733,40 @@ public sealed class BuilderServiceTests
         }
     }
 
-    private sealed class TestExtensionCatalog(IAgentWorkspaceExecutionResolver resolver) :
-        IPackageExtensionCatalog,
-        IPackageExtensionInvocationCatalog
+    private sealed class TestExtensionCatalog : RegressionTestExtensionCatalog
     {
-        public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
-            => resolver is TContract typedResolver
-               && string.Equals(extensionPoint.Id, PackageExtensionPoints.WorkspaceExecutionResolvers.Id, StringComparison.Ordinal)
-                ? [typedResolver]
-                : [];
-
-        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
-            => GetExtensions(extensionPoint)
-                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
-                .ToArray();
-
-        public IReadOnlyList<IPackageExtensionReference<TContract>> GetExtensionReferences<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint)
-            => GetExtensions(extensionPoint)
-                .Select(extension => (IPackageExtensionReference<TContract>)new TestReference<TContract>(extension))
-                .ToArray();
-
-        private sealed class TestReference<TContract>(TContract contribution)
-            : IPackageExtensionReference<TContract>
+        public TestExtensionCatalog(IAgentWorkspaceExecutionResolver resolver)
         {
-            public bool TryAcquire(
-                [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-                out IPackageExtensionLease<TContract>? lease)
+            if (resolver is TestWorkspaceExecutionResolver testResolver)
             {
-                lease = new TestLease<TContract>(contribution);
-                return true;
+                AddProvider(AgentRpcServices.ExecutionTargets, testResolver.Target);
+                testResolver.BindTargetReference(GetRequiredReference(AgentRpcServices.ExecutionTargets));
             }
-        }
-
-        private sealed class TestLease<TContract>(TContract contribution) : IPackageExtensionLease<TContract>
-        {
-            private object? _contribution = contribution;
-
-            public string PackageId
-            {
-                get
-                {
-                    ObjectDisposedException.ThrowIf(_contribution is null, this);
-                    return "test.package";
-                }
-            }
-
-            public TContract Contribution
-                => (TContract)(Volatile.Read(ref _contribution)
-                    ?? throw new ObjectDisposedException(nameof(TestLease<TContract>)));
-
-            public CancellationToken RetirementToken
-            {
-                get
-                {
-                    ObjectDisposedException.ThrowIf(_contribution is null, this);
-                    return CancellationToken.None;
-                }
-            }
-
-            public void Dispose() => Interlocked.Exchange(ref _contribution, null);
+            AddProvider(AgentRpcServices.WorkspaceExecutionResolvers, resolver);
         }
     }
 
-    private sealed class TestWorkspaceExecutionResolver(AgentWorkspaceRecord workspace, TestExecutionTarget target)
-        : IAgentWorkspaceExecutionResolver
+    private sealed class TestWorkspaceExecutionResolver : IAgentWorkspaceExecutionResolver
     {
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [workspace];
+        private readonly AgentWorkspaceRecord _workspace;
+        private readonly TestExecutionTarget _target;
+        private readonly RegressionTestExtensionCatalog _targetCatalog = new();
+        private AgentRpcReference<IAgentExecutionTarget> _targetReference;
+
+        public TestWorkspaceExecutionResolver(AgentWorkspaceRecord workspace, TestExecutionTarget target)
+        {
+            _workspace = workspace;
+            _target = target;
+            _targetCatalog.AddProvider(AgentRpcServices.ExecutionTargets, target);
+            _targetReference = _targetCatalog.GetRequiredReference(AgentRpcServices.ExecutionTargets);
+        }
+
+        public TestExecutionTarget Target => _target;
+
+        public void BindTargetReference(AgentRpcReference<IAgentExecutionTarget> targetReference)
+            => _targetReference = targetReference;
+
+        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [_workspace];
 
         public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
             string workspaceId,
@@ -807,21 +775,28 @@ public sealed class BuilderServiceTests
             var now = DateTimeOffset.UtcNow;
             var binding = new AgentWorkspaceBindingRecord(
                 "binding.local",
-                workspace.WorkspaceId,
-                PackageExtensionPoints.ExecutionTargets.Id,
+                _workspace.WorkspaceId,
+                AgentRpcContractIds.ExecutionTarget,
                 "local",
                 "primary",
                 true,
                 0,
                 now,
                 now);
-            var scope = new AgentExecutionScopeDescriptor("Local", [workspace.Paths[0].HostPath], workspace.Paths[0].HostPath);
+            var scope = new AgentExecutionScopeDescriptor(
+                "Local",
+                [_workspace.Paths[0].HostPath],
+                _workspace.Paths[0].HostPath);
             return ValueTask.FromResult(new AgentWorkspaceExecutionResolution(
-                workspace,
+                _workspace,
                 binding,
-                target.Descriptor,
+                _target.Descriptor,
                 scope,
-                target));
+                _target)
+            {
+                ExecutionTargetReference = _targetReference,
+                ExecutionTargetHandle = _targetReference.ToHandle(),
+            });
         }
     }
 

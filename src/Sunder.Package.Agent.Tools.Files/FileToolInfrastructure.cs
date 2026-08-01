@@ -1,6 +1,7 @@
 using System.Text;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Tools.Files;
@@ -39,6 +40,8 @@ internal static class FileSystemPromptBuilder
         if (!request.AvailableTools.Any(tool => string.Equals(tool.SourceId, "files", StringComparison.OrdinalIgnoreCase))
             || request.Workspace is null
             || request.ExecutionBinding is null
+            || target is null
+            || !AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ExecutionScope)
             || target is not IAgentExecutionScopeProvider scopeProvider)
         {
             return null;

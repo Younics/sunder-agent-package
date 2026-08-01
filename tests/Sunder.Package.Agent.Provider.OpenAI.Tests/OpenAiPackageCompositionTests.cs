@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
 using Sunder.Package.Agent.Provider.Shared;
@@ -41,14 +42,12 @@ public sealed class OpenAiPackageCompositionTests
         runtimeModule.RegisterRuntimeContributions(runtimeRegistry, runtimeProvider);
         Assert.Equal(
             [
-                PackageExtensionPoints.ChatProviders.Id,
-                PackageExtensionPoints.EmbeddingProviders.Id,
-                PackageExtensionPoints.SessionDataCleaners.Id,
+                "openai.chat",
+                "openai.embedding",
+                "openai.continuation.cleaner",
             ],
-            runtimeRegistry.ExtensionIds);
-        Assert.Equal(
-            [typeof(OpenAiAgentProvider), typeof(OpenAiEmbeddingProvider), typeof(CodexResponseContinuationStore)],
-            runtimeRegistry.ExtensionTypes);
+            runtimeRegistry.RpcProviderIds);
+        Assert.All(runtimeRegistry.RpcHandlerTypes, type => Assert.Equal(typeof(AgentRpcServiceHandler), type));
         Assert.Same(OpenAiProviderConfiguration.Schema, Assert.Single(runtimeRegistry.SettingsSchemas));
         Assert.Equal([OpenAiRuntimeOperations.Auth.OperationId], runtimeRegistry.RuntimeOperationIds);
         Assert.Equal([typeof(OpenAiAuthOperationHandler)], runtimeRegistry.RuntimeOperationHandlerTypes);
@@ -74,7 +73,7 @@ public sealed class OpenAiPackageCompositionTests
         var appRegistry = new ProviderCompositionTestRegistry();
         appModule.RegisterAppContributions(appRegistry, appProvider);
         Assert.Equal([typeof(OpenAiSettingsView)], appRegistry.SettingsViewTypes);
-        Assert.Empty(appRegistry.ExtensionIds);
+        Assert.Empty(appRegistry.RpcProviderIds);
         Assert.Empty(appRegistry.RuntimeOperationIds);
     }
 

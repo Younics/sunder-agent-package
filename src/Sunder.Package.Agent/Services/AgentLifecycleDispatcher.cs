@@ -1,9 +1,10 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -14,8 +15,7 @@ public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsync
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(250);
 
     private readonly AgentLocalStore _store;
-    private readonly IPackageExtensionInvocationCatalog? _invocationCatalog;
-    private readonly IPackageExtensionCatalogMonitor? _extensionCatalogMonitor;
+    private readonly AgentRpcCatalog _rpcCatalog;
     private readonly IPackageEventLogger _eventLogger;
     private readonly object _syncRoot = new();
     private readonly SemaphoreSlim _dispatchGate = new(1, 1);
@@ -30,12 +30,11 @@ public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsync
 
     public AgentLifecycleDispatcher(
         AgentLocalStore store,
-        IPackageExtensionCatalog extensionCatalog,
+        AgentRpcCatalog rpcCatalog,
         IPackageEventLogger? eventLogger = null)
     {
         _store = store;
-        _invocationCatalog = extensionCatalog as IPackageExtensionInvocationCatalog;
-        _extensionCatalogMonitor = extensionCatalog as IPackageExtensionCatalogMonitor;
+        _rpcCatalog = rpcCatalog;
         _eventLogger = eventLogger ?? NullPackageLogging.Instance.Events;
         _store.LifecycleOutboxChanged += Wake;
     }
@@ -55,20 +54,14 @@ public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsync
             _lifetime = lifetime;
             try
             {
-                if (_extensionCatalogMonitor is not null)
-                {
-                    _extensionCatalogMonitor.Changed += OnExtensionCatalogChanged;
-                }
+                _rpcCatalog.Changed += OnCatalogChanged;
                 _startupRecoveryPending = true;
                 ReconcileSubscriptions();
                 _worker = RunAsync(lifetime.Token);
             }
             catch
             {
-                if (_extensionCatalogMonitor is not null)
-                {
-                    _extensionCatalogMonitor.Changed -= OnExtensionCatalogChanged;
-                }
+                _rpcCatalog.Changed -= OnCatalogChanged;
                 _lifetime = null;
                 lifetime.Dispose();
                 throw;
@@ -92,10 +85,7 @@ public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsync
             }
             _worker = null;
             _lifetime = null;
-            if (_extensionCatalogMonitor is not null)
-            {
-                _extensionCatalogMonitor.Changed -= OnExtensionCatalogChanged;
-            }
+            _rpcCatalog.Changed -= OnCatalogChanged;
         }
 
         await lifetime.CancelAsync().ConfigureAwait(false);
@@ -185,11 +175,7 @@ public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsync
                         PackageLogLevel.Error,
                         "lifecycle.dispatch.failed",
                         "The durable lifecycle dispatcher encountered an isolated processing failure.",
-                        new Dictionary<string, object?>(StringComparer.Ordinal)
-                        {
-                            ["lifecycle.failure_code"] = "dispatcher_processing_failure",
-                            ["exception.type"] = GetBoundedExceptionType(ex),
-                        }).ConfigureAwait(false);
+                        CreateProcessingFailureAttributes(ex)).ConfigureAwait(false);
                 }
             }
         }
@@ -260,7 +246,7 @@ public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsync
                         ex,
                         DateTimeOffset.UtcNow,
                         ex is AgentDurableLifecycleIntegrityException);
-                    await LogDeliveryFailureAsync(active.Subscription, claim.Event, failure).ConfigureAwait(false);
+                    await LogDeliveryFailureAsync(active.Subscription, claim.Event, failure, ex).ConfigureAwait(false);
                 }
             }
 
@@ -277,10 +263,7 @@ public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsync
         var now = DateTimeOffset.UtcNow;
         var replayPending = false;
         var active = new Dictionary<string, ActiveLifecycleSubscription>(StringComparer.Ordinal);
-        var invocationCatalog = _invocationCatalog
-            ?? throw new InvalidOperationException(
-                "The host extension catalog does not support activation-scoped invocation leases.");
-        foreach (var reference in invocationCatalog.GetExtensionReferences(PackageExtensionPoints.DurableLifecycleObservers))
+        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.DurableLifecycleObservers))
         {
             if (reference.TryAcquire(out var lease))
             {
@@ -289,28 +272,10 @@ public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsync
                     replayPending |= AddSubscription(
                         active,
                         lease.PackageId,
-                        lease.Contribution.ObserverId,
-                        lease.Contribution.DisplayName,
+                        lease.Service.ObserverId,
+                        lease.Service.DisplayName,
                         "Durable",
                         subscription => new DurableLifecycleSubscription(subscription, reference),
-                        now);
-                }
-            }
-        }
-
-        foreach (var reference in invocationCatalog.GetExtensionReferences(PackageExtensionPoints.LifecycleObservers))
-        {
-            if (reference.TryAcquire(out var lease))
-            {
-                using (lease)
-                {
-                    replayPending |= AddSubscription(
-                        active,
-                        lease.PackageId,
-                        lease.Contribution.ObserverId,
-                        lease.Contribution.DisplayName,
-                        "Compatibility",
-                        subscription => new CompatibilityLifecycleSubscription(subscription, reference),
                         now);
                 }
             }
@@ -396,10 +361,11 @@ public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsync
     }
 
     private static async ValueTask<LifecycleDeliveryOutcome> DeliverWithLeaseAsync<TObserver>(
-        IPackageExtensionReference<TObserver> reference,
+        AgentRpcReference<TObserver> reference,
         AgentDurableLifecycleEventEnvelope envelope,
         CancellationToken cancellationToken,
         Func<TObserver, AgentDurableLifecycleEventEnvelope, CancellationToken, ValueTask> deliver)
+        where TObserver : class
     {
         if (!reference.TryAcquire(out var lease))
         {
@@ -419,84 +385,55 @@ public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsync
                 retirementToken);
             try
             {
-                await deliver(lease.Contribution, envelope, invocation.Token).ConfigureAwait(false);
+                await deliver(lease.Service, envelope, invocation.Token).ConfigureAwait(false);
                 return retirementToken.IsCancellationRequested
                     ? LifecycleDeliveryOutcome.OwnerRetired
                     : LifecycleDeliveryOutcome.Delivered;
             }
-            catch (Exception) when (retirementToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception) when (
+                retirementToken.IsCancellationRequested
+                || AgentRpcInvocation.IsUnavailableFailure(exception, cancellationToken))
             {
                 return LifecycleDeliveryOutcome.OwnerRetired;
             }
         }
     }
 
-    private static ValueTask DeliverCompatibilityAsync(
-        IAgentLifecycleObserver observer,
-        AgentDurableLifecycleEventEnvelope envelope,
-        CancellationToken cancellationToken)
-    {
-        var payload = envelope.Payload;
-        if (payload.ContentErased)
-        {
-            return ValueTask.CompletedTask;
-        }
-        if (payload.Session is null || payload.Run is null)
-        {
-            throw new AgentDurableLifecycleIntegrityException(
-                $"Compatibility lifecycle event '{envelope.EventId}' has no run/session snapshot.");
-        }
-
-        var turnContext = new AgentTurnContextRecord(
-            payload.Session,
-            payload.Run,
-            payload.UserMessage ?? string.Empty,
-            payload.WorkingSummary);
-        var compatibilityEvent = new AgentLifecycleEvent(
-            envelope.Kind,
-            payload.Session,
-            payload.Run,
-            turnContext,
-            payload.Turns,
-            payload.RecentLiveBufferTurns,
-            payload.TriggerTurn,
-            payload.Checkpoint)
-        {
-            EventId = envelope.EventId,
-            Sequence = envelope.Sequence,
-            PayloadHash = envelope.PayloadHash,
-        };
-        return observer.HandleLifecycleEventAsync(compatibilityEvent, cancellationToken);
-    }
-
     private async Task LogDeliveryFailureAsync(
         AgentLifecycleSubscription subscription,
         AgentLifecycleOutboxRecord outboxEvent,
-        AgentLifecycleDeliveryFailureResult failure)
+        AgentLifecycleDeliveryFailureResult failure,
+        Exception exception)
     {
         var level = failure.Poisoned ? PackageLogLevel.Error : PackageLogLevel.Warning;
         var eventName = failure.Poisoned ? "lifecycle.delivery.poisoned" : "lifecycle.delivery.retry";
         var message = failure.Poisoned
             ? "A durable lifecycle delivery entered poison state and remains an ordering barrier until its recovery retry."
             : "A durable lifecycle delivery failed and was scheduled for bounded retry.";
+        var attributes = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["package.id"] = subscription.PackageId,
+            ["observer.id"] = subscription.ObserverId,
+            ["lifecycle.contract"] = subscription.ContractKind,
+            ["lifecycle.event_id"] = outboxEvent.EventId,
+            ["lifecycle.event_type"] = outboxEvent.Kind.ToString(),
+            ["lifecycle.sequence"] = outboxEvent.Sequence,
+            ["lifecycle.attempt"] = failure.AttemptCount,
+            ["lifecycle.poisoned"] = failure.Poisoned,
+            ["lifecycle.next_attempt_at_utc"] = failure.NextAttemptAtUtc,
+            ["lifecycle.failure_code"] = failure.FailureCode,
+            ["exception.type"] = failure.ExceptionType,
+        };
+        AddRpcFailureDiagnostics(attributes, exception);
         await LogSafelyAsync(
             level,
             eventName,
             message,
-            new Dictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["package.id"] = subscription.PackageId,
-                ["observer.id"] = subscription.ObserverId,
-                ["lifecycle.contract"] = subscription.ContractKind,
-                ["lifecycle.event_id"] = outboxEvent.EventId,
-                ["lifecycle.event_type"] = outboxEvent.Kind.ToString(),
-                ["lifecycle.sequence"] = outboxEvent.Sequence,
-                ["lifecycle.attempt"] = failure.AttemptCount,
-                ["lifecycle.poisoned"] = failure.Poisoned,
-                ["lifecycle.next_attempt_at_utc"] = failure.NextAttemptAtUtc,
-                ["lifecycle.failure_code"] = failure.FailureCode,
-                ["exception.type"] = failure.ExceptionType,
-            }).ConfigureAwait(false);
+            attributes).ConfigureAwait(false);
     }
 
     private async Task LogSafelyAsync(
@@ -515,14 +452,60 @@ public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsync
         }
     }
 
-    private void OnExtensionCatalogChanged(object? sender, PackageExtensionCatalogChangedEventArgs e)
-        => Wake();
+    private void OnCatalogChanged(object? sender, AgentRpcCatalogChangedEventArgs e)
+    {
+        if (e.IncludesContract(AgentRpcContractIds.DurableLifecycleObserver)) Wake();
+    }
 
     private static string GetBoundedExceptionType(Exception exception)
     {
         var exceptionType = exception.GetType().FullName ?? exception.GetType().Name;
         return exceptionType[..Math.Min(exceptionType.Length, 512)];
     }
+
+    internal static IReadOnlyDictionary<string, object?> CreateProcessingFailureAttributes(Exception exception)
+    {
+        var attributes = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["lifecycle.failure_code"] = "dispatcher_processing_failure",
+            ["exception.type"] = GetBoundedExceptionType(exception),
+        };
+        AddRpcFailureDiagnostics(attributes, exception);
+        return attributes;
+    }
+
+    private static void AddRpcFailureDiagnostics(
+        IDictionary<string, object?> attributes,
+        Exception exception)
+    {
+        var pending = new Stack<Exception>();
+        pending.Push(exception);
+        while (pending.TryPop(out var current))
+        {
+            if (current is SunderRpcException rpcException)
+            {
+                attributes["rpc.error_kind"] = rpcException.Error.Kind.ToString();
+                attributes["rpc.error_code"] = Bound(rpcException.Error.Code, 256);
+                return;
+            }
+            if (current is AggregateException aggregate)
+            {
+                for (var index = aggregate.InnerExceptions.Count - 1; index >= 0; index--)
+                {
+                    pending.Push(aggregate.InnerExceptions[index]);
+                }
+            }
+            else if (current.InnerException is not null)
+            {
+                pending.Push(current.InnerException);
+            }
+        }
+    }
+
+    private static string Bound(string? value, int maximumLength)
+        => string.IsNullOrWhiteSpace(value)
+            ? "rpc.unknown"
+            : value[..Math.Min(value.Length, maximumLength)];
 
     private void Wake()
     {
@@ -556,7 +539,7 @@ public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsync
 
     private sealed record DurableLifecycleSubscription(
         AgentLifecycleSubscription Subscription,
-        IPackageExtensionReference<IAgentDurableLifecycleObserver> Reference)
+        AgentRpcReference<IAgentDurableLifecycleObserver> Reference)
         : ActiveLifecycleSubscription(Subscription)
     {
         public override ValueTask<LifecycleDeliveryOutcome> DeliverAsync(
@@ -569,18 +552,4 @@ public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsync
                 static (observer, item, token) => observer.HandleDurableLifecycleEventAsync(item, token));
     }
 
-    private sealed record CompatibilityLifecycleSubscription(
-        AgentLifecycleSubscription Subscription,
-        IPackageExtensionReference<IAgentLifecycleObserver> Reference)
-        : ActiveLifecycleSubscription(Subscription)
-    {
-        public override ValueTask<LifecycleDeliveryOutcome> DeliverAsync(
-            AgentDurableLifecycleEventEnvelope envelope,
-            CancellationToken cancellationToken)
-            => DeliverWithLeaseAsync(
-                Reference,
-                envelope,
-                cancellationToken,
-                DeliverCompatibilityAsync);
-    }
 }

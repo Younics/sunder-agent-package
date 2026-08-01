@@ -1,9 +1,8 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Shared.Presentation;
-using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -93,11 +92,11 @@ public sealed partial class AgentWorkspacesViewModel
     private void ReloadTargets(string? preferredTargetId = null)
         => ReloadTargets(_executionGateway.ListTargets(), preferredTargetId);
 
-    private void OnExtensionCatalogChanged(object? sender, PackageExtensionCatalogChangedEventArgs e)
+    private void OnRpcCatalogChanged(object? sender, AgentRpcCatalogChangedEventArgs e)
     {
         if (_isInitialized
-            && (e.IncludesExtensionPoint(PackageExtensionPoints.ExecutionTargets.Id)
-                || e.IncludesExtensionPoint(PackageExtensionPoints.WorkspaceEditorContributors.Id)))
+            && (e.IncludesContract(AgentRpcContractIds.ExecutionTarget)
+                || e.IncludesContract(AgentRpcContractIds.WorkspaceEditor)))
         {
             RunOnUiThread(ApplyExtensionCatalogChanges);
         }
@@ -154,13 +153,12 @@ public sealed partial class AgentWorkspacesViewModel
             var editorSections = new List<AgentEditorSectionViewModel>();
             var intent = CaptureEditorIntent(context, ticket.IntentRevision);
             var failureCount = 0;
-            foreach (var contributorReference in _extensionInvocationCatalog.GetExtensionReferences(
-                         PackageExtensionPoints.WorkspaceEditorContributors))
+            foreach (var contributorReference in _rpcCatalog.GetServiceReferences(AgentRpcServices.WorkspaceEditors))
             {
                 var result = await AgentEditorSectionViewModel.TryGetApplicableSectionsAsync(
                     contributorReference,
                     context,
-                    _extensionInvocationCatalog,
+                    _rpcCatalog,
                     AgentEditorInvocationOperation.Discovery,
                     ticket.Request.CancellationToken);
                 if (!result.Success)
@@ -252,7 +250,7 @@ public sealed partial class AgentWorkspacesViewModel
         var intent = CaptureEditorIntent(context);
         var result = await field.Section.TryGetApplicableSectionsAsync(
             context,
-            _extensionInvocationCatalog,
+            _rpcCatalog,
             AgentEditorInvocationOperation.Refresh,
             cancellationToken);
         if (!IsCurrentEditorIntent(intent) || !EditorSections.Contains(field.Section))
@@ -306,7 +304,7 @@ public sealed partial class AgentWorkspacesViewModel
     }
 
     private AgentEditorSectionViewModel CreateEditorErrorSection(
-        IPackageExtensionReference<IAgentWorkspaceEditorContributor> contributorReference,
+        AgentRpcReference<IAgentWorkspaceEditorContributor> contributorReference,
         AgentWorkspaceEditorContext context,
         AgentEditorInvocationFailure failure,
         AgentEditorRetryState retryState)
@@ -343,7 +341,7 @@ public sealed partial class AgentWorkspacesViewModel
                 var original = retry.OriginalSection
                     ?? throw new InvalidOperationException("A save retry requires the original editor section.");
                 var save = await original.TrySaveAsync(
-                    _extensionInvocationCatalog,
+                    _rpcCatalog,
                     _lifetimeCancellation.Token);
                 if (!CanApplyEditorRetry(errorSection, retry.Intent))
                 {
@@ -365,7 +363,7 @@ public sealed partial class AgentWorkspacesViewModel
 
             var sections = await errorSection.TryGetApplicableSectionsAsync(
                 errorSection.Context,
-                _extensionInvocationCatalog,
+                _rpcCatalog,
                 retry.Kind == AgentEditorRetryKind.Discovery
                     ? AgentEditorInvocationOperation.Discovery
                     : AgentEditorInvocationOperation.Refresh,
@@ -509,7 +507,7 @@ public sealed partial class AgentWorkspacesViewModel
             }
 
             var result = await section.TrySaveAsync(
-                _extensionInvocationCatalog,
+                _rpcCatalog,
                 cancellationToken);
             if (!result.Success)
             {

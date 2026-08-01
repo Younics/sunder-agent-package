@@ -19,6 +19,100 @@ public sealed class AgentSessionContinuityTests
         ContextWindowTokens: 128_000,
         MaxOutputTokens: 8_192);
 
+    [Theory]
+    [InlineData(4_000, 1_000, 2_000)]
+    [InlineData(20_000, 4_000, 4_000)]
+    [InlineData(100_000, 10_000, 8_000)]
+    public void RecentTailBudget_UsesQuarterOfUsableContextWithinBounds(
+        int contextWindowTokens,
+        int maxOutputTokens,
+        int expected)
+    {
+        var capabilities = DefaultCapabilities with
+        {
+            ContextWindowTokens = contextWindowTokens,
+            MaxOutputTokens = maxOutputTokens,
+        };
+
+        Assert.Equal(expected, AgentSessionContextProjectionService.EstimateRecentTailBudgetTokens(capabilities));
+    }
+
+    [Fact]
+    public async Task Projection_LongHistoryWithoutCompactionRequestDoesNotCreateCheckpoint()
+    {
+        using var fixture = ContinuityFixture.CreateStartedWithHistory(40);
+
+        var projection = await fixture.BuildProjectionAsync(compactContext: false);
+
+        Assert.Null(projection.ContextCheckpoint);
+        Assert.False(projection.SummaryUpdated);
+        Assert.Equal(0, projection.OmittedHistoricalTurnCount);
+        Assert.Equal(41, projection.PromptTurns.Count);
+    }
+
+    [Fact]
+    public async Task ExplicitCompaction_RetainsTwoRecentUserDelimitedExchanges()
+    {
+        using var fixture = ContinuityFixture.CreateStartedWithHistory(10);
+        var turns = fixture.Store.ListTurns(fixture.SessionId);
+
+        var projection = await fixture.BuildProjectionAsync();
+
+        Assert.Equal(8, projection.OmittedHistoricalTurnCount);
+        Assert.Equal(
+            turns.Skip(8).Select(turn => turn.TurnId),
+            projection.PromptTurns.Select(turn => turn.TurnId));
+    }
+
+    [Fact]
+    public async Task ExplicitCompaction_RetainsFittingSuffixOfOversizedOlderExchange()
+    {
+        using var fixture = ContinuityFixture.Create();
+        var olderUser = fixture.Store.AppendTextTurn(
+            fixture.SessionId,
+            AgentMessageRole.User,
+            "oversized request");
+        var oversizedAssistant = fixture.Store.AppendTextTurn(
+            fixture.SessionId,
+            AgentMessageRole.Assistant,
+            new string('x', 12_000));
+        var fittingSuffix = fixture.Store.AppendTextTurn(
+            fixture.SessionId,
+            AgentMessageRole.Assistant,
+            "fitting suffix");
+        fixture.StartRun();
+        var constrained = DefaultCapabilities with
+        {
+            ContextWindowTokens = 4_000,
+            MaxOutputTokens = 1_000,
+        };
+
+        var projection = await fixture.BuildProjectionAsync(constrained);
+
+        Assert.Equal(2, projection.OmittedHistoricalTurnCount);
+        Assert.DoesNotContain(projection.PromptTurns, turn => turn.TurnId == olderUser.TurnId);
+        Assert.DoesNotContain(projection.PromptTurns, turn => turn.TurnId == oversizedAssistant.TurnId);
+        Assert.Contains(projection.PromptTurns, turn => turn.TurnId == fittingSuffix.TurnId);
+        Assert.Contains(projection.PromptTurns, turn => turn.TurnId == fixture.ActiveUserTurnId);
+    }
+
+    [Fact]
+    public async Task Projection_ReusesCheckpointWhileCurrentRawTailGrows()
+    {
+        using var fixture = ContinuityFixture.CreateStartedWithHistory(40);
+        var compacted = await fixture.BuildProjectionAsync();
+        var appended = fixture.AppendCurrentRunAssistantText("short response");
+
+        var projection = await fixture.BuildProjectionAsync(compactContext: false);
+
+        Assert.False(projection.SummaryUpdated);
+        Assert.Equal(
+            compacted.ContextCheckpoint?.ContextCheckpointId,
+            projection.ContextCheckpoint?.ContextCheckpointId);
+        Assert.Equal(compacted.OmittedHistoricalTurnCount, projection.OmittedHistoricalTurnCount);
+        Assert.Contains(projection.PromptTurns, turn => turn.TurnId == appended.TurnId);
+    }
+
     [Fact]
     public async Task Projection_UsesContiguousPrefix_WhenToolPairCrossesInitialBoundary()
     {
@@ -28,13 +122,13 @@ public sealed class AgentSessionContinuityTests
         {
             turns.Add(index switch
             {
-                3 => fixture.Store.AppendToolCallTurn(
+                17 => fixture.Store.AppendToolCallTurn(
                     fixture.SessionId,
                     AgentMessageRole.Assistant,
                     "crossing-call",
                     "read",
                     "{\"path\":\"src/Crossing.cs\"}"),
-                5 => fixture.Store.AppendToolResultTurn(
+                19 => fixture.Store.AppendToolResultTurn(
                     fixture.SessionId,
                     "crossing-call",
                     "read",
@@ -57,10 +151,9 @@ public sealed class AgentSessionContinuityTests
 
         var projection = await fixture.BuildProjectionAsync();
 
-        Assert.Equal(6, projection.OmittedHistoricalTurnCount);
-        Assert.Equal(turns[5].TurnId, projection.ContextCheckpoint!.LastOmittedTurnId);
-        Assert.Equal(turns.Skip(6).Select(turn => turn.TurnId).Append(fixture.ActiveUserTurnId),
-            projection.PromptTurns.Select(turn => turn.TurnId));
+        Assert.Equal(20, projection.OmittedHistoricalTurnCount);
+        Assert.Equal(turns[19].TurnId, projection.ContextCheckpoint!.LastOmittedTurnId);
+        Assert.Equal([fixture.ActiveUserTurnId], projection.PromptTurns.Select(turn => turn.TurnId));
     }
 
     [Fact]
@@ -134,7 +227,7 @@ public sealed class AgentSessionContinuityTests
         var projectedTokens = projection.PromptTurns.Sum(AgentProviderRequestBudget.EstimateTurnTokens);
 
         Assert.NotNull(projection.ContextCheckpoint);
-        Assert.True(projectedTokens <= limits.ProactiveInputLimitTokens);
+        Assert.True(projectedTokens <= limits.HardInputLimitTokens);
     }
 
     [Fact]
@@ -744,10 +837,18 @@ public sealed class AgentSessionContinuityTests
                 _sourceRun!.Key.RunId,
                 _sourceRun.Key.RunRevision)!;
 
+        public AgentTurnRecord AppendCurrentRunAssistantText(string text)
+            => Store.TryAppendTextTurn(
+                _sourceRun!.Key,
+                _sourceRun.Epoch,
+                AgentMessageRole.Assistant,
+                text) ?? throw new InvalidOperationException("Could not append the current run assistant turn.");
+
         public Task<AgentSessionPromptProjection> BuildProjectionAsync(
             AgentProviderRunCapabilities? capabilities = null,
             int promptOverheadTokens = 0,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            bool compactContext = true)
         {
             var service = new AgentSessionContextProjectionService(SessionService, _refiner);
             return service.BuildProjectionAsync(
@@ -758,7 +859,8 @@ public sealed class AgentSessionContinuityTests
                 _sourceRun!.Key.RunId,
                 _sourceRun.Key.RunRevision,
                 promptOverheadTokens,
-                cancellationToken);
+                cancellationToken,
+                compactContext: compactContext);
         }
 
         public void Dispose() => _scope.Dispose();

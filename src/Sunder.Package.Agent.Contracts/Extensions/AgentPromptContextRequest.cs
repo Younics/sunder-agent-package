@@ -1,5 +1,6 @@
+using System.Text.Json.Serialization;
 using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Contracts.Models;
 
@@ -64,5 +65,6 @@ public sealed record AgentPromptContextRequest(
     public long TranscriptEpoch { get; init; }
 
     /// <summary>Gets an opaque reference to the exact execution-target activation selected for this prompt-context callback.</summary>
-    public IPackageExtensionReference<IAgentExecutionTarget>? ExecutionTargetReference { get; init; }
+    [JsonIgnore]
+    public AgentRpcReference<IAgentExecutionTarget>? ExecutionTargetReference { get; init; }
 }

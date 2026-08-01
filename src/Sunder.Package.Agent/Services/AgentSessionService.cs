@@ -1,21 +1,20 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Runtime;
-using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed partial class AgentSessionService(AgentLocalStore store, IPackageExtensionCatalog? extensionCatalog = null)
+public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcCatalog? rpcCatalog = null)
     : IAgentSessionGateway,
       IAgentTurnMutationGateway,
       IAgentTranscriptHeaderGateway,
       IAgentTranscriptToolDetailGateway
 {
     private readonly AgentLocalStore _store = store;
-    private readonly IPackageExtensionCatalog? _extensionCatalog = extensionCatalog;
+    private readonly AgentRpcCatalog? _rpcCatalog = rpcCatalog;
 
     internal AgentLocalStore Store => _store;
 
@@ -154,19 +153,19 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
         => string.Equals(workspaceId, AgentLocalStore.UnassignedSessionsWorkspaceId, StringComparison.OrdinalIgnoreCase);
 
     internal IReadOnlyList<AgentSessionDataCleanerIdentity> SnapshotSessionDataCleaners()
-        => SnapshotSessionDataCleaners(_extensionCatalog);
+        => SnapshotSessionDataCleaners(_rpcCatalog);
 
     internal static IReadOnlyList<AgentSessionDataCleanerIdentity> SnapshotSessionDataCleaners(
-        IPackageExtensionCatalog? extensionCatalog)
+        AgentRpcCatalog? rpcCatalog)
     {
-        if (extensionCatalog is null)
+        if (rpcCatalog is null)
         {
             return [];
         }
 
-        var cleaners = AgentExtensionInvocation.Snapshot(
-            AgentExtensionInvocation.Require(extensionCatalog),
-            PackageExtensionPoints.SessionDataCleaners,
+        var cleaners = AgentRpcInvocation.Snapshot(
+            rpcCatalog,
+            AgentRpcServices.SessionCleaners,
             static cleaner => cleaner.CleanerId);
         return cleaners
             .Where(cleaner => !string.IsNullOrWhiteSpace(cleaner.PackageId)
@@ -182,14 +181,14 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IPackageE
 
     private void DispatchPendingSessionCleanup()
     {
-        if (_extensionCatalog is null)
+        if (_rpcCatalog is null)
         {
             return;
         }
 
         try
         {
-            AgentSessionCleanupDispatcher.DispatchAvailableNow(_store, _extensionCatalog);
+            AgentSessionCleanupDispatcher.DispatchAvailableNow(_store, _rpcCatalog);
         }
         catch
         {

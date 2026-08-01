@@ -8,6 +8,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Execution.Docker;
 using Sunder.Package.Agent.Execution.Local;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tests;
 using Sunder.Package.Agent.Tools.Files;
 using Sunder.Sdk.Abstractions;
@@ -359,13 +360,16 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
                     path,
                     allowOutsideConfiguredScope: true)))
             : CreateDockerResolvingTarget(root);
-        var source = new FilesToolSource(new SingleTargetCatalog(target));
+        using var packageScope = RegressionTestPackageScope.Create();
+        using var catalog = new RegressionTestExtensionCatalog();
+        catalog.AddProvider(AgentRpcServices.ExecutionTargets, target);
+        var source = new FilesToolSource(packageScope.Context);
         var now = DateTimeOffset.UtcNow;
         var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
-            PackageExtensionPoints.ExecutionTargets.Id,
+            AgentRpcContractIds.ExecutionTarget,
             target.Descriptor.TargetId,
             "primary-execution-target",
             true,
@@ -376,7 +380,10 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         var patch = $"*** Begin Patch\n*** Update File: policy-alias.md\n@@\n-old policy\n+new policy\n*** Add File: {otherPath}\n+changed\n*** End Patch";
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding),
+            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
+            {
+                ExecutionTargetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+            },
             new AgentToolRequest("apply_patch", JsonSerializer.Serialize(new { patchText = patch })));
 
         Assert.True(result.IsError);
@@ -830,20 +837,6 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             return File.WriteAllBytesAsync(path, content);
         }
-    }
-
-    private sealed class SingleTargetCatalog(IAgentExecutionTarget target) : IPackageExtensionCatalog
-    {
-        public IReadOnlyList<TContract> GetExtensions<TContract>(PackageExtensionPoint<TContract> extensionPoint)
-            => string.Equals(extensionPoint.Id, PackageExtensionPoints.ExecutionTargets.Id, StringComparison.Ordinal)
-                ? [((TContract)(object)target)]
-                : [];
-
-        public IReadOnlyList<PackageExtensionContribution<TContract>> GetExtensionContributions<TContract>(
-            PackageExtensionPoint<TContract> extensionPoint)
-            => GetExtensions(extensionPoint)
-                .Select(extension => new PackageExtensionContribution<TContract>("test.package", extension))
-                .ToArray();
     }
 
     private sealed class ResolvingExecutionTarget(

@@ -2,7 +2,8 @@ using System.Text.Json;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Builder;
@@ -92,26 +93,24 @@ internal sealed class BuilderLocalRuntimeGateway(IAgentWorkspaceExecutionResolve
 
 internal sealed class BuilderRuntimeHandler : IPackageRuntimeOperationHandler<BuilderRuntimeRequest, BuilderRuntimeResponse>
 {
-    private readonly IPackageExtensionInvocationCatalog _invocations;
+    private readonly AgentRpcCatalog _rpcCatalog;
 
-    public BuilderRuntimeHandler(IPackageExtensionCatalog extensionCatalog)
-    {
-        _invocations = extensionCatalog as IPackageExtensionInvocationCatalog
-            ?? throw new InvalidOperationException(
-                "The host extension catalog does not support activation-scoped invocation leases.");
-    }
+    public BuilderRuntimeHandler(AgentRpcCatalog rpcCatalog) => _rpcCatalog = rpcCatalog;
 
     public async ValueTask<BuilderRuntimeResponse> HandleAsync(
         BuilderRuntimeRequest request,
         CancellationToken cancellationToken = default)
     {
-        var reference = _invocations
-            .GetExtensionReferences(PackageExtensionPoints.WorkspaceExecutionResolvers)
-            .FirstOrDefault()
-            ?? throw new InvalidOperationException("Agent workspace execution service is unavailable.");
+        var reference = _rpcCatalog
+            .GetServiceReferences(AgentRpcServices.WorkspaceExecutionResolvers)
+            .FirstOrDefault();
+        if (reference is null)
+        {
+            throw WorkspaceExecutionUnavailable();
+        }
         if (!reference.TryAcquire(out var lease))
         {
-            throw new InvalidOperationException("Agent workspace execution service is unavailable.");
+            throw WorkspaceExecutionUnavailable();
         }
 
         BuilderRuntimeResponse response;
@@ -123,7 +122,7 @@ internal sealed class BuilderRuntimeHandler : IPackageRuntimeOperationHandler<Bu
             try
             {
                 response = await BuilderRuntimeExecutor
-                    .ExecuteAsync(lease.Contribution, request, invocation.Token)
+                    .ExecuteAsync(lease.Service, request, invocation.Token)
                     .ConfigureAwait(false);
                 if (lease.RetirementToken.IsCancellationRequested
                     && !cancellationToken.IsCancellationRequested)
@@ -148,6 +147,17 @@ internal sealed class BuilderRuntimeHandler : IPackageRuntimeOperationHandler<Bu
         }
         return response;
     }
+
+    private SunderRpcException WorkspaceExecutionUnavailable()
+        => new(_rpcCatalog.AvailabilityError is
+            {
+                Kind: SunderRpcErrorKind.PermissionDenied or SunderRpcErrorKind.Unavailable,
+            } error
+            ? error
+            : new SunderRpcError(
+                SunderRpcErrorKind.Unavailable,
+                "agent.builder.workspace-execution-unavailable",
+                "Agent workspace execution service is unavailable."));
 }
 
 internal static class BuilderRuntimeExecutor
@@ -177,7 +187,7 @@ internal static class BuilderRuntimeExecutor
             resolution.Workspace,
             resolution.Binding);
         var targetReference = resolution.ExecutionTargetReference
-            ?? new CompatibilityTargetReference(resolution.ExecutionTarget);
+            ?? throw new InvalidOperationException("Workspace resolution did not retain its exact execution-target activation.");
         if (!targetReference.TryAcquire(out var targetLease))
         {
             throw new InvalidOperationException("The selected execution-target package is unavailable.");
@@ -188,7 +198,7 @@ internal static class BuilderRuntimeExecutor
             using var targetInvocation = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken,
                 targetLease.RetirementToken);
-            var target = targetLease.Contribution;
+            var target = targetLease.Service;
             var invocationToken = targetInvocation.Token;
             BuilderRuntimeResponse response;
             try
@@ -205,11 +215,12 @@ internal static class BuilderRuntimeExecutor
                             resolution.Target,
                             resolution.Scope,
                             shell,
-                            target is IAgentExecutionPathMapper,
-                            target is IAgentExecutionPathEnvironment));
+                            AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.PathMapping),
+                            AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.PathEnvironment)));
                         break;
                     case BuilderRuntimeOperationKind.ExecuteProcess:
-                        var processResult = target is IAgentProcessExecutionTarget processTarget
+                        var processResult = AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ProcessExecution)
+                            && target is IAgentProcessExecutionTarget processTarget
                             ? await processTarget.ExecuteProcessAsync(
                                 context,
                                 new AgentProcessCommandRequest(
@@ -242,7 +253,8 @@ internal static class BuilderRuntimeExecutor
                         response = new BuilderRuntimeResponse(Process: ProjectProcessResult(shellResult));
                         break;
                     case BuilderRuntimeOperationKind.MapToHostPath:
-                        if (target is not IAgentExecutionPathMapper mapper)
+                        if (!resolution.Target.SupportsFacet(AgentExecutionFacetIds.PathMapping)
+                            || target is not IAgentExecutionPathMapper mapper)
                         {
                             throw new NotSupportedException("The selected execution target does not map execution paths to host paths.");
                         }
@@ -252,7 +264,8 @@ internal static class BuilderRuntimeExecutor
                             invocationToken).ConfigureAwait(false));
                         break;
                     case BuilderRuntimeOperationKind.AddPathEntry:
-                        if (target is IAgentExecutionPathEnvironment pathEnvironment)
+                        if (resolution.Target.SupportsFacet(AgentExecutionFacetIds.PathEnvironment)
+                            && target is IAgentExecutionPathEnvironment pathEnvironment)
                         {
                             await pathEnvironment.AddPathEntryAsync(
                                 context,
@@ -351,47 +364,6 @@ internal static class BuilderRuntimeExecutor
     private static string? TruncateNullable(string? value, int maximumCharacters)
         => value is null ? null : Truncate(value, maximumCharacters);
 
-    private sealed class CompatibilityTargetReference(IAgentExecutionTarget target)
-        : IPackageExtensionReference<IAgentExecutionTarget>
-    {
-        public bool TryAcquire(
-            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-            out IPackageExtensionLease<IAgentExecutionTarget>? lease)
-        {
-            lease = new CompatibilityTargetLease(target);
-            return true;
-        }
-    }
-
-    private sealed class CompatibilityTargetLease(IAgentExecutionTarget target)
-        : IPackageExtensionLease<IAgentExecutionTarget>
-    {
-        private IAgentExecutionTarget? _target = target;
-
-        public string PackageId
-        {
-            get
-            {
-                ObjectDisposedException.ThrowIf(_target is null, this);
-                return "sunder.package.agent.builder.compatibility";
-            }
-        }
-
-        public IAgentExecutionTarget Contribution
-            => Volatile.Read(ref _target)
-               ?? throw new ObjectDisposedException(nameof(CompatibilityTargetLease));
-
-        public CancellationToken RetirementToken
-        {
-            get
-            {
-                ObjectDisposedException.ThrowIf(_target is null, this);
-                return CancellationToken.None;
-            }
-        }
-
-        public void Dispose() => Interlocked.Exchange(ref _target, null);
-    }
 }
 
 internal sealed class BuilderRuntimeExecutionTargetProxy(

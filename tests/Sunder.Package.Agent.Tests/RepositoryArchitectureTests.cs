@@ -1,14 +1,150 @@
 using System.Reflection;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Sunder.Package.Agent.Contracts;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class RepositoryArchitectureTests
 {
+    [Fact]
+    public void AgentRpcContracts_AreExactEmbeddedAndEnvelopeFree()
+    {
+        var contractsRoot = Path.Combine(
+            AgentPackageRepositoryInventory.RepositoryRoot.FullName,
+            "src",
+            "Sunder.Package.Agent.Contracts",
+            "Contracts");
+        var checkedIn = Directory.EnumerateFiles(contractsRoot, "*.rpc.json", SearchOption.TopDirectoryOnly)
+            .Select(File.ReadAllBytes)
+            .Select(static bytes => SunderRpcContractDescriptor.Parse(bytes))
+            .OrderBy(static descriptor => descriptor.ContractId, StringComparer.Ordinal)
+            .ToArray();
+        var embedded = AgentRpcContractDescriptors.All
+            .OrderBy(static descriptor => descriptor.ContractId, StringComparer.Ordinal)
+            .ToArray();
+        var generatedRoot = Path.Combine(
+            AgentPackageRepositoryInventory.RepositoryRoot.FullName,
+            "src",
+            "Sunder.Package.Agent.Contracts",
+            "Rpc",
+            "Generated");
+
+        Assert.Equal(18, checkedIn.Length);
+        Assert.Equal(18, Directory.EnumerateFiles(generatedRoot, "*.g.cs", SearchOption.TopDirectoryOnly).Count());
+        Assert.Equal(checkedIn.Select(static descriptor => descriptor.ContractId), embedded.Select(static descriptor => descriptor.ContractId));
+        Assert.Equal(checkedIn.Select(static descriptor => descriptor.Sha256), embedded.Select(static descriptor => descriptor.Sha256));
+        foreach (var descriptor in checkedIn)
+        {
+            Assert.DoesNotContain("Payload", descriptor.Definitions.Keys, StringComparer.Ordinal);
+            foreach (var method in descriptor.Services.SelectMany(static service => service.Methods))
+            {
+                Assert.NotEqual("#/$defs/Payload", method.RequestSchemaReference);
+                Assert.NotEqual("#/$defs/Payload", method.OutputSchemaReference);
+            }
+            var serviceName = string.Concat(Assert.Single(descriptor.Services).ServiceId
+                .Split('-')
+                .Select(static part => char.ToUpperInvariant(part[0]) + part[1..]));
+            var generated = SunderRpcCSharpGenerator.Generate(
+                descriptor,
+                "Sunder.Package.Agent.Protocol.Generated." + serviceName);
+            Assert.DoesNotContain("AgentRpcPayload", generated, StringComparison.Ordinal);
+            Assert.Contains("Provider", generated, StringComparison.Ordinal);
+            Assert.Contains("Client", generated, StringComparison.Ordinal);
+            Assert.Equal(generated, File.ReadAllText(Path.Combine(generatedRoot, serviceName + ".g.cs")));
+        }
+    }
+
+    [Fact]
+    public void AgentProtocolIdentityDescriptorsAndCapabilityInventory_AreCanonicalV1()
+    {
+        var root = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
+        var protocolRoot = Path.Combine(root, "src", "Sunder.Package.Agent.Contracts");
+        var project = XDocument.Load(Path.Combine(protocolRoot, "Sunder.Package.Agent.Contracts.csproj"));
+        Assert.Equal("Sunder.Package.Agent.Protocol", GetSingleProperty(project, "AssemblyName"));
+        Assert.Equal("Sunder.Package.Agent.Protocol", GetSingleProperty(project, "PackageId"));
+
+        var descriptors = Directory.EnumerateFiles(
+                Path.Combine(protocolRoot, "Contracts"),
+                "*.rpc.json",
+                SearchOption.TopDirectoryOnly)
+            .Select(File.ReadAllBytes)
+            .Select(static bytes => SunderRpcContractDescriptor.Parse(bytes))
+            .OrderBy(static descriptor => descriptor.ContractId, StringComparer.Ordinal)
+            .ToArray();
+        var buildAssets = XDocument.Load(Path.Combine(
+                protocolRoot,
+                "buildTransitive",
+                "Sunder.Package.Agent.Protocol.props"))
+            .Descendants("SunderContractBundle")
+            .OrderBy(static item => item.Attribute("ContractId")?.Value, StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(18, descriptors.Length);
+        Assert.Equal(
+            descriptors.Select(static descriptor => descriptor.ContractId),
+            buildAssets.Select(static item => item.Attribute("ContractId")?.Value));
+
+        var inventoryPath = Path.Combine(root, "packages.json");
+        using var inventory = JsonDocument.Parse(File.ReadAllBytes(inventoryPath));
+        Assert.Equal("2.0.0", inventory.RootElement.GetProperty("releaseVersion").GetString());
+        var packages = inventory.RootElement.GetProperty("packages").EnumerateArray().ToArray();
+        Assert.Equal(16, packages.Length);
+        var protocol = Assert.Single(packages, static package =>
+            package.GetProperty("key").GetString() == "agent-protocol");
+        Assert.Equal("Sunder.Package.Agent.Protocol", protocol.GetProperty("packageId").GetString());
+        Assert.Equal("nuget", protocol.GetProperty("artifactType").GetString());
+
+        foreach (var package in inventory.RootElement.GetProperty("capabilities").EnumerateObject())
+        {
+            var capabilities = package.Value.EnumerateArray()
+                .Select(static item => item.GetString())
+                .ToArray();
+            Assert.DoesNotContain("stacks.contributions.v1", capabilities, StringComparer.Ordinal);
+            if (capabilities.Contains("stacks.v1", StringComparer.Ordinal))
+            {
+                Assert.Contains("stacks.rpc.v1", capabilities, StringComparer.Ordinal);
+            }
+        }
+
+        var ratchetedText = File.ReadAllText(inventoryPath)
+            + string.Join('\n', Directory.EnumerateFiles(Path.Combine(root, "docs"), "*.md")
+                .Select(File.ReadAllText))
+            + File.ReadAllText(Path.Combine(root, "README.md"));
+        Assert.DoesNotContain("StackContributionsV1", ratchetedText, StringComparison.Ordinal);
+        Assert.DoesNotContain("stacks.contributions.v1", ratchetedText, StringComparison.Ordinal);
+        Assert.DoesNotContain("IPackageExtensionCatalog", ratchetedText, StringComparison.Ordinal);
+        Assert.DoesNotContain("IPackageExtensionInvocationCatalog", ratchetedText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AgentRpcBindings_DoNotUseOpaquePayloadOrLegacyExtensionTransport()
+    {
+        var sourceRoot = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "src");
+        var source = string.Join('\n', Directory.EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(AgentPackageRepositoryInventory.IsSourceFile)
+            .Select(File.ReadAllText));
+        var prohibited = new[]
+        {
+            "AgentRpcPayload",
+            "AddPayloadUnary",
+            "AddPayloadStream",
+            "InvokePayloadAsync",
+            "SubscribePayloadAsync",
+            "PackageExtensionPoints",
+            "IPackageExtensionCatalog",
+            "IPackageExtensionInvocationCatalog",
+            "GetExtensionReferences",
+            "GetExtensionContributions",
+        };
+
+        Assert.All(prohibited, token => Assert.DoesNotContain(token, source, StringComparison.Ordinal));
+    }
+
     [Fact]
     public void ProductionProjectReferences_FollowSharedAssemblyDirection()
     {
@@ -62,6 +198,7 @@ public sealed partial class RepositoryArchitectureTests
             "Extensions",
             "Models",
             "Providers",
+            "Rpc",
             "Runtime",
             "Tools",
         };
@@ -85,15 +222,17 @@ public sealed partial class RepositoryArchitectureTests
                 StringComparison.Ordinal));
         }
 
-        var publicNamespaces = typeof(PackageExtensionPoints).Assembly.ExportedTypes
+        var publicNamespaces = typeof(Sunder.Package.Agent.Contracts.Contracts.IAgentChatProvider).Assembly.ExportedTypes
             .Select(static type => type.Namespace)
             .Where(static value => value is not null)
             .ToHashSet(StringComparer.Ordinal);
         Assert.DoesNotContain(publicNamespaces, namespaceName => namespaceName is not
-            ("Sunder.Package.Agent.Contracts"
-            or "Sunder.Package.Agent.Contracts.Contracts"
-            or "Sunder.Package.Agent.Contracts.Models"
-            or "Sunder.Package.Agent.Contracts.Services"));
+                 ("Sunder.Package.Agent.Contracts"
+                 or "Sunder.Package.Agent.Contracts.Contracts"
+                 or "Sunder.Package.Agent.Contracts.Models"
+                 or "Sunder.Package.Agent.Contracts.Services"
+                 or "Sunder.Package.Agent.Protocol")
+             && !namespaceName!.StartsWith("Sunder.Package.Agent.Protocol.Generated.", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -144,7 +283,7 @@ public sealed partial class RepositoryArchitectureTests
         Assert.Equal("true", GetSingleProperty(buildProperties, "TreatWarningsAsErrors"));
         Assert.Equal("true", GetSingleProperty(buildProperties, "Deterministic"));
         Assert.Equal("true", GetSingleProperty(buildProperties, "EnableNETAnalyzers"));
-        Assert.Equal("1.1.0", GetSingleProperty(buildProperties, "VersionPrefix"));
+        Assert.Equal("2.0.0", GetSingleProperty(buildProperties, "VersionPrefix"));
         Assert.Equal("GPL-3.0-only", GetSingleProperty(buildProperties, "PackageLicenseExpression"));
 
         var packageProperties = XDocument.Load(Path.Combine(repositoryRoot, "Directory.Packages.props"));
@@ -161,7 +300,7 @@ public sealed partial class RepositoryArchitectureTests
         foreach (var package in AgentPackageRepositoryInventory.GetRuntimePackageProjects()
                      .Where(static package => !string.Equals(package.Name, "Sunder.Package.Agent", StringComparison.Ordinal)))
         {
-            Assert.Matches(BaseAgentV1DependencyPattern(), File.ReadAllText(package.MetadataPath));
+            Assert.Matches(BaseAgentV2DependencyPattern(), File.ReadAllText(package.MetadataPath));
         }
 
         var editorConfig = File.ReadAllText(Path.Combine(repositoryRoot, ".editorconfig"));
@@ -289,6 +428,6 @@ public sealed partial class RepositoryArchitectureTests
     private static string NormalizePath(string path)
         => path.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
 
-    [GeneratedRegex("SunderPackageDependency\\s*\\(\\s*PackageId\\s*=\\s*\"sunder\\.package\\.agent\"\\s*,\\s*VersionRange\\s*=\\s*\">=1\\.1\\.0 <1\\.2\\.0\"", RegexOptions.CultureInvariant)]
-    private static partial Regex BaseAgentV1DependencyPattern();
+    [GeneratedRegex("SunderPackageDependency\\s*\\(\\s*PackageId\\s*=\\s*\"sunder\\.package\\.agent\"\\s*,\\s*VersionRange\\s*=\\s*\">=2\\.0\\.0 <3\\.0\\.0\"", RegexOptions.CultureInvariant)]
+    private static partial Regex BaseAgentV2DependencyPattern();
 }

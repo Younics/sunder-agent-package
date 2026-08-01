@@ -1,4 +1,5 @@
 using Sunder.Package.Agent.Subagents.Runtime;
+using Sunder.Package.Agent.Subagents.PackageViews;
 using Sunder.Sdk.Runtime;
 using Xunit;
 
@@ -13,5 +14,16 @@ public sealed class SubagentGatewayLifetimeTests
 
         gateway.Dispose();
         gateway.Dispose();
+    }
+
+    [Fact]
+    public async Task SubsessionsViewModel_DisposeDoesNotDisposeSharedAppRuntimeGateway()
+    {
+        using var gateway = new SubagentAppRuntimeGateway(NullPackageRuntimeClient.Instance);
+        var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway);
+
+        viewModel.Dispose();
+
+        await gateway.InitializeAsync();
     }
 }

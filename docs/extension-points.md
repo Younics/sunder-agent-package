@@ -1,79 +1,53 @@
-# Extension-Point Catalog
+# RPC Contract Catalog
 
-`PackageExtensionPoints` defines 19 typed Agent extension points. This catalog records their role, data-flow direction, effective cardinality, ordering, ownership, and failure behavior in the 1.1 implementation.
+Agent 2.x exposes every cross-package capability through exactly 18 schema-first Sunder RPC contracts. There is no second object-discovery path. Each provider declaration has a stable provider id, contract id, contract version, host-stamped owner, and opaque endpoint reference.
 
-## Catalog Rules
+## Contract Rules
 
-- **Role is local.** Runtime and App have separate `IPackageExtensionCatalog` instances. Register Runtime behavior through `ISunderRuntimeContributionRegistry`; register App presentation through `ISunderAppContributionRegistry`.
-- **The registrar owns the contribution.** `RegisterExtension` attributes every instance to the activating package. The host retains it for that activation and removes it on deactivation. `GetExtensionContributions` is the authoritative owner lookup for immediate snapshots; activation-spanning calls use `IPackageExtensionInvocationCatalog`.
-- **Autonomous invocation uses owner leases.** Agent consumers retain only opaque activation references between calls, acquire before reading owner or contribution metadata, link callbacks to the exact owner's retirement token, and release promptly. Once retirement starts, an old reference cannot acquire a same-package-id replacement, and retirement drains only leases from that exact activation.
-- **Catalog order is deterministic host order, not a precedence API.** Agent consumers often sort or select by stable ids. Never depend on package activation order to win an id collision.
-- **Duplicate semantic ids are not rejected at registration.** Depending on the consumer, the first match wins or later entries are deduplicated. Use globally stable ids and test with other installed packages.
-- **Cancellation propagates.** Optional pipelines that isolate contributor failures still rethrow `OperationCanceledException`.
-- **Base ports are not open competitions.** `RuntimeCatalogs`, `WorkspaceExecutionResolvers`, and `ChildRunExecutors` are published by `sunder.package.agent` for peer packages to consume. Do not register a competing implementation.
+- Bundle every imported or provided descriptor locally. `Sunder.Package.Agent.Protocol` supplies all 18 first-party descriptors through `buildTransitive` assets.
+- Declare providers with `SunderRpcProvider` and publish the matching handler with `RegisterRpcProvider`.
+- Declare consumers with `SunderUsesContract`; discovery and invocation remain default-denied unless the package manifest grants the relevant action.
+- Retain endpoint references, not provider objects. A reference names one exact activation and becomes stale when that activation retires.
+- The host validates each request, response, and stream event against the selected method schema before forwarding it.
+- Provider retirement cancels in-flight work with `StaleEndpoint` and waits for exact-activation calls to drain.
+- Catalog order is not a precedence API. Resolve semantic ids explicitly and reject or deterministically handle duplicates.
+- Runtime catalog, run control, workspace resolution, and child execution are base-Agent-owned ports. Peer packages consume them and must not publish competing providers.
 
-Cardinality below describes the effective active catalog. `0..N` means any number of packages may contribute. `1 base` means peers should consume the single base-Agent contribution with `FirstOrDefault`-style absence handling.
+## Provider Contracts
 
-### Invocation-Lease Audit
+| Contract id | Service | Typical owner | Shape |
+| --- | --- | --- | --- |
+| `sunder.agent.chat.provider` | `chat-provider` | Model provider package | Metadata/readiness unary calls plus bounded chat event stream |
+| `sunder.agent.embedding.provider` | `embedding-provider` | Model provider package | Metadata, space identity, single and batch generation |
+| `sunder.agent.behavior.loop` | `behavior-loop` | Base Agent or orchestration package | Loop descriptor and one run invocation |
+| `sunder.agent.tool.source` | `tool-source` | Tool, MCP, skill, or subagent package | Discovery, readiness, preflight, permission, execution, presentation |
+| `sunder.agent.execution.target` | `execution-target` | Local, container, or remote execution package | Declared execution facets and bounded operations |
+| `sunder.agent.permission.surface` | `permission-surface` | Tool or execution package | Stable action and boundary declarations |
+| `sunder.agent.system.prompt.contributor` | `system-prompt-contributor` | Trusted instruction package | Identity and trusted prompt blocks |
+| `sunder.agent.prompt.context.contributor` | `prompt-context-contributor` | Memory, skill, files, or subagent package | Reference context and optional acknowledgment |
+| `sunder.agent.durable.lifecycle.observer` | `durable-lifecycle-observer` | Package with durable derived state | Identity and at-least-once lifecycle delivery |
+| `sunder.agent.profile.capability.consumer` | `profile-capability-consumer` | Capability-consuming package | Static profile capability declaration |
+| `sunder.agent.selectable.capability.provider` | `selectable-capability-provider` | MCP, skill, or subagent package | Capability list plus change stream |
+| `sunder.agent.session.cleaner` | `session-cleaner` | Package with session-local state | Identity and idempotent session deletion |
+| `sunder.agent.workspace.path.migrator` | `workspace-path-migrator` | Execution package | Prior-path discovery and completion |
+| `sunder.agent.workspace.editor` | `workspace-editor` | Execution package | Editor sections and validated save requests |
 
-Provider and behavior-loop selection, tool discovery/readiness/preflight/execution, execution targets, prompt contributors and acknowledgment sinks, permission surfaces, workspace editors and migrators, session cleaners, base-Agent service ports, Stack metadata, semantic provider work, lifecycle delivery, and retained selectable-capability notifier subscriptions all preserve exact activation identity. A selected tool, provider, target, child executor, or acknowledgment sink therefore cannot silently dispatch to a replacement contribution with the same semantic or package id.
+## Base-Agent Ports
 
-Durable permission suspension stores the authoritative tool and execution-target package owners, not activation objects. In-process resume keeps the original activation references. After process restart, configured resource work may bind a new activation only when both persisted package owners, the advertised descriptor, invocation fingerprint, workspace/binding generations, and complete resource claims still match. Outside Local authority is activation-bound and deliberately requires reapproval instead of restart rebind.
+| Contract id | Service | Purpose |
+| --- | --- | --- |
+| `sunder.agent.runtime.catalog` | `runtime-catalog` | Bounded session, profile, workspace, transcript, and change projections |
+| `sunder.agent.run.control` | `run-control` | Invocation-scoped behavior-loop operations and chat stream |
+| `sunder.agent.workspace.execution.resolver` | `workspace-execution-resolver` | Resolve a workspace to one exact execution-target endpoint |
+| `sunder.agent.child.run.executor` | `child-run-executor` | Launch and correlate durable child sessions |
 
-Intentional compatibility surfaces remain narrow. `AgentProfileService.ListBehaviorLoops`, `ListChatProviders`, and `ListEmbeddingProviders` return immediate raw snapshots for existing callers; new async work uses their descriptor/reference paths. Files, Shell, Skills, Builder, and workspace-editor adapters also retain direct-construction fallbacks for legacy test or shipped call sites that do not supply invocation-aware context. Production host composition supplies `IPackageExtensionInvocationCatalog`; compatibility snapshots must never be queued, cached, or used across an asynchronous boundary.
+## Failure Semantics
 
-## Providers And Orchestration
+- Use typed readiness or result failures for expected provider conditions.
+- Let caller cancellation propagate.
+- Treat `StaleEndpoint` as exact-provider retirement; rediscover only when the operation is safe to retry against a replacement.
+- Treat schema validation failures as protocol defects, not transient provider failures.
+- Durable lifecycle handlers must be idempotent by event id because delivery is at least once.
+- Session cleaners must be bounded and idempotent because pending jobs survive restart and provider absence.
 
-| Extension point and contract | Role | Direction | Cardinality | Agent ordering/resolution | Ownership | Failure semantics |
-| --- | --- | --- | --- | --- | --- | --- |
-| `ChatProviders` (`sunder.package.agent:chat-providers`), `IAgentChatProvider` | Runtime | Extension -> Agent | `0..N` | UI lists by descriptor display name. A profile binding resolves the first case-insensitive `ProviderId` match. | Provider package owns the instance; set descriptor `PackageId` from `IPackageContext.PackageId`, but catalog ownership remains authoritative. | Non-ready state should be returned from `GetReadinessAsync`. Selected-provider exceptions fail or interrupt the run; `AgentChatProviderException` supplies safe visible failure content. |
-| `EmbeddingProviders` (`sunder.package.agent:embedding-providers`), `IAgentEmbeddingProvider` | Runtime | Extension -> Agent and memory packages | `0..N` | UI lists by display name. Bindings resolve the first case-insensitive `ProviderId` match. | Embedding package owns the instance. | Non-ready or missing providers make semantic retrieval unavailable without disabling lexical memory. Generation failures are recorded by the memory indexing worker; cancellation propagates. |
-| `BehaviorLoops` (`sunder.package.agent:behavior-loops`), `IAgentBehaviorLoop` | Runtime | Extension -> Agent | `1..N`, including base default | UI lists by display name. Runtime selects first `LoopId` plus optional `SourceId`; otherwise it falls back to the registered default, then the built-in default object. | Loop package owns custom loops; base Agent owns `default`. | An unhandled custom-loop exception is converted into a failed run and visible assistant failure turn. The loop must return a checkpoint and matching completion kind. |
-| `ProfileCapabilityConsumers` (`sunder.package.agent:profile-capability-consumers`), `IAgentProfileCapabilityConsumer` | Runtime | Extension -> Agent profile editor | `0..N` | Catalog order; Agent tests whether any consumer declares a case-insensitive capability kind. | Consumer package owns its declaration. | Synchronous declaration failures are not isolated by the catalog and reach the caller. Keep declarations static and side-effect free. |
-| `ProfileSelectableCapabilityProviders` (`sunder.package.agent:profile-selectable-capability-providers`), `IAgentProfileSelectableCapabilityProvider` | Runtime | Extension -> Agent profile editor | `0..N` | Providers by display name; results are validated, deduplicated by kind/source/id, then sorted by capability display name. Optional `IAgentProfileSelectableCapabilityChangeNotifier` refreshes active views. | Provider package owns descriptors and notifier subscriptions for its activation. | Listing exceptions fail that catalog refresh. Raise change notifications only after state is durable; do not throw from event accessors or callbacks. |
-
-## Base-Agent Service Ports
-
-| Extension point and contract | Role | Direction | Cardinality | Agent ordering/resolution | Ownership | Failure semantics |
-| --- | --- | --- | --- | --- | --- | --- |
-| `RuntimeCatalogs` (`sunder.package.agent:runtime-catalogs`), `IAgentRuntimeCatalog` | Runtime | Agent -> peer extensions | `1 base` | Consumers use the first contribution. | Base Agent owns session/profile/workspace projections and events. | Absence means Agent is inactive; peers should report unavailable and avoid mutation. Method exceptions propagate to the peer operation. |
-| `WorkspaceExecutionResolvers` (`sunder.package.agent:workspace-execution-resolvers`), `IAgentWorkspaceExecutionResolver` | Runtime | Agent -> peer extensions | `1 base` | Consumers use the first contribution. | Base Agent owns workspace/binding resolution; returned execution target remains owned by its package. | `ResolveAsync` throws for missing workspace, binding, target, readiness, or execution scope. Callers should present the message and preserve cancellation. |
-| `ChildRunExecutors` (`sunder.package.agent:child-run-executors`), `IAgentChildRunExecutor` | Runtime | Agent -> orchestration extensions | `1 base` | Consumers use the first contribution. | Base Agent owns durable child sessions, run state, and parent correlation. | Absence disables child runs. Validation or run failures are returned/thrown through the invoking tool pipeline; parent/run revisions must not be fabricated. |
-
-## Tools, Execution, And Workspace Editing
-
-| Extension point and contract | Role | Direction | Cardinality | Agent ordering/resolution | Ownership | Failure semantics |
-| --- | --- | --- | --- | --- | --- | --- |
-| `Tools` (`sunder.package.agent:tools`), `IAgentTool` | Runtime | Extension -> Agent | `0..N` | Fixed tools are wrapped by the installed-package source, ordered by display name for lookup, then advertised by priority, display name, and id. First case-insensitive `ToolId` wins. | Tool package owns each fixed tool. | Discovery/readiness exceptions can fail run preparation. Execution exceptions are converted to error `AgentToolResult`; caller cancellation is rethrown. |
-| `ToolSources` (`sunder.package.agent:tool-sources`), `IAgentToolSource` | Runtime | Extension -> Agent | `0..N` | Sources by display name; advertised tools by priority, display name, and id. Execution re-resolves the exact advertised source/id/read-only identity. Optional `IAgentToolExecutionPreflightSource` runs after permission resolution and before durable start/dispatch. | Source package owns discovered descriptors, preflight, and execution. Returned descriptors are snapshots, not host-owned services. | Discovery/readiness exceptions can fail preparation. Execute exceptions become error tool results. A non-null preflight result must be an error and skips dispatch. A tool that is no longer ready, assigned, or identically advertised is denied. |
-| `ExecutionTargets` (`sunder.package.agent:execution-targets`), `IAgentExecutionTarget` | Runtime | Extension -> Agent and workspace tools | `0..N` | UI sorts by display name, kind, and id. A binding resolves the first target whose `TargetId` or `TargetKind` matches `ContributionId`. | Target package owns execution and any resources it creates. Agent owns workspace/binding records. | Return `NeedsConfiguration` or `Failed` readiness for expected conditions. Unexpected exceptions reach the requesting tool/run; never silently widen path scope. |
-| `WorkspaceEditorContributors` (`sunder.package.agent:workspace-editor-contributors`), `IAgentWorkspaceEditorContributor` | Runtime and App, role-local | Execution package -> Agent editor | `0..N` per role | App uses host order, filters with `CanEdit`, and appends sections in returned order. Discovery, refresh, and save are isolated per owner section; healthy sections remain visible and healthy saves still run. | Each role owns its own contributor. App contributors should be presentation/proxy objects; Runtime owns settings and mutation. | Runtime invocation failures and owner retirement produce a host-owned section error with bounded diagnostics and exact-owner retry. Unexpected contributor exceptions fault that contributor's exact App owner activation. Return `AgentEditorSaveResult.Failed` for expected validation errors. |
-| `WorkspacePathMigrationContributors` (`sunder.package.agent:workspace-path-migration-contributors`), `IAgentWorkspacePathMigrationContributor` | Runtime | Execution package -> Agent workspace store | `0..N` | Host order; applicable path items are aggregated only for workspaces with no current paths. Completion runs after paths are persisted. | Migrator owns only legacy configuration; Agent owns migrated workspace paths. | Per-contributor discovery and cleanup failures are isolated. Failed cleanup does not roll back already persisted paths. Methods must be idempotent. |
-| `PermissionSurfaces` (`sunder.package.agent:permission-surfaces`), `IAgentPermissionSurface` | Runtime | Tool/execution package -> Agent permissions | `0..N` | Actions flatten in host order, duplicate `ActionId` keeps first, final UI sorts by display name. | Surface package owns action/boundary definitions; Agent owns user overrides, pending requests, and approvals. | A missing action id is denied. Unknown action/boundary asks rather than allows. Surface enumeration exceptions reach permission evaluation and can fail the tool cycle. |
-
-## Prompting, Observation, And Cleanup
-
-| Extension point and contract | Role | Direction | Cardinality | Agent ordering/resolution | Ownership | Failure semantics |
-| --- | --- | --- | --- | --- | --- | --- |
-| `SystemPromptContributors` (`sunder.package.agent:system-prompt-contributors`), `IAgentSystemPromptContributor` | Runtime | Extension -> Agent prompt | `0..N` | Contributors by display name. Valid blocks deduplicate by `SourceId:BlockId`, preferring required then higher priority, and render required/high-priority first. | Package owns trusted instruction text and stable block ids. | Non-cancellation exceptions are ignored so optional instructions cannot block chat. Invalid/empty blocks are dropped; `MaxChars` truncates individual content. |
-| `PromptContextContributors` (`sunder.package.agent:prompt-context-contributors`), `IAgentPromptContextContributor` | Runtime | Extension -> Agent prompt | `0..N` | Optional references follow the recall plan and generic bounds. Host-reserved profile/Files instructions use separate fail-closed bounds and exact post-serialization receipts. | Catalog ownership is authoritative; self-declared authority/usage/ids are not. Runtime owns normalization and final serialization. | Optional non-cancellation exceptions are ignored. Owner-verified first-party Files discovery/acknowledgment failures stop provider progression. All blocks remain user-role; only host-reserved standing/scoped blocks direct behavior. |
-| `LifecycleObservers` (`sunder.package.agent:lifecycle-observers`), `IAgentLifecycleObserver` | Runtime | Agent -> extension | `0..N` | Compatibility projection of six run-scoped kinds. Package id plus stable observer id identifies a persisted subscription; retained payloads replay incrementally and calls serialize by subscription/scope. | Observer package owns side effects and related storage. Agent owns outbox, replay cursor, and source state. | Failures do not affect source runs, but retry and can become poison ordering barriers. Use the durable contract when rollback/deletion/erasure is required. |
-| `DurableLifecycleObservers` (`sunder.package.agent:durable-lifecycle-observers`), `IAgentDurableLifecycleObserver` | Runtime | Agent -> extension | `0..N` | Package id plus stable observer id identifies a persisted subscription. At-least-once history and future delivery serialize by subscription/scope; event id is the idempotency key. | Observer owns only package-local derived effects. Agent owns source transaction, payload retention/erasure, ordering, leases, and cursor. | Reconciliation and dispatch are bounded per pass. Failures retry; poison remains a barrier. Existing subscriptions receive ordered erasure receipts, while new subscriptions exclude erased source payloads. |
-| `SessionDataCleaners` (`sunder.package.agent:session-data-cleaners`), `IAgentSessionDataCleaner` | Runtime | Agent -> extension | `0..N` | One ids-only durable job per owning package id, stable cleaner id, and deleted session id. | Extension owns only its package-local session data; Agent owns deletion orchestration, activation leases, and retry state. | Implement bounded idempotent deletion. Failure, restart, or owner retirement leaves the job pending until the same package cleaner reactivates and succeeds. |
-
-## Selecting Static Versus Dynamic Contracts
-
-Use the narrowest contract that matches the lifetime:
-
-- Fixed process-local tool: `IAgentTool` through `Tools`.
-- Session/profile/workspace-dependent tools: `IAgentToolSource` through `ToolSources`.
-- Framework-native dynamic declaration: add `IAgentNativeToolSource` to the source.
-- Tool-specific approval request: add `IAgentPermissionAwareTool` or `IAgentPermissionAwareToolSource`.
-- Non-dispatching source safety check: add `IAgentToolExecutionPreflightSource`.
-- Permission settings shown to users: also register `IAgentPermissionSurface` through `PermissionSurfaces`.
-- Trusted package policy: `IAgentSystemPromptContributor`.
-- Retrieved or external data: `IAgentPromptContextContributor`.
-- Compatibility reaction to the six run events: `IAgentLifecycleObserver`.
-- Durable reaction with rollback/deletion and replay: `IAgentDurableLifecycleObserver`.
-
-Next: [Package family architecture](package-family-architecture.md) and the capability-specific guides in the [documentation index](README.md).
+Generated DTOs, clients, and provider interfaces live under `Sunder.Package.Agent.Protocol.Generated.*`. First-party adapters in `Sunder.Package.Agent.Protocol` map those wire shapes to package-local implementation interfaces. Every first-party package registers handlers only through `RegisterRpcProvider` using provider ids declared in its generated manifest.

@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Subagents.PackageViews;
 using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Package.Agent.Subagents.Services;
@@ -15,14 +17,16 @@ public sealed class SubagentRuntimeChangeTests
     public async Task ChangeStream_SlowSubscriberOverSixtyFourEventsRequiresResnapshot()
     {
         using var scope = RegressionTestPackageScope.Create();
+        using var catalog = new RegressionTestExtensionCatalog();
         var service = new SubagentService(new SubagentStore(scope.Context));
         using var stream = new SubagentRuntimeChangeStream(
             service,
-            new RegressionTestExtensionCatalog());
+            catalog);
         await using var subscription = stream.SubscribeAsync(
             new SubagentChangeSubscription(stream.Revision)).GetAsyncEnumerator();
-        Assert.True(await subscription.MoveNextAsync());
-        Assert.Equal(SubagentChangeKind.Connected, subscription.Current.Kind);
+        Assert.Equal(
+            SubagentChangeKind.Connected,
+            (await ReadUntilAsync(subscription, change => change.Kind == SubagentChangeKind.Connected)).Kind);
 
         for (var index = 0; index < 80; index++)
         {
@@ -38,6 +42,57 @@ public sealed class SubagentRuntimeChangeTests
         Assert.NotNull(terminal);
         Assert.Equal(SubagentChangeKind.ResnapshotRequired, terminal!.Kind);
         Assert.Equal(stream.Revision, terminal.Revision);
+    }
+
+    [Fact]
+    public async Task ChangeStream_ReacquiresRuntimeCatalogPublishedAfterConstructionAndAfterRetirement()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        using var catalog = new RegressionTestExtensionCatalog();
+        var service = new SubagentService(new SubagentStore(scope.Context));
+        using var stream = new SubagentRuntimeChangeStream(service, catalog);
+        using var subscriptionCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var subscription = stream.SubscribeAsync(
+            new SubagentChangeSubscription(stream.Revision),
+            subscriptionCancellation.Token).GetAsyncEnumerator();
+        Assert.Equal(
+            SubagentChangeKind.Connected,
+            (await ReadUntilAsync(subscription, change => change.Kind == SubagentChangeKind.Connected)).Kind);
+
+        var firstRuntime = new TestRuntimeCatalog();
+        catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, firstRuntime);
+        await firstRuntime.SessionSubscription.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var firstSessionId = Guid.NewGuid();
+        firstRuntime.RaiseSessionChanged(firstSessionId);
+        var firstChange = await ReadUntilAsync(
+            subscription,
+            change => change.Kind == SubagentChangeKind.Session
+                      && change.SessionId == firstSessionId);
+        Assert.Equal(firstSessionId, firstChange.SessionId);
+
+        await catalog.RetireProviderAsync(firstRuntime);
+        _ = await ReadUntilAsync(
+            subscription,
+            change => change.Kind == SubagentChangeKind.ResnapshotRequired);
+        _ = await ReadUntilAsync(
+            subscription,
+            change => change.Kind == SubagentChangeKind.Catalog);
+        var replacementRuntime = new TestRuntimeCatalog();
+        catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, replacementRuntime);
+        await replacementRuntime.SessionSubscription.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        _ = await ReadUntilAsync(
+            subscription,
+            change => change.Kind == SubagentChangeKind.ResnapshotRequired);
+        _ = await ReadUntilAsync(
+            subscription,
+            change => change.Kind == SubagentChangeKind.Catalog);
+        var replacementSessionId = Guid.NewGuid();
+        replacementRuntime.RaiseSessionChanged(replacementSessionId);
+        var replacementChange = await ReadUntilAsync(
+            subscription,
+            change => change.Kind == SubagentChangeKind.Session
+                      && change.SessionId == replacementSessionId);
+        Assert.Equal(replacementSessionId, replacementChange.SessionId);
     }
 
     [Fact]
@@ -132,6 +187,18 @@ public sealed class SubagentRuntimeChangeTests
             Assert.True(DateTimeOffset.UtcNow < deadline, "The subsession runtime state did not settle in time.");
             await Task.Delay(10);
         }
+    }
+
+    private static async Task<SubagentChanged> ReadUntilAsync(
+        IAsyncEnumerator<SubagentChanged> subscription,
+        Func<SubagentChanged, bool> predicate)
+    {
+        while (await subscription.MoveNextAsync())
+        {
+            if (predicate(subscription.Current)) return subscription.Current;
+        }
+
+        throw new InvalidOperationException("The subagent change stream completed before the expected change.");
     }
 
     private sealed class ReconnectingSubagentRuntimeClient : IPackageRuntimeClient
@@ -396,6 +463,64 @@ public sealed class SubagentRuntimeChangeTests
                 now,
                 now);
         }
+    }
+
+    private sealed class TestRuntimeCatalog : IAgentRuntimeCatalog
+    {
+        private Action<Guid>? _sessionChanged;
+
+        public TaskCompletionSource SessionSubscription { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public event Action<Guid>? SessionChanged
+        {
+            add
+            {
+                _sessionChanged += value;
+                SessionSubscription.TrySetResult();
+            }
+            remove => _sessionChanged -= value;
+        }
+
+        public event Action<Guid, AgentTurnRecord>? TurnChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public event Action<string>? ProfileChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public IReadOnlyList<AgentSessionRecord> ListSessions() => [];
+        public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => [];
+        public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId) => [];
+        public AgentSessionRecord? GetSession(Guid sessionId) => null;
+        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [];
+        public AgentWorkspaceRecord? GetWorkspace(string workspaceId) => null;
+        public AgentProfileRecord? GetSessionProfile(Guid sessionId) => null;
+        public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
+        public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;
+        public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => null;
+        public IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit) => [];
+        public IReadOnlyList<AgentTurnRecord> ListTurnsBefore(
+            Guid sessionId,
+            DateTimeOffset beforeCreatedAtUtc,
+            Guid beforeTurnId,
+            int limit) => [];
+        public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(
+            Guid sessionId,
+            DateTimeOffset afterCreatedAtUtc,
+            Guid afterTurnId,
+            int limit) => [];
+        public IReadOnlyList<AgentProfileRecord> ListProfiles() => [];
+        public AgentProfileRecord? GetProfile(string profileId) => null;
+        public AgentProfileModelBindingRecord? GetSessionModelBinding(Guid sessionId, string capabilityKind) => null;
+        public AgentProfileModelBindingRecord? GetModelBinding(string profileId, string capabilityKind) => null;
+
+        public void RaiseSessionChanged(Guid sessionId) => _sessionChanged?.Invoke(sessionId);
     }
 
     private sealed class MissingPageSubagentRuntimeClient : IPackageRuntimeClient

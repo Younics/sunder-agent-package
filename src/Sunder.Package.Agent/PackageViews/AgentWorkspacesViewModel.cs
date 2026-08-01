@@ -2,9 +2,9 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
@@ -19,9 +19,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     private readonly IAgentWorkspaceGateway _workspaceService;
     private readonly IAgentExecutionGateway _executionGateway;
-    private readonly IPackageExtensionCatalog _extensionCatalog;
-    private readonly IPackageExtensionInvocationCatalog _extensionInvocationCatalog;
-    private readonly IPackageExtensionCatalogMonitor? _extensionCatalogMonitor;
+    private readonly AgentRpcCatalog _rpcCatalog;
     private readonly IPackageSettingsNavigationService? _settingsNavigationService;
     private readonly IAgentRuntimeAvailability? _runtimeAvailability;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
@@ -49,17 +47,12 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     public AgentWorkspacesViewModel(
         IAgentWorkspaceGateway workspaceService,
         IAgentExecutionGateway executionGateway,
-        IPackageExtensionCatalog extensionCatalog,
-        IPackageSettingsNavigationService? settingsNavigationService = null,
-        IPackageExtensionInvocationCatalog? extensionInvocationCatalog = null)
+        AgentRpcCatalog rpcCatalog,
+        IPackageSettingsNavigationService? settingsNavigationService = null)
     {
         _workspaceService = workspaceService;
         _executionGateway = executionGateway;
-        _extensionCatalog = extensionCatalog;
-        _extensionInvocationCatalog = extensionInvocationCatalog
-            ?? extensionCatalog as IPackageExtensionInvocationCatalog
-            ?? throw new InvalidOperationException(
-                "The host extension catalog does not support activation-scoped extension invocation.");
+        _rpcCatalog = rpcCatalog;
         _settingsNavigationService = settingsNavigationService;
         _uiDispatcher = PresentationDispatcher.Capture();
         _tasks = new PresentationTaskScope(exception => ReportPresentationFailure(exception));
@@ -81,20 +74,16 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             _runtimeAvailability.ConnectionStateChanged += OnRuntimeConnectionStateChanged;
         }
         _workspaceService.WorkspacesChanged += OnWorkspacesChanged;
-        _extensionCatalogMonitor = extensionCatalog as IPackageExtensionCatalogMonitor;
-        if (_extensionCatalogMonitor is not null)
-        {
-            _extensionCatalogMonitor.Changed += OnExtensionCatalogChanged;
-        }
+        _rpcCatalog.Changed += OnRpcCatalogChanged;
     }
 
     public AgentWorkspacesViewModel(
         AgentWorkspaceService workspaceService,
         AgentExecutionTargetService executionTargetService,
-        IPackageExtensionCatalog extensionCatalog,
+        AgentRpcCatalog rpcCatalog,
         AgentExecutionTargetWarmupService warmupService,
         IPackageSettingsNavigationService? settingsNavigationService = null)
-        : this(workspaceService, warmupService, extensionCatalog, settingsNavigationService)
+        : this(workspaceService, warmupService, rpcCatalog, settingsNavigationService)
     {
     }
 
@@ -272,10 +261,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         _operation.PropertyChanged -= OnOperationPropertyChanged;
         _operation.Dispose();
         _workspaceService.WorkspacesChanged -= OnWorkspacesChanged;
-        if (_extensionCatalogMonitor is not null)
-        {
-            _extensionCatalogMonitor.Changed -= OnExtensionCatalogChanged;
-        }
+        _rpcCatalog.Changed -= OnRpcCatalogChanged;
 
         _listDetail.PropertyChanged -= OnListDetailPropertyChanged;
         _listDetail.SelectionChanging -= OnWorkspaceSelectionChanging;

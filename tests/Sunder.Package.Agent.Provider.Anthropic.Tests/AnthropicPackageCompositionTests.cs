@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Xunit;
@@ -25,8 +26,8 @@ public sealed class AnthropicPackageCompositionTests
         using var runtimeProvider = runtimeServices.BuildServiceProvider();
         var runtimeRegistry = new ProviderCompositionTestRegistry();
         runtimeModule.RegisterRuntimeContributions(runtimeRegistry, runtimeProvider);
-        Assert.Equal([PackageExtensionPoints.ChatProviders.Id], runtimeRegistry.ExtensionIds);
-        Assert.Equal([typeof(AnthropicAgentProvider)], runtimeRegistry.ExtensionTypes);
+        Assert.Equal(["anthropic.chat"], runtimeRegistry.RpcProviderIds);
+        Assert.Equal([typeof(AgentRpcServiceHandler)], runtimeRegistry.RpcHandlerTypes);
         Assert.Same(AnthropicProviderConfiguration.Schema, Assert.Single(runtimeRegistry.SettingsSchemas));
 
         var appServices = new ServiceCollection();
@@ -41,6 +42,6 @@ public sealed class AnthropicPackageCompositionTests
         var appRegistry = new ProviderCompositionTestRegistry();
         appModule.RegisterAppContributions(appRegistry, appProvider);
         Assert.Equal([typeof(AnthropicSettingsView)], appRegistry.SettingsViewTypes);
-        Assert.Empty(appRegistry.ExtensionIds);
+        Assert.Empty(appRegistry.RpcProviderIds);
     }
 }

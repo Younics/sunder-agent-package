@@ -112,6 +112,13 @@
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
+    <Style Selector="Border.subsession-status-message">
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Danger.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Danger}" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+      <Setter Property="Padding" Value="18,12" />
+    </Style>
+
     <Style Selector="ListBox.subsession-list">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
       <Setter Property="BorderThickness" Value="0" />
@@ -392,9 +399,29 @@
   </UserControl.DataTemplates>
 
   <Border Classes="subsession-shell">
-    <Grid x:Name="SubsessionAdaptiveLayout"
-          ColumnDefinitions="360,*"
-          ColumnSpacing="4">
+    <Grid RowDefinitions="Auto,*">
+      <Border x:Name="SubsessionLoadError"
+              Grid.Row="0"
+              Classes="subsession-status-message"
+              IsVisible="{Binding HasLoadError}">
+        <Grid ColumnDefinitions="*,Auto"
+              ColumnSpacing="16">
+          <TextBlock Text="{Binding StatusText}"
+                     Foreground="{DynamicResource Sunder.Brush.Danger}"
+                     TextWrapping="Wrap"
+                     VerticalAlignment="Center"
+                     AutomationProperties.LiveSetting="Assertive" />
+          <Button Grid.Column="1"
+                  Classes="secondary-action compact-action"
+                  Content="Retry"
+                  Command="{Binding RetryLoadCommand}" />
+        </Grid>
+      </Border>
+
+      <Grid x:Name="SubsessionAdaptiveLayout"
+            Grid.Row="1"
+            ColumnDefinitions="360,*"
+            ColumnSpacing="4">
       <Border x:Name="SubsessionListPane"
               Classes="subsession-pane subsession-list-pane"
               IsVisible="{Binding ShowListPane}">
@@ -556,6 +583,7 @@
           </Border>
         </Grid>
       </Border>
+      </Grid>
     </Grid>
   </Border>
 </UserControl>

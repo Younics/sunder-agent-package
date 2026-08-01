@@ -21,7 +21,7 @@
 
 Sunder Agent is the first-party AI agent package family for [Sunder Core](https://github.com/Younics/sunder-core). It is intentionally modular: install the core agent package, then add only the providers, tools, memory, execution targets, and integrations you want.
 
-The packages in this repository are normal Sunder runtime packages built with `Sunder.Sdk` and `Sunder.Package.Build`. Extension packages depend on `sunder.package.agent` at runtime and contribute capabilities through `Sunder.Package.Agent.Contracts`.
+The packages in this repository are normal Sunder runtime packages built with `Sunder.Sdk` and `Sunder.Package.Build`. Extension packages depend on `sunder.package.agent` at runtime and publish capabilities through the schema-first contracts in `Sunder.Package.Agent.Protocol`.
 
 ## What You Get
 
@@ -58,7 +58,7 @@ The Agent workspace includes [local History Search](docs/history-search.md): it 
 | Package | Identifier | Role |
 | --- | --- | --- |
 | Sunder Agent | `sunder.package.agent` | Core sessions, chat, profiles, workspaces, permissions, and orchestration |
-| Agent Contracts | `Sunder.Package.Agent.Contracts` | Public NuGet contracts used by Agent extension packages |
+| Agent Protocol | `Sunder.Package.Agent.Protocol` | RPC descriptors plus generated DTO, client, and provider bindings |
 | OpenAI Provider | `sunder.package.agent.provider.openai` | OpenAI chat and embedding providers |
 | Anthropic Provider | `sunder.package.agent.provider.anthropic` | Anthropic chat provider |
 | Gemini Provider | `sunder.package.agent.provider.gemini` | Gemini chat and embedding providers |
@@ -100,7 +100,7 @@ sunder.package.agent
   +-- orchestration: behavior loops, subagents, child runs
 ```
 
-Extension packages use `Sunder.Package.Agent.Contracts` to register capabilities with the core Agent package. That keeps providers, tools, execution targets, and memory features independently installable.
+Extension packages use `Sunder.Package.Agent.Protocol` and `RegisterRpcProvider` to publish schema-validated capabilities to the core Agent package. That keeps providers, tools, execution targets, and memory features independently installable without sharing live extension objects across package activations.
 
 Extension ownership is mandatory. Stack exporters use owned catalog contributions to include provider, execution-target, behavior-loop, skill, and subagent package dependencies; an ownerless catalog result is rejected by the SDK.
 
@@ -122,9 +122,9 @@ Agent capabilities are split into explicit packages so users can choose what is 
 
 Browser callbacks are host-owned; packages never bind callback ports. OpenAI Codex authorization uses the auth projection, while MCP registers the distinct `mcp.oauth.v1` callback handler and starts server-scoped OAuth with the host-provided redirect URI. The MCP App gateway opens the SDK authorization URI, polls the generic callback session through completion, and leaves clear-authorization as a Runtime command. Dynamic client registrations and token caches remain server-scoped package secrets.
 
-## 1.x Compatibility Policy
+## 2.x Compatibility Policy
 
-Version `1.1.0` is an intentional clean break from the unused public `1.0.0` line. Every Agent package and `Sunder.Package.Agent.Contracts` ships at one family version; Sunder NuGet references use `[1.1.0,1.2.0)` and extension runtime dependencies use `>=1.1.0 <1.2.0`. Rebuild and release the complete family together. There are no 1.0 compatibility shims, and the Runtime rejects mixed SDK/package baselines before assembly load. The immutable contract ledger is `src/Sunder.Package.Agent.Contracts/PublicAPI.Shipped.txt`.
+Every Agent runtime package and `Sunder.Package.Agent.Protocol` ships at one 2.x family version. Protocol references use `[2.0.0,3.0.0)` and extension runtime dependencies use `>=2.0.0 <3.0.0`. Rebuild and release the complete family together. Cross-package capabilities use only the 18 schema-first descriptors, generated bindings, and manifest-declared RPC providers; Runtime rejects mixed package baselines before activation.
 
 Agent data upgrades are forward-only through one ordered SQLite migration ledger, currently through migration 20, `durable-resource-claims`, with checksum `849bc5010a9c700c8cb683e2992e442dc4471fed275135b39f60ae8d54f46fa0`. Migration 20 adds durable resource-claim persistence and execution-target ownership while leaving migrations 1-19 and their checksums unchanged. Each applied migration records its number, immutable name, and SHA-256 checksum in the same transaction as its schema change. Startup refuses unknown, newer, renamed, or checksum-mismatched entries. If validation fails, back up `agent/agent.db` and use an Agent build that recognizes the ledger; do not edit or delete ledger rows.
 
@@ -144,7 +144,7 @@ Package projects support two development modes:
 | Inside the private `sunder` workspace | Local source references to `repos/sunder-core` |
 | Standalone public clone | NuGet references to `Sunder.Sdk` and `Sunder.Package.Build` |
 
-GitHub CI resolves `Younics/sunder-core` `main` once at the start of each run and reuses that full commit SHA for every Core checkout in the run. Land coordinated Core changes on `main` before expecting Agent CI or releases to consume them; see [`docs/RELEASES.md`](docs/RELEASES.md).
+GitHub CI resolves `Younics/sunder-core` `main` once at the start of each run and reuses that full commit SHA for every Core checkout in the run. Land coordinated Core changes on `main` before expecting Agent CI to consume them, and publish the required Core developer-package version before creating an Agent release tag; see [`docs/RELEASES.md`](docs/RELEASES.md).
 
 ## Tests
 
@@ -156,9 +156,9 @@ dotnet test tests/Sunder.Package.Agent.Provider.OpenAI.Tests/Sunder.Package.Agen
 
 ## Release Tags
 
-`agent/vX.Y.Z` releases `Sunder.Package.Agent.Contracts` and all 15 runtime packages as one family. The workflow builds once from one Agent commit and one Core `main` commit resolved at workflow start, validates the exact artifacts through Package Format, Runtime lifecycle, and App snapshot activation, publishes immutable versions without moving Registry tags, verifies downloaded bytes, and only then promotes `latest` for stable releases or `preview` for prereleases.
+`agent/vX.Y.Z` releases `Sunder.Package.Agent.Protocol` and all 15 runtime packages as one family. The workflow builds once from one Agent commit and one Core `main` commit resolved at workflow start, validates the exact artifacts through Package Format, Runtime lifecycle, and App snapshot activation, publishes immutable versions without moving Registry tags, verifies downloaded bytes, and only then promotes `latest` for stable releases or `preview` for prereleases.
 
-Stable releases require `PublicAPI.Unshipped.txt` to contain no API entries. The initial baseline deliberately rejects `agent/v1.1.0-*`; use stable `agent/v1.1.0` first. Full operator steps and required repository configuration are in [`docs/RELEASES.md`](docs/RELEASES.md).
+Stable releases require `PublicAPI.Unshipped.txt` to contain no API entries. The 2.x baseline belongs to the `Sunder.Package.Agent.Protocol` package and assembly identity. The retained `Sunder.Package.Agent.Contracts.*` source namespaces are types inside that artifact, not a second package. Full operator steps and required repository configuration are in [`docs/RELEASES.md`](docs/RELEASES.md).
 
 ## Related Projects
 

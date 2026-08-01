@@ -73,7 +73,7 @@ jobs:
           dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 -p:SunderUseSourceSdk=true -p:Version="$version" -p:PackageVersion="$version" -p:InformationalVersion="$version" -p:ContinuousIntegrationBuild=true
           dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore -m:1 -p:SunderUseSourceSdk=true
 
-      - name: Pack Contracts and every runtime archive once
+      - name: Pack Protocol and every runtime archive once
         working-directory: sunder-agent-package
         shell: bash
         run: |
@@ -98,12 +98,12 @@ jobs:
 
           runtime_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
           test "$(find "$output" -maxdepth 1 -name '*.sunderpkg' -type f | wc -l)" -eq "$runtime_count"
-          test -f "$output/Sunder.Package.Agent.Contracts.$version.nupkg"
+          test -f "$output/Sunder.Package.Agent.Protocol.$version.nupkg"
           test "$(find "$output" -maxdepth 1 -type f | wc -l)" -eq "$((runtime_count + 1))"
 
-          contracts_nuspec="$(unzip -p "$output/Sunder.Package.Agent.Contracts.$version.nupkg" '*.nuspec')"
-          if ! grep -Eq 'id="Sunder\.Sdk" version="\[1\.1\.0, ?1\.2\.0\)"' <<< "$contracts_nuspec"; then
-            echo "Agent Contracts does not bound its Sunder.Sdk dependency to the 1.1 minor line." >&2
+          protocol_nuspec="$(unzip -p "$output/Sunder.Package.Agent.Protocol.$version.nupkg" '*.nuspec')"
+          if ! grep -Eq 'id="Sunder\.Sdk" version="\[1\.1\.0, ?1\.2\.0\)"' <<< "$protocol_nuspec"; then
+            echo "Agent Protocol does not bound its Sunder.Sdk dependency to the published 1.1 line." >&2
             exit 1
           fi
 

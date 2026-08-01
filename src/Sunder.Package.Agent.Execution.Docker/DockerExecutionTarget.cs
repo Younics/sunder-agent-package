@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Docker;
@@ -72,7 +73,20 @@ public sealed partial class DockerExecutionTarget
         "Docker Container",
         "Creates a resource-bounded Docker container with networking disabled by default. Mounted workspace paths remain writable host data; this is not a complete security sandbox.",
         SupportsShell: true,
-        SupportsFiles: true);
+        SupportsFiles: true)
+    {
+        Facets =
+        [
+            AgentExecutionFacetIds.ProcessExecution,
+            AgentExecutionFacetIds.ResourceAuthority,
+            AgentExecutionFacetIds.ExecutionScope,
+            AgentExecutionFacetIds.PathMapping,
+            AgentExecutionFacetIds.PathEnvironment,
+            AgentExecutionFacetIds.RangedFileRead,
+            AgentExecutionFacetIds.StructuredFileSearch,
+            AgentExecutionFacetIds.ScopedInstructionDiscovery,
+        ],
+    };
 
     public async ValueTask<string?> GetConfigurationGenerationAsync(
         AgentExecutionTargetContext context,

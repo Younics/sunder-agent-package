@@ -1,26 +1,22 @@
 # Agent Extension Author Guide
 
-This documentation is the canonical author guide for packages that extend `sunder.package.agent` through `Sunder.Package.Agent.Contracts`. It describes the 1.1 contract line implemented in this repository.
+This is the canonical guide for packages that integrate with `sunder.package.agent` 2.x through the schema-first contracts in `Sunder.Package.Agent.Protocol`.
 
-Use only the public types in `Sunder.Package.Agent.Contracts` and the Sunder SDK. An extension package must not reference `Sunder.Package.Agent`, `Sunder.App`, or `Sunder.Runtime.Host` implementation assemblies.
+Use the Protocol package and the Sunder SDK only. Extensions must not reference `Sunder.Package.Agent`, `Sunder.App`, or `Sunder.Runtime.Host` implementation assemblies. Runtime capabilities are declared in manifests and published only as schema-validated RPC providers; package-local CLR objects never cross an activation boundary.
 
 ## Start Here
 
 | Goal | Guide |
 | --- | --- |
 | Create and build a first extension | [Extension quickstart](extension-quickstart.md) |
-| Choose an extension point | [Extension-point catalog](extension-points.md) |
+| Choose an RPC contract | [RPC contract catalog](extension-points.md) |
 | Implement chat or embedding models | [Chat and embedding providers](providers.md) |
-| Publish fixed or discovered tools | [Static and dynamic tools, permissions](tools-and-permissions.md) |
-| Add a local, container, or remote executor | [Execution targets, paths, and security](execution-targets.md) |
-| Add instructions, reference context, or event observers | [Prompts, context, lifecycle, and trust](prompts-context-lifecycle.md) |
-| Integrate durable recall | [Semantic memory](semantic-memory.md) |
-| Understand local recent-history and transcript search | [History search](history-search.md) |
-| Customize orchestration or launch child sessions | [Behavior loops, child runs, and subagents](behavior-loops-and-subagents.md) |
-| Configure MCP tools and browser authorization | [MCP and OAuth](mcp-and-oauth.md) |
-| Understand repository and runtime boundaries | [Package family architecture](package-family-architecture.md) |
+| Publish tools and permission surfaces | [Tools and permissions](tools-and-permissions.md) |
+| Add an execution target | [Execution targets, paths, and security](execution-targets.md) |
+| Add prompt context or lifecycle handling | [Prompts, context, lifecycle, and trust](prompts-context-lifecycle.md) |
+| Customize orchestration or child runs | [Behavior loops and subagents](behavior-loops-and-subagents.md) |
 | Test an extension | [Testing extensions](testing-extensions.md) |
-| Ship safely or diagnose activation/runtime failures | [Release, compatibility, and troubleshooting](release-compatibility-troubleshooting.md) |
+| Release or troubleshoot a package | [Release, compatibility, and troubleshooting](release-compatibility-troubleshooting.md) |
 
 The compiled minimal example is [`samples/Sunder.Agent.Extension.Minimal`](../samples/Sunder.Agent.Extension.Minimal/README.md).
 
@@ -28,23 +24,22 @@ The compiled minimal example is [`samples/Sunder.Agent.Extension.Minimal`](../sa
 
 | Namespace | Contents |
 | --- | --- |
-| `Sunder.Package.Agent.Contracts` | `PackageExtensionPoints` |
-| `Sunder.Package.Agent.Contracts.Contracts` | Extension interfaces and host service ports |
-| `Sunder.Package.Agent.Contracts.Models` | Immutable requests, descriptors, results, and enums |
-| `Sunder.Package.Agent.Contracts.Services` | Public catalog observation helper |
-| `Sunder.Sdk.*` | Package modules, activation context, contribution registries, settings, secrets, callbacks, logging, and package metadata |
+| `Sunder.Package.Agent.Protocol` | Contract ids, discovery/catalog adapters, bounded wire adapters, and embedded descriptors |
+| `Sunder.Package.Agent.Protocol.Generated.*` | Deterministically generated DTO, client, and provider ABI for each descriptor |
+| `Sunder.Package.Agent.Contracts.Contracts` | Local implementation interfaces accepted by the first-party RPC adapters |
+| `Sunder.Package.Agent.Contracts.Models` | Immutable domain requests, descriptors, results, and enums used by those adapters |
+| `Sunder.Sdk.Rpc` | Host RPC registration, discovery, invocation, endpoint, and error contracts |
 
-`PackageExtensionPoints` are role-local. A Runtime registration is visible only in the Runtime extension catalog; an App registration is visible only in the App extension catalog. Most Agent capabilities belong in an `ISunderRuntimePackageModule`. Add an `ISunderAppPackageModule` only for presentation or an App-side proxy over typed Runtime operations.
+Most Agent capabilities belong in an `ISunderRuntimePackageModule`. Register an activation-owned handler with `ISunderRuntimeContributionRegistry.RegisterRpcProvider`. Add an `ISunderAppPackageModule` only for presentation or an App-side proxy over Runtime operations.
+
+`Sunder.Package.Agent.Protocol` is the shipped NuGet and assembly identity. The repository retains source folder `src/Sunder.Package.Agent.Contracts` and the `Sunder.Package.Agent.Contracts.*` namespaces for the package-local implementation interfaces and stable API types already carried by that artifact. The path and namespace do not identify another package or a cross-package CLR ABI; all 18 cross-package boundaries are the descriptors and generated bindings under the Protocol identity.
 
 ## Compatibility Baseline
 
-The coordinated 1.1 ranges are:
-
 | Dependency kind | Required range |
 | --- | --- |
-| NuGet: `Sunder.Sdk`, `Sunder.Package.Build`, `Sunder.Package.Agent.Contracts` | `[1.1.0,1.2.0)` |
-| Runtime package: `sunder.package.agent` | `>=1.1.0 <1.2.0` |
+| NuGet: `Sunder.Package.Agent.Protocol` | `[2.0.0,3.0.0)` |
+| Runtime package: `sunder.package.agent` | `>=2.0.0 <3.0.0` |
+| NuGet: `Sunder.Sdk`, `Sunder.Package.Build` | The independent Core SDK minor supported by the Protocol package |
 
-These are different range syntaxes for different dependency systems. Do not copy the NuGet syntax into `SunderPackageDependency`, and do not use the Sunder runtime syntax in a `PackageReference`.
-
-For family release operations, see [Agent family releases](RELEASES.md). For the deliberate 1.1 break from 1.0, see [Agent 1.1 breaking baseline](1.1-BREAKING-BASELINE.md).
+Contract descriptors have independent versions, currently `1.0.0`. Package-family versions and descriptor versions serve different compatibility boundaries.

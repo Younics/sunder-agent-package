@@ -5,6 +5,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Package.Agent.Storage;
@@ -709,20 +710,20 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
         {
             var catalog = new RegressionTestExtensionCatalog();
             var provider = new PermissionHardeningProvider();
-            catalog.AddExtension(PackageExtensionPoints.ChatProviders, provider);
-            catalog.AddExtension(PackageExtensionPoints.ToolSources, source);
+            catalog.AddProvider(AgentRpcServices.ChatProviders, provider);
+            catalog.AddProvider(AgentRpcServices.ToolSources, source);
             if (source is IAgentPermissionSurface permissionSurface)
             {
-                catalog.AddExtension(PackageExtensionPoints.PermissionSurfaces, permissionSurface);
+                catalog.AddProvider(AgentRpcServices.PermissionSurfaces, permissionSurface);
             }
 
             var primaryExecutionTarget = new PermissionHardeningExecutionTarget(
                 PermissionHardeningExecutionTarget.PrimaryTargetId);
-            catalog.AddExtension(
-                PackageExtensionPoints.ExecutionTargets,
+            catalog.AddProvider(
+                AgentRpcServices.ExecutionTargets,
                 primaryExecutionTarget);
-            catalog.AddExtension(
-                PackageExtensionPoints.ExecutionTargets,
+            catalog.AddProvider(
+                AgentRpcServices.ExecutionTargets,
                 new PermissionHardeningExecutionTarget(
                     PermissionHardeningExecutionTarget.SecondaryTargetId));
 
@@ -732,14 +733,13 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
             var permissionService = new AgentPermissionService(store, catalog);
             var executionTargetService = new AgentExecutionTargetService(catalog);
             var toolService = new AgentToolService(
-                new InstalledPackageToolSource(catalog),
                 sessionService,
                 workspaceService,
                 executionTargetService,
                 catalog);
-            var profileService = new AgentProfileService(store, toolService, catalog);
-            catalog.AddExtension(
-                PackageExtensionPoints.RuntimeCatalogs,
+            var profileService = new AgentProfileService(store, toolService, catalog, catalog.BehaviorLoops);
+            catalog.AddProvider(
+                AgentRpcServices.RuntimeCatalogs,
                 new AgentRuntimeCatalog(sessionService, profileService, workspaceService));
 
             var profile = await profileService.CreateProfileAsync("Permission hardening profile");
@@ -796,8 +796,8 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
                 runEventLogger,
                 activeRunRegistry,
                 defaultBehaviorLoop);
-            catalog.AddExtension(PackageExtensionPoints.BehaviorLoops, defaultBehaviorLoop);
-            var behaviorLoopResolver = new AgentBehaviorLoopResolver(catalog, defaultBehaviorLoop);
+            catalog.AddBehaviorLoop(defaultBehaviorLoop);
+            var behaviorLoopResolver = new AgentBehaviorLoopResolver(catalog, catalog.BehaviorLoops);
             var providerResolver = new AgentRunProviderResolver(profileService, catalog);
             var childRunSessionService = new AgentChildRunSessionService(sessionService, profileService);
             var parentRunContinuationService = new AgentParentRunContinuationService(

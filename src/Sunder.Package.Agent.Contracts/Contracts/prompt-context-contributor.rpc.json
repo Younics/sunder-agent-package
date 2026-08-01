@@ -1,0 +1,1206 @@
+{
+  "descriptorVersion": 1,
+  "contractId": "sunder.agent.prompt.context.contributor",
+  "version": "1.0.0",
+  "services": [
+    {
+      "serviceId": "prompt-context-contributor",
+      "methods": [
+        {
+          "methodId": "describe",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentRpcEmpty"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/PromptContextContributorDescription"
+          }
+        },
+        {
+          "methodId": "contribute",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/PromptContextRequestWire"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentRpcOptionalOfAgentPromptContextContribution"
+          }
+        },
+        {
+          "methodId": "acknowledge",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentPromptContextReceipt"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentRpcEmpty"
+          }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "AgentRpcEmpty": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "String": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "PromptContextContributorDescription": {
+      "type": "object",
+      "properties": {
+        "acknowledgmentSinkId": {
+          "$ref": "#/$defs/String"
+        },
+        "contributorId": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "contributorId",
+        "displayName"
+      ],
+      "additionalProperties": false
+    },
+    "AgentToolActivationRequirement": {
+      "type": "object",
+      "properties": {
+        "capabilityId": {
+          "$ref": "#/$defs/String"
+        },
+        "capabilityKind": {
+          "$ref": "#/$defs/String"
+        },
+        "sourceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "capabilityKind"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfString": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/String"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentToolConcurrencyMode": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1,
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "Boolean": {
+      "type": "boolean"
+    },
+    "AgentToolPriority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentToolSelectionScope": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1,
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "AgentToolDescriptor": {
+      "type": "object",
+      "properties": {
+        "activationRequirement": {
+          "$ref": "#/$defs/AgentToolActivationRequirement"
+        },
+        "aliases": {
+          "$ref": "#/$defs/ListOfString"
+        },
+        "argumentsJsonSchema": {
+          "$ref": "#/$defs/String"
+        },
+        "concurrencyMode": {
+          "$ref": "#/$defs/AgentToolConcurrencyMode"
+        },
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "isReadOnly": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "priority": {
+          "$ref": "#/$defs/AgentToolPriority"
+        },
+        "requiresNetwork": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "runtimeInstructions": {
+          "$ref": "#/$defs/String"
+        },
+        "selectionGroupDescription": {
+          "$ref": "#/$defs/String"
+        },
+        "selectionGroupDisplayName": {
+          "$ref": "#/$defs/String"
+        },
+        "selectionGroupId": {
+          "$ref": "#/$defs/String"
+        },
+        "selectionScope": {
+          "$ref": "#/$defs/AgentToolSelectionScope"
+        },
+        "sourceDisplayName": {
+          "$ref": "#/$defs/String"
+        },
+        "sourceId": {
+          "$ref": "#/$defs/String"
+        },
+        "sourceKind": {
+          "$ref": "#/$defs/String"
+        },
+        "toolId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "concurrencyMode",
+        "description",
+        "displayName",
+        "isReadOnly",
+        "priority",
+        "requiresNetwork",
+        "selectionScope",
+        "toolId"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentToolDescriptor": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentToolDescriptor"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "Int32": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "AgentPromptContextPlan": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "$ref": "#/$defs/String"
+        },
+        "maxChars": {
+          "$ref": "#/$defs/Int32"
+        },
+        "maxEntryCount": {
+          "$ref": "#/$defs/Int32"
+        },
+        "preferredCategories": {
+          "$ref": "#/$defs/ListOfString"
+        },
+        "queryText": {
+          "$ref": "#/$defs/String"
+        },
+        "reason": {
+          "$ref": "#/$defs/String"
+        },
+        "shouldContribute": {
+          "$ref": "#/$defs/Boolean"
+        }
+      },
+      "required": [
+        "intent",
+        "maxChars",
+        "maxEntryCount",
+        "queryText",
+        "shouldContribute"
+      ],
+      "additionalProperties": false
+    },
+    "DateTimeOffset": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "AgentWorkspaceBindingRecord": {
+      "type": "object",
+      "properties": {
+        "bindingId": {
+          "$ref": "#/$defs/String"
+        },
+        "contributionId": {
+          "$ref": "#/$defs/String"
+        },
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "extensionPointId": {
+          "$ref": "#/$defs/String"
+        },
+        "isEnabled": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "role": {
+          "$ref": "#/$defs/String"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "bindingId",
+        "contributionId",
+        "createdAtUtc",
+        "extensionPointId",
+        "isEnabled",
+        "role",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "Int64": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "Guid": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "AgentRpcProviderHandle": {
+      "type": "object",
+      "properties": {
+        "activationEpoch": {
+          "$ref": "#/$defs/Int64"
+        },
+        "activationId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "contractId": {
+          "$ref": "#/$defs/String"
+        },
+        "contractSha256": {
+          "$ref": "#/$defs/String"
+        },
+        "contractVersion": {
+          "$ref": "#/$defs/String"
+        },
+        "endpointReference": {
+          "$ref": "#/$defs/String"
+        },
+        "packageId": {
+          "$ref": "#/$defs/String"
+        },
+        "packageVersion": {
+          "$ref": "#/$defs/String"
+        },
+        "providerId": {
+          "$ref": "#/$defs/String"
+        },
+        "sessionGeneration": {
+          "$ref": "#/$defs/Int64"
+        }
+      },
+      "required": [
+        "activationEpoch",
+        "activationId",
+        "contractId",
+        "contractSha256",
+        "contractVersion",
+        "endpointReference",
+        "packageId",
+        "packageVersion",
+        "providerId",
+        "sessionGeneration"
+      ],
+      "additionalProperties": false
+    },
+    "AgentMemoryConsistencyBarrier": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/$defs/String"
+        },
+        "payloadHash": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "eventId",
+        "payloadHash"
+      ],
+      "additionalProperties": false
+    },
+    "AgentProfileModelBindingRecord": {
+      "type": "object",
+      "properties": {
+        "capabilityKind": {
+          "$ref": "#/$defs/String"
+        },
+        "modelId": {
+          "$ref": "#/$defs/String"
+        },
+        "profileId": {
+          "$ref": "#/$defs/String"
+        },
+        "providerId": {
+          "$ref": "#/$defs/String"
+        },
+        "settingsJson": {
+          "$ref": "#/$defs/String"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        }
+      },
+      "required": [
+        "capabilityKind",
+        "profileId",
+        "updatedAtUtc"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentProfileModelBindingRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentProfileModelBindingRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentProfileSelectableCapabilityAssignmentRecord": {
+      "type": "object",
+      "properties": {
+        "capabilityId": {
+          "$ref": "#/$defs/String"
+        },
+        "kind": {
+          "$ref": "#/$defs/String"
+        },
+        "sourceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "capabilityId",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentProfileSelectableCapabilityAssignmentRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentProfileSelectableCapabilityAssignmentRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentProfileRecord": {
+      "type": "object",
+      "properties": {
+        "behaviorLoopId": {
+          "$ref": "#/$defs/String"
+        },
+        "behaviorLoopSettingsJson": {
+          "$ref": "#/$defs/String"
+        },
+        "behaviorLoopSourceId": {
+          "$ref": "#/$defs/String"
+        },
+        "chatModelId": {
+          "$ref": "#/$defs/String"
+        },
+        "chatProviderId": {
+          "$ref": "#/$defs/String"
+        },
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "embeddingModelId": {
+          "$ref": "#/$defs/String"
+        },
+        "embeddingProviderId": {
+          "$ref": "#/$defs/String"
+        },
+        "instructions": {
+          "$ref": "#/$defs/String"
+        },
+        "isInternal": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "modelBindings": {
+          "$ref": "#/$defs/ListOfAgentProfileModelBindingRecord"
+        },
+        "profileId": {
+          "$ref": "#/$defs/String"
+        },
+        "selectableCapabilityAssignments": {
+          "$ref": "#/$defs/ListOfAgentProfileSelectableCapabilityAssignmentRecord"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "displayName",
+        "isInternal",
+        "profileId",
+        "updatedAtUtc"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTurnItemKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "enum": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "Nullable": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "AgentToolExecutionStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "Nullable2": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "Nullable3": {
+      "type": "boolean"
+    },
+    "AgentTurnItemRecord": {
+      "type": "object",
+      "properties": {
+        "argumentsJson": {
+          "$ref": "#/$defs/String"
+        },
+        "backendId": {
+          "$ref": "#/$defs/String"
+        },
+        "callId": {
+          "$ref": "#/$defs/String"
+        },
+        "errorCode": {
+          "$ref": "#/$defs/String"
+        },
+        "isError": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "isToolHeaderProjection": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "itemId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentTurnItemKind"
+        },
+        "presentationPayloadJson": {
+          "$ref": "#/$defs/String"
+        },
+        "resultSummary": {
+          "$ref": "#/$defs/String"
+        },
+        "sequenceNumber": {
+          "$ref": "#/$defs/Int32"
+        },
+        "sourcesJson": {
+          "$ref": "#/$defs/String"
+        },
+        "structuredPayloadJson": {
+          "$ref": "#/$defs/String"
+        },
+        "textContent": {
+          "$ref": "#/$defs/String"
+        },
+        "toolDetailRevision": {
+          "$ref": "#/$defs/Int64"
+        },
+        "toolErrorSummary": {
+          "$ref": "#/$defs/String"
+        },
+        "toolExecutionId": {
+          "$ref": "#/$defs/Nullable"
+        },
+        "toolExecutionStatus": {
+          "$ref": "#/$defs/Nullable2"
+        },
+        "toolHasDetails": {
+          "$ref": "#/$defs/Nullable3"
+        },
+        "toolHeaderHint": {
+          "$ref": "#/$defs/String"
+        },
+        "toolId": {
+          "$ref": "#/$defs/String"
+        },
+        "toolOwnerPackageId": {
+          "$ref": "#/$defs/String"
+        },
+        "toolSchemaId": {
+          "$ref": "#/$defs/String"
+        },
+        "toolSchemaVersion": {
+          "$ref": "#/$defs/String"
+        },
+        "turnId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "wasTruncated": {
+          "$ref": "#/$defs/Boolean"
+        }
+      },
+      "required": [
+        "isError",
+        "isToolHeaderProjection",
+        "itemId",
+        "kind",
+        "sequenceNumber",
+        "toolDetailRevision",
+        "turnId",
+        "wasTruncated"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentTurnItemRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentTurnItemRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentTurnKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentMessageRole": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "enum": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "Nullable4": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "AgentTurnRecord": {
+      "type": "object",
+      "properties": {
+        "contentRevision": {
+          "$ref": "#/$defs/Int64"
+        },
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "isStreaming": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "items": {
+          "$ref": "#/$defs/ListOfAgentTurnItemRecord"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentTurnKind"
+        },
+        "role": {
+          "$ref": "#/$defs/AgentMessageRole"
+        },
+        "runId": {
+          "$ref": "#/$defs/Nullable"
+        },
+        "runRevision": {
+          "$ref": "#/$defs/Nullable4"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "turnId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        }
+      },
+      "required": [
+        "contentRevision",
+        "createdAtUtc",
+        "isStreaming",
+        "items",
+        "kind",
+        "role",
+        "sessionId",
+        "turnId",
+        "updatedAtUtc"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentTurnRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentTurnRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentRunStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    "AgentRunContextRecord": {
+      "type": "object",
+      "properties": {
+        "isInterrupted": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "revision": {
+          "$ref": "#/$defs/Int64"
+        },
+        "runId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "startedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentRunStatus"
+        }
+      },
+      "required": [
+        "isInterrupted",
+        "revision",
+        "runId",
+        "startedAtUtc",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AgentSessionState": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        5
+      ]
+    },
+    "AgentSessionContextRecord": {
+      "type": "object",
+      "properties": {
+        "profileDisplayName": {
+          "$ref": "#/$defs/String"
+        },
+        "profileId": {
+          "$ref": "#/$defs/String"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "sessionState": {
+          "$ref": "#/$defs/AgentSessionState"
+        },
+        "sessionTitle": {
+          "$ref": "#/$defs/String"
+        },
+        "workingSummary": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "profileDisplayName",
+        "profileId",
+        "sessionId",
+        "sessionState",
+        "sessionTitle"
+      ],
+      "additionalProperties": false
+    },
+    "PromptContextTurnWire": {
+      "type": "object",
+      "properties": {
+        "userMessage": {
+          "$ref": "#/$defs/String"
+        },
+        "workingSummary": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "userMessage"
+      ],
+      "additionalProperties": false
+    },
+    "AgentWorkspaceDocumentRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "documentId": {
+          "$ref": "#/$defs/String"
+        },
+        "filePath": {
+          "$ref": "#/$defs/String"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "documentId",
+        "filePath",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentWorkspaceDocumentRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentWorkspacePathRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "hostPath": {
+          "$ref": "#/$defs/String"
+        },
+        "isDefault": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "pathId": {
+          "$ref": "#/$defs/String"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "hostPath",
+        "isDefault",
+        "pathId",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentWorkspacePathRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentWorkspacePathRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentWorkspaceRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "documents": {
+          "$ref": "#/$defs/ListOfAgentWorkspaceDocumentRecord"
+        },
+        "paths": {
+          "$ref": "#/$defs/ListOfAgentWorkspacePathRecord"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "displayName",
+        "documents",
+        "paths",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "PromptContextRequestWire": {
+      "type": "object",
+      "properties": {
+        "availableTools": {
+          "$ref": "#/$defs/ListOfAgentToolDescriptor"
+        },
+        "contextPlan": {
+          "$ref": "#/$defs/AgentPromptContextPlan"
+        },
+        "executionBinding": {
+          "$ref": "#/$defs/AgentWorkspaceBindingRecord"
+        },
+        "executionTarget": {
+          "$ref": "#/$defs/AgentRpcProviderHandle"
+        },
+        "memoryConsistencyBarrier": {
+          "$ref": "#/$defs/AgentMemoryConsistencyBarrier"
+        },
+        "profile": {
+          "$ref": "#/$defs/AgentProfileRecord"
+        },
+        "recentLiveBufferTurns": {
+          "$ref": "#/$defs/ListOfAgentTurnRecord"
+        },
+        "run": {
+          "$ref": "#/$defs/AgentRunContextRecord"
+        },
+        "session": {
+          "$ref": "#/$defs/AgentSessionContextRecord"
+        },
+        "transcriptEpoch": {
+          "$ref": "#/$defs/Int64"
+        },
+        "turn": {
+          "$ref": "#/$defs/PromptContextTurnWire"
+        },
+        "turns": {
+          "$ref": "#/$defs/ListOfAgentTurnRecord"
+        },
+        "workspace": {
+          "$ref": "#/$defs/AgentWorkspaceRecord"
+        }
+      },
+      "required": [
+        "availableTools",
+        "contextPlan",
+        "recentLiveBufferTurns",
+        "run",
+        "session",
+        "transcriptEpoch",
+        "turn",
+        "turns"
+      ],
+      "additionalProperties": false
+    },
+    "AgentPromptContextAuthority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentContextProvenance": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    "AgentPromptContextScope": {
+      "type": "object",
+      "properties": {
+        "appliesToDirectory": {
+          "$ref": "#/$defs/String"
+        },
+        "contentHash": {
+          "$ref": "#/$defs/String"
+        },
+        "contextIdentity": {
+          "$ref": "#/$defs/String"
+        },
+        "documentPath": {
+          "$ref": "#/$defs/String"
+        },
+        "scopeRoot": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "appliesToDirectory",
+        "contentHash",
+        "contextIdentity",
+        "documentPath",
+        "scopeRoot"
+      ],
+      "additionalProperties": false
+    },
+    "AgentContextTrust": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1,
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "AgentPromptContextUsage": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentPromptContextBlock": {
+      "type": "object",
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/AgentPromptContextAuthority"
+        },
+        "content": {
+          "$ref": "#/$defs/String"
+        },
+        "hostIdentity": {
+          "$ref": "#/$defs/String"
+        },
+        "priority": {
+          "$ref": "#/$defs/Int32"
+        },
+        "provenance": {
+          "$ref": "#/$defs/AgentContextProvenance"
+        },
+        "scope": {
+          "$ref": "#/$defs/AgentPromptContextScope"
+        },
+        "sourceId": {
+          "$ref": "#/$defs/String"
+        },
+        "title": {
+          "$ref": "#/$defs/String"
+        },
+        "trust": {
+          "$ref": "#/$defs/AgentContextTrust"
+        },
+        "usage": {
+          "$ref": "#/$defs/AgentPromptContextUsage"
+        }
+      },
+      "required": [
+        "authority",
+        "content",
+        "priority",
+        "provenance",
+        "title",
+        "trust",
+        "usage"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentPromptContextBlock": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentPromptContextBlock"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentPromptContextContribution": {
+      "type": "object",
+      "properties": {
+        "blocks": {
+          "$ref": "#/$defs/ListOfAgentPromptContextBlock"
+        }
+      },
+      "required": [
+        "blocks"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRpcOptionalOfAgentPromptContextContribution": {
+      "type": "object",
+      "properties": {
+        "hasValue": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "value": {
+          "$ref": "#/$defs/AgentPromptContextContribution"
+        }
+      },
+      "required": [
+        "hasValue"
+      ],
+      "additionalProperties": false
+    },
+    "AgentPromptContextReceiptBlock": {
+      "type": "object",
+      "properties": {
+        "contentHash": {
+          "$ref": "#/$defs/String"
+        },
+        "contextIdentity": {
+          "$ref": "#/$defs/String"
+        },
+        "documentPath": {
+          "$ref": "#/$defs/String"
+        },
+        "hostIdentity": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "contentHash",
+        "contextIdentity",
+        "documentPath",
+        "hostIdentity"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentPromptContextReceiptBlock": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentPromptContextReceiptBlock"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentPromptContextReceipt": {
+      "type": "object",
+      "properties": {
+        "blocks": {
+          "$ref": "#/$defs/ListOfAgentPromptContextReceiptBlock"
+        },
+        "runId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "transcriptEpoch": {
+          "$ref": "#/$defs/Int64"
+        }
+      },
+      "required": [
+        "blocks",
+        "runId",
+        "sessionId",
+        "transcriptEpoch"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

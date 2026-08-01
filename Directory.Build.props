@@ -9,7 +9,7 @@
         <EnableNETAnalyzers>true</EnableNETAnalyzers>
         <AnalysisLevel>latest</AnalysisLevel>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-        <VersionPrefix>1.1.0</VersionPrefix>
+        <VersionPrefix>2.0.0</VersionPrefix>
         <Authors>Younics</Authors>
         <Company>Younics</Company>
         <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>

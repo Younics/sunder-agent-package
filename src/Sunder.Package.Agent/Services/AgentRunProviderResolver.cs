@@ -1,17 +1,15 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Services;
 
 public sealed class AgentRunProviderResolver(
     AgentProfileService profileService,
-    IPackageExtensionCatalog extensionCatalog)
+    AgentRpcCatalog rpcCatalog)
 {
     private readonly AgentProfileService _profileService = profileService;
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
-        AgentExtensionInvocation.Require(extensionCatalog);
+    private readonly AgentRpcCatalog _rpcCatalog = rpcCatalog;
 
     public AgentRunProviderSelection ResolveChatProvider(AgentProfileRecord profile)
     {
@@ -21,14 +19,14 @@ public sealed class AgentRunProviderResolver(
             return new AgentRunProviderSelection(chatBinding);
         }
 
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.ChatProviders))
+        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.ChatProviders))
         {
             if (!reference.TryAcquire(out var lease))
             {
                 continue;
             }
 
-            var descriptor = SnapshotDescriptor(lease.Contribution.Descriptor);
+            var descriptor = SnapshotDescriptor(lease.Service.Descriptor);
             if (!string.Equals(
                     descriptor.ProviderId,
                     chatBinding.ProviderId,
@@ -176,12 +174,12 @@ public sealed class AgentRunProviderResolver(
 
 public sealed class AgentRunProviderSelection : IDisposable
 {
-    private IPackageExtensionLease<IAgentChatProvider>? _lease;
+    private AgentRpcLease<IAgentChatProvider>? _lease;
 
     internal AgentRunProviderSelection(
         AgentProfileModelBindingRecord? chatBinding,
-        IPackageExtensionReference<IAgentChatProvider>? reference = null,
-        IPackageExtensionLease<IAgentChatProvider>? lease = null,
+        AgentRpcReference<IAgentChatProvider>? reference = null,
+        AgentRpcLease<IAgentChatProvider>? lease = null,
         AgentProviderDescriptor? descriptor = null)
     {
         ChatBinding = chatBinding;
@@ -200,14 +198,14 @@ public sealed class AgentRunProviderSelection : IDisposable
 
     public bool IsAvailable => Volatile.Read(ref _lease) is not null;
 
-    internal IPackageExtensionReference<IAgentChatProvider>? Reference { get; }
+    internal AgentRpcReference<IAgentChatProvider>? Reference { get; }
 
     internal CancellationToken RetirementToken { get; }
 
     internal bool IsRetiring => RetirementToken.IsCancellationRequested;
 
     internal IAgentChatProvider Provider
-        => Volatile.Read(ref _lease)?.Contribution
+        => Volatile.Read(ref _lease)?.Service
            ?? throw new ObjectDisposedException(nameof(AgentRunProviderSelection));
 
     internal AgentRunProviderSelection? TryRetain()
@@ -256,10 +254,10 @@ public sealed class AgentRunProviderSelection : IDisposable
             RetirementToken);
         try
         {
-            var result = await callback(lease.Contribution, invocation.Token).ConfigureAwait(false);
+            var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
             if (IsRetiring && !cancellationToken.IsCancellationRequested)
             {
-                throw AgentExtensionInvocation.Unavailable(OwnerPackageId!);
+                throw AgentRpcInvocation.Unavailable(OwnerPackageId!);
             }
 
             return result;
@@ -272,13 +270,13 @@ public sealed class AgentRunProviderSelection : IDisposable
             IsRetiring
             && !cancellationToken.IsCancellationRequested)
         {
-            throw AgentExtensionInvocation.Unavailable(OwnerPackageId!, exception);
+            throw AgentRpcInvocation.Unavailable(OwnerPackageId!, exception);
         }
         catch (Exception exception) when (
             IsRetiring
             && !cancellationToken.IsCancellationRequested)
         {
-            throw AgentExtensionInvocation.Unavailable(OwnerPackageId!, exception);
+            throw AgentRpcInvocation.Unavailable(OwnerPackageId!, exception);
         }
     }
 

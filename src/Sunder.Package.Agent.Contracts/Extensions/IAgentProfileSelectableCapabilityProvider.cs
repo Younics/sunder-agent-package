@@ -7,9 +7,9 @@ namespace Sunder.Package.Agent.Contracts.Contracts;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Role and direction: this is a Runtime-role extension contract. Zero or more packages contribute
-/// providers through <see cref="PackageExtensionPoints.ProfileSelectableCapabilityProviders"/>, and
-/// the Agent Runtime consumes their descriptors for profile and subagent editors.
+/// Role and direction: this is a Runtime-role RPC adapter contract. Zero or more packages provide
+/// the <c>sunder.agent.selectable.capability.provider</c> contract, and the Agent Runtime consumes
+/// their descriptors for profile and subagent editors.
 /// </para>
 /// <para>
 /// Identity, ordering, and deduplication: <see cref="ProviderId"/> identifies the provider and should be

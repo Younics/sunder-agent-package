@@ -1,25 +1,22 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentExecutionTargetService(IPackageExtensionCatalog extensionCatalog) : IAgentExecutionGateway
+public sealed class AgentExecutionTargetService(AgentRpcCatalog rpcCatalog) : IAgentExecutionGateway
 {
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
-        AgentExtensionInvocation.Require(extensionCatalog);
-
     public IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets()
         => GetTargetReferences()
-            .Select(target => target.Metadata)
+            .Select(TryDescribe)
+            .OfType<AgentExecutionTargetDescriptor>()
             .OrderBy(target => target.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(target => target.TargetKind, StringComparer.OrdinalIgnoreCase)
             .ThenBy(target => target.TargetId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-    internal AgentExtensionReference<IAgentExecutionTarget, AgentExecutionTargetDescriptor>?
+    internal AgentRpcReference<IAgentExecutionTarget>?
         ResolveTargetReference(AgentWorkspaceBindingRecord? binding)
     {
         if (binding is null || !binding.IsEnabled)
@@ -27,23 +24,27 @@ public sealed class AgentExecutionTargetService(IPackageExtensionCatalog extensi
             return null;
         }
 
-        return GetTargetReferences()
-            .FirstOrDefault(target => string.Equals(
-                                          target.Metadata.TargetId,
-                                          binding.ContributionId,
-                                          StringComparison.OrdinalIgnoreCase)
-                                      || string.Equals(
-                                          target.Metadata.TargetKind,
-                                          binding.ContributionId,
-                                          StringComparison.OrdinalIgnoreCase));
+        foreach (var target in GetTargetReferences())
+        {
+            var descriptor = TryDescribe(target);
+            if (descriptor is not null
+                && (string.Equals(descriptor.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase)))
+            {
+                return target;
+            }
+        }
+        return null;
     }
 
-    private IReadOnlyList<AgentExtensionReference<IAgentExecutionTarget, AgentExecutionTargetDescriptor>>
-        GetTargetReferences()
-        => AgentExtensionInvocation.Snapshot(
-            _invocationCatalog,
-            PackageExtensionPoints.ExecutionTargets,
-            static target => target.Descriptor);
+    private IReadOnlyList<AgentRpcReference<IAgentExecutionTarget>> GetTargetReferences()
+        => rpcCatalog.GetServiceReferences(AgentRpcServices.ExecutionTargets);
+
+    private static AgentExecutionTargetDescriptor? TryDescribe(AgentRpcReference<IAgentExecutionTarget> target)
+    {
+        if (!target.TryAcquire(out var lease)) return null;
+        using (lease) return lease.Service.Descriptor;
+    }
 
     public Task<AgentExecutionTargetWarmupResult> WarmWorkspaceAsync(
         AgentWorkspaceRecord workspace,

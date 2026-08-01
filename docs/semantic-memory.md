@@ -6,7 +6,7 @@
 
 The first-party feature implements and registers four public contracts:
 
-| Extension point | Purpose |
+| RPC capability | Purpose |
 | --- | --- |
 | `ProfileCapabilityConsumers` | Declares that semantic retrieval consumes the profile's `model.embedding` binding. |
 | `PromptContextContributors` | Recalls relevant memories as lower-trust reference context. |

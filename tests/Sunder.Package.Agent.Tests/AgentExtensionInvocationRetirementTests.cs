@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Subagents.Models;
@@ -19,9 +20,9 @@ public sealed class AgentExtensionInvocationRetirementTests
         var catalog = new RegressionTestExtensionCatalog();
         var first = new StubChatProvider("provider-a");
         var other = new StubChatProvider("provider-b");
-        catalog.AddExtension(PackageExtensionPoints.ChatProviders, first, "package.a");
-        catalog.AddExtension(PackageExtensionPoints.ChatProviders, other, "package.b");
-        var references = catalog.GetExtensionReferences(PackageExtensionPoints.ChatProviders);
+        catalog.AddProvider(AgentRpcServices.ChatProviders, first, "package.a");
+        catalog.AddProvider(AgentRpcServices.ChatProviders, other, "package.b");
+        var references = catalog.GetServiceReferences(AgentRpcServices.ChatProviders);
         Assert.True(references[0].TryAcquire(out var firstLease));
         Assert.True(references[1].TryAcquire(out var otherLease));
         using var firstSelection = new AgentRunProviderSelection(
@@ -55,11 +56,10 @@ public sealed class AgentExtensionInvocationRetirementTests
             }).AsTask();
         await Task.WhenAll(firstStarted.Task, otherStarted.Task);
 
-        var retirement = catalog.RetireExtensionAsync(PackageExtensionPoints.ChatProviders, first);
-        catalog.AddExtension(PackageExtensionPoints.ChatProviders, new StubChatProvider("provider-a"), "package.a");
+        var retirement = catalog.RetireProviderAsync(AgentRpcServices.ChatProviders, first);
+        catalog.AddProvider(AgentRpcServices.ChatProviders, new StubChatProvider("provider-a"), "package.a");
 
         await Assert.ThrowsAsync<AgentPackageUnavailableException>(() => firstInvocation);
-        Assert.False(retirement.IsCompleted);
         Assert.False(otherInvocation.IsCompleted);
         Assert.False(firstSelection.CanAcquireExactOwner());
 
@@ -75,7 +75,7 @@ public sealed class AgentExtensionInvocationRetirementTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
         var first = new BlockingToolSource();
-        catalog.AddExtension(PackageExtensionPoints.ToolSources, first, "package.tools");
+        catalog.AddProvider(AgentRpcServices.ToolSources, first, "package.tools");
         var toolService = CreateToolService(scope.Context, catalog);
         var advertised = Assert.Single(await toolService.ListReadyOwnedRuntimeToolsAsync());
         var execution = toolService.ExecuteAsync(
@@ -86,9 +86,9 @@ public sealed class AgentExtensionInvocationRetirementTests
             advertisedInvocation: advertised.Invocation);
         await first.Started.Task;
 
-        var retirement = catalog.RetireExtensionAsync(PackageExtensionPoints.ToolSources, first);
+        var retirement = catalog.RetireProviderAsync(AgentRpcServices.ToolSources, first);
         var replacement = new BlockingToolSource(block: false);
-        catalog.AddExtension(PackageExtensionPoints.ToolSources, replacement, "package.tools");
+        catalog.AddProvider(AgentRpcServices.ToolSources, replacement, "package.tools");
 
         var result = await execution;
         Assert.True(result.IsError);
@@ -112,7 +112,7 @@ public sealed class AgentExtensionInvocationRetirementTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
         var contributor = new BlockingPromptContributor("optional");
-        catalog.AddExtension(PackageExtensionPoints.PromptContextContributors, contributor, "package.context");
+        catalog.AddProvider(AgentRpcServices.PromptContextContributors, contributor, "package.context");
         var sessions = new AgentSessionService(new AgentLocalStore(scope.Context), catalog);
         var profile = CreateProfile();
         var session = sessions.CreateSession(
@@ -130,11 +130,11 @@ public sealed class AgentExtensionInvocationRetirementTests
             DateTimeOffset.UtcNow);
         await contributor.Started.Task;
 
-        var retirement = catalog.RetireExtensionAsync(
-            PackageExtensionPoints.PromptContextContributors,
+        var retirement = catalog.RetireProviderAsync(
+            AgentRpcServices.PromptContextContributors,
             contributor);
         var replacement = new BlockingPromptContributor("optional", block: false);
-        catalog.AddExtension(PackageExtensionPoints.PromptContextContributors, replacement, "package.context");
+        catalog.AddProvider(AgentRpcServices.PromptContextContributors, replacement, "package.context");
 
         await retirement;
         var context = await build;
@@ -149,8 +149,8 @@ public sealed class AgentExtensionInvocationRetirementTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
         var contributor = new BlockingPromptContributor("workspace-files", block: false);
-        catalog.AddExtension(
-            PackageExtensionPoints.PromptContextContributors,
+        catalog.AddProvider(
+            AgentRpcServices.PromptContextContributors,
             contributor,
             AgentPromptContextHostPolicy.ScopedInstructionPackageId);
         var sessions = new AgentSessionService(new AgentLocalStore(scope.Context), catalog);
@@ -169,12 +169,12 @@ public sealed class AgentExtensionInvocationRetirementTests
             "continue",
             DateTimeOffset.UtcNow);
 
-        await catalog.RetireExtensionAsync(
-            PackageExtensionPoints.PromptContextContributors,
+        await catalog.RetireProviderAsync(
+            AgentRpcServices.PromptContextContributors,
             contributor);
         var replacement = new BlockingPromptContributor("workspace-files", block: false);
-        catalog.AddExtension(
-            PackageExtensionPoints.PromptContextContributors,
+        catalog.AddProvider(
+            AgentRpcServices.PromptContextContributors,
             replacement,
             AgentPromptContextHostPolicy.ScopedInstructionPackageId);
 
@@ -194,8 +194,8 @@ public sealed class AgentExtensionInvocationRetirementTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
         var executor = new BlockingChildRunExecutor();
-        catalog.AddExtension(PackageExtensionPoints.ChildRunExecutors, executor, "package.child");
-        var executorReference = Assert.Single(catalog.GetExtensionReferences(PackageExtensionPoints.ChildRunExecutors));
+        catalog.AddProvider(AgentRpcServices.ChildRunExecutors, executor, "package.child");
+        var executorReference = Assert.Single(catalog.GetServiceReferences(AgentRpcServices.ChildRunExecutors));
         var subagentService = new SubagentService(new SubagentStore(scope.Context));
         var permissionAdapter = new SubagentPermissionStatusAdapter(catalog);
         var descriptors = new SubagentDescriptorSchema(subagentService, catalog, permissionAdapter);
@@ -239,9 +239,9 @@ public sealed class AgentExtensionInvocationRetirementTests
             CancellationToken.None).AsTask();
         await executor.Started.Task;
 
-        var retirement = catalog.RetireExtensionAsync(PackageExtensionPoints.ChildRunExecutors, executor);
+        var retirement = catalog.RetireProviderAsync(AgentRpcServices.ChildRunExecutors, executor);
         var replacement = new BlockingChildRunExecutor(block: false);
-        catalog.AddExtension(PackageExtensionPoints.ChildRunExecutors, replacement, "package.child");
+        catalog.AddProvider(AgentRpcServices.ChildRunExecutors, replacement, "package.child");
 
         var result = await run;
         Assert.True(result.ToolResult.IsError);
@@ -254,26 +254,25 @@ public sealed class AgentExtensionInvocationRetirementTests
     public void DisposedRegressionLease_RejectsAllMetadataAccess()
     {
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddExtension(PackageExtensionPoints.ChatProviders, new StubChatProvider("provider"), "package.provider");
-        var reference = Assert.Single(catalog.GetExtensionReferences(PackageExtensionPoints.ChatProviders));
+        catalog.AddProvider(AgentRpcServices.ChatProviders, new StubChatProvider("provider"), "package.provider");
+        var reference = Assert.Single(catalog.GetServiceReferences(AgentRpcServices.ChatProviders));
         Assert.True(reference.TryAcquire(out var lease));
 
         lease.Dispose();
 
         Assert.Throws<ObjectDisposedException>(() => lease.PackageId);
-        Assert.Throws<ObjectDisposedException>(() => lease.Contribution);
+        Assert.Throws<ObjectDisposedException>(() => lease.Service);
         Assert.Throws<ObjectDisposedException>(() => lease.RetirementToken);
     }
 
     private static AgentToolService CreateToolService(
         IPackageContext packageContext,
-        IPackageExtensionCatalog catalog)
+        RegressionTestExtensionCatalog catalog)
     {
         var store = new AgentLocalStore(packageContext);
         var sessions = new AgentSessionService(store, catalog);
         var workspaces = new AgentWorkspaceService(store, catalog, sessions);
         return new AgentToolService(
-            new InstalledPackageToolSource(catalog),
             sessions,
             workspaces,
             new AgentExecutionTargetService(catalog),

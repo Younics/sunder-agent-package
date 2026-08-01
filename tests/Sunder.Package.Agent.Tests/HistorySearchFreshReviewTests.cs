@@ -254,7 +254,7 @@ public sealed class HistorySearchFreshReviewTests
         var services = new ServiceCollection();
         services.AddSingleton(scope.Context);
         services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton<IPackageExtensionCatalog>(new RegressionTestExtensionCatalog());
+        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(new RegressionTestExtensionCatalog());
         services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
         new PackageModule().ConfigureRuntimeServices(services, scope.Context);
         return services.BuildServiceProvider();

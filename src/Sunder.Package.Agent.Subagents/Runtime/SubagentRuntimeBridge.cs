@@ -1,6 +1,7 @@
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Subagents.Models;
@@ -171,9 +172,9 @@ internal sealed record SubagentChanged(
 
 internal sealed class SubagentLocalManagementGateway(
     SubagentService service,
-    IPackageExtensionCatalog extensionCatalog) : ISubagentManagementGateway, IDisposable
+    AgentRpcCatalog rpcCatalog) : ISubagentManagementGateway, IDisposable
 {
-    private readonly SubagentEditorCapabilityCatalog _capabilities = new(extensionCatalog);
+    private readonly SubagentEditorCapabilityCatalog _capabilities = new(rpcCatalog);
     public event Action? SubagentsChanged { add => service.SubagentsChanged += value; remove => service.SubagentsChanged -= value; }
     public event Action? CatalogChanged { add => _capabilities.Changed += value; remove => _capabilities.Changed -= value; }
     public Task<IReadOnlyList<SubagentRecord>> ListSubagentsAsync(CancellationToken cancellationToken = default) => Task.FromResult(service.ListSubagents());
@@ -182,9 +183,9 @@ internal sealed class SubagentLocalManagementGateway(
         => Task.FromResult(service.SaveSubagent(request.SubagentId, request.DisplayName, request.Description, request.Instructions,
             request.ChatProviderId, request.ChatModelId, request.Assignments, request.ChatModelSettingsJson));
     public Task DeleteSubagentAsync(string subagentId, CancellationToken cancellationToken = default) { service.DeleteSubagent(subagentId); return Task.CompletedTask; }
-    public IReadOnlyList<ProviderCatalogOption> ListChatProviders() => ProviderModelCatalogAdapter.ForChatProviders(extensionCatalog).ListProviders();
+    public IReadOnlyList<ProviderCatalogOption> ListChatProviders() => ProviderModelCatalogAdapter.ForChatProviders(rpcCatalog).ListProviders();
     public Task<ProviderModelCatalogResult> LoadChatModelsAsync(string providerId, CancellationToken cancellationToken = default)
-        => ProviderModelCatalogAdapter.ForChatProviders(extensionCatalog).LoadAsync(providerId, cancellationToken);
+        => ProviderModelCatalogAdapter.ForChatProviders(rpcCatalog).LoadAsync(providerId, cancellationToken);
     public Task<IReadOnlyList<AgentToolDescriptor>> ListLocalToolsAsync(CancellationToken cancellationToken = default) => _capabilities.ListLocalToolsAsync(cancellationToken);
     public Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListPackageCapabilitiesAsync(CancellationToken cancellationToken = default) => _capabilities.ListPackageCapabilitiesAsync(cancellationToken);
     public void Dispose() => _capabilities.Dispose();
@@ -515,15 +516,11 @@ internal sealed class SubagentAppRuntimeGateway :
 
 internal sealed class SubagentRuntimeHandler(
     SubagentService service,
-    IPackageExtensionCatalog extensions)
+    AgentRpcCatalog rpcCatalog)
     : IPackageRuntimeOperationHandler<SubagentQuery, SubagentProjection>,
       IPackageRuntimeOperationHandler<SubagentCommand, SubagentProjection>
 {
-    private readonly SubagentEditorCapabilityCatalog _capabilities = new(extensions);
-    private readonly IPackageExtensionInvocationCatalog _invocations =
-        extensions as IPackageExtensionInvocationCatalog
-        ?? throw new InvalidOperationException(
-            "The host extension catalog does not support activation-scoped invocation leases.");
+    private readonly SubagentEditorCapabilityCatalog _capabilities = new(rpcCatalog);
 
     public async ValueTask<SubagentProjection> HandleAsync(SubagentQuery request, CancellationToken cancellationToken = default)
     {
@@ -598,8 +595,8 @@ internal sealed class SubagentRuntimeHandler(
             using var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, retirementToken);
             try
             {
-                var modelsTask = lease.Contribution.GetAvailableModelsAsync(invocation.Token).AsTask();
-                var readinessTask = lease.Contribution.GetReadinessAsync(invocation.Token).AsTask();
+                var modelsTask = lease.Service.GetAvailableModelsAsync(invocation.Token).AsTask();
+                var readinessTask = lease.Service.GetReadinessAsync(invocation.Token).AsTask();
                 await Task.WhenAll(modelsTask, readinessTask);
                 if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
@@ -620,7 +617,7 @@ internal sealed class SubagentRuntimeHandler(
     private IReadOnlyList<SubagentProviderReference> SnapshotChatProviders()
     {
         var providers = new List<SubagentProviderReference>();
-        foreach (var reference in _invocations.GetExtensionReferences(PackageExtensionPoints.ChatProviders))
+        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.ChatProviders))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -633,7 +630,7 @@ internal sealed class SubagentRuntimeHandler(
                     providers.Add(new SubagentProviderReference(
                         reference,
                         lease.PackageId,
-                        lease.Contribution.Descriptor));
+                        lease.Service.Descriptor));
                 }
             }
         }
@@ -645,7 +642,7 @@ internal sealed class SubagentRuntimeHandler(
         Func<IAgentRuntimeCatalog, SubagentProjection> callback,
         CancellationToken cancellationToken)
     {
-        var reference = _invocations.GetExtensionReferences(PackageExtensionPoints.RuntimeCatalogs)
+        var reference = rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs)
             .FirstOrDefault();
         if (reference is null || !reference.TryAcquire(out var lease))
         {
@@ -655,7 +652,7 @@ internal sealed class SubagentRuntimeHandler(
         using (lease)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var result = await Task.Run(() => callback(lease.Contribution), cancellationToken);
+            var result = await Task.Run(() => callback(lease.Service), cancellationToken);
             if (lease.RetirementToken.IsCancellationRequested)
             {
                 throw new InvalidOperationException("The Agent runtime catalog became unavailable.");
@@ -704,7 +701,7 @@ internal sealed class SubagentRuntimeHandler(
     private static Guid Require(Guid? value) => value ?? throw new InvalidOperationException("A session id is required.");
     private static DateTimeOffset Require(DateTimeOffset? value) => value ?? throw new InvalidOperationException("A transcript anchor is required.");
     private sealed record SubagentProviderReference(
-        IPackageExtensionReference<IAgentChatProvider> Reference,
+        AgentRpcReference<IAgentChatProvider> Reference,
         string PackageId,
         AgentProviderDescriptor Descriptor);
 }

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Xunit;
@@ -29,10 +30,8 @@ public sealed class LMStudioPackageCompositionTests
         using var runtimeProvider = runtimeServices.BuildServiceProvider();
         var runtimeRegistry = new ProviderCompositionTestRegistry();
         runtimeModule.RegisterRuntimeContributions(runtimeRegistry, runtimeProvider);
-        Assert.Equal(
-            [PackageExtensionPoints.ChatProviders.Id, PackageExtensionPoints.EmbeddingProviders.Id],
-            runtimeRegistry.ExtensionIds);
-        Assert.Equal([typeof(LMStudioAgentProvider), typeof(LMStudioEmbeddingProvider)], runtimeRegistry.ExtensionTypes);
+        Assert.Equal(["lmstudio.chat", "lmstudio.embedding"], runtimeRegistry.RpcProviderIds);
+        Assert.All(runtimeRegistry.RpcHandlerTypes, type => Assert.Equal(typeof(AgentRpcServiceHandler), type));
         Assert.Same(LMStudioProviderConfiguration.Schema, Assert.Single(runtimeRegistry.SettingsSchemas));
 
         var appServices = new ServiceCollection();
@@ -51,6 +50,6 @@ public sealed class LMStudioPackageCompositionTests
         var appRegistry = new ProviderCompositionTestRegistry();
         appModule.RegisterAppContributions(appRegistry, appProvider);
         Assert.Equal([typeof(LMStudioSettingsView)], appRegistry.SettingsViewTypes);
-        Assert.Empty(appRegistry.ExtensionIds);
+        Assert.Empty(appRegistry.RpcProviderIds);
     }
 }

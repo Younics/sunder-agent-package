@@ -4,6 +4,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Memory.Semantic;
 using Sunder.Package.Agent.Memory.Semantic.Services;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Xunit;
 using Xunit.Abstractions;
@@ -333,10 +334,10 @@ public sealed class MemoryEvaluationTests
             Store = new MemoryLocalStore(_packageContext);
             Settings = new MemorySemanticSettingsService(_packageContext);
 
-            _extensionCatalog.AddExtension(PackageExtensionPoints.RuntimeCatalogs, _runtimeCatalog);
+            _extensionCatalog.AddProvider(AgentRpcServices.RuntimeCatalogs, _runtimeCatalog);
             if (enableEmbeddings)
             {
-                _extensionCatalog.AddExtension(PackageExtensionPoints.EmbeddingProviders, new EvaluationEmbeddingProvider("test-embeddings"));
+                _extensionCatalog.AddProvider(AgentRpcServices.EmbeddingProviders, new EvaluationEmbeddingProvider("test-embeddings"));
             }
 
             var metrics = new SemanticMemoryMetricsService();

@@ -1,6 +1,7 @@
 using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Local;
@@ -40,7 +41,21 @@ public sealed class LocalExecutionTarget
         "Local Machine",
         "Executes commands and file operations on this machine within configured workspace paths.",
         SupportsShell: true,
-        SupportsFiles: true);
+        SupportsFiles: true)
+    {
+        Facets =
+        [
+            AgentExecutionFacetIds.ProcessExecution,
+            AgentExecutionFacetIds.ResourceResolution,
+            AgentExecutionFacetIds.ResourceAuthority,
+            AgentExecutionFacetIds.ExecutionScope,
+            AgentExecutionFacetIds.PathMapping,
+            AgentExecutionFacetIds.PathEnvironment,
+            AgentExecutionFacetIds.RangedFileRead,
+            AgentExecutionFacetIds.StructuredFileSearch,
+            AgentExecutionFacetIds.ScopedInstructionDiscovery,
+        ],
+    };
 
     public async ValueTask<string?> GetConfigurationGenerationAsync(
         AgentExecutionTargetContext context,

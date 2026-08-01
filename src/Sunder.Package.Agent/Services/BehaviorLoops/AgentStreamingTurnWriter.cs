@@ -37,6 +37,7 @@ internal sealed class AgentStreamingTurnWriter(
             state.Content.Clear();
             state.PersistedContentLength = 0;
             state.ToolCalls.Clear();
+            state.ProviderUsage = null;
             state.LastAssistantFlushTimestamp = null;
             state.SuppressPendingFlush = false;
         }
@@ -76,6 +77,11 @@ internal sealed class AgentStreamingTurnWriter(
                 foreach (var functionCall in streamUpdate.Contents.OfType<FunctionCallContent>())
                 {
                     state.ToolCalls.Add(functionCall);
+                }
+
+                foreach (var usage in streamUpdate.Contents.OfType<UsageContent>())
+                {
+                    state.ProviderUsage = AgentProviderUsage.Merge(state.ProviderUsage, usage.Details);
                 }
 
                 foreach (var reasoningContent in streamUpdate.Contents.OfType<TextReasoningContent>())
@@ -145,7 +151,8 @@ internal sealed class AgentStreamingTurnWriter(
             return new AgentProviderCycleResult(
                 state.Content.ToString(),
                 state.ToolCalls,
-                state.TerminalResult);
+                state.TerminalResult,
+                state.ProviderUsage?.ContextTokenCount);
         }
 
         lock (state.SyncRoot)
@@ -159,7 +166,8 @@ internal sealed class AgentStreamingTurnWriter(
         return new AgentProviderCycleResult(
             state.Content.ToString(),
             state.ToolCalls,
-            TerminalResult: null);
+            TerminalResult: null,
+            state.ProviderUsage?.ContextTokenCount);
     }
 
     private async Task BlockProtocolLeakAsync(
@@ -241,6 +249,8 @@ internal sealed class AgentStreamingTurnState(
 
     public List<FunctionCallContent> ToolCalls { get; } = [];
 
+    public AgentProviderUsage? ProviderUsage { get; set; }
+
     public ReasoningActivityReporter ReasoningActivity { get; } = new(host as IAgentRunActivitySink);
 
     public long? LastAssistantFlushTimestamp { get; set; }
@@ -257,7 +267,36 @@ internal sealed class AgentStreamingTurnState(
 internal sealed record AgentProviderCycleResult(
     string Text,
     IReadOnlyList<FunctionCallContent> ToolCalls,
-    AgentBehaviorLoopResult? TerminalResult);
+    AgentBehaviorLoopResult? TerminalResult,
+    long? ReportedContextTokenCount);
+
+internal sealed record AgentProviderUsage(
+    long? InputTokenCount,
+    long? OutputTokenCount,
+    long? TotalTokenCount)
+{
+    public long? ContextTokenCount => Normalize(TotalTokenCount)
+        ?? Add(Normalize(InputTokenCount), Normalize(OutputTokenCount));
+
+    public static AgentProviderUsage Merge(AgentProviderUsage? current, UsageDetails next)
+        => new(
+            next.InputTokenCount ?? current?.InputTokenCount,
+            next.OutputTokenCount ?? current?.OutputTokenCount,
+            next.TotalTokenCount ?? current?.TotalTokenCount);
+
+    private static long? Normalize(long? value) => value is >= 0 ? value : null;
+
+    private static long? Add(long? left, long? right)
+    {
+        if (left is null || right is null)
+        {
+            return null;
+        }
+        return left.Value > long.MaxValue - right.Value
+            ? long.MaxValue
+            : left.Value + right.Value;
+    }
+}
 
 internal sealed class ReasoningActivityReporter(IAgentRunActivitySink? activitySink)
 {

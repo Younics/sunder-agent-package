@@ -1,0 +1,616 @@
+{
+  "descriptorVersion": 1,
+  "contractId": "sunder.agent.durable.lifecycle.observer",
+  "version": "1.0.0",
+  "services": [
+    {
+      "serviceId": "durable-lifecycle-observer",
+      "methods": [
+        {
+          "methodId": "describe",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentRpcEmpty"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentRpcIdentity"
+          }
+        },
+        {
+          "methodId": "handle",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentDurableLifecycleEventEnvelope"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentRpcEmpty"
+          }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "AgentRpcEmpty": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "String": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "AgentRpcIdentity": {
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "id": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "displayName",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "AgentLifecycleEventKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    "DateTimeOffset": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "Guid": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "Int64": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "AgentRunStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    "AgentRunCheckpointRecord": {
+      "type": "object",
+      "properties": {
+        "checkpointId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "runRevision": {
+          "$ref": "#/$defs/Int64"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentRunStatus"
+        },
+        "summary": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "checkpointId",
+        "createdAtUtc",
+        "runRevision",
+        "sessionId",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "Boolean": {
+      "type": "boolean"
+    },
+    "Int32": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "ListOfGuid": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Guid"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "Nullable": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "AgentMemoryConsistencyBarrier": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/$defs/String"
+        },
+        "payloadHash": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "eventId",
+        "payloadHash"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentMemoryConsistencyBarrier": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentMemoryConsistencyBarrier"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentTurnItemKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "enum": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "Nullable2": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "AgentToolExecutionStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "Nullable3": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "Nullable4": {
+      "type": "boolean"
+    },
+    "AgentTurnItemRecord": {
+      "type": "object",
+      "properties": {
+        "argumentsJson": {
+          "$ref": "#/$defs/String"
+        },
+        "backendId": {
+          "$ref": "#/$defs/String"
+        },
+        "callId": {
+          "$ref": "#/$defs/String"
+        },
+        "errorCode": {
+          "$ref": "#/$defs/String"
+        },
+        "isError": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "isToolHeaderProjection": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "itemId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentTurnItemKind"
+        },
+        "presentationPayloadJson": {
+          "$ref": "#/$defs/String"
+        },
+        "resultSummary": {
+          "$ref": "#/$defs/String"
+        },
+        "sequenceNumber": {
+          "$ref": "#/$defs/Int32"
+        },
+        "sourcesJson": {
+          "$ref": "#/$defs/String"
+        },
+        "structuredPayloadJson": {
+          "$ref": "#/$defs/String"
+        },
+        "textContent": {
+          "$ref": "#/$defs/String"
+        },
+        "toolDetailRevision": {
+          "$ref": "#/$defs/Int64"
+        },
+        "toolErrorSummary": {
+          "$ref": "#/$defs/String"
+        },
+        "toolExecutionId": {
+          "$ref": "#/$defs/Nullable2"
+        },
+        "toolExecutionStatus": {
+          "$ref": "#/$defs/Nullable3"
+        },
+        "toolHasDetails": {
+          "$ref": "#/$defs/Nullable4"
+        },
+        "toolHeaderHint": {
+          "$ref": "#/$defs/String"
+        },
+        "toolId": {
+          "$ref": "#/$defs/String"
+        },
+        "toolOwnerPackageId": {
+          "$ref": "#/$defs/String"
+        },
+        "toolSchemaId": {
+          "$ref": "#/$defs/String"
+        },
+        "toolSchemaVersion": {
+          "$ref": "#/$defs/String"
+        },
+        "turnId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "wasTruncated": {
+          "$ref": "#/$defs/Boolean"
+        }
+      },
+      "required": [
+        "isError",
+        "isToolHeaderProjection",
+        "itemId",
+        "kind",
+        "sequenceNumber",
+        "toolDetailRevision",
+        "turnId",
+        "wasTruncated"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentTurnItemRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentTurnItemRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentTurnKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentMessageRole": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "enum": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "Nullable5": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "AgentTurnRecord": {
+      "type": "object",
+      "properties": {
+        "contentRevision": {
+          "$ref": "#/$defs/Int64"
+        },
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "isStreaming": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "items": {
+          "$ref": "#/$defs/ListOfAgentTurnItemRecord"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentTurnKind"
+        },
+        "role": {
+          "$ref": "#/$defs/AgentMessageRole"
+        },
+        "runId": {
+          "$ref": "#/$defs/Nullable2"
+        },
+        "runRevision": {
+          "$ref": "#/$defs/Nullable5"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "turnId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        }
+      },
+      "required": [
+        "contentRevision",
+        "createdAtUtc",
+        "isStreaming",
+        "items",
+        "kind",
+        "role",
+        "sessionId",
+        "turnId",
+        "updatedAtUtc"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentTurnRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentTurnRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentRunContextRecord": {
+      "type": "object",
+      "properties": {
+        "isInterrupted": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "revision": {
+          "$ref": "#/$defs/Int64"
+        },
+        "runId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "startedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentRunStatus"
+        }
+      },
+      "required": [
+        "isInterrupted",
+        "revision",
+        "runId",
+        "startedAtUtc",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AgentSessionState": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        5
+      ]
+    },
+    "AgentSessionContextRecord": {
+      "type": "object",
+      "properties": {
+        "profileDisplayName": {
+          "$ref": "#/$defs/String"
+        },
+        "profileId": {
+          "$ref": "#/$defs/String"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Guid"
+        },
+        "sessionState": {
+          "$ref": "#/$defs/AgentSessionState"
+        },
+        "sessionTitle": {
+          "$ref": "#/$defs/String"
+        },
+        "workingSummary": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "profileDisplayName",
+        "profileId",
+        "sessionId",
+        "sessionState",
+        "sessionTitle"
+      ],
+      "additionalProperties": false
+    },
+    "AgentDurableLifecycleEventPayload": {
+      "type": "object",
+      "properties": {
+        "checkpoint": {
+          "$ref": "#/$defs/AgentRunCheckpointRecord"
+        },
+        "contentErased": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "deletedChildSessionCount": {
+          "$ref": "#/$defs/Int32"
+        },
+        "deletedChildSessionIds": {
+          "$ref": "#/$defs/ListOfGuid"
+        },
+        "deletedSessionCount": {
+          "$ref": "#/$defs/Int32"
+        },
+        "deletedSessionIds": {
+          "$ref": "#/$defs/ListOfGuid"
+        },
+        "deletedTurnCount": {
+          "$ref": "#/$defs/Int32"
+        },
+        "deletedTurnIds": {
+          "$ref": "#/$defs/ListOfGuid"
+        },
+        "deletionBatchId": {
+          "$ref": "#/$defs/String"
+        },
+        "deletionChunkCount": {
+          "$ref": "#/$defs/Nullable"
+        },
+        "deletionChunkIndex": {
+          "$ref": "#/$defs/Nullable"
+        },
+        "deletionChunkReceipts": {
+          "$ref": "#/$defs/ListOfAgentMemoryConsistencyBarrier"
+        },
+        "recentLiveBufferTurns": {
+          "$ref": "#/$defs/ListOfAgentTurnRecord"
+        },
+        "rootSessionId": {
+          "$ref": "#/$defs/Nullable2"
+        },
+        "run": {
+          "$ref": "#/$defs/AgentRunContextRecord"
+        },
+        "session": {
+          "$ref": "#/$defs/AgentSessionContextRecord"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Nullable2"
+        },
+        "triggerTurn": {
+          "$ref": "#/$defs/AgentTurnRecord"
+        },
+        "turns": {
+          "$ref": "#/$defs/ListOfAgentTurnRecord"
+        },
+        "userMessage": {
+          "$ref": "#/$defs/String"
+        },
+        "workingSummary": {
+          "$ref": "#/$defs/String"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        },
+        "workspaceIncarnationId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "contentErased",
+        "deletedChildSessionCount",
+        "deletedChildSessionIds",
+        "deletedSessionCount",
+        "deletedSessionIds",
+        "deletedTurnCount",
+        "deletedTurnIds",
+        "deletionChunkReceipts",
+        "recentLiveBufferTurns",
+        "turns"
+      ],
+      "additionalProperties": false
+    },
+    "AgentDurableLifecycleEventEnvelope": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/$defs/String"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentLifecycleEventKind"
+        },
+        "occurredAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "orderingKey": {
+          "$ref": "#/$defs/String"
+        },
+        "originalPayloadHash": {
+          "$ref": "#/$defs/String"
+        },
+        "payload": {
+          "$ref": "#/$defs/AgentDurableLifecycleEventPayload"
+        },
+        "payloadHash": {
+          "$ref": "#/$defs/String"
+        },
+        "payloadJson": {
+          "$ref": "#/$defs/String"
+        },
+        "sequence": {
+          "$ref": "#/$defs/Int64"
+        },
+        "sourceKey": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "eventId",
+        "kind",
+        "occurredAtUtc",
+        "orderingKey",
+        "payload",
+        "payloadHash",
+        "payloadJson",
+        "sequence",
+        "sourceKey"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

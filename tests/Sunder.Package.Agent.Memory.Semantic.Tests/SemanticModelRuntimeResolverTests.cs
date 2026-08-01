@@ -1,9 +1,9 @@
-using System.Diagnostics.CodeAnalysis;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Memory.Semantic.Services;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Tests;
 using Xunit;
 
 namespace Sunder.Package.Agent.Memory.Semantic.Tests;
@@ -13,17 +13,17 @@ public sealed class SemanticModelRuntimeResolverTests
     [Fact]
     public async Task ResolveForProfile_TracksProviderRemovalAndReplacement()
     {
-        var catalog = new MutableExtensionCatalog();
-        catalog.RuntimeCatalogs.Add(new TestRuntimeCatalog());
+        using var catalog = new RegressionTestExtensionCatalog();
+        catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, new TestRuntimeCatalog());
         var original = new TestEmbeddingProvider("original");
         var replacement = new TestEmbeddingProvider("replacement");
-        catalog.EmbeddingProviders.Add(original);
-        var resolver = new SemanticModelRuntimeResolver(catalog, null!);
+        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, original);
+        using var resolver = new SemanticModelRuntimeResolver(catalog, null!);
 
         var first = await resolver.ResolveForProfileAsync("profile-1");
-        catalog.EmbeddingProviders.Clear();
+        await catalog.RetireProviderAsync(original);
         var removed = await resolver.ResolveForProfileAsync("profile-1");
-        catalog.EmbeddingProviders.Add(replacement);
+        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, replacement);
         var reinstalled = await resolver.ResolveForProfileAsync("profile-1");
 
         Assert.Equal("original", first?.ProviderDisplayName);
@@ -31,53 +31,6 @@ public sealed class SemanticModelRuntimeResolverTests
         Assert.Null(removed);
         Assert.Equal("replacement", reinstalled?.ProviderDisplayName);
         Assert.Equal(1, replacement.ReadinessCallCount);
-    }
-
-    private sealed class MutableExtensionCatalog : IPackageExtensionCatalog, IPackageExtensionInvocationCatalog
-    {
-        public List<IAgentRuntimeCatalog> RuntimeCatalogs { get; } = [];
-        public List<IAgentEmbeddingProvider> EmbeddingProviders { get; } = [];
-
-        public IReadOnlyList<T> GetExtensions<T>(PackageExtensionPoint<T> extensionPoint)
-        {
-            if (extensionPoint.Id == PackageExtensionPoints.RuntimeCatalogs.Id)
-            {
-                return RuntimeCatalogs.Cast<T>().ToArray();
-            }
-
-            return extensionPoint.Id == PackageExtensionPoints.EmbeddingProviders.Id
-                ? EmbeddingProviders.Cast<T>().ToArray()
-                : [];
-        }
-
-        public IReadOnlyList<PackageExtensionContribution<T>> GetExtensionContributions<T>(PackageExtensionPoint<T> extensionPoint)
-            => GetExtensions(extensionPoint)
-                .Select(extension => new PackageExtensionContribution<T>("test.package", extension))
-                .ToArray();
-
-        public IReadOnlyList<IPackageExtensionReference<T>> GetExtensionReferences<T>(PackageExtensionPoint<T> extensionPoint)
-            => GetExtensions(extensionPoint)
-                .Select(extension => (IPackageExtensionReference<T>)new ExtensionReference<T>(extension))
-                .ToArray();
-
-        private sealed class ExtensionReference<T>(T contribution) : IPackageExtensionReference<T>
-        {
-            public bool TryAcquire([NotNullWhen(true)] out IPackageExtensionLease<T>? lease)
-            {
-                lease = new ExtensionLease<T>(contribution);
-                return true;
-            }
-        }
-
-        private sealed class ExtensionLease<T>(T contribution) : IPackageExtensionLease<T>
-        {
-            private object? _contribution = contribution;
-
-            public string PackageId => "test.package";
-            public T Contribution => (T)(_contribution ?? throw new ObjectDisposedException(nameof(ExtensionLease<T>)));
-            public CancellationToken RetirementToken => CancellationToken.None;
-            public void Dispose() => _contribution = null;
-        }
     }
 
     private sealed class TestEmbeddingProvider(string instanceName) : IAgentEmbeddingProvider

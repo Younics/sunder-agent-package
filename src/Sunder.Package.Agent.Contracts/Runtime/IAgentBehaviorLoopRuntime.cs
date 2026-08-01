@@ -136,3 +136,15 @@ public interface IAgentBehaviorLoopRuntime
         AgentTurnRecord? assistantTurn,
         CancellationToken cancellationToken = default);
 }
+
+/// <summary>Exposes host-owned acknowledgment for required scoped prompt context.</summary>
+public interface IAgentPromptContextAcknowledgmentRuntime
+{
+    /// <summary>Persists acknowledgment that the supplied scoped context blocks reached the provider request.</summary>
+    ValueTask AcknowledgePromptContextAsync(
+        IReadOnlyList<AgentPromptContextReceiptBlock> blocks,
+        CancellationToken cancellationToken);
+
+    /// <summary>Discards an unconsumed acknowledgment when the prepared provider request is abandoned.</summary>
+    void DiscardPromptContextAcknowledgment();
+}

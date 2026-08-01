@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 
@@ -27,9 +28,9 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterBackgroundService<LocalPackageStorageMigration>();
         registry.RegisterSettingsSchema(LocalExecutionConfiguration.Schema);
         var target = services.GetRequiredService<LocalExecutionTarget>();
-        registry.RegisterExtension(PackageExtensionPoints.ExecutionTargets, target);
-        registry.RegisterExtension(PackageExtensionPoints.WorkspacePathMigrationContributors, services.GetRequiredService<LocalExecutionWorkspaceConfigService>());
-        registry.RegisterExtension(PackageExtensionPoints.WorkspaceEditorContributors, services.GetRequiredService<LocalExecutionWorkspaceEditorContributor>());
+        registry.RegisterRpcProvider("local.execution.target", AgentExecutionTargetRpc.CreateHandler(target));
+        registry.RegisterRpcProvider("local.workspace.path.migrator", AgentWorkspacePathMigratorRpc.CreateHandler(services.GetRequiredService<LocalExecutionWorkspaceConfigService>()));
+        registry.RegisterRpcProvider("local.workspace.editor", AgentWorkspaceEditorRpc.CreateHandler(services.GetRequiredService<LocalExecutionWorkspaceEditorContributor>()));
         registry.RegisterRuntimeOperation(LocalExecutionRuntimeOperations.Execute, services.GetRequiredService<LocalExecutionRuntimeOperationHandler>());
     }
 
@@ -48,8 +49,5 @@ public sealed class AppPackageModule : ISunderAppPackageModule
     public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterSettingsView<LocalExecutionSettingsView>();
-        registry.RegisterExtension(
-            PackageExtensionPoints.WorkspaceEditorContributors,
-            services.GetRequiredService<LocalExecutionWorkspaceEditorPresentationContributor>());
     }
 }

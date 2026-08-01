@@ -534,7 +534,7 @@
       "sunder.agent.execution.common": {
         "type": "Project",
         "dependencies": {
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )"
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )"
         }
       },
       "sunder.package.agent": {
@@ -547,7 +547,7 @@
           "Microsoft.Data.Sqlite": "[10.0.8, )",
           "Microsoft.Extensions.AI": "[10.5.2, )",
           "Microsoft.Extensions.Http.Resilience": "[10.5.0, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)"
@@ -557,16 +557,9 @@
         "type": "Project",
         "dependencies": {
           "Avalonia": "[12.0.3, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
-        }
-      },
-      "sunder.package.agent.contracts": {
-        "type": "Project",
-        "dependencies": {
-          "Microsoft.Extensions.AI.Abstractions": "[10.5.2, )",
-          "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.execution.docker": {
@@ -574,8 +567,8 @@
         "dependencies": {
           "Avalonia": "[12.0.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "Sunder.Agent.Execution.Common": "[1.1.0, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Agent.Execution.Common": "[2.0.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)"
@@ -586,8 +579,8 @@
         "dependencies": {
           "Avalonia": "[12.0.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "Sunder.Agent.Execution.Common": "[1.1.0, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Agent.Execution.Common": "[2.0.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
         }
@@ -600,7 +593,7 @@
           "AvaloniaEdit.TextMate": "[12.0.0, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "ModelContextProtocol": "[1.3.0, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)"
@@ -612,9 +605,16 @@
           "Avalonia": "[12.0.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "Microsoft.Data.Sqlite": "[10.0.8, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
+        }
+      },
+      "Sunder.Package.Agent.Protocol": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Extensions.AI.Abstractions": "[10.5.2, )",
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.provider.anthropic": {
@@ -623,7 +623,7 @@
           "Anthropic": "[12.20.1, )",
           "Avalonia": "[12.0.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
         }
@@ -634,7 +634,7 @@
           "Avalonia": "[12.0.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "Google.GenAI": "[1.6.1, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
         }
@@ -645,7 +645,7 @@
           "Avalonia": "[12.0.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "OpenAI": "[2.10.0, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
         }
@@ -657,7 +657,7 @@
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "Microsoft.Extensions.AI.OpenAI": "[10.5.2, )",
           "OpenAI": "[2.10.0, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
         }
@@ -668,7 +668,7 @@
           "Avalonia": "[12.0.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "Octokit": "[14.0.0, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)"
@@ -678,9 +678,10 @@
         "type": "Project",
         "dependencies": {
           "Avalonia": "[12.0.3, )",
+          "Avalonia.Controls.ItemsRepeater": "[12.0.0, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "LiveMarkdown.Avalonia": "[2.2.0, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)"
@@ -689,24 +690,24 @@
       "sunder.package.agent.tools.files": {
         "type": "Project",
         "dependencies": {
-          "Sunder.Agent.Execution.Common": "[1.1.0, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Agent.Execution.Common": "[2.0.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.tools.shell": {
         "type": "Project",
         "dependencies": {
-          "Sunder.Agent.Execution.Common": "[1.1.0, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Agent.Execution.Common": "[2.0.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.tools.web": {
         "type": "Project",
         "dependencies": {
-          "Sunder.Agent.Execution.Common": "[1.1.0, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Agent.Execution.Common": "[2.0.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },

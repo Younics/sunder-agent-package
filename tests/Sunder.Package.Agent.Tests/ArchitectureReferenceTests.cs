@@ -21,6 +21,7 @@ public sealed class ArchitectureReferenceTests
         var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
         services.AddSingleton(packageScope.Context);
         services.AddSingleton<IPackageContext>(packageScope.Context);
+        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(new RegressionTestExtensionCatalog());
         services.AddSingleton<Sunder.Sdk.Runtime.IPackageRuntimeClient>(
             Sunder.Sdk.Runtime.NullPackageRuntimeClient.Instance);
 
@@ -39,7 +40,7 @@ public sealed class ArchitectureReferenceTests
     [Fact]
     public void HistorySearch_RemainsAnInternalRuntimeProjection()
     {
-        var contractsAssembly = typeof(Sunder.Package.Agent.Contracts.PackageExtensionPoints).Assembly;
+        var contractsAssembly = typeof(Sunder.Package.Agent.Contracts.Contracts.IAgentChatProvider).Assembly;
         Assert.DoesNotContain(
             contractsAssembly.ExportedTypes,
             type => type.Name.Contains("HistorySearch", StringComparison.Ordinal));
@@ -63,7 +64,7 @@ public sealed class ArchitectureReferenceTests
 
         var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
         services.AddSingleton<IPackageContext>(packageScope.Context);
-        services.AddSingleton<IPackageExtensionCatalog>(new RegressionTestExtensionCatalog());
+        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(new RegressionTestExtensionCatalog());
         services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
         new PackageModule().ConfigureRuntimeServices(services, packageScope.Context);
 
@@ -84,7 +85,7 @@ public sealed class ArchitectureReferenceTests
     }
 
     [Fact]
-    public void StackDependencyContributors_RequireOwnedExtensionCatalogs()
+    public void StackDependencyContributors_RequireOwnedRpcCatalogs()
     {
         var contributorTypes = new[]
         {
@@ -97,7 +98,7 @@ public sealed class ArchitectureReferenceTests
         {
             var parameter = Assert.Single(
                 Assert.Single(contributorType.GetConstructors()).GetParameters(),
-                candidate => candidate.ParameterType == typeof(IPackageExtensionCatalog));
+                candidate => candidate.ParameterType == typeof(Sunder.Package.Agent.Protocol.AgentRpcCatalog));
             Assert.False(parameter.IsOptional);
             Assert.False(parameter.HasDefaultValue);
         }
@@ -134,9 +135,9 @@ public sealed class ArchitectureReferenceTests
     }
 
     [Fact]
-    public void AgentExtensionPackages_ReferenceAgentContractsProject()
+    public void AgentExtensionPackages_ReferenceAgentProtocolProject()
     {
-        var contractsProjectPath = Path.Combine(
+        var protocolProjectPath = Path.Combine(
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
             "src",
             "Sunder.Package.Agent.Contracts",
@@ -146,7 +147,30 @@ public sealed class ArchitectureReferenceTests
         Assert.NotEmpty(extensionProjects);
         foreach (var projectPath in extensionProjects)
         {
-            Assert.Contains(contractsProjectPath, GetProjectReferencePaths(projectPath), StringComparer.OrdinalIgnoreCase);
+            Assert.Contains(protocolProjectPath, GetProjectReferencePaths(projectPath), StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public void ProductionAssemblies_DoNotReferenceRetiredContractsAssemblyIdentity()
+    {
+        const string retiredAssemblyName = "Sunder.Package.Agent.Contracts";
+        const string protocolAssemblyName = "Sunder.Package.Agent.Protocol";
+        Assert.Equal(
+            protocolAssemblyName,
+            typeof(Sunder.Package.Agent.Contracts.Contracts.IAgentChatProvider).Assembly.GetName().Name);
+
+        var assemblyNames = AgentPackageRepositoryInventory.GetRuntimePackageProjects()
+            .Select(static package => package.Name)
+            .Append("Sunder.Agent.Execution.Common")
+            .Append(protocolAssemblyName)
+            .Distinct(StringComparer.Ordinal);
+        foreach (var assemblyName in assemblyNames)
+        {
+            var assembly = Assembly.Load(assemblyName);
+            Assert.DoesNotContain(
+                assembly.GetReferencedAssemblies(),
+                reference => string.Equals(reference.Name, retiredAssemblyName, StringComparison.Ordinal));
         }
     }
 
@@ -284,7 +308,7 @@ public sealed class ArchitectureReferenceTests
     [Fact]
     public void AgentContracts_PublicApiDoesNotExposeSourceLinkedSharedTypes()
     {
-        var contractsAssembly = typeof(Sunder.Package.Agent.Contracts.PackageExtensionPoints).Assembly;
+        var contractsAssembly = typeof(Sunder.Package.Agent.Contracts.Contracts.IAgentChatProvider).Assembly;
         var prohibitedNamespaces = new[]
         {
             "Sunder.Agent.Execution.Common",

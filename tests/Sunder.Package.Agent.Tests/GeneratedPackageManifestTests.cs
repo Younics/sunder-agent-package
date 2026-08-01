@@ -9,8 +9,11 @@ public sealed class GeneratedPackageManifestTests
     [Fact]
     public void RuntimePackages_GenerateExpectedSdkCompatibilityMetadata()
     {
-        var configuration = ResolveConfiguration();
-        var targetFramework = ResolveTargetFramework();
+        var artifactsRoot = ResolveArtifactsRoot();
+        var configuration = artifactsRoot is null
+            ? ResolveConfiguration()
+            : new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)).Name;
+        var targetFramework = artifactsRoot is null ? ResolveTargetFramework() : null;
         var runtimePackages = AgentPackageRepositoryInventory.GetRuntimePackageProjects();
         using var inventoryDocument = JsonDocument.Parse(File.ReadAllText(Path.Combine(
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
@@ -22,48 +25,51 @@ public sealed class GeneratedPackageManifestTests
 
         foreach (var package in runtimePackages)
         {
-            var manifestPath = Path.Combine(
-                package.DirectoryPath,
-                "obj",
-                configuration,
-                targetFramework,
-                "sunder-package.json");
+            var manifestPath = artifactsRoot is null
+                ? Path.Combine(package.DirectoryPath, "obj", configuration, targetFramework!, "sunder-package.json")
+                : Path.Combine(artifactsRoot, "obj", package.Name, configuration, "sunder-package.json");
 
             Assert.True(File.Exists(manifestPath), $"Generated manifest was not found for {package.Name}: {manifestPath}");
             using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
             var root = document.RootElement;
+            Assert.Equal(1, root.GetProperty("archiveFormatVersion").GetInt32());
             Assert.Equal(1, root.GetProperty("manifestVersion").GetInt32());
-            Assert.Equal(1, root.GetProperty("sdkApiVersion").GetInt32());
-            Assert.StartsWith("1.1.", root.GetProperty("sdkPackageVersion").GetString(), StringComparison.Ordinal);
-            var capabilities = root.GetProperty("requiredSdkCapabilities")
-                .EnumerateArray()
-                .Select(static capability => capability.GetString()!)
-                .ToArray();
             var packageId = root.GetProperty("id").GetString()!;
             var expected = expectedCapabilities.GetProperty(packageId)
                 .EnumerateArray()
                 .Select(static capability => capability.GetString()!)
                 .ToArray();
-            Assert.Equal(expected, capabilities);
+            var targets = root.GetProperty("targets").EnumerateArray().ToArray();
+            Assert.NotEmpty(targets);
+            foreach (var target in targets)
+            {
+                Assert.StartsWith("1.1.", target.GetProperty("sdkVersion").GetString(), StringComparison.Ordinal);
+                var capabilities = target.GetProperty("requiredHostCapabilities")
+                    .EnumerateArray()
+                    .Select(static capability => capability.GetString()!)
+                    .ToArray();
+                Assert.Equal(expected, capabilities);
+            }
 
+            var packageOutputPath = artifactsRoot is null
+                ? Path.Combine(package.DirectoryPath, "bin", configuration, targetFramework!)
+                : Path.Combine(artifactsRoot, "bin", package.Name, configuration);
             var avaloniaSdkPath = Path.Combine(
-                package.DirectoryPath,
-                "bin",
-                configuration,
-                targetFramework,
+                packageOutputPath,
                 "sunder-dev",
+                "payload",
+                "shared",
                 "lib",
                 "Sunder.Sdk.Avalonia.dll");
             Assert.False(File.Exists(avaloniaSdkPath), $"Host-shared Avalonia SDK assembly was emitted for {package.Name}: {avaloniaSdkPath}");
 
-            if (capabilities.Contains(SunderSdkCapabilities.StackContributionsV1, StringComparer.Ordinal))
+            if (expected.Contains(SunderSdkCapabilities.StacksRpcV1, StringComparer.Ordinal))
             {
                 var stackSdkPath = Path.Combine(
-                    package.DirectoryPath,
-                    "bin",
-                    configuration,
-                    targetFramework,
+                    packageOutputPath,
                     "sunder-dev",
+                    "payload",
+                    "shared",
                     "lib",
                     "Sunder.Sdk.Stacks.dll");
                 Assert.False(File.Exists(stackSdkPath), $"Host-shared Stack SDK assembly was emitted for {package.Name}: {stackSdkPath}");
@@ -82,4 +88,19 @@ public sealed class GeneratedPackageManifestTests
     private static string ResolveConfiguration()
         => new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)).Parent?.Name
            ?? "Debug";
+
+    private static string? ResolveArtifactsRoot()
+    {
+        var outputDirectory = new DirectoryInfo(
+            AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var projectOutputDirectory = outputDirectory.Parent;
+        var binDirectory = projectOutputDirectory?.Parent;
+        return string.Equals(
+                   projectOutputDirectory?.Name,
+                   typeof(GeneratedPackageManifestTests).Assembly.GetName().Name,
+                   StringComparison.Ordinal)
+               && string.Equals(binDirectory?.Name, "bin", StringComparison.OrdinalIgnoreCase)
+            ? binDirectory?.Parent?.FullName
+            : null;
+    }
 }

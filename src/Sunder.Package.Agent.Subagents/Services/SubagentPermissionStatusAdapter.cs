@@ -1,18 +1,12 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Subagents.Models;
-using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
-internal sealed class SubagentPermissionStatusAdapter(IPackageExtensionCatalog extensionCatalog)
+internal sealed class SubagentPermissionStatusAdapter(AgentRpcCatalog rpcCatalog)
 {
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
-        extensionCatalog as IPackageExtensionInvocationCatalog
-        ?? throw new InvalidOperationException(
-            "The host extension catalog does not support activation-scoped invocation leases.");
-
     public async ValueTask<bool> IsReadOnlySubagentAsync(
         SubagentRecord subagent,
         CancellationToken cancellationToken)
@@ -147,25 +141,8 @@ internal sealed class SubagentPermissionStatusAdapter(IPackageExtensionCatalog e
         AgentProfileSelectableCapabilityAssignmentRecord assignment,
         CancellationToken cancellationToken)
     {
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.Tools))
-        {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-            using (lease)
-            {
-                var descriptor = lease.Contribution.Descriptor;
-                if (!lease.RetirementToken.IsCancellationRequested
-                    && IsToolAssignmentMatch(assignment, descriptor))
-                {
-                    return descriptor;
-                }
-            }
-        }
-
         var context = new AgentToolSourceContext(SessionId: null, Profile: null, Workspace: null, ExecutionBinding: null);
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.ToolSources))
+        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.ToolSources))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -180,7 +157,7 @@ internal sealed class SubagentPermissionStatusAdapter(IPackageExtensionCatalog e
                 IReadOnlyList<AgentToolDescriptor> descriptors;
                 try
                 {
-                    descriptors = await lease.Contribution.ListToolsAsync(context, invocation.Token);
+                    descriptors = await lease.Service.ListToolsAsync(context, invocation.Token);
                 }
                 catch (OperationCanceledException) when (
                     retirementToken.IsCancellationRequested

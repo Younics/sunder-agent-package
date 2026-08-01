@@ -145,11 +145,10 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
                             {
                                 ["prompt.estimated_tokens.before"] = ex.EstimatedInputTokens,
                             });
-                        var limits = AgentProviderRequestLimits.Resolve(context.RunCapabilities);
                         var recoveryTarget = Math.Max(1_024L, ex.EstimatedInputTokens / 2);
                         var requestedReduction = Math.Max(
                             1L,
-                            limits.ProactiveInputLimitTokens - recoveryTarget);
+                            ex.EstimatedInputTokens - recoveryTarget);
                         var changed = await _promptPreparationPipeline.CompactForRequestPressureAsync(
                             host,
                             context,
@@ -192,6 +191,17 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
                 if (providerCycle.TerminalResult is not null)
                 {
                     return providerCycle.TerminalResult;
+                }
+
+                var compactedAfterProviderCycle = await _promptPreparationPipeline.CompactAfterProviderCycleAsync(
+                    host,
+                    context,
+                    preparation,
+                    providerCycle.ReportedContextTokenCount,
+                    runCancellationToken);
+                if (compactedAfterProviderCycle)
+                {
+                    providerSession.Options.Instructions = preparation.SystemInstructions;
                 }
 
                 if (providerCycle.ToolCalls.Count == 0)

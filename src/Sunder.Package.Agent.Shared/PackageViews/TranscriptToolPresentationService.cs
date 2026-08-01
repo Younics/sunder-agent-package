@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
@@ -248,8 +248,8 @@ internal sealed class TranscriptToolPresentationService(
         => count == 1 ? $"1 {noun}" : $"{count} {noun}s";
 }
 
-internal sealed class PackageToolSourcePresentationResolver(
-    IPackageExtensionReference<IAgentToolSource> reference) : IAgentToolPresentationResolver
+internal sealed class RpcToolSourcePresentationResolver(
+    AgentRpcReference<IAgentToolSource> reference) : IAgentToolPresentationResolver
 {
     public AgentToolPresentation? ResolveToolPresentation(AgentToolPresentationRequest request)
     {
@@ -260,7 +260,7 @@ internal sealed class PackageToolSourcePresentationResolver(
 
         using (lease)
         {
-            var presentation = lease.Contribution is IAgentToolPresentationResolver resolver
+            var presentation = lease.Service is IAgentToolPresentationResolver resolver
                 ? resolver.ResolveToolPresentation(request)
                 : null;
             return lease.RetirementToken.IsCancellationRequested ? null : presentation;

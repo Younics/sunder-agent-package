@@ -14,6 +14,7 @@ concurrency:
 env:
   DOTNET_VERSION: "10.0.100"
   MSBUILDDISABLENODEREUSE: "1"
+  CORE_SDK_VERSION: "1.1.0"
   NUGET_SOURCE: https://api.nuget.org/v3/index.json
   NUGET_FLAT_CONTAINER: https://api.nuget.org/v3-flatcontainer
 
@@ -70,15 +71,23 @@ jobs:
             echo "Release tag version '$version' must match packages.json releaseVersion '$release_version'." >&2
             exit 1
           fi
-          if [[ "$version" == 1.1.0-* ]]; then
-            echo "The Agent 1.1 baseline starts at stable 1.1.0; initial-baseline prereleases cannot satisfy >=1.1.0 <1.2.0." >&2
+          if [[ "$version" == 2.0.0-* ]]; then
+            echo "The Agent 2.0 baseline starts at stable 2.0.0; initial-baseline prereleases cannot satisfy >=2.0.0 <3.0.0." >&2
             exit 1
           fi
 
           runtime_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
-          contracts_count="$(jq '[.packages[] | select(.artifactType == "nuget" and .packageId == "Sunder.Package.Agent.Contracts")] | length' packages.json)"
+          protocol_count="$(jq '[.packages[] | select(.artifactType == "nuget" and .packageId == "Sunder.Package.Agent.Protocol")] | length' packages.json)"
           test "$runtime_count" -eq 15 || { echo "packages.json must contain exactly 15 runtime packages." >&2; exit 1; }
-          test "$contracts_count" -eq 1 || { echo "packages.json must contain exactly one Agent Contracts NuGet package." >&2; exit 1; }
+          test "$protocol_count" -eq 1 || { echo "packages.json must contain exactly one Agent Protocol NuGet package." >&2; exit 1; }
+
+          for package_id in sunder.sdk sunder.sdk.avalonia sunder.sdk.stacks sunder.package.build; do
+            versions="$(curl --fail --silent --show-error "$NUGET_FLAT_CONTAINER/$package_id/index.json")"
+            if ! jq -e --arg version "$CORE_SDK_VERSION" '.versions | index($version) != null' <<< "$versions" >/dev/null; then
+              echo "Core developer package '$package_id' $CORE_SDK_VERSION must be published before the Agent family release." >&2
+              exit 1
+            fi
+          done
 
           is_prerelease=false
           dist_tag=latest
@@ -141,13 +150,17 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
+          dotnet restore src/Sunder.Package.Agent.Contracts/Sunder.Package.Agent.Contracts.csproj \
+            -p:SunderUseSourceSdk=false -p:RestoreLockedMode=true --source "$NUGET_SOURCE"
+          dotnet build src/Sunder.Package.Agent.Contracts/Sunder.Package.Agent.Contracts.csproj \
+            -c Release --no-restore -p:SunderUseSourceSdk=false
           dotnet restore Sunder.AgentPackage.slnx --force-evaluate -p:SunderUseSourceSdk=true
           dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 \
             -p:SunderUseSourceSdk=true -p:Version="$VERSION" -p:PackageVersion="$VERSION" \
             -p:InformationalVersion="$VERSION" -p:ContinuousIntegrationBuild=true
           dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore -m:1 -p:SunderUseSourceSdk=true
 
-      - name: Pack Contracts and complete runtime family
+      - name: Pack Protocol and complete runtime family
         working-directory: sunder-agent-package
         shell: bash
         env:
@@ -174,12 +187,12 @@ jobs:
 
           runtime_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
           test "$(find "$output" -maxdepth 1 -name '*.sunderpkg' -type f | wc -l)" -eq "$runtime_count"
-          test -f "$output/Sunder.Package.Agent.Contracts.$VERSION.nupkg"
+          test -f "$output/Sunder.Package.Agent.Protocol.$VERSION.nupkg"
           test "$(find "$output" -maxdepth 1 -type f | wc -l)" -eq "$((runtime_count + 1))"
 
-          contracts_nuspec="$(unzip -p "$output/Sunder.Package.Agent.Contracts.$VERSION.nupkg" '*.nuspec')"
-          if ! grep -Eq 'id="Sunder\.Sdk" version="\[1\.1\.0, ?1\.2\.0\)"' <<< "$contracts_nuspec"; then
-            echo "Agent Contracts does not bound its Sunder.Sdk dependency to the 1.1 minor line." >&2
+          protocol_nuspec="$(unzip -p "$output/Sunder.Package.Agent.Protocol.$VERSION.nupkg" '*.nuspec')"
+          if ! grep -Eq 'id="Sunder\.Sdk" version="\[1\.1\.0, ?1\.2\.0\)"' <<< "$protocol_nuspec"; then
+            echo "Agent Protocol does not bound its Sunder.Sdk dependency to the published 1.1 line." >&2
             exit 1
           fi
 
@@ -290,8 +303,8 @@ jobs:
           runtime_packages=(release-assets/*.sunderpkg)
           nuget_packages=(release-assets/*.nupkg)
           test "${#runtime_packages[@]}" -eq "$runtime_count" || { echo "Expected $runtime_count runtime archives, found ${#runtime_packages[@]}." >&2; exit 1; }
-          test "${#nuget_packages[@]}" -eq 1 || { echo "Expected one Contracts package, found ${#nuget_packages[@]}." >&2; exit 1; }
-          test -f "release-assets/Sunder.Package.Agent.Contracts.$VERSION.nupkg"
+          test "${#nuget_packages[@]}" -eq 1 || { echo "Expected one Protocol package, found ${#nuget_packages[@]}." >&2; exit 1; }
+          test -f "release-assets/Sunder.Package.Agent.Protocol.$VERSION.nupkg"
           while IFS= read -r package_id; do
             test -f "release-assets/$package_id.$VERSION.sunderpkg" || { echo "Missing runtime archive for $package_id." >&2; exit 1; }
           done < <(jq -r '.packages[] | select(.artifactType == "sunderpkg") | .packageId' packages.json)
@@ -333,7 +346,7 @@ jobs:
             create_args=(
               release create "$tag"
               --title "Sunder Agent Family $VERSION"
-              --notes "Coordinated Agent Contracts and 15-package runtime family release for $VERSION."
+              --notes "Coordinated Agent Protocol and 15-package runtime family release for $VERSION."
               --latest=false
               --draft
             )
@@ -344,25 +357,25 @@ jobs:
             created_draft=true
           fi
 
-          contracts_path="release-assets/Sunder.Package.Agent.Contracts.$VERSION.nupkg"
-          contracts_version_lower="${VERSION,,}"
-          contracts_url="$NUGET_FLAT_CONTAINER/sunder.package.agent.contracts/$contracts_version_lower/sunder.package.agent.contracts.$contracts_version_lower.nupkg"
-          verify_contracts() {
-            local remote="$RUNNER_TEMP/Sunder.Package.Agent.Contracts.$VERSION.nupkg"
+          protocol_path="release-assets/Sunder.Package.Agent.Protocol.$VERSION.nupkg"
+          protocol_version_lower="${VERSION,,}"
+          protocol_url="$NUGET_FLAT_CONTAINER/sunder.package.agent.protocol/$protocol_version_lower/sunder.package.agent.protocol.$protocol_version_lower.nupkg"
+          verify_protocol() {
+            local remote="$RUNNER_TEMP/Sunder.Package.Agent.Protocol.$VERSION.nupkg"
             for _ in {1..30}; do
-              if curl -fsSL "$contracts_url" -o "$remote" 2>/dev/null; then
-                bash scripts/release/verify-nuget-package.sh "$contracts_path" "$remote"
+              if curl -fsSL "$protocol_url" -o "$remote" 2>/dev/null; then
+                bash scripts/release/verify-nuget-package.sh "$protocol_path" "$remote"
                 return
               fi
               sleep 10
             done
-            echo "NuGet.org did not expose Agent Contracts $VERSION after publication." >&2
+            echo "NuGet.org did not expose Agent Protocol $VERSION after publication." >&2
             exit 1
           }
-          if ! dotnet nuget push "$contracts_path" --source "$NUGET_SOURCE" --api-key "$NUGET_API_KEY" --skip-duplicate; then
-            verify_contracts
+          if ! dotnet nuget push "$protocol_path" --source "$NUGET_SOURCE" --api-key "$NUGET_API_KEY" --skip-duplicate; then
+            verify_protocol
           fi
-          verify_contracts
+          verify_protocol
 
           while IFS= read -r package_id; do
             archive="release-assets/$package_id.$VERSION.sunderpkg"

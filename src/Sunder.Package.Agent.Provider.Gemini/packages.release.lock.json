@@ -134,7 +134,7 @@
           "System.CodeDom": "7.0.0"
         }
       },
-      "sunder.package.agent.contracts": {
+      "Sunder.Package.Agent.Protocol": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.AI.Abstractions": "[10.5.2, )",

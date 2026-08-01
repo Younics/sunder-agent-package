@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts;
+using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
 
@@ -9,7 +11,8 @@ namespace Sunder.Package.Agent.Services;
 public sealed class AgentProfileStackContributor(
     AgentProfileService profileService,
     IPackageContext packageContext,
-    IPackageExtensionCatalog extensionCatalog) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
+    AgentRpcCatalog rpcCatalog,
+    AgentRpcProviderService<IAgentBehaviorLoop> behaviorLoops) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
     private const string PackageId = "sunder.package.agent";
     private const string SchemaId = "sunder.package.agent/profile";
@@ -19,9 +22,6 @@ public sealed class AgentProfileStackContributor(
     private const string DetailModels = "model-choices";
     private const string DetailBehaviorLoop = "behavior-loop";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
-        AgentExtensionInvocation.Require(extensionCatalog);
-
     public string ContributorId => "sunder.package.agent.profiles";
 
     public string DisplayName => "Agent Profiles";
@@ -206,9 +206,9 @@ public sealed class AgentProfileStackContributor(
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var contribution in AgentExtensionInvocation.Snapshot(
-                     _invocationCatalog,
-                     PackageExtensionPoints.BehaviorLoops,
+        foreach (var contribution in AgentRpcInvocation.Snapshot(
+                     rpcCatalog,
+                     behaviorLoops,
                      static loop => loop.Descriptor))
         {
             var descriptor = contribution.Metadata;
@@ -238,9 +238,9 @@ public sealed class AgentProfileStackContributor(
             return;
         }
 
-        foreach (var contribution in AgentExtensionInvocation.Snapshot(
-                     _invocationCatalog,
-                     PackageExtensionPoints.ChatProviders,
+        foreach (var contribution in AgentRpcInvocation.Snapshot(
+                     rpcCatalog,
+                     AgentRpcServices.ChatProviders,
                      static provider => provider.Descriptor.ProviderId))
         {
             if (providerIds.Contains(contribution.Metadata))
@@ -249,9 +249,9 @@ public sealed class AgentProfileStackContributor(
             }
         }
 
-        foreach (var contribution in AgentExtensionInvocation.Snapshot(
-                     _invocationCatalog,
-                     PackageExtensionPoints.EmbeddingProviders,
+        foreach (var contribution in AgentRpcInvocation.Snapshot(
+                     rpcCatalog,
+                     AgentRpcServices.EmbeddingProviders,
                      static provider => provider.Descriptor.ProviderId))
         {
             if (providerIds.Contains(contribution.Metadata))
@@ -275,9 +275,9 @@ public sealed class AgentProfileStackContributor(
             return;
         }
 
-        foreach (var contribution in AgentExtensionInvocation.Snapshot(
-                     _invocationCatalog,
-                     PackageExtensionPoints.ProfileSelectableCapabilityProviders,
+        foreach (var contribution in AgentRpcInvocation.Snapshot(
+                     rpcCatalog,
+                     AgentRpcServices.SelectableCapabilityProviders,
                      static provider => provider.ProviderId))
         {
             if (sourceIds.Contains(contribution.Metadata))

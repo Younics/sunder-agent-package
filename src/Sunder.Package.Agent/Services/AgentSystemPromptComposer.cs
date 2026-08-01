@@ -1,15 +1,11 @@
 using System.Text;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentSystemPromptComposer(IPackageExtensionCatalog extensionCatalog)
+public sealed class AgentSystemPromptComposer(AgentRpcCatalog rpcCatalog)
 {
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
-        AgentExtensionInvocation.Require(extensionCatalog);
-
     public async ValueTask<string?> ComposeAsync(
         AgentSystemPromptRequest request,
         string? baseInstructions,
@@ -23,16 +19,16 @@ public sealed class AgentSystemPromptComposer(IPackageExtensionCatalog extension
         blocks.AddRange(BuildToolConcurrencyBlocks(request));
         blocks.AddRange(BuildToolRuntimeInstructionBlocks(request.AvailableTools));
 
-        var contributors = AgentExtensionInvocation.Snapshot(
-            _invocationCatalog,
-            PackageExtensionPoints.SystemPromptContributors,
+        var contributors = AgentRpcInvocation.Snapshot(
+            rpcCatalog,
+            AgentRpcServices.SystemPromptContributors,
             static contributor => contributor.DisplayName);
         foreach (var contributor in contributors
                      .OrderBy(contributor => contributor.Metadata, StringComparer.OrdinalIgnoreCase))
         {
             try
             {
-                var contribution = await AgentExtensionInvocation.InvokeAsync(
+                var contribution = await AgentRpcInvocation.InvokeAsync(
                     contributor,
                     cancellationToken,
                     (instance, token) => instance.ContributeAsync(request, token));

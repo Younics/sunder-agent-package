@@ -25,4 +25,11 @@ public sealed record AgentExecutionTargetDescriptor(
     string DisplayName,
     string? Description,
     bool SupportsShell,
-    bool SupportsFiles);
+    bool SupportsFiles)
+{
+    /// <summary>Gets the exact wire facets advertised by this target activation.</summary>
+    public IReadOnlyList<string> Facets { get; init; } = [];
+
+    /// <summary>Tests whether this target explicitly advertises a wire facet.</summary>
+    public bool SupportsFacet(string facetId) => Facets.Contains(facetId, StringComparer.Ordinal);
+}

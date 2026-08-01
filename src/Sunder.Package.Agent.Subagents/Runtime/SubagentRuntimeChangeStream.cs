@@ -1,8 +1,8 @@
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Runtime;
@@ -17,42 +17,31 @@ internal sealed class SubagentRuntimeChangeStream :
     private const int SubscriberCapacity = 64;
     private readonly SubagentService _service;
     private readonly SubagentEditorCapabilityCatalog _capabilities;
+    private readonly AgentRpcCatalog _rpcCatalog;
     private readonly object _gate = new();
+    private readonly object _runtimeGate = new();
     private readonly Dictionary<long, Subscriber> _subscribers = [];
     private readonly Queue<SubagentChanged> _replay = new(ReplayCapacity);
     private readonly string _instanceId = Guid.NewGuid().ToString("N");
-    private IPackageExtensionLease<IAgentRuntimeCatalog>? _runtimeLease;
+    private AgentRpcReference<IAgentRuntimeCatalog>? _runtimeReference;
+    private AgentRpcLease<IAgentRuntimeCatalog>? _runtimeLease;
     private IAgentRuntimeCatalog? _runtime;
     private CancellationTokenRegistration _runtimeRetirement;
+    private long _runtimeGeneration;
     private long _revision;
     private long _subscriberId;
     private bool _disposed;
 
     public SubagentRuntimeChangeStream(
         SubagentService service,
-        IPackageExtensionCatalog extensions)
+        AgentRpcCatalog rpcCatalog)
     {
         _service = service;
-        _capabilities = new SubagentEditorCapabilityCatalog(extensions);
+        _rpcCatalog = rpcCatalog;
+        _capabilities = new SubagentEditorCapabilityCatalog(rpcCatalog);
         service.SubagentsChanged += OnSubagentsChanged;
         _capabilities.Changed += OnCatalogChanged;
-
-        var invocations = extensions as IPackageExtensionInvocationCatalog
-            ?? throw new InvalidOperationException(
-                "The host extension catalog does not support activation-scoped invocation leases.");
-        var runtimeReference = invocations.GetExtensionReferences(PackageExtensionPoints.RuntimeCatalogs)
-            .FirstOrDefault();
-        if (runtimeReference?.TryAcquire(out var runtimeLease) == true)
-        {
-            _runtimeLease = runtimeLease;
-            _runtime = runtimeLease.Contribution;
-            _runtime.SessionChanged += OnSessionChanged;
-            _runtime.TurnChanged += OnTurnChanged;
-            _runtime.ProfileChanged += OnProfileChanged;
-            _runtimeRetirement = runtimeLease.RetirementToken.Register(
-                static state => ((SubagentRuntimeChangeStream)state!).OnRuntimeRetired(),
-                this);
-        }
+        RefreshRuntime();
     }
 
     internal long Revision => Interlocked.Read(ref _revision);
@@ -129,7 +118,19 @@ internal sealed class SubagentRuntimeChangeStream :
 
     private void OnSubagentsChanged() => Publish(new(0, SubagentChangeKind.Subagents));
 
-    private void OnCatalogChanged() => Publish(new(0, SubagentChangeKind.Catalog));
+    private void OnCatalogChanged()
+    {
+        var runtimeChanged = false;
+        try
+        {
+            runtimeChanged = RefreshRuntime();
+        }
+        finally
+        {
+            if (runtimeChanged) Publish(new(0, SubagentChangeKind.ResnapshotRequired));
+            Publish(new(0, SubagentChangeKind.Catalog));
+        }
+    }
 
     private void OnSessionChanged(Guid sessionId)
         => Publish(new(0, SubagentChangeKind.Session, SessionId: sessionId));
@@ -177,22 +178,110 @@ internal sealed class SubagentRuntimeChangeStream :
             SubagentChangeKind.ResnapshotRequired,
             RuntimeInstanceId: _instanceId);
 
-    private void OnRuntimeRetired()
+    private void OnRuntimeRetired(long generation)
     {
-        DetachRuntime();
+        lock (_runtimeGate)
+        {
+            if (generation != _runtimeGeneration) return;
+            DetachRuntimeCore();
+        }
+        if (!Volatile.Read(ref _disposed))
+        {
+            try
+            {
+                _ = RefreshRuntime();
+            }
+            catch
+            {
+                // Catalog availability is reported by AgentRpcCatalog; retirement callbacks must not throw.
+            }
+        }
         Publish(new(0, SubagentChangeKind.ResnapshotRequired));
     }
 
-    private void DetachRuntime()
+    private bool RefreshRuntime()
     {
-        var runtime = Interlocked.Exchange(ref _runtime, null);
-        if (runtime is not null)
+        if (Volatile.Read(ref _disposed)) return false;
+        var runtimeReference = _rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs)
+            .FirstOrDefault();
+        lock (_runtimeGate)
+        {
+            if (ReferenceEquals(_runtimeReference, runtimeReference)
+                && _runtimeLease is { } currentLease
+                && !currentLease.RetirementToken.IsCancellationRequested)
+            {
+                return false;
+            }
+        }
+
+        AgentRpcLease<IAgentRuntimeCatalog>? runtimeLease = null;
+        if (runtimeReference?.TryAcquire(out var acquired) == true) runtimeLease = acquired;
+
+        long generation;
+        lock (_runtimeGate)
+        {
+            if (Volatile.Read(ref _disposed))
+            {
+                runtimeLease?.Dispose();
+                return false;
+            }
+            if (ReferenceEquals(_runtimeReference, runtimeReference)
+                && _runtimeLease is { } currentLease
+                && !currentLease.RetirementToken.IsCancellationRequested)
+            {
+                runtimeLease?.Dispose();
+                return false;
+            }
+
+            var hadRuntime = _runtimeReference is not null;
+            DetachRuntimeCore();
+            if (runtimeReference is null || runtimeLease is null) return hadRuntime;
+            _runtimeReference = runtimeReference;
+            _runtimeLease = runtimeLease;
+            _runtime = runtimeLease.Service;
+            _runtime.SessionChanged += OnSessionChanged;
+            _runtime.TurnChanged += OnTurnChanged;
+            _runtime.ProfileChanged += OnProfileChanged;
+            generation = ++_runtimeGeneration;
+        }
+
+        var registration = runtimeLease.RetirementToken.Register(
+            static state =>
+            {
+                var (owner, registeredGeneration) =
+                    ((SubagentRuntimeChangeStream Owner, long Generation))state!;
+                owner.OnRuntimeRetired(registeredGeneration);
+            },
+            (this, generation));
+        lock (_runtimeGate)
+        {
+            if (generation == _runtimeGeneration && ReferenceEquals(_runtimeLease, runtimeLease))
+            {
+                _runtimeRetirement = registration;
+            }
+            else
+            {
+                registration.Dispose();
+            }
+        }
+        return true;
+    }
+
+    private void DetachRuntimeCore()
+    {
+        _runtimeGeneration++;
+        _runtimeRetirement.Unregister();
+        _runtimeRetirement = default;
+        if (_runtime is { } runtime)
         {
             runtime.SessionChanged -= OnSessionChanged;
             runtime.TurnChanged -= OnTurnChanged;
             runtime.ProfileChanged -= OnProfileChanged;
         }
-        Interlocked.Exchange(ref _runtimeLease, null)?.Dispose();
+        _runtime = null;
+        _runtimeReference = null;
+        _runtimeLease?.Dispose();
+        _runtimeLease = null;
     }
 
     public void Dispose()
@@ -214,8 +303,7 @@ internal sealed class SubagentRuntimeChangeStream :
         _service.SubagentsChanged -= OnSubagentsChanged;
         _capabilities.Changed -= OnCatalogChanged;
         _capabilities.Dispose();
-        _runtimeRetirement.Dispose();
-        DetachRuntime();
+        lock (_runtimeGate) DetachRuntimeCore();
     }
 
     private sealed class Subscriber(Channel<SubagentChanged> channel)

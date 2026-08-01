@@ -1,15 +1,14 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Runtime;
-using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
 
 public sealed class AgentPermissionService(
     AgentLocalStore store,
-    IPackageExtensionCatalog extensionCatalog) : IAgentPermissionGateway
+    AgentRpcCatalog rpcCatalog) : IAgentPermissionGateway
 {
     internal const string GenericMutationActionId = "agent.tool.mutate";
     internal const string GenericMutationBoundaryId = "provider-requested-mutation";
@@ -27,8 +26,6 @@ public sealed class AgentPermissionService(
         ]);
 
     private readonly AgentLocalStore _store = store;
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
-        AgentExtensionInvocation.Require(extensionCatalog);
     private readonly object _policySyncRoot = new();
 
     public AgentSessionPermissionState GetSessionState(Guid sessionId)
@@ -45,7 +42,7 @@ public sealed class AgentPermissionService(
     public IReadOnlyList<AgentPermissionActionDescriptor> ListActions()
     {
         var actions = new List<AgentPermissionActionDescriptor>();
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.PermissionSurfaces))
+        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.PermissionSurfaces))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -53,7 +50,7 @@ public sealed class AgentPermissionService(
             }
             using (lease)
             {
-                var contributed = lease.Contribution.ListActions().ToArray();
+                var contributed = lease.Service.ListActions().ToArray();
                 if (!lease.RetirementToken.IsCancellationRequested)
                 {
                     actions.AddRange(contributed);

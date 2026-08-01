@@ -68,9 +68,9 @@ public sealed partial class SubsessionsViewModel
             await RunOnUiThreadAsync(() =>
             {
                 EnsureCurrentNavigation(navigation);
-                StatusText = ex.Message;
+                SetLoadFailure(ex.Message);
             }, cancellationToken).ConfigureAwait(false);
-            return false;
+            return sessionId is null && navigationAnchor is null;
         }
         EnsureCurrentNavigation(navigation);
         var navigationAlreadyApplied = false;

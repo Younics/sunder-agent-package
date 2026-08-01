@@ -1,19 +1,15 @@
 using System.Text;
 using Sunder.Agent.Execution.Common;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Presentation;
-using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Tools.Shell;
 
-public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
+public sealed class ShellToolSource
     : IAgentToolSource, IAgentPermissionAwareToolSource, IAgentPermissionSurface, IAgentPromptContextContributor, IAgentToolPresentationResolver
 {
-    private readonly IPackageExtensionInvocationCatalog? _invocationCatalog =
-        extensionCatalog as IPackageExtensionInvocationCatalog;
-
     private static readonly AgentToolDescriptor Descriptor = new(
         "shell",
         "Shell Command",
@@ -229,20 +225,19 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
             ]),
         ];
 
-    private bool TryAcquireTarget(
-        IPackageExtensionReference<IAgentExecutionTarget>? selectedReference,
+    private static bool TryAcquireTarget(
+        AgentRpcReference<IAgentExecutionTarget>? selectedReference,
         AgentWorkspaceBindingRecord binding,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-        out IPackageExtensionLease<IAgentExecutionTarget>? lease)
+        out AgentRpcLease<IAgentExecutionTarget>? lease)
     {
-        var reference = selectedReference ?? ResolveCompatibilityTargetReference(binding);
-        if (reference is null || !reference.TryAcquire(out lease))
+        if (selectedReference is null || !selectedReference.TryAcquire(out lease))
         {
             lease = null;
             return false;
         }
         if (lease.RetirementToken.IsCancellationRequested
-            || !IsBindingMatch(lease.Contribution.Descriptor, binding))
+            || !IsBindingMatch(lease.Service.Descriptor, binding))
         {
             lease.Dispose();
             lease = null;
@@ -252,35 +247,6 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
         return true;
     }
 
-    private IPackageExtensionReference<IAgentExecutionTarget>? ResolveCompatibilityTargetReference(
-        AgentWorkspaceBindingRecord binding)
-    {
-        if (_invocationCatalog is not null)
-        {
-            foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.ExecutionTargets))
-            {
-                if (!reference.TryAcquire(out var lease))
-                {
-                    continue;
-                }
-                using (lease)
-                {
-                    if (!lease.RetirementToken.IsCancellationRequested
-                        && IsBindingMatch(lease.Contribution.Descriptor, binding))
-                    {
-                        return reference;
-                    }
-                }
-            }
-
-            return null;
-        }
-
-        var target = extensionCatalog.GetExtensions(PackageExtensionPoints.ExecutionTargets)
-            .FirstOrDefault(candidate => IsBindingMatch(candidate.Descriptor, binding));
-        return target is null ? null : new CompatibilityTargetReference(target);
-    }
-
     private static bool IsBindingMatch(
         AgentExecutionTargetDescriptor descriptor,
         AgentWorkspaceBindingRecord binding)
@@ -288,7 +254,7 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
            || string.Equals(descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase);
 
     private static async ValueTask<TResult> InvokeTargetAsync<TResult>(
-        IPackageExtensionLease<IAgentExecutionTarget> lease,
+        AgentRpcLease<IAgentExecutionTarget> lease,
         CancellationToken cancellationToken,
         Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback)
     {
@@ -301,7 +267,7 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
                 retirementToken);
             try
             {
-                var result = await callback(lease.Contribution, invocation.Token).ConfigureAwait(false);
+                var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
                 if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
                     throw new InvalidOperationException(
@@ -321,7 +287,7 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
     }
 
     private static void ThrowIfExactTargetUnavailable(
-        IPackageExtensionReference<IAgentExecutionTarget>? selectedReference)
+        AgentRpcReference<IAgentExecutionTarget>? selectedReference)
     {
         if (selectedReference is not null)
         {
@@ -408,48 +374,6 @@ public sealed class ShellToolSource(IPackageExtensionCatalog extensionCatalog)
         => count == 1 ? $"1 {noun}" : $"{count} {noun}s";
 
     private sealed record ShellArgs(string Command, string? WorkingDirectory = null, int? TimeoutSeconds = null);
-
-    private sealed class CompatibilityTargetReference(IAgentExecutionTarget target)
-        : IPackageExtensionReference<IAgentExecutionTarget>
-    {
-        public bool TryAcquire(
-            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-            out IPackageExtensionLease<IAgentExecutionTarget>? lease)
-        {
-            lease = new CompatibilityTargetLease(target);
-            return true;
-        }
-    }
-
-    private sealed class CompatibilityTargetLease(IAgentExecutionTarget target)
-        : IPackageExtensionLease<IAgentExecutionTarget>
-    {
-        private IAgentExecutionTarget? _target = target;
-
-        public string PackageId
-        {
-            get
-            {
-                ObjectDisposedException.ThrowIf(_target is null, this);
-                return "sunder.package.agent.tools.shell.compatibility";
-            }
-        }
-
-        public IAgentExecutionTarget Contribution
-            => Volatile.Read(ref _target)
-               ?? throw new ObjectDisposedException(nameof(CompatibilityTargetLease));
-
-        public CancellationToken RetirementToken
-        {
-            get
-            {
-                ObjectDisposedException.ThrowIf(_target is null, this);
-                return CancellationToken.None;
-            }
-        }
-
-        public void Dispose() => Interlocked.Exchange(ref _target, null);
-    }
 
     private const string ShellDescription = "Execute a non-interactive command in the selected workspace executor.";
 

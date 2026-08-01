@@ -110,10 +110,10 @@ public sealed class SolutionPackageInventoryTests
 
         Assert.Contains("- \"agent/v*\"", workflow, StringComparison.Ordinal);
         Assert.Contains("map(select(.artifactType == \"sunderpkg\")) | sort_by(.key)[]", workflow, StringComparison.Ordinal);
-        Assert.Contains("dotnet nuget push \"$contracts_path\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("dotnet nuget push \"$protocol_path\"", workflow, StringComparison.Ordinal);
         Assert.Contains("--skip-duplicate", workflow, StringComparison.Ordinal);
         Assert.Contains("group: sunder-agent-family-dist-tag-promotion", workflow, StringComparison.Ordinal);
-        Assert.Contains("bash scripts/release/verify-nuget-package.sh \"$contracts_path\" \"$remote\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/release/verify-nuget-package.sh \"$protocol_path\" \"$remote\"", workflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/promote-family-dist-tag.sh", workflow, StringComparison.Ordinal);
         Assert.Contains("-e 's/\\[/[[]/g'", nugetVerifier, StringComparison.Ordinal);
         Assert.Contains("if ! entry_hash=", nugetVerifier, StringComparison.Ordinal);

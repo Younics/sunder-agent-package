@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -24,24 +25,28 @@ public sealed class AgentWorkspaceExecutionResolver(
             ?? throw new InvalidOperationException("Selected workspace is not bound to an execution target.");
         var target = executionTargetService.ResolveTargetReference(binding)
             ?? throw new InvalidOperationException("Selected workspace execution target is not available.");
+        if (!target.TryAcquire(out var lease))
+        {
+            throw new InvalidOperationException("Selected workspace execution target is not available.");
+        }
         var context = new AgentExecutionTargetContext(null, null, workspace, binding);
-        var resolution = await AgentExtensionInvocation.InvokeAsync(
-            target,
-            cancellationToken,
-            async (instance, token) =>
+        AgentExecutionTargetDescriptor descriptor;
+        AgentExecutionScopeDescriptor scope;
+        IAgentExecutionTarget executionTarget;
+        using (lease)
+        using (var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.RetirementToken))
+        {
+            executionTarget = lease.Service;
+            descriptor = executionTarget.Descriptor;
+            var readiness = await executionTarget.GetReadinessAsync(context, invocation.Token).ConfigureAwait(false);
+            if (readiness.Status != AgentExecutionTargetReadinessStatus.Ready)
             {
-                var readiness = await instance.GetReadinessAsync(context, token).ConfigureAwait(false);
-                if (readiness.Status != AgentExecutionTargetReadinessStatus.Ready)
-                {
-                    throw new InvalidOperationException(readiness.Message);
-                }
-
-                var scope = instance is IAgentExecutionScopeProvider scopeProvider
-                    ? await scopeProvider.GetExecutionScopeAsync(context, token).ConfigureAwait(false)
-                    : new AgentExecutionScopeDescriptor(target.Metadata.DisplayName, []);
-                return scope;
-            }).ConfigureAwait(false);
-        var scope = resolution;
+                throw new InvalidOperationException(readiness.Message);
+            }
+            scope = descriptor.SupportsFacet(AgentExecutionFacetIds.ExecutionScope)
+                ? await ((IAgentExecutionScopeProvider)executionTarget).GetExecutionScopeAsync(context, invocation.Token).ConfigureAwait(false)
+                : new AgentExecutionScopeDescriptor(descriptor.DisplayName, []);
+        }
         if (scope.WorkspacePaths.Count == 0)
         {
             throw new InvalidOperationException("Selected workspace execution target does not expose a workspace path.");
@@ -50,87 +55,12 @@ public sealed class AgentWorkspaceExecutionResolver(
         return new AgentWorkspaceExecutionResolution(
             workspace,
             binding,
-            target.Metadata,
+            descriptor,
             scope,
-            new AgentExecutionTargetInvocationProxy(target))
+            executionTarget)
         {
-            ExecutionTargetReference = target.Reference,
+            ExecutionTargetReference = target,
+            ExecutionTargetHandle = target.ToHandle(),
         };
     }
-}
-
-internal sealed class AgentExecutionTargetInvocationProxy(
-    AgentExtensionReference<IAgentExecutionTarget, AgentExecutionTargetDescriptor> target)
-    : IAgentExecutionTarget
-{
-    public AgentExecutionTargetDescriptor Descriptor { get; } = target.Metadata;
-
-    public ValueTask<string?> GetConfigurationGenerationAsync(
-        AgentExecutionTargetContext context,
-        CancellationToken cancellationToken = default)
-        => AgentExtensionInvocation.InvokeAsync(
-            target,
-            cancellationToken,
-            (instance, token) => instance.GetConfigurationGenerationAsync(context, token));
-
-    public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
-        AgentExecutionTargetContext context,
-        CancellationToken cancellationToken = default)
-        => AgentExtensionInvocation.InvokeAsync(
-            target,
-            cancellationToken,
-            (instance, token) => instance.GetReadinessAsync(context, token));
-
-    public ValueTask<AgentExecutionShellDescriptor> GetShellAsync(
-        AgentExecutionTargetContext context,
-        CancellationToken cancellationToken = default)
-        => AgentExtensionInvocation.InvokeAsync(
-            target,
-            cancellationToken,
-            (instance, token) => instance.GetShellAsync(context, token));
-
-    public ValueTask<AgentResolvedResource> ResolveFileResourceAsync(
-        AgentExecutionTargetContext context,
-        string path,
-        CancellationToken cancellationToken = default)
-        => AgentExtensionInvocation.InvokeAsync(
-            target,
-            cancellationToken,
-            (instance, token) => instance.ResolveFileResourceAsync(context, path, token));
-
-    public ValueTask<AgentShellCommandResult> ExecuteShellAsync(
-        AgentExecutionTargetContext context,
-        AgentShellCommandRequest request,
-        CancellationToken cancellationToken = default)
-        => AgentExtensionInvocation.InvokeAsync(
-            target,
-            cancellationToken,
-            (instance, token) => instance.ExecuteShellAsync(context, request, token));
-
-    public ValueTask<AgentFileReadResult> ReadFileAsync(
-        AgentExecutionTargetContext context,
-        AgentFileReadRequest request,
-        CancellationToken cancellationToken = default)
-        => AgentExtensionInvocation.InvokeAsync(
-            target,
-            cancellationToken,
-            (instance, token) => instance.ReadFileAsync(context, request, token));
-
-    public ValueTask<AgentFileMutationResult> WriteFileAsync(
-        AgentExecutionTargetContext context,
-        AgentFileWriteRequest request,
-        CancellationToken cancellationToken = default)
-        => AgentExtensionInvocation.InvokeAsync(
-            target,
-            cancellationToken,
-            (instance, token) => instance.WriteFileAsync(context, request, token));
-
-    public ValueTask<AgentFileMutationResult> DeleteFileAsync(
-        AgentExecutionTargetContext context,
-        AgentFileDeleteRequest request,
-        CancellationToken cancellationToken = default)
-        => AgentExtensionInvocation.InvokeAsync(
-            target,
-            cancellationToken,
-            (instance, token) => instance.DeleteFileAsync(context, request, token));
 }

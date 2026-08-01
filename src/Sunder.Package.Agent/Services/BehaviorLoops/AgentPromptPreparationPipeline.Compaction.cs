@@ -12,17 +12,56 @@ internal sealed partial class AgentPromptPreparationPipeline
         int requestedReductionTokens,
         bool requireHistoricalAttachmentEviction,
         CancellationToken cancellationToken)
+        => await CompactAsync(
+            host,
+            context,
+            preparation,
+            Math.Max(1, requestedReductionTokens),
+            requireHistoricalAttachmentEviction,
+            cancellationToken).ConfigureAwait(false);
+
+    public async Task<bool> CompactAfterProviderCycleAsync(
+        IAgentBehaviorLoopRuntime host,
+        AgentBehaviorLoopContext context,
+        AgentPromptPreparation preparation,
+        long? reportedContextTokenCount,
+        CancellationToken cancellationToken)
+    {
+        if (reportedContextTokenCount is null
+            || reportedContextTokenCount.Value
+            < AgentProviderRequestLimits.Resolve(context.RunCapabilities).HardInputLimitTokens)
+        {
+            return false;
+        }
+
+        return await CompactAsync(
+            host,
+            context,
+            preparation,
+            additionalPressureTokens: 0,
+            requireHistoricalAttachmentEviction: false,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> CompactAsync(
+        IAgentBehaviorLoopRuntime host,
+        AgentBehaviorLoopContext context,
+        AgentPromptPreparation preparation,
+        int additionalPressureTokens,
+        bool requireHistoricalAttachmentEviction,
+        CancellationToken cancellationToken)
     {
         var previousProjection = preparation.Projection;
         var pressureOverhead = (int)Math.Min(
             int.MaxValue,
-            Math.Max(0L, preparation.PromptOverheadTokens) + Math.Max(1L, requestedReductionTokens));
+            Math.Max(0L, preparation.PromptOverheadTokens) + Math.Max(0L, additionalPressureTokens));
         var projection = await BuildPromptProjectionAsync(
             host,
             context,
             pressureOverhead,
             cancellationToken,
-            requireHistoricalAttachmentEviction && previousProjection.ContextCheckpoint is null ? 1 : 0)
+            requireHistoricalAttachmentEviction && previousProjection.ContextCheckpoint is null ? 1 : 0,
+            compactContext: true)
             .ConfigureAwait(false);
         preparation.Projection = projection;
         var instructionContext = await host.BuildInstructionContextAsync(cancellationToken);

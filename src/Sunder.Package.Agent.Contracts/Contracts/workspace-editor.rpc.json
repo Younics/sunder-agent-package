@@ -1,0 +1,538 @@
+{
+  "descriptorVersion": 1,
+  "contractId": "sunder.agent.workspace.editor",
+  "version": "1.0.0",
+  "services": [
+    {
+      "serviceId": "workspace-editor",
+      "methods": [
+        {
+          "methodId": "describe",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentRpcEmpty"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentRpcIdentity"
+          }
+        },
+        {
+          "methodId": "can-edit",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentWorkspaceEditorContext"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/Boolean"
+          }
+        },
+        {
+          "methodId": "get-sections",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/AgentWorkspaceEditorContext"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/ListOfAgentEditorSection"
+          }
+        },
+        {
+          "methodId": "save-section",
+          "kind": "unary",
+          "requestSchema": {
+            "$ref": "#/$defs/WorkspaceEditorSaveRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentEditorSaveResult"
+          }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "AgentRpcEmpty": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "String": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "AgentRpcIdentity": {
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "id": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "displayName",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "DateTimeOffset": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "Int32": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "AgentWorkspaceDocumentRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "documentId": {
+          "$ref": "#/$defs/String"
+        },
+        "filePath": {
+          "$ref": "#/$defs/String"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "documentId",
+        "filePath",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentWorkspaceDocumentRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "Boolean": {
+      "type": "boolean"
+    },
+    "AgentWorkspacePathRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "hostPath": {
+          "$ref": "#/$defs/String"
+        },
+        "isDefault": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "pathId": {
+          "$ref": "#/$defs/String"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "hostPath",
+        "isDefault",
+        "pathId",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentWorkspacePathRecord": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentWorkspacePathRecord"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentWorkspaceRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "documents": {
+          "$ref": "#/$defs/ListOfAgentWorkspaceDocumentRecord"
+        },
+        "paths": {
+          "$ref": "#/$defs/ListOfAgentWorkspacePathRecord"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/DateTimeOffset"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "displayName",
+        "documents",
+        "paths",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentWorkspaceEditorContext": {
+      "type": "object",
+      "properties": {
+        "configurationId": {
+          "$ref": "#/$defs/String"
+        },
+        "targetId": {
+          "$ref": "#/$defs/String"
+        },
+        "workspace": {
+          "$ref": "#/$defs/AgentWorkspaceRecord"
+        }
+      },
+      "required": [
+        "configurationId",
+        "targetId",
+        "workspace"
+      ],
+      "additionalProperties": false
+    },
+    "AgentEditorActionKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        2
+      ]
+    },
+    "NullableString": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/String"
+        }
+      ]
+    },
+    "MapOfStringToNullableString": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/NullableString"
+      },
+      "propertyNames": {
+        "type": "string",
+        "minLength": 0,
+        "maxLength": 1000000
+      },
+      "minProperties": 0,
+      "maxProperties": 1000000
+    },
+    "AgentEditorAction": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "$ref": "#/$defs/String"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentEditorActionKind"
+        },
+        "label": {
+          "$ref": "#/$defs/String"
+        },
+        "packageId": {
+          "$ref": "#/$defs/String"
+        },
+        "parameters": {
+          "$ref": "#/$defs/MapOfStringToNullableString"
+        }
+      },
+      "required": [
+        "actionId",
+        "kind",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentEditorAction": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentEditorAction"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentEditorListItem": {
+      "type": "object",
+      "properties": {
+        "isDefault": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "itemId": {
+          "$ref": "#/$defs/String"
+        },
+        "secondaryValue": {
+          "$ref": "#/$defs/String"
+        },
+        "value": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "isDefault",
+        "itemId",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentEditorListItem": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentEditorListItem"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentEditorFieldKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentEditorOption": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "label": {
+          "$ref": "#/$defs/String"
+        },
+        "value": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentEditorOption": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentEditorOption"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentEditorField": {
+      "type": "object",
+      "properties": {
+        "actions": {
+          "$ref": "#/$defs/ListOfAgentEditorAction"
+        },
+        "addItemLabel": {
+          "$ref": "#/$defs/String"
+        },
+        "defaultNewItemValue": {
+          "$ref": "#/$defs/String"
+        },
+        "defaultNewSecondaryItemValue": {
+          "$ref": "#/$defs/String"
+        },
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "fieldId": {
+          "$ref": "#/$defs/String"
+        },
+        "itemValueLabel": {
+          "$ref": "#/$defs/String"
+        },
+        "items": {
+          "$ref": "#/$defs/ListOfAgentEditorListItem"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentEditorFieldKind"
+        },
+        "label": {
+          "$ref": "#/$defs/String"
+        },
+        "options": {
+          "$ref": "#/$defs/ListOfAgentEditorOption"
+        },
+        "secondaryItemValueLabel": {
+          "$ref": "#/$defs/String"
+        },
+        "useFolderPicker": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "useSecondaryFolderPicker": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "value": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "fieldId",
+        "kind",
+        "label",
+        "useFolderPicker",
+        "useSecondaryFolderPicker"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentEditorField": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentEditorField"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentEditorSection": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "fields": {
+          "$ref": "#/$defs/ListOfAgentEditorField"
+        },
+        "sectionId": {
+          "$ref": "#/$defs/String"
+        },
+        "title": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "fields",
+        "sectionId",
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "ListOfAgentEditorSection": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentEditorSection"
+      },
+      "minItems": 0,
+      "maxItems": 1000000
+    },
+    "AgentEditorFieldValue": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "$ref": "#/$defs/ListOfAgentEditorListItem"
+        },
+        "value": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "MapOfStringToAgentEditorFieldValue": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/AgentEditorFieldValue"
+      },
+      "propertyNames": {
+        "type": "string",
+        "minLength": 0,
+        "maxLength": 1000000
+      },
+      "minProperties": 0,
+      "maxProperties": 1000000
+    },
+    "AgentEditorSaveRequest": {
+      "type": "object",
+      "properties": {
+        "fields": {
+          "$ref": "#/$defs/MapOfStringToAgentEditorFieldValue"
+        },
+        "sectionId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "fields",
+        "sectionId"
+      ],
+      "additionalProperties": false
+    },
+    "WorkspaceEditorSaveRequest": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/AgentWorkspaceEditorContext"
+        },
+        "request": {
+          "$ref": "#/$defs/AgentEditorSaveRequest"
+        }
+      },
+      "required": [
+        "context",
+        "request"
+      ],
+      "additionalProperties": false
+    },
+    "AgentEditorSaveResult": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "$ref": "#/$defs/String"
+        },
+        "success": {
+          "$ref": "#/$defs/Boolean"
+        }
+      },
+      "required": [
+        "message",
+        "success"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

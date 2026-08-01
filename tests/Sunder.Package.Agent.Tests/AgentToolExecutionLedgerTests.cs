@@ -270,7 +270,9 @@ public sealed class AgentToolExecutionLedgerTests
         Assert.Equal(expectedStatus, detail.Status);
         Assert.Equal(isError, detail.IsError);
         Assert.Equal(finalSummary, detail.ResultSummary);
-        Assert.Equal(execution.UpdatedAtUtc.UtcDateTime.Ticks, detail.Revision);
+        Assert.Equal(
+            (execution.UpdatedAtUtc.UtcDateTime.Ticks - DateTime.UnixEpoch.Ticks) / 10,
+            detail.Revision);
     }
 
     [Fact]

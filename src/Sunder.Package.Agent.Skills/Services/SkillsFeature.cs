@@ -1,20 +1,16 @@
 using System.Text;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Skills.Services;
 
-public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog extensionCatalog)
+public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
     : IAgentProfileSelectableCapabilityProvider,
         IAgentProfileSelectableCapabilityChangeNotifier,
         IAgentToolSource,
         IAgentPromptContextContributor
 {
-    private readonly IPackageExtensionInvocationCatalog? _invocationCatalog =
-        extensionCatalog as IPackageExtensionInvocationCatalog;
-
     private const int MaxSkillToolChars = 60000;
     private const int DefaultReadLimit = 2000;
     private const int MaxReadLimit = 5000;
@@ -377,7 +373,7 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
         Guid? sessionId,
         AgentWorkspaceRecord? workspace,
         AgentWorkspaceBindingRecord? executionBinding,
-        IPackageExtensionReference<IAgentExecutionTarget>? executionTargetReference,
+        AgentRpcReference<IAgentExecutionTarget>? executionTargetReference,
         CancellationToken cancellationToken)
     {
         if (workspace is null || executionBinding is null)
@@ -404,7 +400,8 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
         return await InvokeTargetAsync(
             targetLease,
             cancellationToken,
-            (target, invocationToken) => target is IAgentExecutionResourceResolver resolver
+            (target, invocationToken) => target.Descriptor.SupportsFacet(AgentExecutionFacetIds.ResourceResolution)
+                && target is IAgentExecutionResourceResolver resolver
                 ? resolver.ResolveResourcesAsync(
                     new AgentExecutionTargetContext(sessionId, profile.ProfileId, workspace, executionBinding),
                     descriptors,
@@ -412,20 +409,19 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
                 : ValueTask.FromResult<IReadOnlyList<AgentResolvedExecutionResource>>([]));
     }
 
-    private bool TryAcquireExecutionTarget(
-        IPackageExtensionReference<IAgentExecutionTarget>? selectedReference,
+    private static bool TryAcquireExecutionTarget(
+        AgentRpcReference<IAgentExecutionTarget>? selectedReference,
         AgentWorkspaceBindingRecord binding,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-        out IPackageExtensionLease<IAgentExecutionTarget>? lease)
+        out AgentRpcLease<IAgentExecutionTarget>? lease)
     {
-        var reference = selectedReference ?? ResolveCompatibilityTargetReference(binding);
-        if (reference is null || !reference.TryAcquire(out lease))
+        if (selectedReference is null || !selectedReference.TryAcquire(out lease))
         {
             lease = null;
             return false;
         }
         if (lease.RetirementToken.IsCancellationRequested
-            || !IsBindingMatch(lease.Contribution.Descriptor, binding))
+            || !IsBindingMatch(lease.Service.Descriptor, binding))
         {
             lease.Dispose();
             lease = null;
@@ -435,35 +431,6 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
         return true;
     }
 
-    private IPackageExtensionReference<IAgentExecutionTarget>? ResolveCompatibilityTargetReference(
-        AgentWorkspaceBindingRecord binding)
-    {
-        if (_invocationCatalog is not null)
-        {
-            foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.ExecutionTargets))
-            {
-                if (!reference.TryAcquire(out var lease))
-                {
-                    continue;
-                }
-                using (lease)
-                {
-                    if (!lease.RetirementToken.IsCancellationRequested
-                        && IsBindingMatch(lease.Contribution.Descriptor, binding))
-                    {
-                        return reference;
-                    }
-                }
-            }
-
-            return null;
-        }
-
-        var target = extensionCatalog.GetExtensions(PackageExtensionPoints.ExecutionTargets)
-            .FirstOrDefault(candidate => IsBindingMatch(candidate.Descriptor, binding));
-        return target is null ? null : new CompatibilityTargetReference(target);
-    }
-
     private static bool IsBindingMatch(
         AgentExecutionTargetDescriptor descriptor,
         AgentWorkspaceBindingRecord binding)
@@ -471,7 +438,7 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
            || string.Equals(descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase);
 
     private static async ValueTask<TResult> InvokeTargetAsync<TResult>(
-        IPackageExtensionLease<IAgentExecutionTarget> lease,
+        AgentRpcLease<IAgentExecutionTarget> lease,
         CancellationToken cancellationToken,
         Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback)
     {
@@ -484,7 +451,7 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
                 retirementToken);
             try
             {
-                var result = await callback(lease.Contribution, invocation.Token).ConfigureAwait(false);
+                var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
                 if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
                     throw new InvalidOperationException(
@@ -509,14 +476,7 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
         {
             return null;
         }
-        if (_invocationCatalog is null)
-        {
-            return extensionCatalog.GetExtensions(PackageExtensionPoints.RuntimeCatalogs)
-                .FirstOrDefault()
-                ?.GetProfile(profileId);
-        }
-
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.RuntimeCatalogs))
+        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -524,7 +484,7 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
             }
             using (lease)
             {
-                var profile = lease.Contribution.GetProfile(profileId);
+                var profile = lease.Service.GetProfile(profileId);
                 if (!lease.RetirementToken.IsCancellationRequested)
                 {
                     return profile;
@@ -672,45 +632,4 @@ public sealed class SkillsFeature(SkillStore store, IPackageExtensionCatalog ext
 
     private sealed record SkillResourceArgs(string Skill, string? Path = null, int? Offset = null, int? Limit = null);
 
-    private sealed class CompatibilityTargetReference(IAgentExecutionTarget target)
-        : IPackageExtensionReference<IAgentExecutionTarget>
-    {
-        public bool TryAcquire(
-            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-            out IPackageExtensionLease<IAgentExecutionTarget>? lease)
-        {
-            lease = new CompatibilityTargetLease(target);
-            return true;
-        }
-    }
-
-    private sealed class CompatibilityTargetLease(IAgentExecutionTarget target)
-        : IPackageExtensionLease<IAgentExecutionTarget>
-    {
-        private IAgentExecutionTarget? _target = target;
-
-        public string PackageId
-        {
-            get
-            {
-                ObjectDisposedException.ThrowIf(_target is null, this);
-                return "sunder.package.agent.skills.compatibility";
-            }
-        }
-
-        public IAgentExecutionTarget Contribution
-            => Volatile.Read(ref _target)
-               ?? throw new ObjectDisposedException(nameof(CompatibilityTargetLease));
-
-        public CancellationToken RetirementToken
-        {
-            get
-            {
-                ObjectDisposedException.ThrowIf(_target is null, this);
-                return CancellationToken.None;
-            }
-        }
-
-        public void Dispose() => Interlocked.Exchange(ref _target, null);
-    }
 }

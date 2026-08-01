@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Tools.Files;
 
@@ -40,7 +41,10 @@ internal static class FileReadHandler
         }
 
         var legacyTruncated = false;
-        var content = target is IAgentRangedFileExecutionTarget
+        var supportsRangedRead = AgentExecutionTargetRpc.SupportsFacet(
+            target,
+            AgentExecutionFacetIds.RangedFileRead);
+        var content = supportsRangedRead
             ? NumberLines(result.Content, args.EffectiveOffset)
             : SliceAndNumberLegacyResult(result.Content, args.EffectiveOffset, args.EffectiveLimit, out legacyTruncated);
         return new FileReadToolResult(
@@ -48,7 +52,7 @@ internal static class FileReadHandler
                 request.ToolId,
                 $"Read {result.Path}",
                 Content: content,
-                WasTruncated: result.WasTruncated || (target is not IAgentRangedFileExecutionTarget && legacyTruncated),
+                WasTruncated: result.WasTruncated || (!supportsRangedRead && legacyTruncated),
                 BackendId: FileToolResult.BackendId(target)),
             IsDirectory: false);
     }

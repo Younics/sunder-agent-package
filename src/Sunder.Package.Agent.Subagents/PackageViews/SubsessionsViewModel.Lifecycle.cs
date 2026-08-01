@@ -1,9 +1,19 @@
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Subagents.Runtime;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
 
 public sealed partial class SubsessionsViewModel
 {
+    private bool _ownsChangeNotifications;
+
+    [ObservableProperty]
+    private string _statusText = string.Empty;
+
+    [ObservableProperty]
+    private bool _hasLoadError;
+
     internal SubsessionsViewModel(
         ISubsessionSessionReader sessionReader,
         ISubsessionCheckpointReader checkpointReader,
@@ -26,7 +36,30 @@ public sealed partial class SubsessionsViewModel
         }
         catch (Exception ex)
         {
-            await RunOnUiThreadAsync(() => StatusText = ex.Message, CancellationToken.None);
+            await RunOnUiThreadAsync(() => SetLoadFailure(ex.Message), CancellationToken.None);
+        }
+    }
+
+    [RelayCommand]
+    private async Task RetryLoadAsync(CancellationToken cancellationToken)
+    {
+        Guid? selectedSessionId = null;
+        await RunOnUiThreadAsync(() =>
+        {
+            selectedSessionId = SelectedSubsession?.SessionId;
+            StatusText = "Retrying Agent Runtime...";
+        }, cancellationToken);
+        try
+        {
+            await InitializeCoreAsync(selectedSessionId, suppressTranscriptLoad: false, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            await RunOnUiThreadAsync(() => SetLoadFailure(ex.Message), CancellationToken.None);
         }
     }
 
@@ -42,8 +75,14 @@ public sealed partial class SubsessionsViewModel
     {
         if (!_disposed)
         {
-            RunOnUiThread(() => StatusText = $"Unable to load transcript: {exception.Message}");
+            RunOnUiThread(() => SetLoadFailure($"Unable to load transcript: {exception.Message}"));
         }
+    }
+
+    private void SetLoadFailure(string message)
+    {
+        StatusText = message;
+        HasLoadError = true;
     }
 
     private async Task InitializeCoreAsync(
@@ -80,7 +119,7 @@ public sealed partial class SubsessionsViewModel
             _changeNotifications.SessionChanged -= OnSessionChanged;
             _changeNotifications.TurnChanged -= OnTurnChanged;
             _changeNotifications.ResnapshotRequired -= OnRuntimeResnapshotRequired;
-            (_changeNotifications as IDisposable)?.Dispose();
+            if (_ownsChangeNotifications) (_changeNotifications as IDisposable)?.Dispose();
         }
 
         _runActivity.Changed -= OnRunActivityStateChanged;

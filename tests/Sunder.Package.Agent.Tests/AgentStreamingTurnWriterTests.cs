@@ -171,6 +171,128 @@ public sealed class AgentStreamingTurnWriterTests
         Assert.Empty(host.ChatClients);
     }
 
+    [Fact]
+    public async Task WriteAttemptAsync_CapturesLatestUsageAndPrefersReportedTotal()
+    {
+        var writer = new AgentStreamingTurnWriter(new AgentLoopTerminalHandler());
+        var state = writer.BeginCycle(
+            new RecordingBehaviorLoopRuntime(),
+            CreateContext(),
+            new AgentAssistantTurnState(),
+            Stopwatch.StartNew());
+        var chatClient = new UpdateChatClient(
+            new ChatResponseUpdate(ChatRole.Assistant,
+            [
+                new UsageContent(new UsageDetails
+                {
+                    InputTokenCount = 100,
+                    OutputTokenCount = 20,
+                    CachedInputTokenCount = 80,
+                    ReasoningTokenCount = 10,
+                }),
+            ]),
+            new ChatResponseUpdate(ChatRole.Assistant,
+            [
+                new UsageContent(new UsageDetails { TotalTokenCount = 150 }),
+            ]));
+
+        await writer.WriteAttemptAsync(state, chatClient, [], new ChatOptions(), CancellationToken.None);
+        var result = writer.CompleteCycle(state);
+
+        Assert.Equal(150, result.ReportedContextTokenCount);
+    }
+
+    [Fact]
+    public async Task ResetForRetry_DiscardsUsageFromFailedAttempt()
+    {
+        var writer = new AgentStreamingTurnWriter(new AgentLoopTerminalHandler());
+        var state = writer.BeginCycle(
+            new RecordingBehaviorLoopRuntime(),
+            CreateContext(),
+            new AgentAssistantTurnState(),
+            Stopwatch.StartNew());
+
+        await writer.WriteAttemptAsync(
+            state,
+            new UpdateChatClient(new ChatResponseUpdate(ChatRole.Assistant,
+            [
+                new UsageContent(new UsageDetails { TotalTokenCount = 200 }),
+            ])),
+            [],
+            new ChatOptions(),
+            CancellationToken.None);
+        writer.ResetForRetry(state);
+        await writer.WriteAttemptAsync(
+            state,
+            new UpdateChatClient(new ChatResponseUpdate(ChatRole.Assistant,
+            [
+                new UsageContent(new UsageDetails
+                {
+                    InputTokenCount = 10,
+                    OutputTokenCount = 5,
+                    CachedInputTokenCount = 8,
+                    ReasoningTokenCount = 4,
+                }),
+            ])),
+            [],
+            new ChatOptions(),
+            CancellationToken.None);
+
+        Assert.Equal(15, writer.CompleteCycle(state).ReportedContextTokenCount);
+    }
+
+    [Fact]
+    public async Task WriteAttemptAsync_InvalidTotalFallsBackToInputAndOutputUsage()
+    {
+        var writer = new AgentStreamingTurnWriter(new AgentLoopTerminalHandler());
+        var state = writer.BeginCycle(
+            new RecordingBehaviorLoopRuntime(),
+            CreateContext(),
+            new AgentAssistantTurnState(),
+            Stopwatch.StartNew());
+        var chatClient = new UpdateChatClient(new ChatResponseUpdate(ChatRole.Assistant,
+        [
+            new UsageContent(new UsageDetails
+            {
+                InputTokenCount = 10,
+                OutputTokenCount = 5,
+                TotalTokenCount = -1,
+            }),
+        ]));
+
+        await writer.WriteAttemptAsync(state, chatClient, [], new ChatOptions(), CancellationToken.None);
+
+        Assert.Equal(15, writer.CompleteCycle(state).ReportedContextTokenCount);
+    }
+
+    [Fact]
+    public async Task ProviderCycleRunner_RetryDiscardsUsageFromFailedAttempt()
+    {
+        var chatClient = new RetryingUsageChatClient();
+        var host = new RecordingBehaviorLoopRuntime();
+        host.ChatClients.Enqueue(chatClient);
+        var runner = new AgentProviderCycleRunner(
+            new AgentStreamingTurnWriter(new AgentLoopTerminalHandler()));
+        var context = CreateContext();
+        var session = await runner.CreateSessionAsync(
+            host,
+            context,
+            new AgentPromptPreparation([], [], false, null!, null!, null, [], 0),
+            CancellationToken.None);
+
+        var result = await runner.RunCycleAsync(
+            host,
+            context,
+            session,
+            [],
+            new AgentAssistantTurnState(),
+            Stopwatch.StartNew(),
+            CancellationToken.None);
+
+        Assert.Equal(2, chatClient.AttemptCount);
+        Assert.Equal(15, result.ReportedContextTokenCount);
+    }
+
     private static AgentBehaviorLoopContext CreateContext()
     {
         var now = DateTimeOffset.UtcNow;
@@ -414,6 +536,81 @@ public sealed class AgentStreamingTurnWriterTests
             => serviceKey is null && serviceType.IsInstanceOfType(this) ? this : null;
 
         public void Dispose() => IsDisposed = true;
+    }
+
+    private sealed class UpdateChatClient(params ChatResponseUpdate[] updates) : IChatClient
+    {
+        public ChatClientMetadata Metadata { get; } = new("Update test");
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            foreach (var update in updates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await Task.Yield();
+                yield return update;
+            }
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null)
+            => serviceKey is null && serviceType.IsInstanceOfType(this) ? this : null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class RetryingUsageChatClient : IChatClient
+    {
+        public int AttemptCount { get; private set; }
+
+        public ChatClientMetadata Metadata { get; } = new("Retrying usage test");
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            AttemptCount++;
+            yield return new ChatResponseUpdate(ChatRole.Assistant,
+            [
+                new UsageContent(new UsageDetails
+                {
+                    InputTokenCount = AttemptCount == 1 ? 150_000 : 10,
+                    OutputTokenCount = AttemptCount == 1 ? 50_000 : 5,
+                }),
+            ]);
+            await Task.Yield();
+            if (AttemptCount == 1)
+            {
+                throw new AgentChatProviderException(
+                    "The response ended prematurely. (ResponseEnded)",
+                    "The response ended prematurely. (ResponseEnded)",
+                    "ResponseEnded");
+            }
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null)
+            => serviceKey is null && serviceType.IsInstanceOfType(this) ? this : null;
+
+        public void Dispose()
+        {
+        }
     }
 
     private sealed class ManualTimeProvider : TimeProvider

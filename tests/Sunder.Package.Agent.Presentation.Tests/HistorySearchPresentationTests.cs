@@ -15,6 +15,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.PackageViews;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
@@ -199,7 +200,7 @@ public sealed class HistorySearchPresentationTests
         services.AddSingleton<IPackageContext>(scope.Context);
         services.AddSingleton(runtime);
         services.AddSingleton<IPackageRuntimeClient>(runtime);
-        services.AddSingleton<IPackageExtensionCatalog>(new RegressionTestExtensionCatalog());
+        services.AddSingleton<AgentRpcCatalog>(new RegressionTestExtensionCatalog());
         services.AddSingleton<IPackageShellViewService, PresentationShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
         services.AddSingleton<IBackgroundProcessQueue, PresentationBackgroundProcessQueue>();

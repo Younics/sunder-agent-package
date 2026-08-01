@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Contracts.Models;
 
@@ -50,7 +50,8 @@ public sealed record AgentToolExecutionContext(
     public AgentResourceOperationContext? ResourceOperation { get; init; }
 
     /// <summary>Gets an opaque reference to the exact execution-target activation selected when this tool was advertised.</summary>
-    public IPackageExtensionReference<IAgentExecutionTarget>? ExecutionTargetReference { get; init; }
+    [JsonIgnore]
+    public AgentRpcReference<IAgentExecutionTarget>? ExecutionTargetReference { get; init; }
 
     /// <summary>Gets the target-owned configuration generation captured for permission planning and execution.</summary>
     /// <remarks>Target-backed tools must propagate this value to <see cref="AgentExecutionTargetContext.ExpectedConfigurationGeneration"/>.</remarks>

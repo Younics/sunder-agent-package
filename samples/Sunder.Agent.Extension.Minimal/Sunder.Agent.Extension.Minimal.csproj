@@ -8,4 +8,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
   </ItemGroup>
+
+  <ItemGroup Condition="'$(BuildAuthorSamplePackage)' == 'true'">
+    <SunderRpcProvider Include="minimal.tools" ContractId="sunder.agent.tool.source" ContractVersion="1.0.0" Role="runtime" />
+  </ItemGroup>
 </Project>

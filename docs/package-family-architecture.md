@@ -1,6 +1,6 @@
 # Package Family Architecture
 
-Sunder Agent is a package family, not one monolithic plugin. The base package owns durable Agent state and orchestration; independently installed packages contribute providers, tools, execution, memory, MCP, skills, and subagents through public contracts.
+Sunder Agent is a package family, not one monolithic plugin. The base package owns durable Agent state and orchestration; independently installed packages provide tools, execution, memory, MCP, skills, and subagents through the 18 public RPC descriptors.
 
 ## Layering
 
@@ -14,15 +14,15 @@ Sunder Runtime / Sunder App
   |     publishes base service ports through Agent contracts
   |
   +-- Agent extension packages
-        consume Sunder.Package.Agent.Contracts
-        publish providers/tools/execution/context/orchestration
+        consume Sunder.Package.Agent.Protocol
+        publish RPC providers for tools/execution/context/orchestration
 ```
 
 An extension compiles against:
 
 - `Sunder.Sdk` for package activation and host capabilities.
 - `Sunder.Package.Build` for generated manifests and archives.
-- `Sunder.Package.Agent.Contracts` for Agent extension interfaces/models.
+- `Sunder.Package.Agent.Protocol` for bundled descriptors and generated wire bindings.
 
 It declares a runtime dependency on `sunder.package.agent`. It must not reference `Sunder.Package.Agent`, `Sunder.App`, or `Sunder.Runtime.Host` implementation assemblies.
 
@@ -30,7 +30,7 @@ It declares a runtime dependency on `sunder.package.agent`. It must not referenc
 
 | Artifact | Runtime package id | Responsibility |
 | --- | --- | --- |
-| `Sunder.Package.Agent.Contracts` | Not a runtime package | Public NuGet extension contracts |
+| `Sunder.Package.Agent.Protocol` | Not a runtime package | Public RPC descriptors and generated bindings |
 | `Sunder.Package.Agent` | `sunder.package.agent` | Core profiles, workspaces, sessions, transcript, attachments, permissions, runs, context projection, default loop |
 | `Sunder.Package.Agent.Builder` | `sunder.package.agent.builder` | Package project creation, prerequisite setup, build, and publish |
 | `Sunder.Package.Agent.Provider.OpenAI` | `sunder.package.agent.provider.openai` | OpenAI chat and embeddings |
@@ -60,7 +60,7 @@ Each installed package can activate separate modules in separate processes/conta
 | Runtime (`ISunderRuntimePackageModule`) | Network clients, secrets, storage authority, providers, tools, execution, memory, callbacks, typed operations/streams | Avalonia controls or direct App state |
 | App (`ISunderAppPackageModule`) | Views, view models, navigation, host browser launch, typed Runtime clients | Runtime stores, provider clients, credentials, execution authority |
 
-Role-local DI and extension catalogs mean an object registered in Runtime is not available in App. When both roles contribute the same contract, such as workspace editors, they are different objects with different responsibilities. The App object should call a typed Runtime operation rather than duplicating state.
+Role-local DI and RPC visibility mean a Runtime service object is never available directly in App. When both roles expose related behavior, they use different activation-owned providers with different responsibilities. The App should call a typed Runtime operation rather than duplicating state.
 
 Runtime snapshots/gateways are explicit. Do not use static singletons, shared files, or assumptions about a common current directory to communicate between roles.
 
@@ -83,9 +83,9 @@ Extensions read base projections through `IAgentRuntimeCatalog` and use service 
 
 ## Extension Ownership
 
-The host records the activating package id for every `RegisterExtension` call. Contribution instances remain activation-scoped and disappear when that owner deactivates.
+The host records the activating package id for every `RegisterRpcProvider` call. Each endpoint names one exact activation and becomes stale when that owner deactivates.
 
-Use `IPackageExtensionCatalog.GetExtensionContributions` when package identity matters, especially stack export or dependency inference. A descriptor's optional `PackageId` is useful display metadata but is not the ownership authority.
+Use `SunderRpcProviderSnapshot.PackageId` when package identity matters, especially stack export or dependency inference. A domain descriptor's optional `PackageId` is useful display metadata but is not the ownership authority.
 
 Stack exporters include the owning provider, execution-target, behavior-loop, skill, or subagent package when selected state depends on it. Ownerless results are invalid because an imported stack must know which package supplies a contribution.
 
@@ -96,12 +96,12 @@ Every first-party Agent extension runtime archive declares:
 ```csharp
 [assembly: SunderPackageDependency(
     PackageId = "sunder.package.agent",
-    VersionRange = ">=1.1.0 <1.2.0")]
+    VersionRange = ">=2.0.0 <3.0.0")]
 ```
 
-The contracts NuGet and coordinated Sunder SDK/build packages use `[1.1.0,1.2.0)`. Runtime graph validation occurs before assembly load; a package cannot rely on compatibility shims after an invalid graph is already active.
+The Agent Protocol NuGet uses `[2.0.0,3.0.0)` while Sunder SDK/build packages retain their independent Core version line. Runtime graph validation occurs before assembly load; a package cannot rely on compatibility shims after an invalid graph is already active.
 
-An extension may add dependencies on another extension only when its runtime behavior truly requires that package. Prefer optional discovery through extension points when absence can be represented as not ready/unavailable.
+An extension may add dependencies on another extension only when its runtime behavior truly requires that package. Prefer optional RPC discovery when absence can be represented as not ready or unavailable.
 
 ## Storage And Configuration
 
@@ -127,8 +127,8 @@ Do not maintain a source manifest or copy SDK assemblies into the package archiv
 
 ## Public Surface Policy
 
-`Sunder.Package.Agent.Contracts` is the only public Agent author contract assembly. Its `PublicAPI.Shipped.txt` is the immutable stable baseline; intentional additions move through `PublicAPI.Unshipped.txt` and family release review.
+`Sunder.Package.Agent.Protocol` is the public Agent author protocol assembly. Its checked-in descriptors and generated bindings are compatibility surfaces reviewed with the public API ledger.
 
-Concrete types under first-party package projects are examples, not supported cross-package APIs. If a required capability cannot be expressed with the contracts package, propose a contract change instead of reflecting into an implementation or copying its internal storage format.
+Concrete types under first-party package projects are examples, not supported cross-package APIs. If a required capability cannot be expressed with the Protocol package, propose a descriptor/binding change instead of reflecting into an implementation or copying its internal storage format.
 
 Next: [Extension-point catalog](extension-points.md) and [Release, compatibility, and troubleshooting](release-compatibility-troubleshooting.md).

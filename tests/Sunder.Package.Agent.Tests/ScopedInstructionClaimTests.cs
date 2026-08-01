@@ -4,6 +4,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Execution.Local;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tools.Files;
 using Sunder.Package.Agent.Tools.Shell;
 using Xunit;
@@ -539,13 +540,17 @@ public sealed class ScopedInstructionClaimTests
         using var fixture = await Fixture.CreateAsync();
         var target = new IncompleteDiscoveryExecutionTarget(fixture.Root);
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddExtension(PackageExtensionPoints.ExecutionTargets, target);
-        var source = new FilesToolSource(catalog, fixture.PackageContext);
-        await PresentAsync(source, fixture.PromptRequest(epoch: 1));
+        catalog.AddProvider(AgentRpcServices.ExecutionTargets, target);
+        var targetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets);
+        var source = new FilesToolSource(fixture.PackageContext);
+        await PresentAsync(source, fixture.PromptRequest(epoch: 1) with
+        {
+            ExecutionTargetReference = targetReference,
+        });
         target.ReturnIncompleteDiscovery = true;
 
         var withheld = await source.ExecuteAsync(
-            fixture.ToolContext(epoch: 1),
+            fixture.ToolContext(epoch: 1) with { ExecutionTargetReference = targetReference },
             Request("read", new { path = "nested/secret.txt" }));
 
         Assert.True(withheld.IsError);
@@ -554,10 +559,13 @@ public sealed class ScopedInstructionClaimTests
         Assert.DoesNotContain("INCOMPLETE_DISCOVERY_SECRET", withheld.Content, StringComparison.Ordinal);
 
         target.ReturnIncompleteDiscovery = false;
-        var restarted = new FilesToolSource(catalog, fixture.PackageContext);
-        await PresentAsync(restarted, fixture.PromptRequest(epoch: 1));
+        var restarted = new FilesToolSource(fixture.PackageContext);
+        await PresentAsync(restarted, fixture.PromptRequest(epoch: 1) with
+        {
+            ExecutionTargetReference = targetReference,
+        });
         var rerun = await restarted.ExecuteAsync(
-            fixture.ToolContext(epoch: 1),
+            fixture.ToolContext(epoch: 1) with { ExecutionTargetReference = targetReference },
             Request("read", new { path = "nested/secret.txt" }));
 
         Assert.False(rerun.IsError, rerun.Content);
@@ -875,8 +883,8 @@ public sealed class ScopedInstructionClaimTests
                     scope.Context,
                     configService,
                     new LocalShellCatalogService(scope.Context));
-                catalog.AddExtension(
-                    PackageExtensionPoints.ExecutionTargets,
+                catalog.AddProvider(
+                    AgentRpcServices.ExecutionTargets,
                     target);
                 return new Fixture(scope, roots, workspace, binding, configService, catalog, target);
             }
@@ -887,12 +895,12 @@ public sealed class ScopedInstructionClaimTests
             }
         }
 
-        public FilesToolSource CreateSource() => new(_catalog, _scope.Context);
+        public FilesToolSource CreateSource() => new(_scope.Context);
 
         public async Task<ShellToolSource> CreateShellSourceAsync()
         {
             await _configService.SaveConfigAsync(Binding.BindingId, new LocalExecutionWorkspaceConfig(null, []));
-            return new ShellToolSource(_catalog);
+            return new ShellToolSource();
         }
 
         public async Task<AgentWorkspaceBindingRecord> CreateBindingAsync(string bindingId)
@@ -928,6 +936,7 @@ public sealed class ScopedInstructionClaimTests
                 ExecutionBinding = binding ?? Binding,
                 AvailableTools = [FilesTool],
                 TranscriptEpoch = epoch,
+                ExecutionTargetReference = _catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
             };
         }
 
@@ -949,6 +958,7 @@ public sealed class ScopedInstructionClaimTests
                 AllowOutsideConfiguredScope: allowOutsideConfiguredScope)
             {
                 TranscriptEpoch = epoch,
+                ExecutionTargetReference = _catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
             };
 
         public async Task<AgentToolExecutionContext> ApprovedToolContextAsync(
@@ -979,8 +989,7 @@ public sealed class ScopedInstructionClaimTests
                 RunRevision = 1,
                 ToolCallId = toolCallId,
             };
-            var target = _catalog.GetExtensions(PackageExtensionPoints.ExecutionTargets).Single();
-            var resource = await target.ResolveFileResourceAsync(
+            var resource = await _target.ResolveFileResourceAsync(
                 new AgentExecutionTargetContext(
                     sessionId,
                     null,
@@ -1041,7 +1050,7 @@ public sealed class ScopedInstructionClaimTests
             return new AgentWorkspaceBindingRecord(
                 bindingId,
                 workspaceId,
-                PackageExtensionPoints.ExecutionTargets.Id,
+                AgentRpcContractIds.ExecutionTarget,
                 "local",
                 "primary-execution-target",
                 IsEnabled: true,

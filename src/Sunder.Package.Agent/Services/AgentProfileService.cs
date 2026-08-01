@@ -4,6 +4,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Contracts.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Runtime;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
@@ -12,21 +13,22 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
 {
     private readonly AgentLocalStore _store;
     private readonly AgentToolService _toolService;
-    private readonly IPackageExtensionCatalog _extensionCatalog;
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog;
+    private readonly AgentRpcCatalog _rpcCatalog;
+    private readonly AgentRpcProviderService<IAgentBehaviorLoop> _behaviorLoops;
     private readonly AgentProfileSelectableCapabilityChangeObserver _capabilityChangeObserver;
     private bool _disposed;
 
     public AgentProfileService(
         AgentLocalStore store,
         AgentToolService toolService,
-        IPackageExtensionCatalog extensionCatalog)
+        AgentRpcCatalog rpcCatalog,
+        AgentRpcProviderService<IAgentBehaviorLoop> behaviorLoops)
     {
         _store = store;
         _toolService = toolService;
-        _extensionCatalog = extensionCatalog;
-        _invocationCatalog = AgentExtensionInvocation.Require(extensionCatalog);
-        _capabilityChangeObserver = new AgentProfileSelectableCapabilityChangeObserver(extensionCatalog);
+        _rpcCatalog = rpcCatalog;
+        _behaviorLoops = behaviorLoops;
+        _capabilityChangeObserver = new AgentProfileSelectableCapabilityChangeObserver(rpcCatalog);
         _capabilityChangeObserver.Changed += OnSelectableCapabilitiesChanged;
     }
 
@@ -46,7 +48,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             .FirstOrDefault();
         var orderedChatModels = chatProvider is null
             ? []
-            : (await AgentExtensionInvocation.InvokeAsync(
+            : (await AgentRpcInvocation.InvokeAsync(
                     chatProvider,
                     cancellationToken,
                     static (provider, token) => provider.GetAvailableModelsAsync(token))
@@ -135,15 +137,10 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
         ProfileChanged?.Invoke(profileId);
     }
 
-    public IReadOnlyList<IAgentBehaviorLoop> ListBehaviorLoops()
-        => _extensionCatalog.GetExtensions(PackageExtensionPoints.BehaviorLoops)
-            .OrderBy(loop => loop.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
     public IReadOnlyList<AgentBehaviorLoopDescriptor> ListBehaviorLoopDescriptors()
-        => AgentExtensionInvocation.Snapshot(
-                _invocationCatalog,
-                PackageExtensionPoints.BehaviorLoops,
+        => AgentRpcInvocation.Snapshot(
+                _rpcCatalog,
+                _behaviorLoops,
                 static loop => loop.Descriptor with
                 {
                     FeatureKinds = loop.Descriptor.FeatureKinds?.ToArray(),
@@ -188,7 +185,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
     }
 
     public IReadOnlyList<IAgentChatProvider> ListChatProviders()
-        => _extensionCatalog.GetExtensions(PackageExtensionPoints.ChatProviders)
+        => _rpcCatalog.GetServices(AgentRpcServices.ChatProviders)
             .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
@@ -199,7 +196,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             .ToArray();
 
     public IReadOnlyList<IAgentEmbeddingProvider> ListEmbeddingProviders()
-        => _extensionCatalog.GetExtensions(PackageExtensionPoints.EmbeddingProviders)
+        => _rpcCatalog.GetServices(AgentRpcServices.EmbeddingProviders)
             .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
@@ -216,8 +213,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             return false;
         }
 
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(
-                     PackageExtensionPoints.ProfileCapabilityConsumers))
+        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.ProfileCapabilityConsumers))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -225,7 +221,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             }
             using (lease)
             {
-                var consumed = lease.Contribution.ListConsumedCapabilities().ToArray();
+                var consumed = lease.Service.ListConsumedCapabilities().ToArray();
                 if (!lease.RetirementToken.IsCancellationRequested
                     && consumed.Any(capability => string.Equals(
                         capability.CapabilityKind,
@@ -247,14 +243,14 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
         _capabilityChangeObserver.RefreshProviderSubscriptions();
         var request = new AgentProfileSelectableCapabilityRequest(profile);
         var capabilities = new List<AgentProfileSelectableCapabilityDescriptor>();
-        var providers = AgentExtensionInvocation.Snapshot(
-            _invocationCatalog,
-            PackageExtensionPoints.ProfileSelectableCapabilityProviders,
+        var providers = AgentRpcInvocation.Snapshot(
+            _rpcCatalog,
+            AgentRpcServices.SelectableCapabilityProviders,
             static provider => provider.DisplayName);
         foreach (var provider in providers
                      .OrderBy(provider => provider.Metadata, StringComparer.OrdinalIgnoreCase))
         {
-            capabilities.AddRange(await AgentExtensionInvocation.InvokeAsync(
+            capabilities.AddRange(await AgentRpcInvocation.InvokeAsync(
                 provider,
                 cancellationToken,
                 (instance, token) => instance.ListCapabilitiesAsync(request, token)).ConfigureAwait(false));
@@ -307,7 +303,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             StringComparison.OrdinalIgnoreCase));
         return provider is null
             ? []
-            : (await AgentExtensionInvocation.InvokeAsync(
+            : (await AgentRpcInvocation.InvokeAsync(
                     provider,
                     cancellationToken,
                     static (instance, token) => instance.GetAvailableModelsAsync(token))
@@ -329,7 +325,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             StringComparison.OrdinalIgnoreCase));
         return provider is null
             ? []
-            : (await AgentExtensionInvocation.InvokeAsync(
+            : (await AgentRpcInvocation.InvokeAsync(
                     provider,
                     cancellationToken,
                     static (instance, token) => instance.GetAvailableModelsAsync(token))
@@ -351,7 +347,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             StringComparison.OrdinalIgnoreCase));
         return provider is null
             ? null
-            : await AgentExtensionInvocation.InvokeAsync(
+            : await AgentRpcInvocation.InvokeAsync(
                 provider,
                 cancellationToken,
                 static (instance, token) => instance.GetReadinessAsync(token)).ConfigureAwait(false);
@@ -370,27 +366,27 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             StringComparison.OrdinalIgnoreCase));
         return provider is null
             ? null
-            : await AgentExtensionInvocation.InvokeAsync(
+            : await AgentRpcInvocation.InvokeAsync(
                 provider,
                 cancellationToken,
                 static (instance, token) => instance.GetReadinessAsync(token)).ConfigureAwait(false);
     }
 
-    private IReadOnlyList<AgentExtensionReference<IAgentChatProvider, AgentProviderDescriptor>>
+    private IReadOnlyList<AgentRpcOwnedReference<IAgentChatProvider, AgentProviderDescriptor>>
         GetChatProviderReferences()
-        => AgentExtensionInvocation.Snapshot(
-            _invocationCatalog,
-            PackageExtensionPoints.ChatProviders,
+        => AgentRpcInvocation.Snapshot(
+            _rpcCatalog,
+            AgentRpcServices.ChatProviders,
             static provider => provider.Descriptor with
             {
                 SupportedAuthModes = provider.Descriptor.SupportedAuthModes.ToArray(),
             });
 
-    private IReadOnlyList<AgentExtensionReference<IAgentEmbeddingProvider, AgentEmbeddingProviderDescriptor>>
+    private IReadOnlyList<AgentRpcOwnedReference<IAgentEmbeddingProvider, AgentEmbeddingProviderDescriptor>>
         GetEmbeddingProviderReferences()
-        => AgentExtensionInvocation.Snapshot(
-            _invocationCatalog,
-            PackageExtensionPoints.EmbeddingProviders,
+        => AgentRpcInvocation.Snapshot(
+            _rpcCatalog,
+            AgentRpcServices.EmbeddingProviders,
             static provider => provider.Descriptor);
 
     private static IReadOnlyList<AgentProfileModelBindingRecord> BuildModelBindings(

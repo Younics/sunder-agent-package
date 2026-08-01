@@ -80,12 +80,11 @@ public sealed class SubagentRuntimeOrchestrationTests
         var sessionService = new AgentSessionService(store, catalog);
         var workspaceService = new AgentWorkspaceService(store, catalog, sessionService);
         var toolService = new AgentToolService(
-            new InstalledPackageToolSource(catalog),
             sessionService,
             workspaceService,
             new AgentExecutionTargetService(catalog),
             catalog);
-        var profileService = new AgentProfileService(store, toolService, catalog);
+        var profileService = new AgentProfileService(store, toolService, catalog, catalog.BehaviorLoops);
         var childSessions = new AgentChildRunSessionService(sessionService, profileService);
         var parent = sessionService.CreateSession("Parent", workspaceId: "workspace");
 

@@ -1,7 +1,8 @@
 using System.Collections.ObjectModel;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.PackageViews;
@@ -106,8 +107,8 @@ internal sealed record AgentEditorRetryState(
 internal static class AgentWorkspaceEditorInvocation
 {
     public static async ValueTask<AgentEditorInvocationResult<TResult>> InvokeAsync<TResult>(
-        IPackageExtensionReference<IAgentWorkspaceEditorContributor> contributorReference,
-        IPackageExtensionInvocationCatalog invocationCatalog,
+        AgentRpcReference<IAgentWorkspaceEditorContributor> contributorReference,
+        AgentRpcCatalog rpcCatalog,
         AgentEditorInvocationOperation operation,
         CancellationToken cancellationToken,
         Func<IAgentWorkspaceEditorContributor, CancellationToken, ValueTask<TResult>> callback)
@@ -129,7 +130,7 @@ internal static class AgentWorkspaceEditorInvocation
                 retirementToken);
             try
             {
-                var result = await callback(lease.Contribution, invocation.Token).ConfigureAwait(false);
+                var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
                 if (retirementToken.IsCancellationRequested)
                 {
@@ -151,12 +152,9 @@ internal static class AgentWorkspaceEditorInvocation
             {
                 throw;
             }
-            catch (OperationCanceledException) when (retirementToken.IsCancellationRequested)
-            {
-                return AgentEditorInvocationResult<TResult>.Failed(
-                    AgentEditorInvocationFailure.Unavailable(packageId, operation));
-            }
-            catch (Exception) when (retirementToken.IsCancellationRequested)
+            catch (Exception exception) when (
+                retirementToken.IsCancellationRequested
+                || AgentRpcInvocation.IsUnavailableFailure(exception, cancellationToken))
             {
                 return AgentEditorInvocationResult<TResult>.Failed(
                     AgentEditorInvocationFailure.Unavailable(packageId, operation));
@@ -167,7 +165,7 @@ internal static class AgentWorkspaceEditorInvocation
             }
         }
 
-        return invocationCatalog.TryReportInvariantViolation(contributorReference, invariantFailure!)
+        return rpcCatalog.TryReportInvariantViolation(contributorReference, invariantFailure!)
             ? AgentEditorInvocationResult<TResult>.Failed(
                 AgentEditorInvocationFailure.OwnerFaulted(packageId))
             : AgentEditorInvocationResult<TResult>.Failed(

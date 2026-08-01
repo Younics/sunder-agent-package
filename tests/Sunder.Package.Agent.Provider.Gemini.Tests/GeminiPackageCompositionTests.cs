@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Xunit;
@@ -27,10 +28,8 @@ public sealed class GeminiPackageCompositionTests
         using var runtimeProvider = runtimeServices.BuildServiceProvider();
         var runtimeRegistry = new ProviderCompositionTestRegistry();
         runtimeModule.RegisterRuntimeContributions(runtimeRegistry, runtimeProvider);
-        Assert.Equal(
-            [PackageExtensionPoints.ChatProviders.Id, PackageExtensionPoints.EmbeddingProviders.Id],
-            runtimeRegistry.ExtensionIds);
-        Assert.Equal([typeof(GeminiAgentProvider), typeof(GeminiEmbeddingProvider)], runtimeRegistry.ExtensionTypes);
+        Assert.Equal(["gemini.chat", "gemini.embedding"], runtimeRegistry.RpcProviderIds);
+        Assert.All(runtimeRegistry.RpcHandlerTypes, type => Assert.Equal(typeof(AgentRpcServiceHandler), type));
         Assert.Same(GeminiProviderConfiguration.Schema, Assert.Single(runtimeRegistry.SettingsSchemas));
 
         var appServices = new ServiceCollection();
@@ -47,6 +46,6 @@ public sealed class GeminiPackageCompositionTests
         var appRegistry = new ProviderCompositionTestRegistry();
         appModule.RegisterAppContributions(appRegistry, appProvider);
         Assert.Equal([typeof(GeminiSettingsView)], appRegistry.SettingsViewTypes);
-        Assert.Empty(appRegistry.ExtensionIds);
+        Assert.Empty(appRegistry.RpcProviderIds);
     }
 }

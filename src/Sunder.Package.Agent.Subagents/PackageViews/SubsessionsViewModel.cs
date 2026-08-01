@@ -5,9 +5,9 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Subagents.Runtime;
@@ -25,7 +25,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private const string ListRefreshChannel = "subsessions-list";
     private const string NavigationChannel = "subsessions-navigation";
 
-    private readonly IPackageExtensionCatalog? _extensionCatalog;
+    private readonly AgentRpcCatalog? _rpcCatalog;
     private readonly TranscriptTimelineState<SubsessionTranscriptRowViewModel> _timeline;
     private readonly TranscriptItemsProjection<SubsessionTranscriptRowViewModel> _transcriptItemsProjection;
     private readonly ActivityTicker _activityTicker = new();
@@ -50,16 +50,16 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private bool _disposed;
 
     public SubsessionsViewModel(
-        IPackageExtensionCatalog? extensionCatalog,
+        AgentRpcCatalog? rpcCatalog,
         TimeSpan? activityQuietDelay = null)
     {
         _activityTicker.SetEnabled(false);
-        _extensionCatalog = extensionCatalog;
+        _rpcCatalog = rpcCatalog;
         var toolPresentation = new TranscriptToolPresentationService(() =>
-            extensionCatalog is IPackageExtensionInvocationCatalog invocationCatalog
-                ? invocationCatalog.GetExtensionReferences(PackageExtensionPoints.ToolSources)
+            rpcCatalog is not null
+                ? rpcCatalog.GetServiceReferences(AgentRpcServices.ToolSources)
                     .Select(static reference =>
-                        (IAgentToolPresentationResolver)new PackageToolSourcePresentationResolver(reference))
+                        (IAgentToolPresentationResolver)new RpcToolSourcePresentationResolver(reference))
                 : []);
         var rowFactory = new SubsessionTranscriptRowFactory(
             toolPresentation,
@@ -98,7 +98,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         _listDetail.PropertyChanged += OnListDetailPropertyChanged;
         _runtimeRefresh = new SerializedRefreshLoop(
             RefreshFromRuntimeAsync,
-            exception => RunOnUiThread(() => StatusText = exception.Message));
+            exception => RunOnUiThread(() => SetLoadFailure(exception.Message)));
     }
 
     private Task<AgentTranscriptToolDetailRecord?> LoadToolDetailAsync(
@@ -220,9 +220,6 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     internal long IntentRevision => _listDetail.IntentRevision;
 
-    [ObservableProperty]
-    private string _statusText = string.Empty;
-
     [RelayCommand]
     private void BackToSubsessionsList()
     {
@@ -312,18 +309,18 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     private void EnsureRuntimeReaders()
     {
-        if (_sessionReader is not null || _extensionCatalog is null)
+        if (_sessionReader is not null || _rpcCatalog is null)
         {
             return;
         }
 
-        var runtimeReference = (_extensionCatalog as IPackageExtensionInvocationCatalog)?
-            .GetExtensionReferences(PackageExtensionPoints.RuntimeCatalogs)
+        var runtimeReference = _rpcCatalog
+            .GetServiceReferences(AgentRpcServices.RuntimeCatalogs)
             .FirstOrDefault();
         if (runtimeReference is not null)
         {
             var adapter = new SubsessionLocalRuntimeAdapter(runtimeReference);
-            SetRuntimePorts(adapter, adapter, adapter, adapter);
+            SetRuntimePorts(adapter, adapter, adapter, adapter, ownsChangeNotifications: true);
         }
     }
 
@@ -335,10 +332,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         EnsureRuntimeReaders();
         if (_sessionReader is null || _checkpointReader is null)
         {
-            await RunOnUiThreadAsync(
-                () => StatusText = "The Agent runtime is not available.",
-                cancellationToken);
-            return;
+            throw new InvalidOperationException("The Agent runtime is not available.");
         }
 
         var refresh = _requests.Begin(ListRefreshChannel, cancellationToken);
@@ -408,6 +402,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         bool preserveLiveSelection = false)
     {
         ReplaceRuntimeSnapshot(catalog, checkpoints);
+        HasLoadError = false;
         var rows = subsessions.Select(session =>
         {
             _knownCheckpoints.TryGetValue(session.SessionId, out var checkpoint);
@@ -774,12 +769,14 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         ISubsessionSessionReader sessionReader,
         ISubsessionCheckpointReader checkpointReader,
         ISubsessionTranscriptPageReader transcriptReader,
-        ISubsessionChangeNotifications changeNotifications)
+        ISubsessionChangeNotifications changeNotifications,
+        bool ownsChangeNotifications = false)
     {
         _sessionReader = sessionReader;
         _checkpointReader = checkpointReader;
         _transcriptReader = transcriptReader;
         _changeNotifications = changeNotifications;
+        _ownsChangeNotifications = ownsChangeNotifications;
         changeNotifications.SessionChanged += OnSessionChanged;
         changeNotifications.TurnChanged += OnTurnChanged;
         changeNotifications.ResnapshotRequired += OnRuntimeResnapshotRequired;

@@ -1,24 +1,20 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Subagents.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
 internal sealed class SubagentChildRunCoordinator(
-    IPackageExtensionCatalog extensionCatalog,
+    AgentRpcCatalog rpcCatalog,
     SubagentDescriptorSchema descriptors,
     SubagentPermissionStatusAdapter permissionStatusAdapter,
     SubagentBatchResultRenderer resultRenderer)
 {
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
-        extensionCatalog as IPackageExtensionInvocationCatalog
-        ?? throw new InvalidOperationException(
-            "The host extension catalog does not support activation-scoped invocation leases.");
     private readonly SubagentDescriptorSchema _descriptors = descriptors;
     private readonly SubagentPermissionStatusAdapter _permissionStatusAdapter = permissionStatusAdapter;
     private readonly SubagentBatchResultRenderer _resultRenderer = resultRenderer;
@@ -38,7 +34,7 @@ internal sealed class SubagentChildRunCoordinator(
         }
 
         AgentProfileRecord? parentProfile = null;
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.RuntimeCatalogs))
+        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -48,7 +44,7 @@ internal sealed class SubagentChildRunCoordinator(
             {
                 parentProfile = string.IsNullOrWhiteSpace(context.ProfileId)
                     ? null
-                    : lease.Contribution.GetProfile(context.ProfileId);
+                    : lease.Service.GetProfile(context.ProfileId);
                 if (!lease.RetirementToken.IsCancellationRequested)
                 {
                     break;
@@ -62,8 +58,8 @@ internal sealed class SubagentChildRunCoordinator(
             return false;
         }
 
-        var childRunExecutorReference = _invocationCatalog
-            .GetExtensionReferences(PackageExtensionPoints.ChildRunExecutors)
+        var childRunExecutorReference = rpcCatalog
+            .GetServiceReferences(AgentRpcServices.ChildRunExecutors)
             .FirstOrDefault(IsAvailable);
         if (childRunExecutorReference is null)
         {
@@ -116,7 +112,7 @@ internal sealed class SubagentChildRunCoordinator(
                 retirementToken);
             try
             {
-                result = await executorLease.Contribution.RunChildAsync(
+                result = await executorLease.Service.RunChildAsync(
                     new AgentChildRunRequest(
                         context.SessionId!.Value,
                         context.RunId!.Value,
@@ -136,9 +132,13 @@ internal sealed class SubagentChildRunCoordinator(
                         AgentToolResultErrorCodes.PackageUnavailable);
                 }
             }
-            catch (OperationCanceledException) when (
-                retirementToken.IsCancellationRequested
-                && !cancellationToken.IsCancellationRequested)
+            catch (Exception exception) when (
+                !cancellationToken.IsCancellationRequested
+                && (retirementToken.IsCancellationRequested
+                    || exception is SunderRpcException
+                    {
+                        Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable,
+                    }))
             {
                 return _permissionStatusAdapter.CreateTaskFailure(
                     resultToolId,
@@ -195,7 +195,7 @@ internal sealed class SubagentChildRunCoordinator(
         => profile.ModelBindings?.FirstOrDefault(binding =>
             string.Equals(binding.CapabilityKind, capabilityKind, StringComparison.OrdinalIgnoreCase));
 
-    private static bool IsAvailable(IPackageExtensionReference<IAgentChildRunExecutor> reference)
+    private static bool IsAvailable(AgentRpcReference<IAgentChildRunExecutor> reference)
     {
         if (!reference.TryAcquire(out var lease))
         {
@@ -236,4 +236,4 @@ internal sealed class SubagentChildRunCoordinator(
 internal sealed record SubagentChildRunEnvironment(
     AgentToolExecutionContext Context,
     AgentProfileRecord ParentProfile,
-    IPackageExtensionReference<IAgentChildRunExecutor> ChildRunExecutorReference);
+    AgentRpcReference<IAgentChildRunExecutor> ChildRunExecutorReference);

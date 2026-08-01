@@ -1,7 +1,6 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Storage;
-using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -11,14 +10,13 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(250);
 
     private readonly AgentLocalStore _store;
-    private readonly IPackageExtensionInvocationCatalog _invocations;
-    private readonly IPackageExtensionCatalogMonitor? _catalogMonitor;
+    private readonly AgentRpcCatalog _rpcCatalog;
     private readonly object _syncRoot = new();
     private readonly SemaphoreSlim _dispatchGate = new(1, 1);
     private readonly SemaphoreSlim _wakeSignal = new(0, 1);
 
-    private IReadOnlyDictionary<AgentSessionDataCleanerIdentity, IPackageExtensionReference<IAgentSessionDataCleaner>>
-        _activeCleaners = new Dictionary<AgentSessionDataCleanerIdentity, IPackageExtensionReference<IAgentSessionDataCleaner>>();
+    private IReadOnlyDictionary<AgentSessionDataCleanerIdentity, AgentRpcReference<IAgentSessionDataCleaner>>
+        _activeCleaners = new Dictionary<AgentSessionDataCleanerIdentity, AgentRpcReference<IAgentSessionDataCleaner>>();
     private CancellationTokenSource? _lifetime;
     private Task? _worker;
     private bool _startupRecoveryPending;
@@ -26,19 +24,18 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
 
     public AgentSessionCleanupDispatcher(
         AgentLocalStore store,
-        IPackageExtensionCatalog extensionCatalog)
+        AgentRpcCatalog rpcCatalog)
     {
         _store = store;
-        _invocations = AgentExtensionInvocation.Require(extensionCatalog);
-        _catalogMonitor = extensionCatalog as IPackageExtensionCatalogMonitor;
+        _rpcCatalog = rpcCatalog;
         _store.SessionCleanupJobsChanged += Wake;
     }
 
     internal static void DispatchAvailableNow(
         AgentLocalStore store,
-        IPackageExtensionCatalog extensionCatalog)
+        AgentRpcCatalog rpcCatalog)
     {
-        var dispatcher = new AgentSessionCleanupDispatcher(store, extensionCatalog);
+        var dispatcher = new AgentSessionCleanupDispatcher(store, rpcCatalog);
         try
         {
             dispatcher.FlushAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -62,10 +59,7 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
 
             _lifetime = new CancellationTokenSource();
             _startupRecoveryPending = true;
-            if (_catalogMonitor is not null)
-            {
-                _catalogMonitor.Changed += OnCatalogChanged;
-            }
+            _rpcCatalog.Changed += OnCatalogChanged;
             ReconcileCleaners(DateTimeOffset.UtcNow);
             _worker = RunAsync(_lifetime.Token);
         }
@@ -87,10 +81,7 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
             }
             _worker = null;
             _lifetime = null;
-            if (_catalogMonitor is not null)
-            {
-                _catalogMonitor.Changed -= OnCatalogChanged;
-            }
+            _rpcCatalog.Changed -= OnCatalogChanged;
         }
 
         await lifetime.CancelAsync().ConfigureAwait(false);
@@ -188,7 +179,7 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
         var unavailable = new HashSet<AgentSessionDataCleanerIdentity>();
         while (dispatchCount < AgentLocalStore.MaxSessionCleanupJobsPerPass)
         {
-            KeyValuePair<AgentSessionDataCleanerIdentity, IPackageExtensionReference<IAgentSessionDataCleaner>>[] cleaners;
+            KeyValuePair<AgentSessionDataCleanerIdentity, AgentRpcReference<IAgentSessionDataCleaner>>[] cleaners;
             lock (_syncRoot)
             {
                 cleaners = _activeCleaners
@@ -229,7 +220,7 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
                 {
                     try
                     {
-                        lease.Contribution.DeleteSessionData(claim.SessionId);
+                        lease.Service.DeleteSessionData(claim.SessionId);
                         if (lease.RetirementToken.IsCancellationRequested)
                         {
                             _store.ReleaseSessionCleanupJob(claim, DateTimeOffset.UtcNow);
@@ -267,8 +258,8 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
     {
         var active = new Dictionary<
             AgentSessionDataCleanerIdentity,
-            IPackageExtensionReference<IAgentSessionDataCleaner>>();
-        foreach (var reference in _invocations.GetExtensionReferences(PackageExtensionPoints.SessionDataCleaners))
+            AgentRpcReference<IAgentSessionDataCleaner>>();
+        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.SessionCleaners))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -277,7 +268,7 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
             using (lease)
             {
                 var packageId = lease.PackageId.Trim();
-                var cleanerId = lease.Contribution.CleanerId?.Trim() ?? string.Empty;
+                var cleanerId = lease.Service.CleanerId?.Trim() ?? string.Empty;
                 if (packageId.Length is < 1 or > 256 || cleanerId.Length is < 1 or > 512)
                 {
                     continue;
@@ -293,8 +284,10 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
         }
     }
 
-    private void OnCatalogChanged(object? sender, PackageExtensionCatalogChangedEventArgs e)
-        => Wake();
+    private void OnCatalogChanged(object? sender, AgentRpcCatalogChangedEventArgs e)
+    {
+        if (e.IncludesContract(AgentRpcContractIds.SessionCleaner)) Wake();
+    }
 
     private void Wake()
     {

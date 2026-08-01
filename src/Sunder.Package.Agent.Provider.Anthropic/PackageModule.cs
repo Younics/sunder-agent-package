@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Provider.Shared;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
@@ -24,7 +25,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterSettingsSchema(AnthropicProviderConfiguration.Schema);
-        registry.RegisterExtension(PackageExtensionPoints.ChatProviders, services.GetRequiredService<AnthropicAgentProvider>());
+        registry.RegisterRpcProvider("anthropic.chat", AgentChatProviderRpc.CreateHandler(services.GetRequiredService<AnthropicAgentProvider>()));
     }
 }
 

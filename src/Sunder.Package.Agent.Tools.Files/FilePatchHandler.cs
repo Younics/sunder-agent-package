@@ -2,6 +2,7 @@ using Sunder.Agent.Execution.Common;
 using System.Text;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Tools.Files;
 
@@ -386,7 +387,8 @@ internal static class FilePatchHandler
         IAgentExecutionTarget target,
         FilePatchPlan plan)
     {
-        if (target is not IAgentResourceAuthorityExecutionTarget authorityTarget)
+        if (!AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
+            || target is not IAgentResourceAuthorityExecutionTarget authorityTarget)
         {
             return;
         }

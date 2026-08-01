@@ -1,26 +1,23 @@
 using System.Text;
 using System.Text.Json;
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Subagents.Models;
-using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
 internal sealed class SubagentDescriptorSchema(
     SubagentService subagentService,
-    IPackageExtensionCatalog extensionCatalog,
+    AgentRpcCatalog rpcCatalog,
     SubagentPermissionStatusAdapter permissionStatusAdapter)
 {
     internal const string SourceDisplayName = "Subagents";
 
     private readonly SubagentService _subagentService = subagentService;
-    private readonly IPackageExtensionInvocationCatalog _invocationCatalog =
-        extensionCatalog as IPackageExtensionInvocationCatalog
-        ?? throw new InvalidOperationException(
-            "The host extension catalog does not support activation-scoped invocation leases.");
     private readonly SubagentPermissionStatusAdapter _permissionStatusAdapter = permissionStatusAdapter;
+    private readonly AgentRpcProviderService<IAgentBehaviorLoop> _behaviorLoops =
+        AgentRpcServices.CreateBehaviorLoops(new AgentRunControlRegistry(), rpcCatalog);
 
     public ValueTask<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListCapabilitiesAsync(
         AgentProfileSelectableCapabilityRequest request,
@@ -203,7 +200,7 @@ internal sealed class SubagentDescriptorSchema(
 
     private AgentProfileRecord? ResolveProfile(string profileId)
     {
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.RuntimeCatalogs))
+        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -211,7 +208,7 @@ internal sealed class SubagentDescriptorSchema(
             }
             using (lease)
             {
-                var profile = lease.Contribution.GetProfile(profileId);
+                var profile = lease.Service.GetProfile(profileId);
                 if (!lease.RetirementToken.IsCancellationRequested)
                 {
                     return profile;
@@ -225,7 +222,7 @@ internal sealed class SubagentDescriptorSchema(
     private IReadOnlyList<AgentBehaviorLoopDescriptor> SnapshotBehaviorLoops()
     {
         var descriptors = new List<AgentBehaviorLoopDescriptor>();
-        foreach (var reference in _invocationCatalog.GetExtensionReferences(PackageExtensionPoints.BehaviorLoops))
+        foreach (var reference in rpcCatalog.GetServiceReferences(_behaviorLoops))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -233,7 +230,7 @@ internal sealed class SubagentDescriptorSchema(
             }
             using (lease)
             {
-                var descriptor = lease.Contribution.Descriptor;
+                var descriptor = lease.Service.Descriptor;
                 if (!lease.RetirementToken.IsCancellationRequested)
                 {
                     descriptors.Add(descriptor);

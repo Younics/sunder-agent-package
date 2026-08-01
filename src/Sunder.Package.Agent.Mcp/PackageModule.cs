@@ -1,8 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Mcp.Runtime;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
@@ -26,9 +28,10 @@ public sealed class PackageModule : ISunderRuntimePackageModule
             context.Logging.LoggerFactory,
             serviceProvider.GetRequiredService<McpOAuthService>()));
         services.AddSingleton<McpEcosystemConfigurationImporter>();
+        services.TryAddSingleton<AgentRpcCatalog>();
         services.AddSingleton(serviceProvider => new McpSunderConfigurationSyncService(
             serviceProvider.GetRequiredService<McpEcosystemConfigurationImporter>(),
-            serviceProvider.GetService<IPackageExtensionCatalog>()));
+            serviceProvider.GetService<AgentRpcCatalog>()));
         services.AddSingleton<McpConfigurationCoordinator>();
         services.AddSingleton<McpSettingsEditorService>();
         services.AddSingleton<McpServerConnectionService>();
@@ -44,15 +47,11 @@ public sealed class PackageModule : ISunderRuntimePackageModule
     public void RegisterRuntimeContributions(ISunderRuntimeContributionRegistry registry, IServiceProvider services)
     {
         registry.RegisterBackgroundService<McpPackageRuntimeStartupService>();
-        registry.RegisterExtension(PackageExtensionPoints.ToolSources, services.GetRequiredService<McpToolSource>());
-        registry.RegisterExtension(PackageExtensionPoints.ProfileSelectableCapabilityProviders, services.GetRequiredService<McpToolSource>());
-        registry.RegisterExtension(
-            PackageExtensionPoints.SessionDataCleaners,
-            services.GetRequiredService<McpSessionConnectionCleaner>());
+        registry.RegisterRpcProvider("mcp.tools", AgentToolSourceRpc.CreateHandler(services.GetRequiredService<McpToolSource>()));
+        registry.RegisterRpcProvider("mcp.selectable.capabilities", AgentSelectableCapabilityProviderRpc.CreateHandler(services.GetRequiredService<McpToolSource>()));
+        registry.RegisterRpcProvider("mcp.session.cleaner", AgentSessionCleanerRpc.CreateHandler(services.GetRequiredService<McpSessionConnectionCleaner>()));
         var stackContributor = services.GetRequiredService<McpServerStackContributor>();
-        registry.RegisterExtension(SunderStackExtensionPoints.StackExporters, stackContributor);
-        registry.RegisterExtension(SunderStackExtensionPoints.StackImporters, stackContributor);
-        registry.RegisterExtension(SunderStackExtensionPoints.StackImportAppliedHandlers, stackContributor);
+        registry.RegisterStackContributor("mcp.stack", stackContributor, services);
         registry.RegisterRuntimeOperation(McpRuntimeOperations.Query, services.GetRequiredService<McpRuntimeHandler>());
         registry.RegisterRuntimeOperation(McpRuntimeOperations.Command, services.GetRequiredService<McpRuntimeHandler>());
         registry.RegisterRuntimeStream(McpRuntimeOperations.Changes, services.GetRequiredService<McpRuntimeChangeStream>());

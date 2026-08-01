@@ -86,10 +86,10 @@
       "sunder.agent.execution.common": {
         "type": "Project",
         "dependencies": {
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )"
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )"
         }
       },
-      "sunder.package.agent.contracts": {
+      "Sunder.Package.Agent.Protocol": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.AI.Abstractions": "[10.5.2, )",

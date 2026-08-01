@@ -1,6 +1,7 @@
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Execution.Local;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -35,7 +36,7 @@ internal static class LocalResourceAuthorityTestContext
         var binding = new AgentWorkspaceBindingRecord(
             Guid.NewGuid().ToString("N"),
             workspaceId,
-            PackageExtensionPoints.ExecutionTargets.Id,
+            AgentRpcContractIds.ExecutionTarget,
             "local",
             "primary-execution-target",
             true,

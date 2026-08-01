@@ -1,7 +1,6 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Shared.Presentation;
 
@@ -47,13 +46,10 @@ internal sealed class ProviderModelCatalogAdapter(
         string providerId,
         CancellationToken cancellationToken) => _load(providerId, cancellationToken);
 
-    public static IProviderModelCatalog ForChatProviders(IPackageExtensionCatalog extensionCatalog)
+    public static IProviderModelCatalog ForChatProviders(AgentRpcCatalog rpcCatalog)
     {
-        var invocations = extensionCatalog as IPackageExtensionInvocationCatalog
-            ?? throw new InvalidOperationException(
-                "The host extension catalog does not support activation-scoped invocation leases.");
         return new ProviderModelCatalogAdapter(
-            () => SnapshotChatProviders(invocations)
+            () => SnapshotChatProviders(rpcCatalog)
                 .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .Select(provider => new ProviderCatalogOption(
                     provider.Descriptor.ProviderId,
@@ -61,16 +57,16 @@ internal sealed class ProviderModelCatalogAdapter(
                     provider.PackageId))
                 .ToArray(),
             (providerId, cancellationToken) => LoadChatProviderAsync(
-                invocations,
+                rpcCatalog,
                 providerId,
                 cancellationToken));
     }
 
     private static IReadOnlyList<OwnedChatProviderReference> SnapshotChatProviders(
-        IPackageExtensionInvocationCatalog invocations)
+        AgentRpcCatalog rpcCatalog)
     {
         var providers = new List<OwnedChatProviderReference>();
-        foreach (var reference in invocations.GetExtensionReferences(PackageExtensionPoints.ChatProviders))
+        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.ChatProviders))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -78,7 +74,7 @@ internal sealed class ProviderModelCatalogAdapter(
             }
             using (lease)
             {
-                var descriptor = lease.Contribution.Descriptor;
+                var descriptor = lease.Service.Descriptor;
                 if (!lease.RetirementToken.IsCancellationRequested)
                 {
                     providers.Add(new OwnedChatProviderReference(reference, lease.PackageId, descriptor));
@@ -90,11 +86,11 @@ internal sealed class ProviderModelCatalogAdapter(
     }
 
     private static async Task<ProviderModelCatalogResult> LoadChatProviderAsync(
-        IPackageExtensionInvocationCatalog invocations,
+        AgentRpcCatalog rpcCatalog,
         string providerId,
         CancellationToken cancellationToken)
     {
-        var provider = SnapshotChatProviders(invocations)
+        var provider = SnapshotChatProviders(rpcCatalog)
             .FirstOrDefault(candidate => string.Equals(
                 candidate.Descriptor.ProviderId,
                 providerId,
@@ -112,8 +108,8 @@ internal sealed class ProviderModelCatalogAdapter(
                 retirementToken);
             try
             {
-                var modelsTask = lease.Contribution.GetAvailableModelsAsync(invocation.Token).AsTask();
-                var readinessTask = lease.Contribution.GetReadinessAsync(invocation.Token).AsTask();
+                var modelsTask = lease.Service.GetAvailableModelsAsync(invocation.Token).AsTask();
+                var readinessTask = lease.Service.GetReadinessAsync(invocation.Token).AsTask();
                 await Task.WhenAll(modelsTask, readinessTask).ConfigureAwait(false);
                 if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
@@ -152,7 +148,7 @@ internal sealed class ProviderModelCatalogAdapter(
         => new(model.ModelId, model.DisplayName);
 
     private sealed record OwnedChatProviderReference(
-        IPackageExtensionReference<IAgentChatProvider> Reference,
+        AgentRpcReference<IAgentChatProvider> Reference,
         string PackageId,
         AgentProviderDescriptor Descriptor);
 }

@@ -1,8 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Subagents.PackageViews;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Package.Agent.Subagents.Runtime;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
@@ -15,6 +17,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
     public void ConfigureRuntimeServices(IServiceCollection services, IPackageContext context)
     {
         services.AddSingleton<SubagentStore>();
+        services.TryAddSingleton<AgentRpcCatalog>();
         services.AddSingleton<SubagentService>();
         services.AddSingleton<SubagentFeature>();
         services.AddSingleton<OrchestratedAgentBehaviorLoop>();
@@ -30,20 +33,14 @@ public sealed class PackageModule : ISunderRuntimePackageModule
     {
         var feature = services.GetRequiredService<SubagentFeature>();
 
-        registry.RegisterExtension(
-            PackageExtensionPoints.ProfileSelectableCapabilityProviders,
-            feature
-        );
-        registry.RegisterExtension(PackageExtensionPoints.ToolSources, feature);
-        registry.RegisterExtension(PackageExtensionPoints.PromptContextContributors, feature);
-        registry.RegisterExtension(
-            PackageExtensionPoints.BehaviorLoops,
-            services.GetRequiredService<OrchestratedAgentBehaviorLoop>()
-        );
+        registry.RegisterRpcProvider("subagents.selectable.capabilities", AgentSelectableCapabilityProviderRpc.CreateHandler(feature));
+        registry.RegisterRpcProvider("subagents.tools", AgentToolSourceRpc.CreateHandler(feature));
+        registry.RegisterRpcProvider("subagents.prompt.context", AgentPromptContextContributorRpc.CreateHandler(feature));
+        registry.RegisterRpcProvider("subagents.behavior.loop", AgentBehaviorLoopRpc.CreateHandler(
+            services.GetRequiredService<OrchestratedAgentBehaviorLoop>(),
+            services.GetRequiredService<AgentRpcCatalog>()));
         var stackContributor = services.GetRequiredService<SubagentStackContributor>();
-        registry.RegisterExtension(SunderStackExtensionPoints.StackExporters, stackContributor);
-        registry.RegisterExtension(SunderStackExtensionPoints.StackImporters, stackContributor);
-        registry.RegisterExtension(SunderStackExtensionPoints.StackImportAppliedHandlers, stackContributor);
+        registry.RegisterStackContributor("subagents.stack", stackContributor, services);
         registry.RegisterRuntimeOperation(SubagentRuntimeOperations.Query, services.GetRequiredService<SubagentRuntimeHandler>());
         registry.RegisterRuntimeOperation(SubagentRuntimeOperations.Command, services.GetRequiredService<SubagentRuntimeHandler>());
         registry.RegisterRuntimeStream(SubagentRuntimeOperations.Changes, services.GetRequiredService<SubagentRuntimeChangeStream>());

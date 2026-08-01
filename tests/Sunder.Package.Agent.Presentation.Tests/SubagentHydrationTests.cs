@@ -3,6 +3,7 @@ using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Subagents.PackageViews;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Package.Agent.Tests;
@@ -18,7 +19,7 @@ public sealed class SubagentHydrationTests
         using var scope = RegressionTestPackageScope.Create();
         var extensions = new RegressionTestExtensionCatalog();
         var provider = new DelayedChatProvider();
-        extensions.AddExtension(PackageExtensionPoints.ChatProviders, provider);
+        extensions.AddProvider(AgentRpcServices.ChatProviders, provider);
         var service = new SubagentService(new SubagentStore(scope.Context));
         var subagent = service.CreateSubagent("Subagent");
         service.SaveSubagent(
@@ -54,7 +55,7 @@ public sealed class SubagentHydrationTests
         using var scope = RegressionTestPackageScope.Create();
         var extensions = new RegressionTestExtensionCatalog();
         var provider = new DelayedChatProvider();
-        extensions.AddExtension(PackageExtensionPoints.ChatProviders, provider);
+        extensions.AddProvider(AgentRpcServices.ChatProviders, provider);
         var service = new SubagentService(new SubagentStore(scope.Context));
         var subagent = service.CreateSubagent("Subagent");
         service.SaveSubagent(

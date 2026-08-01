@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
 using Sunder.Package.Agent.Contracts;
@@ -7,6 +6,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Memory.Semantic;
 using Sunder.Package.Agent.Memory.Semantic.Services;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Xunit;
@@ -557,7 +557,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
     {
         private readonly string _rootPath = Path.Combine(Path.GetTempPath(), "sunder-memory-indexing-tests", Guid.NewGuid().ToString("N"));
         private readonly TestPackageContext _context;
-        private readonly TestExtensionCatalog _catalog;
+        private readonly RegressionTestExtensionCatalog _catalog;
         private readonly int _queueCapacity;
         private readonly TimeSpan _monitorInterval;
         private long _runtimeGeneration;
@@ -581,11 +581,11 @@ public sealed class SemanticMemoryIndexingReliabilityTests
                 []);
             _context = new TestPackageContext(_rootPath);
             _context.MutableSettings.SetValueAsync("semantic.reindex.mode", "eager").GetAwaiter().GetResult();
-            _catalog = new TestExtensionCatalog();
+            _catalog = new RegressionTestExtensionCatalog();
             RuntimeCatalog = new TestRuntimeCatalog(Session, profile);
-            _catalog.Add(PackageExtensionPoints.RuntimeCatalogs, RuntimeCatalog);
+            _catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, RuntimeCatalog);
             Provider = new ControlledEmbeddingProvider("test-embedding-provider");
-            _catalog.Add(PackageExtensionPoints.EmbeddingProviders, Provider);
+            _catalog.AddProvider(AgentRpcServices.EmbeddingProviders, Provider);
             Store = new MemoryLocalStore(_context);
             (Backend, Worker) = CreateIndexingServices();
         }
@@ -605,10 +605,10 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             => Store.ListEmbeddings(Session.SessionId, providerId, Profile.EmbeddingModelId!);
 
         public void AddProvider(ControlledEmbeddingProvider provider)
-            => _catalog.Add(PackageExtensionPoints.EmbeddingProviders, provider);
+            => _catalog.AddProvider(AgentRpcServices.EmbeddingProviders, provider);
 
         public void RemoveProvider(ControlledEmbeddingProvider provider)
-            => _catalog.Remove(PackageExtensionPoints.EmbeddingProviders, provider);
+            => _catalog.RemoveProvider(provider);
 
         public StoredMemoryRecord AddMemory(string content)
             => Store.UpsertMemory(new MemoryUpsertRequest(
@@ -673,6 +673,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         public async ValueTask DisposeAsync()
         {
             await Worker.DisposeAsync();
+            _catalog.Dispose();
             if (Directory.Exists(_rootPath))
             {
                 Directory.Delete(_rootPath, recursive: true);
@@ -815,131 +816,6 @@ public sealed class SemanticMemoryIndexingReliabilityTests
 
         public int CountRequestsContaining(string value)
             => _requests.Count(request => request.Contains(value, StringComparison.Ordinal));
-    }
-
-    private sealed class TestExtensionCatalog :
-        IPackageExtensionCatalog,
-        IPackageExtensionInvocationCatalog,
-        IPackageExtensionCatalogMonitor
-    {
-        private readonly object _syncRoot = new();
-        private readonly Dictionary<string, List<OwnedExtension>> _extensions = new(StringComparer.OrdinalIgnoreCase);
-        private long _revision;
-
-        public event EventHandler<PackageExtensionCatalogChangedEventArgs>? Changed;
-
-        public void Add<T>(PackageExtensionPoint<T> extensionPoint, T extension)
-        {
-            lock (_syncRoot)
-            {
-                if (!_extensions.TryGetValue(extensionPoint.Id, out var entries))
-                {
-                    entries = [];
-                    _extensions[extensionPoint.Id] = entries;
-                }
-
-                entries.Add(new OwnedExtension(extension!));
-            }
-
-            RaiseChanged(extensionPoint.Id, PackageExtensionChangeKind.Added, extension!.GetType());
-        }
-
-        public void Remove<T>(PackageExtensionPoint<T> extensionPoint, T extension)
-        {
-            OwnedExtension? removed = null;
-            lock (_syncRoot)
-            {
-                if (_extensions.TryGetValue(extensionPoint.Id, out var entries))
-                {
-                    removed = entries.FirstOrDefault(entry => ReferenceEquals(entry.Contribution, extension));
-                    if (removed is not null)
-                    {
-                        removed.Active = false;
-                        entries.Remove(removed);
-                    }
-                }
-            }
-
-            if (removed is not null)
-            {
-                removed.Retirement.Cancel();
-                RaiseChanged(extensionPoint.Id, PackageExtensionChangeKind.Removed, extension!.GetType());
-            }
-        }
-
-        public IReadOnlyList<T> GetExtensions<T>(PackageExtensionPoint<T> extensionPoint)
-        {
-            lock (_syncRoot)
-            {
-                return _extensions.TryGetValue(extensionPoint.Id, out var entries)
-                    ? entries.Where(static entry => entry.Active).Select(static entry => entry.Contribution).Cast<T>().ToArray()
-                    : [];
-            }
-        }
-
-        public IReadOnlyList<PackageExtensionContribution<T>> GetExtensionContributions<T>(PackageExtensionPoint<T> extensionPoint)
-            => GetExtensions(extensionPoint)
-                .Select(extension => new PackageExtensionContribution<T>("test.package", extension))
-                .ToArray();
-
-        public IReadOnlyList<IPackageExtensionReference<T>> GetExtensionReferences<T>(PackageExtensionPoint<T> extensionPoint)
-        {
-            lock (_syncRoot)
-            {
-                return _extensions.TryGetValue(extensionPoint.Id, out var entries)
-                    ? entries.Where(static entry => entry.Active)
-                        .Select(entry => (IPackageExtensionReference<T>)new ExtensionReference<T>(this, entry))
-                        .ToArray()
-                    : [];
-            }
-        }
-
-        private bool TryAcquire<T>(OwnedExtension entry, [NotNullWhen(true)] out IPackageExtensionLease<T>? lease)
-        {
-            lock (_syncRoot)
-            {
-                if (!entry.Active || entry.Contribution is not T contribution)
-                {
-                    lease = null;
-                    return false;
-                }
-
-                lease = new ExtensionLease<T>(entry, contribution);
-                return true;
-            }
-        }
-
-        private void RaiseChanged(string extensionPointId, PackageExtensionChangeKind kind, Type contributionType)
-            => Changed?.Invoke(this, new PackageExtensionCatalogChangedEventArgs(
-                Interlocked.Increment(ref _revision),
-                kind == PackageExtensionChangeKind.Added
-                    ? PackageExtensionCatalogChangeReason.PackageActivated
-                    : PackageExtensionCatalogChangeReason.PackageDeactivated,
-                [new PackageExtensionChange("test.package", extensionPointId, kind, contributionType)]));
-
-        private sealed class ExtensionReference<T>(TestExtensionCatalog catalog, OwnedExtension entry)
-            : IPackageExtensionReference<T>
-        {
-            public bool TryAcquire([NotNullWhen(true)] out IPackageExtensionLease<T>? lease)
-                => catalog.TryAcquire(entry, out lease);
-        }
-
-        private sealed class ExtensionLease<T>(OwnedExtension entry, T contribution) : IPackageExtensionLease<T>
-        {
-            private object? _contribution = contribution;
-
-            public string PackageId => "test.package";
-            public T Contribution => (T)(_contribution ?? throw new ObjectDisposedException(nameof(ExtensionLease<T>)));
-            public CancellationToken RetirementToken => entry.Retirement.Token;
-            public void Dispose() => Interlocked.Exchange(ref _contribution, null);
-        }
-
-        private sealed class OwnedExtension(object contribution)
-        {
-            public object Contribution { get; } = contribution;
-            public CancellationTokenSource Retirement { get; } = new();
-            public bool Active { get; set; } = true;
-        }
     }
 
     private sealed class TestRuntimeCatalog : IAgentRuntimeCatalog

@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Sunder.Package.Agent.Shared.Composition;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 using Sunder.Sdk.Runtime;
@@ -9,7 +11,10 @@ namespace Sunder.Package.Agent.Builder;
 public sealed class PackageModule : ISunderRuntimePackageModule
 {
     public void ConfigureRuntimeServices(IServiceCollection services, IPackageContext context)
-        => services.AddSingleton<BuilderRuntimeHandler>();
+    {
+        services.TryAddSingleton<AgentRpcCatalog>();
+        services.AddSingleton<BuilderRuntimeHandler>();
+    }
 
     public void RegisterRuntimeContributions(
         ISunderRuntimeContributionRegistry registry,

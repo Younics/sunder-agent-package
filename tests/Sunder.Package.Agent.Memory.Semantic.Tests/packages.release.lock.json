@@ -160,22 +160,22 @@
           "xunit.extensibility.core": "[2.9.3]"
         }
       },
-      "sunder.package.agent.contracts": {
-        "type": "Project",
-        "dependencies": {
-          "Microsoft.Extensions.AI.Abstractions": "[10.5.2, )",
-          "Sunder.Sdk": "[1.1.0, 1.2.0)"
-        }
-      },
       "sunder.package.agent.memory.semantic": {
         "type": "Project",
         "dependencies": {
           "Avalonia": "[12.0.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "Microsoft.Data.Sqlite": "[10.0.8, )",
-          "Sunder.Package.Agent.Contracts": "[1.1.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
+        }
+      },
+      "Sunder.Package.Agent.Protocol": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Extensions.AI.Abstractions": "[10.5.2, )",
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "Avalonia": {
