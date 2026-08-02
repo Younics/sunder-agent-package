@@ -56,7 +56,7 @@ internal sealed class DockerImageStackContributor(
 
         var selectedReferences = (await imageCatalog.ListImagesAsync(cancellationToken))
             .Select(image => image.ImageReference)
-            .Where(reference => request.IsDetailSelected(ItemId, reference))
+            .Where(reference => request.IsDetailSelected(ItemId, reference, defaultSelected: true))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(reference => reference, StringComparer.OrdinalIgnoreCase)
             .ToArray();

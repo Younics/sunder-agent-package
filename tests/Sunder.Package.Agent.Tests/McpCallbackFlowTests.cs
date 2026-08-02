@@ -103,6 +103,20 @@ public sealed class McpCallbackFlowTests
             return ValueTask.FromResult(Status(PackageCallbackSessionState.Completed));
         }
 
+        public ValueTask<bool> CancelAsync(
+            string callbackSessionId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(false);
+        }
+
+        public ValueTask<PackageCallbackSessionStatus> WaitForCompletionAsync(
+            string callbackSessionId,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+            => GetStatusAsync(callbackSessionId, cancellationToken);
+
         public ValueTask OpenLaunchUriAsync(Uri launchUri, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();

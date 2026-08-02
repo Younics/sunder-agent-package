@@ -120,7 +120,6 @@ public static class AgentRunControlRpc
 
     public static ISunderRpcServiceHandler CreateHandler(AgentRunControlRegistry registry)
     {
-        var contentTransfers = new AgentChatContentTransferStore();
         return AgentRpcServiceHandler.Create()
             .AddUnary<RunControlInvocation, bool>(ServiceId, "is-current", (call, request, _) => ValueTask.FromResult(Resolve(registry, call, request).IsCurrentRun()))
             .AddUnary<RunControlInvocation, IReadOnlyList<AgentTurnRecord>>(ServiceId, "list-turns", (call, request, _) => ValueTask.FromResult(Resolve(registry, call, request).ListTurns()))
@@ -189,23 +188,10 @@ public static class AgentRunControlRpc
                         "agent.run-control.default-loop-unavailable",
                         "The default behavior loop is unavailable.")));
             })
-            .AddUnary<RunControlChatContentChunk, AgentRpcEmpty>(ServiceId, "stage-chat-content", (call, request, _) =>
-            {
-                Resolve(registry, call, request.Invocation);
-                contentTransfers.Stage(call.CallerPackageId, request.Chunk);
-                return ValueTask.FromResult(new AgentRpcEmpty());
-            })
-            .AddUnary<RunControlChatContentDiscard, AgentRpcEmpty>(ServiceId, "discard-chat-content", (call, request, _) =>
-            {
-                Resolve(registry, call, request.Invocation);
-                contentTransfers.Discard(call.CallerPackageId, request.ContentId);
-                return ValueTask.FromResult(new AgentRpcEmpty());
-            })
             .AddStream<RunControlChatRequest, AgentChatStreamEvent>(ServiceId, "stream-chat", (call, request, token) => StreamChatAsync(
                 Resolve(registry, call, request.Invocation),
                 request,
-                contentTransfers,
-                call.CallerPackageId,
+                call,
                 token))
             .Build();
     }
@@ -227,8 +213,7 @@ public static class AgentRunControlRpc
     private static async IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(
         IAgentBehaviorLoopRuntime runtime,
         RunControlChatRequest request,
-        AgentChatContentTransferStore contentTransfers,
-        string callerPackageId,
+        SunderRpcInvocationContext context,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var channel = Channel.CreateUnbounded<AgentChatStreamEvent>(new UnboundedChannelOptions
@@ -239,8 +224,7 @@ public static class AgentRunControlRpc
         var producer = ProduceChatAsync(
             runtime,
             request,
-            contentTransfers,
-            callerPackageId,
+            context,
             channel.Writer,
             cancellationToken);
         await foreach (var item in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
@@ -253,8 +237,7 @@ public static class AgentRunControlRpc
     private static async Task ProduceChatAsync(
         IAgentBehaviorLoopRuntime runtime,
         RunControlChatRequest request,
-        AgentChatContentTransferStore contentTransfers,
-        string callerPackageId,
+        SunderRpcInvocationContext context,
         ChannelWriter<AgentChatStreamEvent> writer,
         CancellationToken cancellationToken)
     {
@@ -267,10 +250,12 @@ public static class AgentRunControlRpc
                     request.Context.ModelId,
                     CorrelationAttributes: request.Context.CorrelationAttributes?.ToDictionary(static pair => pair.Key, static pair => (object?)pair.Value, StringComparer.Ordinal)),
                 cancellationToken).ConfigureAwait(false);
+            var messages = await AgentChatWireMapper.ToChatMessagesAsync(
+                request.Messages,
+                context,
+                cancellationToken).ConfigureAwait(false);
             await foreach (var update in chat.GetStreamingResponseAsync(
-                               request.Messages.Select(message => AgentChatWireMapper.ToChatMessage(
-                                   message,
-                                   reference => contentTransfers.Take(callerPackageId, reference))),
+                               messages,
                                AgentChatWireMapper.ToChatOptions(request.Options),
                                cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
             {
@@ -300,8 +285,26 @@ public sealed class AgentRunControlRpcClient(ISunderRpcClient client, SunderRpcE
         where TResponse : notnull
         => AgentRpcServiceHandler.InvokeAsync<TRequest, TResponse>(client, endpoint, AgentRunControlRpc.ServiceId, methodId, request, cancellationToken);
 
-    internal IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(RunControlChatRequest request, CancellationToken cancellationToken)
-        => AgentRpcServiceHandler.SubscribeAsync<RunControlChatRequest, AgentChatStreamEvent>(client, endpoint, AgentRunControlRpc.ServiceId, "stream-chat", request, cancellationToken);
+    internal ValueTask<ISunderRpcCallScope> CreateCallScopeAsync(CancellationToken cancellationToken)
+        => client.CreateCallScopeAsync(cancellationToken: cancellationToken);
+
+    internal ValueTask<SunderRpcContentReference> RegisterContentAsync(
+        ISunderRpcCallScope scope,
+        DataContent content,
+        CancellationToken cancellationToken)
+        => AgentChatWireMapper.RegisterContentAsync(scope, endpoint, content, cancellationToken);
+
+    internal IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(
+        ISunderRpcClient? invocationClient,
+        RunControlChatRequest request,
+        CancellationToken cancellationToken)
+        => AgentRpcServiceHandler.SubscribeAsync<RunControlChatRequest, AgentChatStreamEvent>(
+            invocationClient ?? client,
+            endpoint,
+            AgentRunControlRpc.ServiceId,
+            "stream-chat",
+            request,
+            cancellationToken);
 }
 
 internal sealed class AgentBehaviorLoopRuntimeRpcClient :
@@ -407,66 +410,54 @@ internal sealed class AgentBehaviorLoopRuntimeRpcClient :
 
     internal IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(
         RunControlChatContext context,
-        IReadOnlyList<AgentChatMessage> messages,
-        AgentChatOptions options,
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options,
         CancellationToken cancellationToken)
-        => WithControlStream(control => control.StreamChatAsync(new(Invocation, context, messages, options), cancellationToken), cancellationToken);
+        => WithControlStream(
+            control => StreamChatAsync(control, context, messages, options, cancellationToken),
+            cancellationToken);
 
-    internal async ValueTask<SunderRpcContentReference> StageChatContentAsync(
-        DataContent content,
-        CancellationToken cancellationToken)
+    private async IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(
+        AgentRunControlRpcClient control,
+        RunControlChatContext context,
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        if (content.Data.Length > AgentChatContentTransferStore.MaxContentBytes)
-        {
-            throw new SunderRpcException(new SunderRpcError(
-                SunderRpcErrorKind.ResourceExhausted,
-                "rpc.content.length-limit",
-                "Chat binary content exceeds the transfer limit."));
-        }
-        var reference = new SunderRpcContentReference(
-            "agent-chat-" + Guid.NewGuid().ToString("N"),
-            content.Data.Length,
-            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content.Data.Span)).ToLowerInvariant(),
-            content.MediaType,
-            string.IsNullOrWhiteSpace(content.Name) ? "content.bin" : content.Name,
-            DateTimeOffset.UtcNow.AddMinutes(2),
-            SunderRpcContentRepeatability.SingleUse);
+        ISunderRpcCallScope? scope = null;
         try
         {
-            for (var offset = 0; offset < content.Data.Length; offset += AgentChatContentTransferStore.ChunkBytes)
+            var mappedMessages = await AgentChatWireMapper.FromChatMessagesAsync(
+                messages,
+                RegisterContentAsync,
+                cancellationToken).ConfigureAwait(false);
+            var request = new RunControlChatRequest(
+                Invocation,
+                context,
+                mappedMessages,
+                AgentChatWireMapper.FromChatOptions(options));
+            await foreach (var item in control.StreamChatAsync(scope, request, cancellationToken)
+                               .WithCancellation(cancellationToken).ConfigureAwait(false))
             {
-                var length = Math.Min(AgentChatContentTransferStore.ChunkBytes, content.Data.Length - offset);
-                _ = await InvokeAsync<RunControlChatContentChunk, AgentRpcEmpty>(
-                    "stage-chat-content",
-                    new(
-                        Invocation,
-                        new AgentChatContentChunk(
-                            reference,
-                            offset,
-                            Convert.ToBase64String(content.Data.Span.Slice(offset, length)),
-                            offset + length == content.Data.Length)),
-                    cancellationToken).ConfigureAwait(false);
+                yield return item;
             }
-            return reference;
         }
-        catch
+        finally
         {
-            try
+            if (scope is not null)
             {
-                await DiscardChatContentAsync(reference.Id).ConfigureAwait(false);
+                await scope.DisposeAsync().ConfigureAwait(false);
             }
-            catch
-            {
-            }
-            throw;
+        }
+
+        async ValueTask<SunderRpcContentReference> RegisterContentAsync(
+            DataContent content,
+            CancellationToken token)
+        {
+            scope ??= await control.CreateCallScopeAsync(token).ConfigureAwait(false);
+            return await control.RegisterContentAsync(scope, content, token).ConfigureAwait(false);
         }
     }
-
-    internal async ValueTask DiscardChatContentAsync(string contentId)
-        => _ = await InvokeAsync<RunControlChatContentDiscard, AgentRpcEmpty>(
-            "discard-chat-content",
-            new(Invocation, contentId),
-            CancellationToken.None).ConfigureAwait(false);
 
     private TResponse Invoke<TRequest, TResponse>(string methodId, TRequest request) where TRequest : notnull where TResponse : notnull
         => InvokeAsync<TRequest, TResponse>(methodId, request).AsTask().GetAwaiter().GetResult();
@@ -509,62 +500,25 @@ internal sealed class AgentRunControlChatClient(AgentBehaviorLoopRuntimeRpcClien
 
     public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var stagedContent = new List<SunderRpcContentReference>();
-        var mappedMessages = new List<AgentChatMessage>();
-        foreach (var message in messages)
+        await foreach (var item in runtime.StreamChatAsync(
+                           context,
+                           messages,
+                           options,
+                           cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            var mappedContents = new List<AgentChatContent>(message.Contents.Count);
-            foreach (var content in message.Contents)
+            if (item.Kind == AgentChatStreamEvent.ErrorKind)
             {
-                if (content is DataContent data && !data.Data.IsEmpty)
+                throw new AgentChatProviderException(
+                    item.ErrorMessage ?? "Provider request failed.",
+                    item.ErrorContent ?? item.ErrorMessage ?? "Provider request failed.",
+                    item.ErrorCode)
                 {
-                    var reference = await runtime.StageChatContentAsync(data, cancellationToken).ConfigureAwait(false);
-                    stagedContent.Add(reference);
-                    mappedContents.Add(AgentChatWireMapper.FromContentReference(data, reference));
-                }
-                else
-                {
-                    mappedContents.Add(AgentChatWireMapper.FromContent(content));
-                }
+                    FailureKind = Enum.TryParse<AgentChatProviderFailureKind>(item.ErrorFailureKind, out var kind)
+                        ? kind
+                        : AgentChatProviderFailureKind.Unknown,
+                };
             }
-            mappedMessages.Add(AgentChatWireMapper.FromChatMessage(message, mappedContents));
-        }
-        try
-        {
-            await foreach (var item in runtime.StreamChatAsync(
-                               context,
-                               mappedMessages,
-                               AgentChatWireMapper.FromChatOptions(options),
-                               cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
-            {
-                if (item.Kind == AgentChatStreamEvent.ErrorKind)
-                {
-                    throw new AgentChatProviderException(
-                        item.ErrorMessage ?? "Provider request failed.",
-                        item.ErrorContent ?? item.ErrorMessage ?? "Provider request failed.",
-                        item.ErrorCode)
-                    {
-                        FailureKind = Enum.TryParse<AgentChatProviderFailureKind>(item.ErrorFailureKind, out var kind)
-                            ? kind
-                            : AgentChatProviderFailureKind.Unknown,
-                    };
-                }
-                yield return AgentChatWireMapper.ToUpdate(item);
-            }
-        }
-        finally
-        {
-            foreach (var reference in stagedContent)
-            {
-                try
-                {
-                    await runtime.DiscardChatContentAsync(reference.Id).ConfigureAwait(false);
-                }
-                catch
-                {
-                    // Staged content is bounded and expires if the run-control endpoint is unavailable.
-                }
-            }
+            yield return AgentChatWireMapper.ToUpdate(item);
         }
     }
 
@@ -587,7 +541,5 @@ public sealed record RunControlLifecycleRequest(RunControlInvocation Invocation,
 public sealed record RunControlToolRequest(RunControlInvocation Invocation, AgentToolCallRequest ToolCall, AgentTurnRecord? AssistantTurn);
 public sealed record RunControlToolsRequest(RunControlInvocation Invocation, IReadOnlyList<AgentToolCallRequest> ToolCalls, AgentTurnRecord? AssistantTurn);
 public sealed record RunControlDefaultLoopRequest(RunControlInvocation Invocation, AgentBehaviorLoopContext Context);
-public sealed record RunControlChatContentChunk(RunControlInvocation Invocation, AgentChatContentChunk Chunk);
-public sealed record RunControlChatContentDiscard(RunControlInvocation Invocation, string ContentId);
 public sealed record RunControlChatContext(string ProviderId, string ModelId, IReadOnlyDictionary<string, string>? CorrelationAttributes);
 public sealed record RunControlChatRequest(RunControlInvocation Invocation, RunControlChatContext Context, IReadOnlyList<AgentChatMessage> Messages, AgentChatOptions Options);

@@ -187,7 +187,6 @@ public sealed class PackageModuleCompositionTests
         services.AddSingleton<IPackageContext>(packageScope.Context);
         services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(extensionCatalog);
         services.AddSingleton<Sunder.Sdk.Runtime.IPackageRuntimeClient>(Sunder.Sdk.Runtime.NullPackageRuntimeClient.Instance);
-        services.AddSingleton<Sunder.Sdk.Rpc.ISunderRpcContentClient>(TestRpcContentClient.Instance);
         services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
 
         var (runtimeModule, appModule) = CreatePackageModules(packageName);

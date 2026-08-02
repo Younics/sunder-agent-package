@@ -82,28 +82,3 @@ internal sealed class CompositionBackgroundProcessQueue : IBackgroundProcessQueu
 
     public bool Cancel(Guid processId) => false;
 }
-
-internal sealed class TestRpcContentClient : ISunderRpcContentClient
-{
-    public static TestRpcContentClient Instance { get; } = new();
-
-    public ValueTask<SunderRpcContentReference> RegisterAsync(
-        SunderRpcInvocationContext context,
-        Stream source,
-        SunderRpcContentRegistrationOptions options,
-        CancellationToken cancellationToken = default)
-        => ValueTask.FromException<SunderRpcContentReference>(new NotSupportedException());
-
-    public ValueTask<SunderRpcContentReference> RegisterFileAsync(
-        SunderRpcInvocationContext context,
-        string filePath,
-        SunderRpcContentRegistrationOptions options,
-        CancellationToken cancellationToken = default)
-        => ValueTask.FromException<SunderRpcContentReference>(new NotSupportedException());
-
-    public ValueTask<Stream> OpenReadAsync(
-        SunderRpcInvocationContext context,
-        SunderRpcContentReference reference,
-        CancellationToken cancellationToken = default)
-        => ValueTask.FromException<Stream>(new NotSupportedException());
-}

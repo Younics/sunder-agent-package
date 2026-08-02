@@ -61,7 +61,7 @@ internal sealed class SkillStackContributor(
                 continue;
             }
 
-            if (!request.IsDetailSelected(skill.SkillId, DetailSource))
+            if (!request.IsDetailSelected(skill.SkillId, DetailSource, defaultSelected: true))
             {
                 warnings.Add($"Skipped skill '{SkillStore.ResolveDisplayName(skill)}' because its GitHub URL was not selected.");
                 continue;

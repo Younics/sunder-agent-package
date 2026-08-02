@@ -464,20 +464,20 @@ public sealed class AgentWorkspaceStackContributor(
             return new AgentWorkspaceStackPayload(
                 workspace.WorkspaceId,
                 workspace.DisplayName,
-                request.IsDetailSelected(workspace.WorkspaceId, DetailDescription) ? request.GetDetailValue(workspace.WorkspaceId, DetailDescription, workspace.Description ?? string.Empty) : null,
-                request.IsDetailSelected(workspace.WorkspaceId, DetailPaths)
+                request.IsDetailSelected(workspace.WorkspaceId, DetailDescription, defaultSelected: true) ? request.GetDetailValue(workspace.WorkspaceId, DetailDescription, workspace.Description ?? string.Empty, defaultSelected: true) : null,
+                request.IsDetailSelected(workspace.WorkspaceId, DetailPaths, defaultSelected: true)
                     ? workspace.Paths
                         .OrderBy(path => path.SortOrder)
                         .Select(path => WorkspacePathStackEntry.FromPath(path))
                         .ToArray()
                     : [],
-                request.IsDetailSelected(workspace.WorkspaceId, DetailDocuments)
+                request.IsDetailSelected(workspace.WorkspaceId, DetailDocuments, defaultSelected: true)
                     ? workspace.Documents
                         .OrderBy(document => document.SortOrder)
                         .Select(WorkspaceDocumentStackEntry.FromDocument)
                         .ToArray()
                     : [],
-                primaryBinding is null || !request.IsDetailSelected(workspace.WorkspaceId, DetailPrimaryExecutionTarget) ? null : new WorkspaceBindingStackEntry(primaryBinding.ContributionId));
+                primaryBinding is null || !request.IsDetailSelected(workspace.WorkspaceId, DetailPrimaryExecutionTarget, defaultSelected: true) ? null : new WorkspaceBindingStackEntry(primaryBinding.ContributionId));
         }
     }
 

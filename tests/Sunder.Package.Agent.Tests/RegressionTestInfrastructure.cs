@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Channels;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -178,6 +179,15 @@ internal sealed class RegressionTestRpcClient(RegressionTestRpcState state, stri
 
     public RegressionTestRpcClient ForCaller(string packageId) => new(State, packageId);
 
+    public ValueTask<ISunderRpcCallScope> CreateCallScopeAsync(
+        SunderRpcCallOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult<ISunderRpcCallScope>(
+            new RegressionTestRpcCallScope(State, callerPackageId, options));
+    }
+
     public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(SunderRpcEndpointReference endpoint, CancellationToken cancellationToken = default)
         => ValueTask.FromResult(State.GetProvider(endpoint));
 
@@ -194,7 +204,7 @@ internal sealed class RegressionTestRpcClient(RegressionTestRpcState state, stri
         JsonElement request,
         SunderRpcCallOptions? options = null,
         CancellationToken cancellationToken = default)
-        => State.InvokeAsync(callerPackageId, endpoint, serviceId, methodId, request, cancellationToken);
+        => State.InvokeAsync(callerPackageId, endpoint, serviceId, methodId, request, cancellationToken, scope: null);
 
     public IAsyncEnumerable<JsonElement> SubscribeAsync(
         SunderRpcEndpointReference endpoint,
@@ -203,7 +213,325 @@ internal sealed class RegressionTestRpcClient(RegressionTestRpcState state, stri
         JsonElement request,
         SunderRpcCallOptions? options = null,
         CancellationToken cancellationToken = default)
-        => State.SubscribeAsync(callerPackageId, endpoint, serviceId, methodId, request, cancellationToken);
+        => State.SubscribeAsync(callerPackageId, endpoint, serviceId, methodId, request, cancellationToken, scope: null);
+}
+
+internal sealed class RegressionTestRpcCallScope(
+    RegressionTestRpcState state,
+    string callerPackageId,
+    SunderRpcCallOptions? options) : ISunderRpcCallScope
+{
+    private readonly object _gate = new();
+    private readonly CancellationTokenSource _lifetime = new();
+    private readonly Dictionary<string, ContentEntry> _requestContent = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ContentEntry> _responseContent = new(StringComparer.Ordinal);
+    private int _disposed;
+
+    public DateTimeOffset DeadlineUtc { get; } = options?.DeadlineUtc ?? DateTimeOffset.UtcNow.AddMinutes(5);
+
+    public ValueTask<ISunderRpcCallScope> CreateCallScopeAsync(
+        SunderRpcCallOptions? nestedOptions = null,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfUnavailable(cancellationToken);
+        return ValueTask.FromResult<ISunderRpcCallScope>(
+            new RegressionTestRpcCallScope(state, callerPackageId, nestedOptions));
+    }
+
+    public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(
+        SunderRpcEndpointReference endpoint,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfUnavailable(cancellationToken);
+        return ValueTask.FromResult(state.GetProvider(endpoint));
+    }
+
+    public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(
+        string contractId,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfUnavailable(cancellationToken);
+        return ValueTask.FromResult(state.Discover(contractId));
+    }
+
+    public async IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(
+        long afterRevision,
+        long afterSequence,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        using var invocation = CreateInvocationCancellation(cancellationToken);
+        await foreach (var item in state.WatchAsync(
+                           afterRevision,
+                           afterSequence,
+                           invocation.Token).ConfigureAwait(false))
+        {
+            yield return item;
+        }
+    }
+
+    public async ValueTask<JsonElement> InvokeAsync(
+        SunderRpcEndpointReference endpoint,
+        string serviceId,
+        string methodId,
+        JsonElement request,
+        SunderRpcCallOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        using var invocation = CreateInvocationCancellation(cancellationToken);
+        return await state.InvokeAsync(
+            callerPackageId,
+            endpoint,
+            serviceId,
+            methodId,
+            request,
+            invocation.Token,
+            this).ConfigureAwait(false);
+    }
+
+    public async IAsyncEnumerable<JsonElement> SubscribeAsync(
+        SunderRpcEndpointReference endpoint,
+        string serviceId,
+        string methodId,
+        JsonElement request,
+        SunderRpcCallOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        using var invocation = CreateInvocationCancellation(cancellationToken);
+        await foreach (var item in state.SubscribeAsync(
+                           callerPackageId,
+                           endpoint,
+                           serviceId,
+                           methodId,
+                           request,
+                           invocation.Token,
+                           this).ConfigureAwait(false))
+        {
+            yield return item;
+        }
+    }
+
+    public async ValueTask<SunderRpcContentReference> RegisterContentAsync(
+        SunderRpcEndpointReference endpoint,
+        Stream source,
+        SunderRpcContentRegistrationOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(options);
+        ThrowIfUnavailable(cancellationToken);
+        if (state.GetProvider(endpoint) is null)
+        {
+            throw new SunderRpcException(new SunderRpcError(
+                SunderRpcErrorKind.StaleEndpoint,
+                "test.rpc.stale-endpoint",
+                "The test RPC provider activation is stale."));
+        }
+
+        await using var destination = new MemoryStream();
+        await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+        return StoreContent(_requestContent, endpoint, destination.ToArray(), options);
+    }
+
+    public async ValueTask<SunderRpcContentReference> RegisterContentFileAsync(
+        SunderRpcEndpointReference endpoint,
+        string filePath,
+        SunderRpcContentRegistrationOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        await using var source = File.OpenRead(filePath);
+        return await RegisterContentAsync(endpoint, source, options, cancellationToken).ConfigureAwait(false);
+    }
+
+    public ValueTask<Stream> OpenContentAsync(
+        SunderRpcContentReference reference,
+        CancellationToken cancellationToken = default)
+        => OpenContentAsync(_responseContent, reference, endpoint: null, cancellationToken);
+
+    public ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        _lifetime.Cancel();
+        lock (_gate)
+        {
+            _requestContent.Clear();
+            _responseContent.Clear();
+        }
+        _lifetime.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    internal ISunderRpcInvocationAuthority CreateInvocationAuthority(SunderRpcEndpointReference endpoint)
+        => new RegressionTestInvocationAuthority(this, endpoint);
+
+    internal ValueTask<Stream> OpenRequestContentAsync(
+        SunderRpcEndpointReference endpoint,
+        SunderRpcContentReference reference,
+        CancellationToken cancellationToken)
+        => OpenContentAsync(_requestContent, reference, endpoint, cancellationToken);
+
+    internal async ValueTask<SunderRpcContentReference> RegisterResponseContentAsync(
+        Stream source,
+        SunderRpcContentRegistrationOptions options,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(options);
+        ThrowIfUnavailable(cancellationToken);
+        await using var destination = new MemoryStream();
+        await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+        return StoreContent(_responseContent, endpoint: null, destination.ToArray(), options);
+    }
+
+    private SunderRpcContentReference StoreContent(
+        Dictionary<string, ContentEntry> destination,
+        SunderRpcEndpointReference? endpoint,
+        byte[] content,
+        SunderRpcContentRegistrationOptions options)
+    {
+        if (options.Length is { } expectedLength && expectedLength != content.LongLength)
+        {
+            throw new InvalidDataException("The registered RPC content length does not match its declared length.");
+        }
+
+        var expiresAtUtc = options.ExpiresAtUtc is { } requestedExpiry && requestedExpiry < DeadlineUtc
+            ? requestedExpiry
+            : DeadlineUtc;
+        var maximumUses = options.Repeatability == SunderRpcContentRepeatability.SingleUse
+            ? 1
+            : options.MaximumUses;
+        if (maximumUses <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "RPC content must permit at least one use.");
+        }
+
+        var reference = new SunderRpcContentReference(
+            $"test.rpc.content.{Guid.NewGuid():N}",
+            content.LongLength,
+            Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant(),
+            options.MediaType,
+            options.FileName,
+            expiresAtUtc,
+            options.Repeatability);
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            destination.Add(reference.Id, new ContentEntry(reference, endpoint, content, maximumUses));
+        }
+        return reference;
+    }
+
+    private ValueTask<Stream> OpenContentAsync(
+        Dictionary<string, ContentEntry> source,
+        SunderRpcContentReference reference,
+        SunderRpcEndpointReference? endpoint,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfUnavailable(cancellationToken);
+        byte[] content;
+        lock (_gate)
+        {
+            if (!source.TryGetValue(reference.Id, out var entry)
+                || entry.Reference != reference
+                || entry.Endpoint != endpoint
+                || entry.Reference.ExpiresAtUtc <= DateTimeOffset.UtcNow
+                || entry.RemainingUses <= 0)
+            {
+                throw new SunderRpcException(new SunderRpcError(
+                    SunderRpcErrorKind.NotFound,
+                    "test.rpc.content-unavailable",
+                    "The test RPC content reference is unavailable."));
+            }
+
+            entry.RemainingUses--;
+            if (entry.RemainingUses == 0)
+            {
+                source.Remove(reference.Id);
+            }
+            content = entry.Content;
+        }
+        return ValueTask.FromResult<Stream>(new MemoryStream(content, writable: false));
+    }
+
+    private CancellationTokenSource CreateInvocationCancellation(CancellationToken cancellationToken)
+    {
+        ThrowIfUnavailable(cancellationToken);
+        var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+        var remaining = DeadlineUtc - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+        {
+            invocation.Cancel();
+        }
+        else
+        {
+            invocation.CancelAfter(remaining);
+        }
+        return invocation;
+    }
+
+    private void ThrowIfUnavailable(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfDisposed();
+        _lifetime.Token.ThrowIfCancellationRequested();
+    }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
+    private sealed class ContentEntry(
+        SunderRpcContentReference reference,
+        SunderRpcEndpointReference? endpoint,
+        byte[] content,
+        int remainingUses)
+    {
+        public SunderRpcContentReference Reference { get; } = reference;
+        public SunderRpcEndpointReference? Endpoint { get; } = endpoint;
+        public byte[] Content { get; } = content;
+        public int RemainingUses { get; set; } = remainingUses;
+    }
+}
+
+internal sealed class RegressionTestInvocationAuthority(
+    RegressionTestRpcCallScope scope,
+    SunderRpcEndpointReference endpoint) : ISunderRpcInvocationAuthority
+{
+    private readonly CancellationTokenSource _revocation = new();
+
+    public CancellationToken RevocationToken => _revocation.Token;
+
+    public ValueTask<SunderRpcContentReference> RegisterContentAsync(
+        Stream source,
+        SunderRpcContentRegistrationOptions options,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfRevoked();
+        return scope.RegisterResponseContentAsync(source, options, cancellationToken);
+    }
+
+    public async ValueTask<SunderRpcContentReference> RegisterContentFileAsync(
+        string filePath,
+        SunderRpcContentRegistrationOptions options,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfRevoked();
+        await using var source = File.OpenRead(filePath);
+        return await RegisterContentAsync(source, options, cancellationToken).ConfigureAwait(false);
+    }
+
+    public ValueTask<Stream> OpenContentAsync(
+        SunderRpcContentReference reference,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfRevoked();
+        return scope.OpenRequestContentAsync(endpoint, reference, cancellationToken);
+    }
+
+    public void Revoke() => _revocation.Cancel();
+
+    private void ThrowIfRevoked() => _revocation.Token.ThrowIfCancellationRequested();
 }
 
 internal sealed class RegressionTestRpcState : IDisposable
@@ -339,15 +667,17 @@ internal sealed class RegressionTestRpcState : IDisposable
         string serviceId,
         string methodId,
         JsonElement request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RegressionTestRpcCallScope? scope)
     {
         var entry = Acquire(endpoint);
         using var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, entry.Retirement.Token);
+        var context = CreateContext(callerPackageId, entry.Snapshot, invocation.Token, scope);
         try
         {
             ValidatePayload(entry, serviceId, methodId, request, output: false);
             var response = await entry.Handler.InvokeUnaryAsync(
-                CreateContext(callerPackageId, entry.Snapshot, invocation.Token),
+                context,
                 serviceId,
                 methodId,
                 request,
@@ -371,6 +701,7 @@ internal sealed class RegressionTestRpcState : IDisposable
         }
         finally
         {
+            context.Revoke();
             Release(entry);
         }
     }
@@ -381,15 +712,17 @@ internal sealed class RegressionTestRpcState : IDisposable
         string serviceId,
         string methodId,
         JsonElement request,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+        [EnumeratorCancellation] CancellationToken cancellationToken,
+        RegressionTestRpcCallScope? scope)
     {
         var entry = Acquire(endpoint);
         using var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, entry.Retirement.Token);
+        var context = CreateContext(callerPackageId, entry.Snapshot, invocation.Token, scope);
         try
         {
             ValidatePayload(entry, serviceId, methodId, request, output: false);
             await foreach (var item in entry.Handler.InvokeServerStreamAsync(
-                               CreateContext(callerPackageId, entry.Snapshot, invocation.Token),
+                               context,
                                serviceId,
                                methodId,
                                request,
@@ -401,6 +734,7 @@ internal sealed class RegressionTestRpcState : IDisposable
         }
         finally
         {
+            context.Revoke();
             Release(entry);
         }
     }
@@ -459,14 +793,16 @@ internal sealed class RegressionTestRpcState : IDisposable
     private static SunderRpcInvocationContext CreateContext(
         string callerPackageId,
         SunderRpcProviderSnapshot provider,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RegressionTestRpcCallScope? scope)
         => new(
             callerPackageId,
             "1.0.0",
             provider,
-            DateTimeOffset.UtcNow.AddMinutes(1),
+            scope?.DeadlineUtc ?? DateTimeOffset.UtcNow.AddMinutes(1),
             1,
-            cancellationToken);
+            cancellationToken,
+            scope?.CreateInvocationAuthority(provider.Endpoint));
 
     private static void ValidatePayload(
         Entry entry,

@@ -56,7 +56,15 @@ public sealed partial class RepositoryArchitectureTests
             Assert.DoesNotContain("AgentRpcPayload", generated, StringComparison.Ordinal);
             Assert.Contains("Provider", generated, StringComparison.Ordinal);
             Assert.Contains("Client", generated, StringComparison.Ordinal);
-            Assert.Equal(generated, File.ReadAllText(Path.Combine(generatedRoot, serviceName + ".g.cs")));
+            var generatedPath = Path.Combine(generatedRoot, serviceName + ".g.cs");
+            if (string.Equals(
+                    Environment.GetEnvironmentVariable("SUNDER_UPDATE_RPC_BINDINGS"),
+                    "1",
+                    StringComparison.Ordinal))
+            {
+                File.WriteAllText(generatedPath, generated);
+            }
+            Assert.Equal(generated, File.ReadAllText(generatedPath));
         }
     }
 
@@ -140,6 +148,15 @@ public sealed partial class RepositoryArchitectureTests
             "IPackageExtensionInvocationCatalog",
             "GetExtensionReferences",
             "GetExtensionContributions",
+            "AgentChatContentTransferStore",
+            "AgentChatContentChunk",
+            "AgentChatContentDiscard",
+            "RunControlChatContentChunk",
+            "RunControlChatContentDiscard",
+            "\"stage-content\"",
+            "\"discard-content\"",
+            "stage-chat-content",
+            "discard-chat-content",
         };
 
         Assert.All(prohibited, token => Assert.DoesNotContain(token, source, StringComparison.Ordinal));

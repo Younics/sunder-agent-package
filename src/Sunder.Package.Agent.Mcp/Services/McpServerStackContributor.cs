@@ -52,19 +52,19 @@ internal sealed class McpServerStackContributor(
         var warnings = new List<string>();
         foreach (var server in servers)
         {
-            if (!request.IsDetailSelected(server.ServerId, DetailIds.Transport))
+            if (!request.IsDetailSelected(server.ServerId, DetailIds.Transport, defaultSelected: true))
             {
                 warnings.Add($"Skipped MCP server '{server.DisplayName}' because transport was not selected.");
                 continue;
             }
 
-            if (server.TransportType == ConfiguredMcpTransportType.Stdio && !request.IsDetailSelected(server.ServerId, DetailIds.LaunchCommand))
+            if (server.TransportType == ConfiguredMcpTransportType.Stdio && !request.IsDetailSelected(server.ServerId, DetailIds.LaunchCommand, defaultSelected: true))
             {
                 warnings.Add($"Skipped MCP server '{server.DisplayName}' because its launch command was not selected.");
                 continue;
             }
 
-            if (server.TransportType == ConfiguredMcpTransportType.HttpSse && !request.IsDetailSelected(server.ServerId, DetailIds.ServerUrl))
+            if (server.TransportType == ConfiguredMcpTransportType.HttpSse && !request.IsDetailSelected(server.ServerId, DetailIds.ServerUrl, defaultSelected: true))
             {
                 warnings.Add($"Skipped MCP server '{server.DisplayName}' because its server URL was not selected.");
                 continue;
@@ -342,13 +342,13 @@ internal static class McpServerStackPayloadCodec
         IReadOnlyDictionary<string, string> headerValues,
         IReadOnlyDictionary<string, string> environmentVariableValues)
     {
-        var description = request.IsDetailSelected(server.ServerId, DetailIds.Description)
-            ? request.GetDetailValue(server.ServerId, DetailIds.Description, server.Description ?? string.Empty)
+        var description = request.IsDetailSelected(server.ServerId, DetailIds.Description, defaultSelected: true)
+            ? request.GetDetailValue(server.ServerId, DetailIds.Description, server.Description ?? string.Empty, defaultSelected: true)
             : null;
         var commandParts = Array.Empty<string>();
         if (server.TransportType == ConfiguredMcpTransportType.Stdio)
         {
-            var command = request.GetDetailValue(server.ServerId, DetailIds.LaunchCommand, string.Join(" ", server.CommandParts));
+            var command = request.GetDetailValue(server.ServerId, DetailIds.LaunchCommand, string.Join(" ", server.CommandParts), defaultSelected: true);
             commandParts = SplitCommand(command);
             if (commandParts.Length == 0)
             {
@@ -360,7 +360,7 @@ internal static class McpServerStackPayloadCodec
         string? endpointUrl = null;
         if (server.TransportType == ConfiguredMcpTransportType.HttpSse)
         {
-            endpointUrl = request.GetDetailValue(server.ServerId, DetailIds.ServerUrl, server.EndpointUrl ?? string.Empty);
+            endpointUrl = request.GetDetailValue(server.ServerId, DetailIds.ServerUrl, server.EndpointUrl ?? string.Empty, defaultSelected: true);
             if (string.IsNullOrWhiteSpace(endpointUrl) || !Uri.TryCreate(endpointUrl, UriKind.Absolute, out _))
             {
                 warnings.Add($"Skipped MCP server '{server.DisplayName}' because its server URL is empty or invalid.");
@@ -395,8 +395,8 @@ internal static class McpServerStackPayloadCodec
             server.IsEnabled,
             server.TransportType.ToString(),
             commandParts,
-            request.IsDetailSelected(server.ServerId, DetailIds.WorkingFolder)
-                ? request.GetDetailValue(server.ServerId, DetailIds.WorkingFolder, server.WorkingDirectory ?? string.Empty)
+            request.IsDetailSelected(server.ServerId, DetailIds.WorkingFolder, defaultSelected: true)
+                ? request.GetDetailValue(server.ServerId, DetailIds.WorkingFolder, server.WorkingDirectory ?? string.Empty, defaultSelected: true)
                 : null,
             endpointUrl,
             server.TimeoutMilliseconds,
@@ -405,7 +405,7 @@ internal static class McpServerStackPayloadCodec
             headers,
             environmentVariables)
         {
-            OAuthEnabled = server.OAuthEnabled && request.IsDetailSelected(server.ServerId, DetailIds.OAuth),
+            OAuthEnabled = server.OAuthEnabled && request.IsDetailSelected(server.ServerId, DetailIds.OAuth, defaultSelected: true),
             OAuthScopes = server.OAuthScopes,
             OAuthClientId = server.OAuthClientId,
         };
@@ -417,11 +417,13 @@ internal static class McpServerStackPayloadCodec
             .Select(header => new StackRequiredInputDescriptor(
                 header.InputId,
                 $"{payload.DisplayName} header: {header.Name}",
+                Sensitivity: StackValueSensitivity.Secret,
                 Required: false,
                 Description: "Header values are stored as local secrets and are not included in Stack exports."))
             .Concat(payload.EnvironmentVariables.Where(variable => variable.RequiresInput).Select(variable => new StackRequiredInputDescriptor(
                 variable.InputId,
                 $"{payload.DisplayName} environment: {variable.Name}",
+                Sensitivity: StackValueSensitivity.Secret,
                 Required: false,
                 Description: "Environment values are stored as local secrets and are not included in Stack exports.")))
             .ToArray();
@@ -649,13 +651,13 @@ internal static class McpServerStackPayloadCodec
         foreach (var name in names.Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name, StringComparer.OrdinalIgnoreCase))
         {
             var detailId = buildDetailId(name);
-            if (!request.IsDetailSelected(serverId, detailId))
+            if (!request.IsDetailSelected(serverId, detailId, defaultSelected: true))
             {
                 continue;
             }
 
             var fallbackSensitivity = IsLikelySecretName(name) ? StackValueSensitivity.Secret : StackValueSensitivity.Public;
-            var sensitivity = request.GetDetailSensitivity(serverId, detailId, fallbackSensitivity);
+            var sensitivity = request.GetDetailSensitivity(serverId, detailId, fallbackSensitivity, defaultSelected: true);
             var inputId = McpServerStackPayload.BuildUniqueInputId(serverId, kind, name, usedIds);
             if (sensitivity == StackValueSensitivity.Secret)
             {
@@ -666,7 +668,7 @@ internal static class McpServerStackPayloadCodec
             var fallbackValue = fallbackSensitivity == StackValueSensitivity.Secret
                 ? string.Empty
                 : values.TryGetValue(name, out var storedValue) ? storedValue : string.Empty;
-            var value = request.GetDetailValue(serverId, detailId, fallbackValue).Trim();
+            var value = request.GetDetailValue(serverId, detailId, fallbackValue, defaultSelected: true).Trim();
             if (string.IsNullOrWhiteSpace(value) || string.Equals(value, SecretPlaceholder, StringComparison.OrdinalIgnoreCase))
             {
                 warnings.Add($"Skipped {kind} '{name}' for MCP server '{serverDisplayName}' because it was marked non-secret but has no exportable value.");

@@ -197,26 +197,6 @@
           }
         },
         {
-          "methodId": "stage-chat-content",
-          "kind": "unary",
-          "requestSchema": {
-            "$ref": "#/$defs/RunControlChatContentChunk"
-          },
-          "responseSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
-          }
-        },
-        {
-          "methodId": "discard-chat-content",
-          "kind": "unary",
-          "requestSchema": {
-            "$ref": "#/$defs/RunControlChatContentDiscard"
-          },
-          "responseSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
-          }
-        },
-        {
           "methodId": "stream-chat",
           "kind": "server-stream",
           "requestSchema": {
@@ -2039,62 +2019,6 @@
         "mediaType",
         "repeatability",
         "sha256"
-      ],
-      "additionalProperties": false
-    },
-    "AgentChatContentChunk": {
-      "type": "object",
-      "properties": {
-        "data": {
-          "$ref": "#/$defs/String"
-        },
-        "isFinal": {
-          "$ref": "#/$defs/Boolean"
-        },
-        "offset": {
-          "$ref": "#/$defs/Int32"
-        },
-        "reference": {
-          "$ref": "#/$defs/SunderRpcContentReference"
-        }
-      },
-      "required": [
-        "data",
-        "isFinal",
-        "offset",
-        "reference"
-      ],
-      "additionalProperties": false
-    },
-    "RunControlChatContentChunk": {
-      "type": "object",
-      "properties": {
-        "chunk": {
-          "$ref": "#/$defs/AgentChatContentChunk"
-        },
-        "invocation": {
-          "$ref": "#/$defs/RunControlInvocation"
-        }
-      },
-      "required": [
-        "chunk",
-        "invocation"
-      ],
-      "additionalProperties": false
-    },
-    "RunControlChatContentDiscard": {
-      "type": "object",
-      "properties": {
-        "contentId": {
-          "$ref": "#/$defs/String"
-        },
-        "invocation": {
-          "$ref": "#/$defs/RunControlInvocation"
-        }
-      },
-      "required": [
-        "contentId",
-        "invocation"
       ],
       "additionalProperties": false
     },

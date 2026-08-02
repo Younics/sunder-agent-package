@@ -381,12 +381,12 @@ internal sealed class SubagentStackContributor(
             => new(
                 subagent.SubagentId,
                 subagent.DisplayName,
-                request.IsDetailSelected(subagent.SubagentId, DetailDescription) ? request.GetDetailValue(subagent.SubagentId, DetailDescription, subagent.Description ?? string.Empty) : null,
-                request.IsDetailSelected(subagent.SubagentId, DetailInstructions) ? request.GetDetailValue(subagent.SubagentId, DetailInstructions, subagent.Instructions ?? string.Empty) : null,
-                request.IsDetailSelected(subagent.SubagentId, DetailProvider) && request.IsDetailSelected(subagent.SubagentId, DetailModel) ? subagent.ChatProviderId : null,
-                request.IsDetailSelected(subagent.SubagentId, DetailProvider) && request.IsDetailSelected(subagent.SubagentId, DetailModel) ? subagent.ChatModelId : null,
+                request.IsDetailSelected(subagent.SubagentId, DetailDescription, defaultSelected: true) ? request.GetDetailValue(subagent.SubagentId, DetailDescription, subagent.Description ?? string.Empty, defaultSelected: true) : null,
+                request.IsDetailSelected(subagent.SubagentId, DetailInstructions, defaultSelected: true) ? request.GetDetailValue(subagent.SubagentId, DetailInstructions, subagent.Instructions ?? string.Empty, defaultSelected: true) : null,
+                request.IsDetailSelected(subagent.SubagentId, DetailProvider, defaultSelected: true) && request.IsDetailSelected(subagent.SubagentId, DetailModel, defaultSelected: true) ? subagent.ChatProviderId : null,
+                request.IsDetailSelected(subagent.SubagentId, DetailProvider, defaultSelected: true) && request.IsDetailSelected(subagent.SubagentId, DetailModel, defaultSelected: true) ? subagent.ChatModelId : null,
                 subagent.SelectableCapabilityAssignments,
-                request.IsDetailSelected(subagent.SubagentId, DetailModel) ? subagent.ChatModelSettingsJson : null);
+                request.IsDetailSelected(subagent.SubagentId, DetailModel, defaultSelected: true) ? subagent.ChatModelSettingsJson : null);
 
         public SubagentRecord ToSubagent()
         {

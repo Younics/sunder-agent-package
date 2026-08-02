@@ -37,18 +37,6 @@
           "responseSchema": { "$ref": "#/$defs/AgentRpcOptionalString" }
         },
         {
-          "methodId": "stage-content",
-          "kind": "unary",
-          "requestSchema": { "$ref": "#/$defs/AgentChatContentChunk" },
-          "responseSchema": { "$ref": "#/$defs/AgentRpcEmpty" }
-        },
-        {
-          "methodId": "discard-content",
-          "kind": "unary",
-          "requestSchema": { "$ref": "#/$defs/AgentChatContentDiscard" },
-          "responseSchema": { "$ref": "#/$defs/AgentRpcEmpty" }
-        },
-        {
           "methodId": "stream-chat",
           "kind": "server-stream",
           "requestSchema": { "$ref": "#/$defs/AgentChatStreamRequest" },
@@ -293,29 +281,6 @@
         "repeatability": { "$ref": "#/$defs/SunderRpcContentRepeatability" }
       },
       "required": ["id", "length", "sha256", "mediaType", "fileName", "expiresAtUtc", "repeatability"],
-      "additionalProperties": false
-    },
-    "AgentChatContentChunk": {
-      "type": "object",
-      "properties": {
-        "reference": { "$ref": "#/$defs/SunderRpcContentReference" },
-        "offset": { "$ref": "#/$defs/NonNegativeInt32" },
-        "data": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 600000
-        },
-        "isFinal": { "type": "boolean" }
-      },
-      "required": ["reference", "offset", "data", "isFinal"],
-      "additionalProperties": false
-    },
-    "AgentChatContentDiscard": {
-      "type": "object",
-      "properties": {
-        "contentId": { "$ref": "#/$defs/ShortText" }
-      },
-      "required": ["contentId"],
       "additionalProperties": false
     },
     "AgentChatMessage": {

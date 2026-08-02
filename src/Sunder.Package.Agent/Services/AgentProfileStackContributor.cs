@@ -409,17 +409,17 @@ public sealed class AgentProfileStackContributor(
             => new(
                 profile.ProfileId,
                 profile.DisplayName,
-                request.IsDetailSelected(profile.ProfileId, DetailDescription) ? request.GetDetailValue(profile.ProfileId, DetailDescription, profile.Description ?? string.Empty) : null,
-                request.IsDetailSelected(profile.ProfileId, DetailInstructions) ? request.GetDetailValue(profile.ProfileId, DetailInstructions, profile.Instructions ?? string.Empty) : null,
-                request.IsDetailSelected(profile.ProfileId, DetailProviders) && request.IsDetailSelected(profile.ProfileId, DetailModels) ? profile.ChatProviderId : null,
-                request.IsDetailSelected(profile.ProfileId, DetailProviders) && request.IsDetailSelected(profile.ProfileId, DetailModels) ? profile.ChatModelId : null,
-                request.IsDetailSelected(profile.ProfileId, DetailProviders) && request.IsDetailSelected(profile.ProfileId, DetailModels) ? profile.EmbeddingProviderId : null,
-                request.IsDetailSelected(profile.ProfileId, DetailProviders) && request.IsDetailSelected(profile.ProfileId, DetailModels) ? profile.EmbeddingModelId : null,
-                request.IsDetailSelected(profile.ProfileId, DetailProviders) && request.IsDetailSelected(profile.ProfileId, DetailModels) ? profile.ModelBindings : [],
+                request.IsDetailSelected(profile.ProfileId, DetailDescription, defaultSelected: true) ? request.GetDetailValue(profile.ProfileId, DetailDescription, profile.Description ?? string.Empty, defaultSelected: true) : null,
+                request.IsDetailSelected(profile.ProfileId, DetailInstructions, defaultSelected: true) ? request.GetDetailValue(profile.ProfileId, DetailInstructions, profile.Instructions ?? string.Empty, defaultSelected: true) : null,
+                request.IsDetailSelected(profile.ProfileId, DetailProviders, defaultSelected: true) && request.IsDetailSelected(profile.ProfileId, DetailModels, defaultSelected: true) ? profile.ChatProviderId : null,
+                request.IsDetailSelected(profile.ProfileId, DetailProviders, defaultSelected: true) && request.IsDetailSelected(profile.ProfileId, DetailModels, defaultSelected: true) ? profile.ChatModelId : null,
+                request.IsDetailSelected(profile.ProfileId, DetailProviders, defaultSelected: true) && request.IsDetailSelected(profile.ProfileId, DetailModels, defaultSelected: true) ? profile.EmbeddingProviderId : null,
+                request.IsDetailSelected(profile.ProfileId, DetailProviders, defaultSelected: true) && request.IsDetailSelected(profile.ProfileId, DetailModels, defaultSelected: true) ? profile.EmbeddingModelId : null,
+                request.IsDetailSelected(profile.ProfileId, DetailProviders, defaultSelected: true) && request.IsDetailSelected(profile.ProfileId, DetailModels, defaultSelected: true) ? profile.ModelBindings : [],
                 profile.SelectableCapabilityAssignments,
-                request.IsDetailSelected(profile.ProfileId, DetailBehaviorLoop) ? profile.BehaviorLoopId : null,
-                request.IsDetailSelected(profile.ProfileId, DetailBehaviorLoop) ? profile.BehaviorLoopSourceId : null,
-                request.IsDetailSelected(profile.ProfileId, DetailBehaviorLoop) ? profile.BehaviorLoopSettingsJson : null);
+                request.IsDetailSelected(profile.ProfileId, DetailBehaviorLoop, defaultSelected: true) ? profile.BehaviorLoopId : null,
+                request.IsDetailSelected(profile.ProfileId, DetailBehaviorLoop, defaultSelected: true) ? profile.BehaviorLoopSourceId : null,
+                request.IsDetailSelected(profile.ProfileId, DetailBehaviorLoop, defaultSelected: true) ? profile.BehaviorLoopSettingsJson : null);
 
         public AgentProfileRecord ToProfile(string profileId, DateTimeOffset now)
             => new(
