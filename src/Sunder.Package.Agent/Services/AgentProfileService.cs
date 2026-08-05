@@ -6,6 +6,7 @@ using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -43,7 +44,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
     public async Task<AgentProfileRecord> CreateProfileAsync(string displayName, CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.UtcNow;
-        var chatProvider = GetChatProviderReferences()
+        var chatProvider = GetChatProviderReferences(cancellationToken)
             .OrderBy(provider => provider.Metadata.DisplayName, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault();
         var orderedChatModels = chatProvider is null
@@ -144,7 +145,8 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
                 static loop => loop.Descriptor with
                 {
                     FeatureKinds = loop.Descriptor.FeatureKinds?.ToArray(),
-                })
+                },
+                omitUnavailable: true)
             .Select(static loop => loop.Metadata)
             .OrderBy(loop => loop.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -154,9 +156,6 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
 
     public AgentProfileModelBindingRecord? GetChatBinding(string profileId)
         => GetModelBinding(profileId, AgentModelCapabilityKinds.Chat);
-
-    public AgentProfileModelBindingRecord? GetEmbeddingBinding(string profileId)
-        => GetModelBinding(profileId, AgentModelCapabilityKinds.Embedding);
 
     public void DeleteProfile(string profileId)
     {
@@ -184,24 +183,14 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
         }
     }
 
-    public IReadOnlyList<IAgentChatProvider> ListChatProviders()
-        => _rpcCatalog.GetServices(AgentRpcServices.ChatProviders)
-            .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
     public IReadOnlyList<AgentProviderDescriptor> ListChatProviderDescriptors()
-        => GetChatProviderReferences()
+        => GetChatProviderReferences(omitUnavailable: true)
             .Select(static provider => provider.Metadata)
             .OrderBy(provider => provider.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-    public IReadOnlyList<IAgentEmbeddingProvider> ListEmbeddingProviders()
-        => _rpcCatalog.GetServices(AgentRpcServices.EmbeddingProviders)
-            .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
     public IReadOnlyList<AgentEmbeddingProviderDescriptor> ListEmbeddingProviderDescriptors()
-        => GetEmbeddingProviderReferences()
+        => GetEmbeddingProviderReferences(omitUnavailable: true)
             .Select(static provider => provider.Metadata)
             .OrderBy(provider => provider.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -213,23 +202,18 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             return false;
         }
 
-        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.ProfileCapabilityConsumers))
+        foreach (var consumer in AgentRpcInvocation.Snapshot(
+                     _rpcCatalog,
+                     AgentRpcServices.ProfileCapabilityConsumers,
+                     static instance => instance.ListConsumedCapabilities().ToArray(),
+                     omitUnavailable: true))
         {
-            if (!reference.TryAcquire(out var lease))
+            if (consumer.Metadata.Any(capability => string.Equals(
+                    capability.CapabilityKind,
+                    capabilityKind,
+                    StringComparison.OrdinalIgnoreCase)))
             {
-                continue;
-            }
-            using (lease)
-            {
-                var consumed = lease.Service.ListConsumedCapabilities().ToArray();
-                if (!lease.RetirementToken.IsCancellationRequested
-                    && consumed.Any(capability => string.Equals(
-                        capability.CapabilityKind,
-                        capabilityKind,
-                        StringComparison.OrdinalIgnoreCase)))
-                {
-                    return true;
-                }
+                return true;
             }
         }
 
@@ -240,20 +224,36 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
         AgentProfileRecord? profile = null,
         CancellationToken cancellationToken = default)
     {
-        _capabilityChangeObserver.RefreshProviderSubscriptions();
+        try
+        {
+            _capabilityChangeObserver.RefreshProviderSubscriptions();
+        }
+        catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
+        {
+            throw AgentRpcInvocation.Cancelled(exception, cancellationToken);
+        }
         var request = new AgentProfileSelectableCapabilityRequest(profile);
         var capabilities = new List<AgentProfileSelectableCapabilityDescriptor>();
         var providers = AgentRpcInvocation.Snapshot(
             _rpcCatalog,
             AgentRpcServices.SelectableCapabilityProviders,
-            static provider => provider.DisplayName);
+            static provider => provider.DisplayName,
+            cancellationToken,
+            omitUnavailable: true);
         foreach (var provider in providers
                      .OrderBy(provider => provider.Metadata, StringComparer.OrdinalIgnoreCase))
         {
-            capabilities.AddRange(await AgentRpcInvocation.InvokeAsync(
-                provider,
-                cancellationToken,
-                (instance, token) => instance.ListCapabilitiesAsync(request, token)).ConfigureAwait(false));
+            try
+            {
+                capabilities.AddRange(await AgentRpcInvocation.InvokeAsync(
+                    provider,
+                    cancellationToken,
+                    (instance, token) => instance.ListCapabilitiesAsync(request, token)).ConfigureAwait(false));
+            }
+            catch (AgentPackageUnavailableException)
+            {
+                continue;
+            }
         }
 
         return capabilities
@@ -297,19 +297,29 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             return [];
         }
 
-        var provider = GetChatProviderReferences().FirstOrDefault(x => string.Equals(
+        var provider = GetChatProviderReferences(cancellationToken, omitUnavailable: true).FirstOrDefault(x => string.Equals(
             x.Metadata.ProviderId,
             providerId,
             StringComparison.OrdinalIgnoreCase));
-        return provider is null
-            ? []
-            : (await AgentRpcInvocation.InvokeAsync(
+        if (provider is null)
+        {
+            return [];
+        }
+
+        try
+        {
+            return (await AgentRpcInvocation.InvokeAsync(
                     provider,
                     cancellationToken,
                     static (instance, token) => instance.GetAvailableModelsAsync(token))
                 .ConfigureAwait(false))
                 .OrderNewestFirst()
                 .ToArray();
+        }
+        catch (AgentPackageUnavailableException)
+        {
+            return [];
+        }
     }
 
     public async Task<IReadOnlyList<AgentEmbeddingModelDescriptor>> ListEmbeddingModelsAsync(string? providerId, CancellationToken cancellationToken = default)
@@ -319,19 +329,29 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             return [];
         }
 
-        var provider = GetEmbeddingProviderReferences().FirstOrDefault(x => string.Equals(
+        var provider = GetEmbeddingProviderReferences(cancellationToken, omitUnavailable: true).FirstOrDefault(x => string.Equals(
             x.Metadata.ProviderId,
             providerId,
             StringComparison.OrdinalIgnoreCase));
-        return provider is null
-            ? []
-            : (await AgentRpcInvocation.InvokeAsync(
+        if (provider is null)
+        {
+            return [];
+        }
+
+        try
+        {
+            return (await AgentRpcInvocation.InvokeAsync(
                     provider,
                     cancellationToken,
                     static (instance, token) => instance.GetAvailableModelsAsync(token))
                 .ConfigureAwait(false))
                 .OrderBy(model => model.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+        }
+        catch (AgentPackageUnavailableException)
+        {
+            return [];
+        }
     }
 
     public async Task<AgentProviderReadiness?> GetChatProviderReadinessAsync(string? providerId, CancellationToken cancellationToken = default)
@@ -341,16 +361,29 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             return null;
         }
 
-        var provider = GetChatProviderReferences().FirstOrDefault(x => string.Equals(
+        var provider = GetChatProviderReferences(cancellationToken, omitUnavailable: true).FirstOrDefault(x => string.Equals(
             x.Metadata.ProviderId,
             providerId,
             StringComparison.OrdinalIgnoreCase));
-        return provider is null
-            ? null
-            : await AgentRpcInvocation.InvokeAsync(
+        if (provider is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await AgentRpcInvocation.InvokeAsync(
                 provider,
                 cancellationToken,
                 static (instance, token) => instance.GetReadinessAsync(token)).ConfigureAwait(false);
+        }
+        catch (AgentPackageUnavailableException)
+        {
+            return new AgentProviderReadiness(
+                provider.Metadata.ProviderId,
+                AgentProviderReadinessStatus.Failed,
+                AgentRpcInvocation.PackageUnavailableMessage);
+        }
     }
 
     public async Task<AgentEmbeddingProviderReadiness?> GetEmbeddingProviderReadinessAsync(string? providerId, CancellationToken cancellationToken = default)
@@ -360,34 +393,55 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             return null;
         }
 
-        var provider = GetEmbeddingProviderReferences().FirstOrDefault(x => string.Equals(
+        var provider = GetEmbeddingProviderReferences(cancellationToken, omitUnavailable: true).FirstOrDefault(x => string.Equals(
             x.Metadata.ProviderId,
             providerId,
             StringComparison.OrdinalIgnoreCase));
-        return provider is null
-            ? null
-            : await AgentRpcInvocation.InvokeAsync(
+        if (provider is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await AgentRpcInvocation.InvokeAsync(
                 provider,
                 cancellationToken,
                 static (instance, token) => instance.GetReadinessAsync(token)).ConfigureAwait(false);
+        }
+        catch (AgentPackageUnavailableException)
+        {
+            return new AgentEmbeddingProviderReadiness(
+                provider.Metadata.ProviderId,
+                AgentProviderReadinessStatus.Failed,
+                AgentRpcInvocation.PackageUnavailableMessage);
+        }
     }
 
     private IReadOnlyList<AgentRpcOwnedReference<IAgentChatProvider, AgentProviderDescriptor>>
-        GetChatProviderReferences()
+        GetChatProviderReferences(
+            CancellationToken cancellationToken = default,
+            bool omitUnavailable = false)
         => AgentRpcInvocation.Snapshot(
             _rpcCatalog,
             AgentRpcServices.ChatProviders,
             static provider => provider.Descriptor with
             {
                 SupportedAuthModes = provider.Descriptor.SupportedAuthModes.ToArray(),
-            });
+            },
+            cancellationToken,
+            omitUnavailable);
 
     private IReadOnlyList<AgentRpcOwnedReference<IAgentEmbeddingProvider, AgentEmbeddingProviderDescriptor>>
-        GetEmbeddingProviderReferences()
+        GetEmbeddingProviderReferences(
+            CancellationToken cancellationToken = default,
+            bool omitUnavailable = false)
         => AgentRpcInvocation.Snapshot(
             _rpcCatalog,
             AgentRpcServices.EmbeddingProviders,
-            static provider => provider.Descriptor);
+            static provider => provider.Descriptor,
+            cancellationToken,
+            omitUnavailable);
 
     private static IReadOnlyList<AgentProfileModelBindingRecord> BuildModelBindings(
         string? profileId,

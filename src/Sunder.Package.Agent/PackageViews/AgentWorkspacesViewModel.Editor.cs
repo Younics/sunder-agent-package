@@ -1,6 +1,7 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Shared.Presentation;
 
@@ -12,6 +13,11 @@ internal sealed record AgentWorkspaceEditorIntent(
     string WorkspaceId,
     string TargetId,
     AdaptiveListDetailLayout Layout);
+
+internal sealed record AgentExecutionTargetRefreshRequest(
+    LatestRequestTicket Ticket,
+    long SelectionRevision,
+    string? PreferredTargetId);
 
 public sealed partial class AgentWorkspacesViewModel
 {
@@ -59,46 +65,134 @@ public sealed partial class AgentWorkspacesViewModel
 
     private void ReloadTargets(
         IReadOnlyList<AgentExecutionTargetDescriptor> targets,
-        string? preferredTargetId = null)
+        string? preferredTargetId = null,
+        bool restoreSelection = false)
     {
-        ExecutionTargets.Clear();
-        ExecutionTargets.Add(ExecutionTargetOption.Unconfigured);
-        foreach (var target in targets)
+        var wasSuppressed = _suppressDraftTracking;
+        if (restoreSelection)
         {
-            ExecutionTargets.Add(new ExecutionTargetOption(
-                target.TargetId,
-                target.DisplayName,
-                target.Description ?? target.TargetId));
+            _suppressDraftTracking = true;
         }
 
-        if (preferredTargetId is not null)
+        try
         {
-            var wasSuppressed = _suppressDraftTracking;
-            _suppressDraftTracking = true;
-            try
+            ExecutionTargets.Clear();
+            ExecutionTargets.Add(ExecutionTargetOption.Unconfigured);
+            foreach (var target in targets)
+            {
+                ExecutionTargets.Add(new ExecutionTargetOption(
+                    target.TargetId,
+                    target.DisplayName,
+                    target.Description ?? target.TargetId));
+            }
+
+            if (restoreSelection)
             {
                 SelectedExecutionTarget = ResolveTargetOption(preferredTargetId);
             }
-            finally
-            {
-                _suppressDraftTracking = wasSuppressed;
-            }
+        }
+        finally
+        {
+            _suppressDraftTracking = wasSuppressed;
         }
 
         OnPropertyChanged(nameof(HasExecutionTargetChoices));
         OnPropertyChanged(nameof(HasNoExecutionTargetChoices));
     }
 
-    private void ReloadTargets(string? preferredTargetId = null)
-        => ReloadTargets(_executionGateway.ListTargets(), preferredTargetId);
+    private Task StartExecutionTargetRefresh()
+    {
+        if (_disposed)
+        {
+            return Task.CompletedTask;
+        }
+
+        _currentExecutionTargetRefresh = RefreshExecutionTargetsAsync(_tasks.CancellationToken);
+        TrackOperation(_currentExecutionTargetRefresh);
+        return _currentExecutionTargetRefresh;
+    }
+
+    private async Task RefreshExecutionTargetsAsync(CancellationToken cancellationToken)
+    {
+        AgentExecutionTargetRefreshRequest? request = null;
+        await _uiDispatcher.InvokeAsync(() =>
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            var preferredTargetId = SelectedExecutionTarget?.TargetId;
+            if (SelectedExecutionTarget is null && SelectedWorkspace is not null)
+            {
+                preferredTargetId = ResolveWorkspaceTargetId(SelectedWorkspace.WorkspaceId);
+            }
+
+            request = new AgentExecutionTargetRefreshRequest(
+                _requests.Begin(ExecutionTargetRefreshChannel, cancellationToken),
+                _executionTargetSelectionRevision,
+                preferredTargetId);
+        }).ConfigureAwait(false);
+        if (request is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var targets = _executionGateway is IAgentExecutionTargetLoader loader
+                ? await loader.ListTargetsAsync(request.Ticket.CancellationToken).ConfigureAwait(false)
+                : _executionGateway.ListTargets();
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (_disposed || !_requests.IsCurrent(request.Ticket))
+                {
+                    return;
+                }
+
+                var selectionChanged = request.SelectionRevision != _executionTargetSelectionRevision;
+                var preferredTargetId = selectionChanged
+                    ? SelectedExecutionTarget?.TargetId
+                    : request.PreferredTargetId;
+                if (selectionChanged
+                    && preferredTargetId is not null
+                    && !targets.Any(target => string.Equals(
+                        target.TargetId,
+                        preferredTargetId,
+                        StringComparison.OrdinalIgnoreCase)))
+                {
+                    return;
+                }
+
+                ReloadTargets(targets, preferredTargetId, restoreSelection: true);
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (
+            request.Ticket.CancellationToken.IsCancellationRequested
+            && !cancellationToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            _requests.Complete(request.Ticket);
+        }
+    }
 
     private void OnRpcCatalogChanged(object? sender, AgentRpcCatalogChangedEventArgs e)
     {
-        if (_isInitialized
-            && (e.IncludesContract(AgentRpcContractIds.ExecutionTarget)
-                || e.IncludesContract(AgentRpcContractIds.WorkspaceEditor)))
+        if (e.IncludesContract(AgentRpcContractIds.ExecutionTarget)
+            || e.IncludesContract(AgentRpcContractIds.WorkspaceEditor))
         {
-            RunOnUiThread(ApplyExtensionCatalogChanges);
+            RunOnUiThread(() =>
+            {
+                if (!_isInitialized)
+                {
+                    _initializationCatalogRefreshPending = true;
+                    return;
+                }
+
+                ApplyExtensionCatalogChanges();
+            });
         }
     }
 
@@ -109,14 +203,26 @@ public sealed partial class AgentWorkspacesViewModel
             return;
         }
 
-        var preferredTargetId = SelectedExecutionTarget?.TargetId;
-        if (string.IsNullOrWhiteSpace(preferredTargetId) && SelectedWorkspace is not null)
+        var targetRefresh = StartExecutionTargetRefresh();
+        _tasks.Run(async cancellationToken =>
         {
-            preferredTargetId = ResolveWorkspaceTargetId(SelectedWorkspace.WorkspaceId);
-        }
+            try
+            {
+                await targetRefresh.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                return;
+            }
 
-        ReloadTargets(preferredTargetId);
-        StartEditorSectionRefresh();
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed && ReferenceEquals(targetRefresh, _currentExecutionTargetRefresh))
+                {
+                    StartEditorSectionRefresh();
+                }
+            }).ConfigureAwait(false);
+        });
     }
 
     private void StartEditorSectionRefresh()

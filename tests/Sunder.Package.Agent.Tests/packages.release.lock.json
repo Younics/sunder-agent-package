@@ -700,7 +700,8 @@
         "dependencies": {
           "Sunder.Agent.Execution.Common": "[2.0.0, )",
           "Sunder.Package.Agent.Protocol": "[2.0.0, )",
-          "Sunder.Sdk": "[1.1.0, 1.2.0)"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Worker": "[1.1.0, 1.1.0]"
         }
       },
       "sunder.package.agent.tools.web": {
@@ -891,6 +892,15 @@
         "requested": "[3.0.3, )",
         "resolved": "3.0.3",
         "contentHash": "bjm6FY4lZyP+t7GmiuvSM0QXpFihAvyE0Y9O2yibm3g95AAWJPNnHOKVNJGyPTGIKuK7Pr4Wh8Rd8/aOtAclQw=="
+      },
+      "Sunder.Sdk.Worker": {
+        "type": "CentralTransitive",
+        "requested": "[1.1.0, 1.1.0]",
+        "resolved": "1.1.0",
+        "contentHash": "p7YJcxYCcaBSktP/W+nzeav9m3mzqfSLsJJ6V63+4z/ijyIj/niSi3EVuAFj0Pfg4qPRotAzo9c6mzhxKk2XRQ==",
+        "dependencies": {
+          "Sunder.Sdk": "[1.1.0]"
+        }
       }
     }
   }

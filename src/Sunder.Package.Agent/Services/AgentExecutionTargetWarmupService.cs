@@ -21,15 +21,17 @@ public sealed class AgentExecutionTargetWarmupService(
             return AgentExecutionTargetWarmupResult.Skipped("Workspace is not bound to an execution target.");
         }
 
-        var target = executionTargetService.ResolveTargetReference(binding);
-        if (target is null)
-        {
-            return AgentExecutionTargetWarmupResult.Failed("The selected workspace is not bound to an installed execution target.");
-        }
-
         try
         {
-            if (!target.TryAcquire(out var lease))
+            var target = await executionTargetService.ResolveTargetReferenceAsync(binding, cancellationToken)
+                .ConfigureAwait(false);
+            if (target is null)
+            {
+                return AgentExecutionTargetWarmupResult.Failed("The selected workspace is not bound to an installed execution target.");
+            }
+
+            var lease = await target.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
+            if (lease is null)
             {
                 return AgentExecutionTargetWarmupResult.Failed("The selected execution target is unavailable.");
             }

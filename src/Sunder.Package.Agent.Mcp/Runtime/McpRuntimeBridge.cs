@@ -17,7 +17,7 @@ internal interface IMcpManagementGateway
     string NormalizeName(string? name);
     ParsedMcpServerConfiguration Parse(string serverId, string name, string document, ConfiguredMcpServerRecord? existing);
     string Format(string serverId, string name, string document, ConfiguredMcpServerRecord? existing);
-    Task SaveAsync(ParsedMcpServerConfiguration parsed, CancellationToken cancellationToken = default);
+    Task<string> SaveAsync(ParsedMcpServerConfiguration parsed, CancellationToken cancellationToken = default);
     Task DeleteAsync(string serverId, CancellationToken cancellationToken = default);
     Task<McpConfigurationImportResult> InitializeAsync(CancellationToken cancellationToken = default);
     Task<McpConfigurationImportResult> ImportCommonAsync(CancellationToken cancellationToken = default);
@@ -70,7 +70,7 @@ internal sealed class McpLocalManagementGateway(
     public string NormalizeName(string? name) => editor.NormalizeName(name);
     public ParsedMcpServerConfiguration Parse(string serverId, string name, string document, ConfiguredMcpServerRecord? existing) => editor.Parse(serverId, name, document, existing);
     public string Format(string serverId, string name, string document, ConfiguredMcpServerRecord? existing) => editor.Format(serverId, name, document, existing);
-    public Task SaveAsync(ParsedMcpServerConfiguration parsed, CancellationToken cancellationToken = default) => editor.SaveAsync(parsed, cancellationToken);
+    public Task<string> SaveAsync(ParsedMcpServerConfiguration parsed, CancellationToken cancellationToken = default) => editor.SaveAsync(parsed, cancellationToken);
     public Task DeleteAsync(string serverId, CancellationToken cancellationToken = default) => editor.DeleteAsync(serverId, cancellationToken);
     public Task<McpConfigurationImportResult> InitializeAsync(CancellationToken cancellationToken = default) => configuration.InitializeAsync(cancellationToken);
     public Task<McpConfigurationImportResult> ImportCommonAsync(CancellationToken cancellationToken = default) => configuration.ImportCommonAsync(cancellationToken);
@@ -121,8 +121,9 @@ internal sealed class McpAppRuntimeGateway : IMcpManagementGateway, IDisposable
         var parsed = Parse(serverId, name, document, existing);
         return McpConfigurationDocument.BuildEditorText(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
     }
-    public async Task SaveAsync(ParsedMcpServerConfiguration parsed, CancellationToken cancellationToken = default)
-        => _ = await CommandAsync(new(McpCommandKind.Save, Configuration: parsed), cancellationToken);
+    public async Task<string> SaveAsync(ParsedMcpServerConfiguration parsed, CancellationToken cancellationToken = default)
+        => (await CommandAsync(new(McpCommandKind.Save, Configuration: parsed), cancellationToken)).Document
+            ?? throw new InvalidOperationException("The Runtime did not return the saved MCP editor document.");
     public async Task DeleteAsync(string serverId, CancellationToken cancellationToken = default)
         => _ = await CommandAsync(new(McpCommandKind.Delete, serverId), cancellationToken);
     public async Task<McpConfigurationImportResult> InitializeAsync(CancellationToken cancellationToken = default)
@@ -221,9 +222,11 @@ internal sealed class McpRuntimeHandler(
             case McpCommandKind.Initialize:
                 return new(ImportResult: await configuration.InitializeAsync(cancellationToken));
             case McpCommandKind.Save:
-                await editor.SaveAsync(request.Configuration ?? throw new InvalidOperationException("MCP configuration is required."), cancellationToken);
-                await connections.DisconnectAsync(request.Configuration.Server.ServerId);
-                return await CatalogAsync(cancellationToken);
+                var configurationToSave = request.Configuration
+                    ?? throw new InvalidOperationException("MCP configuration is required.");
+                var editorDocument = await editor.SaveAsync(configurationToSave, cancellationToken);
+                await connections.DisconnectAsync(configurationToSave.Server.ServerId);
+                return (await CatalogAsync(cancellationToken)) with { Document = editorDocument };
             case McpCommandKind.Delete:
                 await editor.DeleteAsync(Require(request.ServerId), cancellationToken);
                 await connections.DisconnectAsync(Require(request.ServerId));

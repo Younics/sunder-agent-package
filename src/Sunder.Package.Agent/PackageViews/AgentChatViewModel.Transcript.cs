@@ -1,6 +1,4 @@
 using System.ComponentModel;
-using Avalonia;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
@@ -125,10 +123,10 @@ public sealed partial class AgentChatViewModel
                 return new TranscriptTurnPage(page.Turns, page.HasMore, page.Continuation);
             },
             protectedAnchorKey,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (loaded)
         {
-            ApplyRunActivityState();
+            await InvokeOnUiThreadAsync(ApplyRunActivityState).ConfigureAwait(false);
         }
 
         return loaded;
@@ -157,26 +155,30 @@ public sealed partial class AgentChatViewModel
                 return new TranscriptTurnPage(page.Turns, page.HasMore, page.Continuation);
             },
             protectedAnchorKey,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (loaded)
         {
-            if (resumeFollowingWhenCaughtUp)
+            await InvokeOnUiThreadAsync(() =>
             {
-                _timeline.ResumeFollowingLatestIfCaughtUp();
-            }
-            _runActivity.NotifyFollowStateChanged();
+                if (resumeFollowingWhenCaughtUp)
+                {
+                    _timeline.ResumeFollowingLatestIfCaughtUp();
+                }
+                _runActivity.NotifyFollowStateChanged();
+            }).ConfigureAwait(false);
         }
 
         return loaded;
     }
 
     internal void ReportTranscriptPagingFailure(Exception exception)
-    {
-        if (!_disposed)
+        => RunOnUiThread(() =>
         {
-            StatusText = $"Unable to load transcript: {exception.Message}";
-        }
-    }
+            if (!_disposed)
+            {
+                StatusText = $"Unable to load transcript: {exception.Message}";
+            }
+        });
 
     [RelayCommand]
     private void JumpToLatestTranscript()
@@ -383,18 +385,7 @@ public sealed partial class AgentChatViewModel
     }
 
     private void ScheduleTranscriptWorkDrain()
-    {
-        if (Application.Current is null)
-        {
-            DrainTranscriptWorkQueue();
-            return;
-        }
-
-        _backgroundTasks.Run(async _ =>
-            await Dispatcher.UIThread.InvokeAsync(
-                DrainTranscriptWorkQueue,
-                DispatcherPriority.Background));
-    }
+        => _backgroundTasks.Run(_ => InvokeOnUiThreadAsync(DrainTranscriptWorkQueue));
 
     private void DrainTranscriptWorkQueue()
     {

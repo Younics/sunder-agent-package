@@ -6,7 +6,7 @@ internal sealed class ApiKeyUtilitySettingsState : IDisposable
 {
     public ApiKeyUtilitySettingsState(
         IPackageContext packageContext,
-        ProviderCredentialAccessor credentials,
+        IProviderCredentialSettingsGateway credentials,
         string credentialDescription,
         string credentialPlaceholder,
         Func<bool, ApiKeyStatus> resolveCredentialStatus,

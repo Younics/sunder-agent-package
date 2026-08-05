@@ -76,16 +76,38 @@ public partial class SkillSettingsView : UserControl, IDisposable
             return;
         }
 
-        var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        await ContinueLocalFolderImportAsync(viewModel, PickLocalFolderAsync(topLevel.StorageProvider));
+    }
+
+    private static async Task<string?> PickLocalFolderAsync(IStorageProvider storageProvider)
+    {
+        var folders = await storageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
             Title = "Select Agent Skill Folder",
             AllowMultiple = false,
         });
+        return folders.FirstOrDefault()?.Path.LocalPath;
+    }
 
-        var folder = folders.FirstOrDefault();
-        if (folder is not null)
+    internal async Task ContinueLocalFolderImportAsync(
+        SkillSettingsViewModel viewModel,
+        Task<string?> folderPathTask)
+    {
+        try
         {
-            await viewModel.ImportLocalFolderAsync(folder.Path.LocalPath);
+            var folderPath = await folderPathTask;
+            if (_disposed
+                || viewModel.IsDisposed
+                || !ReferenceEquals(DataContext, viewModel)
+                || string.IsNullOrWhiteSpace(folderPath))
+            {
+                return;
+            }
+
+            await viewModel.ImportLocalFolderAsync(folderPath);
+        }
+        catch (ObjectDisposedException) when (_disposed || viewModel.IsDisposed)
+        {
         }
     }
 }

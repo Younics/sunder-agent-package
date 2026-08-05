@@ -16,34 +16,53 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        var turn = _sessionService.GetTurn(message.RowId);
+        var turn = _transcriptPageGateway is null
+            ? _sessionService.GetTurn(message.RowId)
+            : (await _transcriptPageGateway.LoadTranscriptPageAsync(
+                    new Runtime.AgentTranscriptPageRequest(
+                        selectedSession.SessionId,
+                        Runtime.AgentTranscriptPageDirection.Turn,
+                        1,
+                        AnchorTurnId: message.RowId))
+                .ConfigureAwait(false)).Turns.FirstOrDefault();
         if (turn is null || turn.SessionId != selectedSession.SessionId)
         {
-            ApplySessionStatus(selectedSession, "The selected message is no longer available.");
+            await InvokeOnUiThreadAsync(() =>
+                ApplySessionStatus(selectedSession, "The selected message is no longer available."))
+                .ConfigureAwait(false);
             return;
         }
 
         if (turn.Role != AgentMessageRole.User || turn.Kind != AgentTurnKind.Message)
         {
-            ApplySessionStatus(selectedSession, "Only user messages can be edited from history.");
+            await InvokeOnUiThreadAsync(() =>
+                ApplySessionStatus(selectedSession, "Only user messages can be edited from history."))
+                .ConfigureAwait(false);
             return;
         }
 
-        var attachmentUploads = await LoadRollbackAttachmentUploadsAsync(turn);
-
-        ClearPendingAttachments();
-        PendingRollbackTurnId = turn.TurnId;
-        DraftMessage = TranscriptRowProjector<AgentTranscriptRowViewModel>.ExtractTextContent(turn);
-        selectedSession.DraftMessage = DraftMessage;
-        foreach (var upload in attachmentUploads.Uploads)
+        var attachmentUploads = await LoadRollbackAttachmentUploadsAsync(turn).ConfigureAwait(false);
+        await InvokeOnUiThreadAsync(() =>
         {
-            TryAddAttachmentUpload(upload);
-        }
+            if (_disposed)
+            {
+                return;
+            }
 
-        var status = attachmentUploads.SkippedCount == 0
-            ? "Editing an earlier message. Send will replace this point in the transcript."
-            : $"Editing an earlier message. {attachmentUploads.SkippedCount} attachment(s) could not be restored.";
-        ApplySessionStatus(selectedSession, status);
+            ClearPendingAttachments();
+            PendingRollbackTurnId = turn.TurnId;
+            DraftMessage = TranscriptRowProjector<AgentTranscriptRowViewModel>.ExtractTextContent(turn);
+            selectedSession.DraftMessage = DraftMessage;
+            foreach (var upload in attachmentUploads.Uploads)
+            {
+                TryAddAttachmentUpload(upload);
+            }
+
+            var status = attachmentUploads.SkippedCount == 0
+                ? "Editing an earlier message. Send will replace this point in the transcript."
+                : $"Editing an earlier message. {attachmentUploads.SkippedCount} attachment(s) could not be restored.";
+            ApplySessionStatus(selectedSession, status);
+        }).ConfigureAwait(false);
     }
 
     [RelayCommand]

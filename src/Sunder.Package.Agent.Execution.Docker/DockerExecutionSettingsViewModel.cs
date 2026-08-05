@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using Avalonia.Threading;
 using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Shared.Presentation;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -19,6 +18,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
     private readonly SerializedRefreshLoop _imageRefresh;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly object _initializationSyncRoot = new();
+    private readonly IPresentationDispatcher _uiDispatcher;
     private readonly ILogger? _logger;
     private const string ImageListChannel = "docker-images";
     private const string FullSettingsChannel = "docker-settings";
@@ -31,7 +31,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
         [TimeoutKey, DockerCli.ExecutablePathConfigurationKey];
 
-    private readonly DockerExecutionAppRuntimeClient _runtimeClient;
+    private readonly IPackageRuntimeClient _runtimeClient;
     private readonly IBackgroundProcessQueue _backgroundProcessQueue;
     private bool _suppressRevisionTracking;
     private bool _disposed;
@@ -45,13 +45,15 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
     private Task? _initialization;
 
     internal DockerExecutionSettingsViewModel(
-        DockerExecutionAppRuntimeClient runtimeClient,
+        IPackageRuntimeClient runtimeClient,
         IBackgroundProcessQueue backgroundProcessQueue,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        IPresentationDispatcher? uiDispatcher = null)
     {
         _runtimeClient = runtimeClient;
         _backgroundProcessQueue = backgroundProcessQueue;
         _logger = logger;
+        _uiDispatcher = uiDispatcher ?? PresentationDispatcher.Capture();
         _imageRefresh = new SerializedRefreshLoop(
             cancellationToken => ReloadImagesAsync(cancellationToken: cancellationToken),
             ReportImageRefreshFailure);
@@ -226,8 +228,9 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
 
     private async Task InitializeCoreAsync()
     {
-        SetLoadState(DockerSettingsLoadState.Loading);
-        await LoadSettingsSnapshotAsync(_lifetime.Token);
+        await InvokePresentationAsync(() => SetLoadState(DockerSettingsLoadState.Loading))
+            .ConfigureAwait(false);
+        await LoadSettingsSnapshotAsync(_lifetime.Token).ConfigureAwait(false);
     }
 
     private async Task LoadSettingsSnapshotAsync(CancellationToken cancellationToken)
@@ -237,249 +240,84 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
             _lifetime.Token);
         var settingsRequest = _requests.Begin(FullSettingsChannel, linkedCancellation.Token);
         var imageRequest = _requests.Begin(ImageListChannel, linkedCancellation.Token);
-        var selectionRevision = _selectionRevision;
-        var timeoutRevision = _timeoutRevision;
-        var pathRevision = _dockerCliPathRevision;
-        var settingsRevision = _settingsRevision;
+        var selectionRevision = 0L;
+        var timeoutRevision = 0L;
+        var pathRevision = 0L;
+        var settingsRevision = 0L;
+        var snapshotCaptured = false;
         try
         {
+            await InvokePresentationAsync(() =>
+            {
+                selectionRevision = _selectionRevision;
+                timeoutRevision = _timeoutRevision;
+                pathRevision = _dockerCliPathRevision;
+                settingsRevision = _settingsRevision;
+                snapshotCaptured = true;
+            }).ConfigureAwait(false);
+            if (!snapshotCaptured)
+            {
+                return;
+            }
+
             var response = await RunOperationAsync(
                 new DockerExecutionOperationRequest(DockerExecutionOperationKind.GetSettings),
                 settingsRequest.CancellationToken,
                 showBusy: false,
-                () => _requests.IsCurrent(settingsRequest));
+                () => _requests.IsCurrent(settingsRequest)).ConfigureAwait(false);
             if (response is null)
             {
-                if (!_disposed
-                    && !linkedCancellation.IsCancellationRequested
-                    && _requests.IsCurrent(settingsRequest))
+                await InvokePresentationAsync(() =>
                 {
-                    SetLoadState(DockerSettingsLoadState.Error);
-                }
-                return;
-            }
-            if (response.TimeoutSeconds is null || response.DockerCliPath is null)
-            {
-                SetProtocolError("GetSettings response omitted settings fields.");
-                SetLoadState(DockerSettingsLoadState.Error);
-                return;
-            }
-            if (!TryGetImageSnapshot(response, "GetSettings", out var images, out var catalogRevision))
-            {
-                SetLoadState(DockerSettingsLoadState.Error);
+                    if (!linkedCancellation.IsCancellationRequested
+                        && _requests.IsCurrent(settingsRequest))
+                    {
+                        SetLoadState(DockerSettingsLoadState.Error);
+                    }
+                }).ConfigureAwait(false);
                 return;
             }
 
-            if (_requests.IsCurrent(settingsRequest) && settingsRevision == _settingsRevision)
+            await InvokePresentationAsync(() =>
             {
-                ApplyTimeoutSeconds(response.TimeoutSeconds, timeoutRevision);
-                ApplyDockerCliPath(response.DockerCliPath, pathRevision);
-            }
-            if (_requests.IsCurrent(imageRequest))
-            {
-                ApplyImages(images, expectedSelectionRevision: selectionRevision);
-                _catalogRevision = catalogRevision;
-            }
-            ClearRuntimeError();
-            if (LoadState == DockerSettingsLoadState.Loading)
-            {
-                StatusText = string.Empty;
-            }
-            SetLoadState(DockerSettingsLoadState.Ready);
+                if (!_requests.IsCurrent(settingsRequest))
+                {
+                    return;
+                }
+                if (response.TimeoutSeconds is null || response.DockerCliPath is null)
+                {
+                    SetProtocolError("GetSettings response omitted settings fields.");
+                    SetLoadState(DockerSettingsLoadState.Error);
+                    return;
+                }
+                if (!TryGetImageSnapshot(response, "GetSettings", out var images, out var catalogRevision))
+                {
+                    SetLoadState(DockerSettingsLoadState.Error);
+                    return;
+                }
+
+                if (settingsRevision == _settingsRevision)
+                {
+                    ApplyTimeoutSeconds(response.TimeoutSeconds, timeoutRevision);
+                    ApplyDockerCliPath(response.DockerCliPath, pathRevision);
+                }
+                if (_requests.IsCurrent(imageRequest))
+                {
+                    ApplyImages(images, expectedSelectionRevision: selectionRevision);
+                    _catalogRevision = catalogRevision;
+                }
+                ClearRuntimeError();
+                if (LoadState == DockerSettingsLoadState.Loading)
+                {
+                    StatusText = string.Empty;
+                }
+                SetLoadState(DockerSettingsLoadState.Ready);
+            }).ConfigureAwait(false);
         }
         finally
         {
             _requests.Complete(settingsRequest);
             _requests.Complete(imageRequest);
-        }
-    }
-
-    private async Task<DockerExecutionOperationResponse?> RunOperationAsync(
-        DockerExecutionOperationRequest request,
-        CancellationToken cancellationToken,
-        bool showBusy,
-        Func<bool>? hasAuthority = null)
-    {
-        var busyOperation = showBusy ? BeginBusyOperation() : (long?)null;
-        try
-        {
-            var response = await _runtimeClient.InvokeAsync(request, cancellationToken)
-                .AsTask()
-                .WaitAsync(cancellationToken);
-            if (_disposed
-                || busyOperation is { } activeGeneration && !IsBusyOperationCurrent(activeGeneration)
-                || hasAuthority is not null && !hasAuthority())
-            {
-                return null;
-            }
-            if (response.Error is not null)
-            {
-                ApplyDomainError(response.Error);
-                return null;
-            }
-            return response;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            return null;
-        }
-        catch (PackageRuntimeInvocationException exception)
-        {
-            if (hasAuthority is null || hasAuthority())
-            {
-                ApplyRuntimeFailure(exception);
-            }
-            return null;
-        }
-        catch (Exception exception)
-        {
-            if (!_disposed && (hasAuthority is null || hasAuthority()))
-            {
-                var correlationId = Guid.NewGuid().ToString("N");
-                _logger?.LogError(
-                    exception,
-                    "Docker settings operation failed. CorrelationId: {CorrelationId}; Operation: {Operation}",
-                    correlationId,
-                    request.Kind);
-                RuntimeErrorCode = "docker.presentation.failed";
-                RuntimeCorrelationId = correlationId;
-                StatusText = FormatError(
-                    "Docker settings operation failed.",
-                    "docker.presentation.failed",
-                    correlationId);
-            }
-            return null;
-        }
-        finally
-        {
-            if (busyOperation is { } busyGeneration)
-            {
-                CompleteBusyOperation(busyGeneration);
-            }
-        }
-    }
-
-    private bool TryGetImageSnapshot(
-        DockerExecutionOperationResponse response,
-        string operation,
-        out IReadOnlyList<DockerImageDefinition> images,
-        out long catalogRevision)
-    {
-        if (response.Images is null
-            || response.CatalogRevision is not { } revision
-            || revision < 0)
-        {
-            SetProtocolError($"{operation} response omitted image snapshot fields.");
-            images = [];
-            catalogRevision = default;
-            return false;
-        }
-        if (revision < _catalogRevision)
-        {
-            SetProtocolError($"{operation} response returned a regressive catalog revision.");
-            images = [];
-            catalogRevision = default;
-            return false;
-        }
-        images = response.Images;
-        catalogRevision = revision;
-        return true;
-    }
-
-    private void ApplyDomainError(DockerExecutionOperationError error)
-    {
-        if (!IsSafeLowercaseToken(error.Code)
-            || string.IsNullOrWhiteSpace(error.Message)
-            || error.Message.Length > 1024
-            || !IsSafeToken(error.CorrelationId))
-        {
-            SetProtocolError("Operation error payload is invalid.");
-            return;
-        }
-        RuntimeErrorCode = error.Code;
-        RuntimeCorrelationId = error.CorrelationId;
-        StatusText = FormatOperationError(error);
-    }
-
-    private void ApplyRuntimeFailure(PackageRuntimeInvocationException exception)
-    {
-        RuntimeErrorCode = exception.Code;
-        RuntimeCorrelationId = exception.CorrelationId;
-        StatusText = FormatError(
-            "Docker Runtime request failed.",
-            exception.Code,
-            exception.CorrelationId);
-        _logger?.LogWarning(
-            "Docker Runtime request failed. Code: {Code}; CorrelationId: {CorrelationId}",
-            exception.Code,
-            exception.CorrelationId);
-    }
-
-    private void SetProtocolError(string diagnostic)
-    {
-        var correlationId = Guid.NewGuid().ToString("N");
-        RuntimeErrorCode = "docker.protocol.invalid-response";
-        RuntimeCorrelationId = correlationId;
-        StatusText = FormatError(
-            "Docker Runtime returned an invalid response.",
-            "docker.protocol.invalid-response",
-            correlationId);
-        _logger?.LogError(
-            "Docker Runtime protocol failure. CorrelationId: {CorrelationId}; Diagnostic: {Diagnostic}",
-            correlationId,
-            diagnostic);
-    }
-
-    private void ClearRuntimeError()
-    {
-        RuntimeErrorCode = null;
-        RuntimeCorrelationId = null;
-    }
-
-    private void SetLoadState(DockerSettingsLoadState state)
-    {
-        if (!_disposed)
-        {
-            LoadState = state;
-        }
-    }
-
-    private static string FormatOperationError(DockerExecutionOperationError error)
-        => FormatError(error.Message, error.Code, error.CorrelationId);
-
-    private static string FormatError(string message, string code, string? correlationId)
-        => string.IsNullOrWhiteSpace(correlationId)
-            ? $"{message} (code: {code})"
-            : $"{message} (code: {code}; correlation: {correlationId})";
-
-    private static bool IsSafeLowercaseToken(string? value)
-        => IsSafeToken(value)
-           && value!.All(character => !char.IsAsciiLetter(character)
-                                      || char.IsAsciiLetterLower(character));
-
-    private static bool IsSafeToken(string? value)
-        => value is { Length: > 0 and <= 128 }
-           && value.All(character => char.IsAsciiLetterOrDigit(character)
-                                     || character is '.' or '-' or '_');
-
-    private long BeginBusyOperation()
-    {
-        var generation = ++_busyGeneration;
-        if (!_disposed)
-        {
-            IsBusy = true;
-        }
-        return generation;
-    }
-
-    private bool IsBusyOperationCurrent(long generation)
-        => !_disposed && generation == _busyGeneration;
-
-    private void CompleteBusyOperation(long generation)
-    {
-        if (IsBusyOperationCurrent(generation))
-        {
-            IsBusy = false;
         }
     }
 
@@ -536,32 +374,46 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             _lifetime.Token);
+        var selectionRevision = 0L;
+        var snapshotCaptured = false;
+        await InvokePresentationAsync(() =>
+        {
+            selectionRevision = _selectionRevision;
+            selectedImageReference ??= SelectedImage?.ImageReference;
+            snapshotCaptured = true;
+        }).ConfigureAwait(false);
+        if (!snapshotCaptured)
+        {
+            return;
+        }
+
         var request = _requests.Begin(ImageListChannel, linkedCancellation.Token);
-        var selectionRevision = _selectionRevision;
-        selectedImageReference ??= SelectedImage?.ImageReference;
         try
         {
             var response = await RunOperationAsync(
                 new DockerExecutionOperationRequest(DockerExecutionOperationKind.GetSettings),
                 request.CancellationToken,
                 showBusy: false,
-                () => _requests.IsCurrent(request));
-            if (response is null
-                || !TryGetImageSnapshot(response, "GetSettings", out var images, out var catalogRevision))
+                () => _requests.IsCurrent(request)).ConfigureAwait(false);
+            if (response is null)
             {
                 return;
             }
-            await Dispatcher.UIThread.InvokeAsync(() =>
+
+            await InvokePresentationAsync(() =>
             {
-                if (!_disposed && _requests.IsCurrent(request))
+                if (!_requests.IsCurrent(request)
+                    || !TryGetImageSnapshot(response, "GetSettings", out var images, out var catalogRevision))
                 {
-                    ApplyImages(
-                        images,
-                        selectedImageReference,
-                        selectionRevision);
-                    _catalogRevision = catalogRevision;
+                    return;
                 }
-            }, DispatcherPriority.Background);
+
+                ApplyImages(
+                    images,
+                    selectedImageReference,
+                    selectionRevision);
+                _catalogRevision = catalogRevision;
+            }).ConfigureAwait(false);
         }
         finally
         {
@@ -671,22 +523,15 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
             exception,
             "Docker image background refresh failed. CorrelationId: {CorrelationId}",
             correlationId);
-        _tasks.Run(async cancellationToken =>
+        _tasks.Run(InvokePresentationAsync(() =>
         {
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                if (!_disposed)
-                {
-                    RuntimeErrorCode = "docker.presentation.refresh-failed";
-                    RuntimeCorrelationId = correlationId;
-                    StatusText = FormatError(
-                        "Docker image refresh failed.",
-                        "docker.presentation.refresh-failed",
-                        correlationId);
-                }
-            }, DispatcherPriority.Background);
-            cancellationToken.ThrowIfCancellationRequested();
-        });
+            RuntimeErrorCode = "docker.presentation.refresh-failed";
+            RuntimeCorrelationId = correlationId;
+            StatusText = FormatError(
+                "Docker image refresh failed.",
+                "docker.presentation.refresh-failed",
+                correlationId);
+        }));
     }
 
     private static bool IsDockerImagePull(BackgroundProcessSnapshot snapshot)

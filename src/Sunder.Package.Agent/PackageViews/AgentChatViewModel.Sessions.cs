@@ -120,10 +120,11 @@ public sealed partial class AgentChatViewModel
             {
                 [SubsessionNavigationSessionIdKey] = childSession.SessionId.ToString("D"),
             }
-        );
+        ).ConfigureAwait(false);
         if (!opened)
         {
-            SetGlobalStatus("Unable to open the Subsessions view.");
+            await InvokeOnUiThreadAsync(() =>
+                SetGlobalStatus("Unable to open the Subsessions view.")).ConfigureAwait(false);
         }
     }
 

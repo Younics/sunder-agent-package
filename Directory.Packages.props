@@ -9,6 +9,7 @@
     <PackageVersion Include="Sunder.Sdk" Version="[1.1.0,1.2.0)" />
     <PackageVersion Include="Sunder.Sdk.Avalonia" Version="[1.1.0,1.2.0)" />
     <PackageVersion Include="Sunder.Sdk.Stacks" Version="[1.1.0,1.2.0)" />
+    <PackageVersion Include="Sunder.Sdk.Worker" Version="[1.1.0]" />
     <PackageVersion Include="Sunder.Package.Build" Version="[1.1.0,1.2.0)" />
     <!-- UI -->
     <PackageVersion Include="Avalonia" Version="12.0.3"

@@ -70,7 +70,7 @@ jobs:
           set -euo pipefail
           version="$(jq -er '.releaseVersion' packages.json)"
           dotnet restore Sunder.AgentPackage.slnx --force-evaluate -p:SunderUseSourceSdk=true
-          dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 -p:SunderUseSourceSdk=true -p:Version="$version" -p:PackageVersion="$version" -p:InformationalVersion="$version" -p:ContinuousIntegrationBuild=true
+          dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$version" -p:ContinuousIntegrationBuild=true
           dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore -m:1 -p:SunderUseSourceSdk=true
 
       - name: Pack Protocol and every runtime archive once
@@ -82,18 +82,31 @@ jobs:
           mkdir -p "$output"
           version="$(jq -er '.releaseVersion' packages.json)"
 
+          shell_worker="src/Sunder.Package.Agent.Tools.Shell/Sunder.Package.Agent.Tools.Shell.csproj"
+          for rid in win-x64 win-arm64 linux-x64 linux-arm64 osx-x64 osx-arm64; do
+            dotnet restore "$shell_worker" --force-evaluate -r "$rid" -p:SunderUseSourceSdk=true
+            dotnet build "$shell_worker" -c Release --no-restore -m:1 -r "$rid" \
+              -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$version" \
+              -p:ContinuousIntegrationBuild=true
+          done
+          dotnet restore "$shell_worker" --force-evaluate -r linux-x64 -p:SunderUseSourceSdk=true
+
           dotnet pack src/Sunder.Package.Agent.Contracts/Sunder.Package.Agent.Contracts.csproj \
             -c Release --no-build --no-restore -o "$output" \
-            -p:SunderUseSourceSdk=true -p:Version="$version" -p:PackageVersion="$version" \
-            -p:InformationalVersion="$version" -p:ContinuousIntegrationBuild=true
+            -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$version" \
+            -p:ContinuousIntegrationBuild=true
 
           while IFS=$'\t' read -r package_id project_path; do
             output_path="$output/$package_id.$version.sunderpkg"
+            extra_properties=()
+            if [[ "$package_id" == "sunder.package.agent.tools.shell" ]]; then
+              extra_properties+=("-p:SunderShellUniversal=true")
+            fi
             dotnet msbuild "$project_path" -t:PackSunderPackage -m:1 \
               -p:Configuration=Release -p:SunderUseSourceSdk=true \
-              -p:Version="$version" -p:PackageVersion="$version" \
-              -p:InformationalVersion="$version" -p:ContinuousIntegrationBuild=true \
-              -p:SunderPackageOutputPath="$output_path"
+              -p:SunderAgentVersion="$version" -p:ContinuousIntegrationBuild=true \
+              -p:SunderPackageOutputPath="$output_path" \
+              "${extra_properties[@]}"
           done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, .projectPath] | @tsv' packages.json)
 
           runtime_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
@@ -107,17 +120,27 @@ jobs:
             exit 1
           fi
 
+          shell_archive="$output/sunder.package.agent.tools.shell.$version.sunderpkg"
+          shell_manifest="$RUNNER_TEMP/sunder-agent-shell-manifest.json"
+          unzip -p "$shell_archive" manifest/sunder-package.json > "$shell_manifest"
+          jq -e '
+            ([.targets[].rid] | sort) == ["linux-arm64", "linux-x64", "osx-arm64", "osx-x64", "win-arm64", "win-x64"] and
+            ([.targets[].kind] | unique) == ["worker"] and
+            all(.targets[]; .requiredHostCapabilities | index("worker-protocol.v2") != null) and
+            ([.provides[].providerId] | sort) == ["shell.permissions", "shell.prompt.context", "shell.tools"]
+          ' "$shell_manifest" >/dev/null
+
       - name: Build Core validation and smoke paths
         working-directory: sunder-core
         shell: bash
         run: |
           set -euo pipefail
-          dotnet restore src/Host/Sunder.Cli/Sunder.Cli.csproj --locked-mode
-          dotnet restore tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj --locked-mode
-          dotnet restore tests/Sunder.App.Tests/Sunder.App.Tests.csproj --locked-mode
-          dotnet build src/Host/Sunder.Cli/Sunder.Cli.csproj -c Release --no-restore
-          dotnet build tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-restore
-          dotnet build tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-restore
+          dotnet restore languages/csharp/dotnet/host/Sunder.Cli/Sunder.Cli.csproj --locked-mode
+          dotnet restore languages/csharp/dotnet/tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj --locked-mode
+          dotnet restore languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj --locked-mode
+          dotnet build languages/csharp/dotnet/host/Sunder.Cli/Sunder.Cli.csproj -c Release --no-restore
+          dotnet build languages/csharp/dotnet/tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-restore
+          dotnet build languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-restore
 
       - name: Validate exact family archives through Package Format
         working-directory: sunder-agent-package
@@ -125,7 +148,7 @@ jobs:
         run: |
           set -euo pipefail
           while IFS= read -r archive; do
-            dotnet ../sunder-core/src/Host/Sunder.Cli/bin/Release/net10.0/sunder.dll package validate "$archive"
+            dotnet ../sunder-core/languages/csharp/dotnet/host/Sunder.Cli/bin/Release/net10.0/sunder.dll dev package validate "$archive"
           done < <(find artifacts/family -maxdepth 1 -name '*.sunderpkg' -type f | sort)
 
       - name: Runtime clean lifecycle smoke for exact family bytes
@@ -138,9 +161,9 @@ jobs:
           set -euo pipefail
           mkdir -p "$SUNDER_AGENT_UI_SNAPSHOT_DIR"
           test_fqn="Sunder.Runtime.Host.Tests.AgentPackageReleaseSmokeTests.ReleaseArchives_InstallActivateUnloadReloadAndReinstallAsOneFamily"
-          discovered="$(dotnet test tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-build --no-restore --list-tests --filter "FullyQualifiedName=$test_fqn")"
+          discovered="$(dotnet test languages/csharp/dotnet/tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-build --no-restore --list-tests --filter "FullyQualifiedName=$test_fqn")"
           grep -Fqx "    $test_fqn" <<< "$discovered"
-          dotnet test tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
+          dotnet test languages/csharp/dotnet/tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
 
       - name: App activation smoke for Runtime-produced snapshot
         working-directory: sunder-core
@@ -150,9 +173,9 @@ jobs:
         run: |
           set -euo pipefail
           test_fqn="Sunder.App.Tests.AgentPackageReleaseSmokeTests.RuntimeProducedAgentSnapshot_MaterializesAndActivatesInApp"
-          discovered="$(dotnet test tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --list-tests --filter "FullyQualifiedName=$test_fqn")"
+          discovered="$(dotnet test languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --list-tests --filter "FullyQualifiedName=$test_fqn")"
           grep -Fqx "    $test_fqn" <<< "$discovered"
-          dotnet test tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
+          dotnet test languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
 
       - name: Upload verified family artifacts
         uses: actions/upload-artifact@v4

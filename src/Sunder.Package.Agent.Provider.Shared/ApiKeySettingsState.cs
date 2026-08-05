@@ -10,13 +10,13 @@ internal readonly record struct ApiKeyStatus(string Label, string Detail, bool I
 internal sealed partial class ApiKeySettingsState : ObservableObject, IDisposable
 {
     private static readonly TimeSpan SuccessStatusDuration = TimeSpan.FromSeconds(4);
-    private readonly ProviderCredentialAccessor _credentials;
+    private readonly IProviderCredentialSettingsGateway _credentials;
     private readonly Func<bool, ApiKeyStatus> _resolveStatus;
     private readonly OperationState _operation = new();
     private readonly TimedStatusController _statusTimer;
 
     internal ApiKeySettingsState(
-        ProviderCredentialAccessor credentials,
+        IProviderCredentialSettingsGateway credentials,
         string description,
         string placeholder,
         Func<bool, ApiKeyStatus> resolveStatus,
@@ -90,10 +90,13 @@ internal sealed partial class ApiKeySettingsState : ObservableObject, IDisposabl
         try
         {
             operation.CancellationToken.ThrowIfCancellationRequested();
-            var changed = await _credentials.SetCredentialIfProvidedAsync(EnteredCredential, operation.CancellationToken);
+            var changed = !string.IsNullOrWhiteSpace(EnteredCredential);
+            var snapshot = changed
+                ? await _credentials.SetAsync(EnteredCredential!, operation.CancellationToken)
+                : await _credentials.GetStatusAsync(operation.CancellationToken);
             EnteredCredential = null;
             IsClearConfirmationRequested = false;
-            await RefreshCredentialStatusAsync(operation.CancellationToken);
+            ApplyCredentialStatus(snapshot.HasStoredCredential);
             CompleteWithTransientSuccess(
                 operation,
                 changed ? "API key saved." : "Settings saved. The existing API key was retained.");
@@ -131,10 +134,10 @@ internal sealed partial class ApiKeySettingsState : ObservableObject, IDisposabl
         try
         {
             operation.CancellationToken.ThrowIfCancellationRequested();
-            await _credentials.DeleteCredentialAsync(operation.CancellationToken);
+            var snapshot = await _credentials.ClearAsync(operation.CancellationToken);
             EnteredCredential = null;
             IsClearConfirmationRequested = false;
-            await RefreshCredentialStatusAsync(operation.CancellationToken);
+            ApplyCredentialStatus(snapshot.HasStoredCredential);
             CompleteWithTransientSuccess(operation, "Stored API key cleared.");
         }
         catch (OperationCanceledException) when (operation.CancellationToken.IsCancellationRequested)
@@ -153,7 +156,7 @@ internal sealed partial class ApiKeySettingsState : ObservableObject, IDisposabl
 
     internal async Task RefreshCredentialStatusAsync(CancellationToken cancellationToken = default)
     {
-        ApplyCredentialStatus(await _credentials.HasCredentialAsync(cancellationToken));
+        ApplyCredentialStatus((await _credentials.GetStatusAsync(cancellationToken)).HasStoredCredential);
     }
 
     internal void ApplyCredentialStatus(bool hasStoredCredential)

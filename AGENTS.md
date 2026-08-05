@@ -5,6 +5,7 @@ This repository contains the public first-party Sunder Agent package family.
 ## Project Map
 
 - `src/Sunder.Package.Agent` -- main Agent package.
+- `src/Sunder.Package.Agent.Builder` -- package project creation, prerequisite, build, and publish package.
 - `src/Sunder.Package.Agent.Contracts` -- public Agent Protocol descriptors, generated RPC bindings, and local adapter contracts used by Agent extension packages.
 - `src/Sunder.Package.Agent.Execution.*` -- execution backends.
 - `src/Sunder.Package.Agent.Provider.*` -- model/provider integrations.

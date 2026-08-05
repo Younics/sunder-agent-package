@@ -48,7 +48,8 @@ public sealed class ExecutionPackageRoleBoundaryTests
         Assert.DoesNotContain(nameof(DockerExecutionWorkspaceConfigService), serviceTypeNames);
         Assert.DoesNotContain(nameof(DockerImageCatalogService), serviceTypeNames);
         Assert.Contains(serviceTypeNames, name => name.EndsWith("SettingsViewModel", StringComparison.Ordinal));
-        Assert.Contains(serviceTypeNames, name => name.EndsWith("WorkspaceEditorPresentationContributor", StringComparison.Ordinal));
+        Assert.DoesNotContain(serviceTypeNames, name => name.EndsWith("AppRuntimeClient", StringComparison.Ordinal));
+        Assert.DoesNotContain(serviceTypeNames, name => name.EndsWith("WorkspaceEditorPresentationContributor", StringComparison.Ordinal));
 
         using var provider = services.BuildServiceProvider();
         var registry = new RecordingAppRegistry();
@@ -110,9 +111,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new LocalShellCatalogService(scope.Context);
-        var config = new LocalExecutionWorkspaceConfigService(scope.Context);
-        var editor = new LocalExecutionWorkspaceEditorContributor(config, catalog);
-        var handler = new LocalExecutionRuntimeOperationHandler(scope.Context, catalog, editor);
+        var handler = new LocalExecutionRuntimeOperationHandler(scope.Context, catalog);
 
         var response = await handler.HandleAsync(new LocalExecutionOperationRequest(
                 LocalExecutionOperationKind.SaveShells,
@@ -224,9 +223,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         using var scope = RegressionTestPackageScope.Create();
         var runner = new DockerCliRunner(scope.Context);
         var catalog = new DockerImageCatalogService(scope.Context, runner);
-        var config = new DockerExecutionWorkspaceConfigService(scope.Context, catalog);
-        var editor = new DockerExecutionWorkspaceEditorContributor(config, catalog);
-        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog, editor);
+        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog);
 
         var response = await handler.HandleAsync(new DockerExecutionOperationRequest(
                 DockerExecutionOperationKind.SaveSettings,
@@ -351,9 +348,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         using var scope = RegressionTestPackageScope.Create();
         var runner = new DockerCliRunner(scope.Context);
         var catalog = new DockerImageCatalogService(scope.Context, runner);
-        var config = new DockerExecutionWorkspaceConfigService(scope.Context, catalog);
-        var editor = new DockerExecutionWorkspaceEditorContributor(config, catalog);
-        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog, editor);
+        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog);
 
         var response = await handler.HandleAsync(new DockerExecutionOperationRequest(
             DockerExecutionOperationKind.AddImage,
@@ -371,9 +366,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         using var scope = RegressionTestPackageScope.Create();
         var runner = new DockerCliRunner(scope.Context);
         var catalog = new DockerImageCatalogService(scope.Context, runner);
-        var config = new DockerExecutionWorkspaceConfigService(scope.Context, catalog);
-        var editor = new DockerExecutionWorkspaceEditorContributor(config, catalog);
-        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog, editor);
+        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog);
 
         var response = await handler.HandleAsync(new DockerExecutionOperationRequest(
             DockerExecutionOperationKind.AddImage,
@@ -395,9 +388,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         await migration.StartAsync();
         var runner = new DockerCliRunner(scope.Context);
         var catalog = new DockerImageCatalogService(scope.Context, runner, migration);
-        var config = new DockerExecutionWorkspaceConfigService(scope.Context, catalog, migration);
-        var editor = new DockerExecutionWorkspaceEditorContributor(config, catalog);
-        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog, editor);
+        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog);
 
         var response = await handler.HandleAsync(new DockerExecutionOperationRequest(
             DockerExecutionOperationKind.GetSettings));
@@ -406,33 +397,6 @@ public sealed class ExecutionPackageRoleBoundaryTests
         Assert.Equal("docker.catalog.unknown-data", response.Error?.Code);
         Assert.NotNull(response.Error?.CorrelationId);
         Assert.Equal(json, await scope.Context.Storage.State.GetValueAsync(DockerImageCatalogService.ImagesKey));
-    }
-
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task AppRuntimeProxy_WhenRuntimeIsUnavailable_ThrowsSanitizedSdkFailure(bool local)
-    {
-        PackageRuntimeInvocationException exception;
-        if (local)
-        {
-            var client = new LocalExecutionAppRuntimeClient(NullPackageRuntimeClient.Instance);
-            exception = await Assert.ThrowsAsync<PackageRuntimeInvocationException>(async () =>
-                await client.InvokeAsync(new LocalExecutionOperationRequest(
-                    LocalExecutionOperationKind.GetWorkspaceEditor)));
-        }
-        else
-        {
-            var client = new DockerExecutionAppRuntimeClient(NullPackageRuntimeClient.Instance);
-            exception = await Assert.ThrowsAsync<PackageRuntimeInvocationException>(async () =>
-                await client.InvokeAsync(new DockerExecutionOperationRequest(
-                    DockerExecutionOperationKind.GetWorkspaceEditor)));
-        }
-
-        Assert.Equal("runtime.v1.unavailable", exception.Code);
-        Assert.True(exception.IsTransient);
-        Assert.Equal(503, exception.StatusCode);
-        Assert.Null(exception.InnerException);
     }
 
     [Fact]
@@ -466,7 +430,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         var runtimeClient = new RecordingDockerRuntimeClient();
         var queue = new RecordingBackgroundProcessQueue();
         using var viewModel = new DockerExecutionSettingsViewModel(
-            new DockerExecutionAppRuntimeClient(runtimeClient),
+            runtimeClient,
             queue);
         await viewModel.InitializeAsync();
         viewModel.SelectedImage = Assert.Single(viewModel.Images);

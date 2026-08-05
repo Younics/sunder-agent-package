@@ -485,6 +485,7 @@ public sealed partial class AgentLocalStore
     {
         using var connection = CreateConnection();
         connection.Open();
+        EnableWriteAheadLogging(connection);
         ApplySchemaMigrations(connection, SchemaMigrations[^1].Version);
     }
 
@@ -544,11 +545,40 @@ public sealed partial class AgentLocalStore
         }
 
         EnableSecureDelete(connection);
+        if (IsSchemaMigrationTargetApplied(connection, targetVersion))
+        {
+            return;
+        }
         BootstrapAndValidateSchemaMigrationLedger(connection);
         foreach (var migration in SchemaMigrations.Where(item => item.Version <= targetVersion))
         {
             ApplySchemaMigration(connection, migration);
         }
+    }
+
+    private static bool IsSchemaMigrationTargetApplied(SqliteConnection connection, int targetVersion)
+    {
+        using var transaction = connection.BeginTransaction(deferred: true);
+        if (!TableExists(connection, transaction, "SchemaMigrations"))
+        {
+            transaction.Commit();
+            return false;
+        }
+
+        var columns = ListTableColumns(connection, transaction, "SchemaMigrations");
+        if (!columns.Contains("Version")
+            || !columns.Contains("Name")
+            || !columns.Contains("AppliedAtUtc")
+            || !columns.Contains("Checksum"))
+        {
+            transaction.Commit();
+            return false;
+        }
+
+        var entries = ReadLedger(connection, transaction, hasChecksum: true);
+        ValidateLedgerEntries(entries, allowMissingChecksum: false);
+        transaction.Commit();
+        return entries.Count >= targetVersion;
     }
 
     private static void BootstrapAndValidateSchemaMigrationLedger(SqliteConnection connection)

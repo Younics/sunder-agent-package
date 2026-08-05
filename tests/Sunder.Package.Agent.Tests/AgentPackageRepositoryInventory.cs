@@ -8,6 +8,13 @@ internal sealed record RuntimePackageProject(
     string MetadataPath)
 {
     public string DirectoryPath => Path.GetDirectoryName(ProjectPath)!;
+
+    public bool IsWorker => XDocument.Load(ProjectPath)
+        .Descendants("SunderPackageTarget")
+        .Any(static target => string.Equals(
+            target.Attribute("Kind")?.Value,
+            "worker",
+            StringComparison.Ordinal));
 }
 
 internal static class AgentPackageRepositoryInventory

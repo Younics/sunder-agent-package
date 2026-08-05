@@ -51,9 +51,11 @@ It declares a runtime dependency on `sunder.package.agent`. It must not referenc
 
 `packages.json` is the first-party release/capability inventory. Samples are intentionally excluded.
 
+`Sunder.Package.Agent.Tools.Shell` is a self-contained six-RID Worker V2 package. Its universal archive aggregates one exact executable target for each supported RID. Runtime starts the selected target as a supervised child process; it does not load an `ISunderRuntimePackageModule` for Shell.
+
 ## Runtime And App Roles
 
-Each installed package can activate separate modules in separate processes/containers:
+Managed Agent packages can activate separate modules in the Runtime and App processes. The Shell package follows the supervised Worker V2 process lifecycle described above instead:
 
 | Role | Owns | Must not own |
 | --- | --- | --- |
@@ -83,7 +85,7 @@ Extensions read base projections through `IAgentRuntimeCatalog` and use service 
 
 ## Extension Ownership
 
-The host records the activating package id for every `RegisterRpcProvider` call. Each endpoint names one exact activation and becomes stale when that owner deactivates.
+The Host records the activating package id for every managed `RegisterRpcProvider` call and every provider advertised by a Worker V2 activation. Each endpoint names one exact activation and becomes stale when that owner deactivates.
 
 Use `SunderRpcProviderSnapshot.PackageId` when package identity matters, especially stack export or dependency inference. A domain descriptor's optional `PackageId` is useful display metadata but is not the ownership authority.
 

@@ -240,16 +240,38 @@ public sealed partial class AgentToolService
                                             && string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase)
                                             && _executionTargetService.ResolveTargetReference(binding) is not null);
 
-    private AgentToolSourceContext CreateSourceContext(
+    private async Task<AgentToolSourceContext> CreateSourceContextAsync(
         Guid? sessionId,
         AgentProfileRecord? profile,
-        AgentWorkspaceRecord? workspace)
+        AgentWorkspaceRecord? workspace,
+        CancellationToken cancellationToken)
     {
-        var executionBinding = ResolveExecutionBinding(workspace);
-        return new AgentToolSourceContext(sessionId, profile, workspace, executionBinding)
+        if (workspace is null)
         {
-            ExecutionTargetReference = _executionTargetService.ResolveTargetReference(executionBinding),
-        };
+            return new AgentToolSourceContext(sessionId, profile, workspace, null);
+        }
+
+        foreach (var binding in _workspaceService.ListBindings(workspace.WorkspaceId)
+                     .Where(binding => binding.IsEnabled
+                                       && string.Equals(
+                                           binding.Role,
+                                           AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
+                                           StringComparison.OrdinalIgnoreCase)))
+        {
+            var target = await _executionTargetService.ResolveTargetReferenceAsync(
+                    binding,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (target is not null)
+            {
+                return new AgentToolSourceContext(sessionId, profile, workspace, binding)
+                {
+                    ExecutionTargetReference = target,
+                };
+            }
+        }
+
+        return new AgentToolSourceContext(sessionId, profile, workspace, null);
     }
 
     private AgentRpcReference<IAgentExecutionTarget>? ResolveExecutionTargetReference(
@@ -271,7 +293,36 @@ public sealed partial class AgentToolService
         {
             return lease.RetirementToken.IsCancellationRequested
                 ? null
-                : new ExecutionTargetSnapshot(lease.Contribution.Descriptor, lease.PackageId);
+                : new ExecutionTargetSnapshot(lease.Service.Descriptor, lease.PackageId);
+        }
+    }
+
+    private static async Task<ExecutionTargetSnapshot?> SnapshotExecutionTargetAsync(
+        AgentRpcReference<IAgentExecutionTarget>? reference,
+        CancellationToken cancellationToken)
+    {
+        if (reference is null)
+        {
+            return null;
+        }
+
+        var lease = await reference.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
+        if (lease is null)
+        {
+            return null;
+        }
+
+        using (lease)
+        using (var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+                   cancellationToken,
+                   lease.RetirementToken))
+        {
+            var descriptor = lease.Service is AgentExecutionTargetRpcClient rpcTarget
+                ? await rpcTarget.DescribeAsync(invocation.Token).ConfigureAwait(false)
+                : lease.Service.Descriptor;
+            return lease.RetirementToken.IsCancellationRequested
+                ? null
+                : new ExecutionTargetSnapshot(descriptor, lease.PackageId);
         }
     }
 
@@ -546,7 +597,8 @@ public sealed partial class AgentToolService
         CancellationToken cancellationToken,
         Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback)
     {
-        if (!targetReference.TryAcquire(out var targetLease))
+        var targetLease = await targetReference.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
+        if (targetLease is null)
         {
             throw AgentRpcInvocation.Unavailable("execution-target");
         }
@@ -560,7 +612,7 @@ public sealed partial class AgentToolService
                 retirementToken);
             try
             {
-                var result = await callback(targetLease.Contribution, invocation.Token).ConfigureAwait(false);
+                var result = await callback(targetLease.Service, invocation.Token).ConfigureAwait(false);
                 if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
                     throw AgentRpcInvocation.Unavailable(packageId);

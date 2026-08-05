@@ -17,9 +17,14 @@ shift 3
 package_ids=("$@")
 
 [[ -n "$registry_api" ]] || { usage; exit 2; }
+[[ "$registry_api" =~ ^https://[^/@?#]+$ ]] \
+  || { printf 'Registry API URL must be an absolute HTTPS origin without user info, path, query, or fragment.\n' >&2; exit 2; }
 [[ "$dist_tag" == "latest" || "$dist_tag" == "preview" ]] \
   || { printf "Family promotion only supports the 'latest' and 'preview' dist tags.\n" >&2; exit 2; }
-[[ -n "${REGISTRY_TOKEN:-}" ]] || { printf 'REGISTRY_TOKEN is not configured.\n' >&2; exit 1; }
+[[ -n "${SUNDER_REGISTRY_CLI_TOKEN:-}" ]] \
+  || { printf 'SUNDER_REGISTRY_CLI_TOKEN is not configured for Registry dist-tag promotion.\n' >&2; exit 1; }
+[[ "$SUNDER_REGISTRY_CLI_TOKEN" =~ ^sunder_cli_[A-Za-z0-9_-]{43}$ ]] \
+  || { printf 'SUNDER_REGISTRY_CLI_TOKEN must be a valid interactive sunder_cli token.\n' >&2; exit 1; }
 
 for required_command in curl jq; do
   command -v "$required_command" >/dev/null 2>&1 \
@@ -227,7 +232,7 @@ set_dist_tag() {
   payload="$(jq -cn --arg version "$target_version" '{version: $version}')"
   url="$(dist_tag_url "$package_id")"
   if ! response="$(curl --fail-with-body -sS -X PUT \
-    -H "Authorization: Bearer $REGISTRY_TOKEN" \
+    -H "Authorization: Bearer $SUNDER_REGISTRY_CLI_TOKEN" \
     -H 'Content-Type: application/json' \
     --data "$payload" \
     "$url")"; then
@@ -247,7 +252,7 @@ delete_dist_tag() {
 
   url="$(dist_tag_url "$package_id")"
   if ! response="$(curl --fail-with-body -sS -X DELETE \
-    -H "Authorization: Bearer $REGISTRY_TOKEN" \
+    -H "Authorization: Bearer $SUNDER_REGISTRY_CLI_TOKEN" \
     "$url")"; then
     printf "Registry failed to delete package '%s' dist tag '%s'.\n" "$package_id" "$dist_tag" >&2
     return 1

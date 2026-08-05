@@ -2,6 +2,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Contracts.Services;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
@@ -29,16 +30,22 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
             Workspace: null,
             ExecutionBinding: null);
         var descriptors = new List<AgentToolDescriptor>();
-        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.ToolSources))
+        var sources = SubagentCatalogRpcInvocation.Snapshot(
+            _rpcCatalog,
+            AgentRpcServices.ToolSources,
+            cancellationToken,
+            static source => source.DisplayName);
+        foreach (var source in sources.OrderBy(
+                     static item => item.Metadata,
+                     StringComparer.OrdinalIgnoreCase))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var contributed = await InvokeAsync(
-                reference,
+            var contributed = await SubagentCatalogRpcInvocation.InvokeOptionalAsync(
+                source,
                 cancellationToken,
                 (source, token) => source.ListToolsAsync(context, token)).ConfigureAwait(false);
-            if (contributed is not null)
+            if (contributed.IsAvailable)
             {
-                descriptors.AddRange(contributed);
+                descriptors.AddRange(contributed.Value);
             }
         }
 
@@ -58,20 +65,31 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
     public async Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListPackageCapabilitiesAsync(
         CancellationToken cancellationToken = default)
     {
-        _changeObserver.RefreshProviderSubscriptions();
+        try
+        {
+            _changeObserver.RefreshProviderSubscriptions();
+        }
+        catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
+        {
+            throw SubagentCatalogRpcInvocation.Cancelled(exception, cancellationToken);
+        }
         var request = new AgentProfileSelectableCapabilityRequest(Profile: null);
         var capabilities = new List<AgentProfileSelectableCapabilityDescriptor>();
-        var providers = SnapshotCapabilityProviders();
+        var providers = SubagentCatalogRpcInvocation.Snapshot(
+            _rpcCatalog,
+            AgentRpcServices.SelectableCapabilityProviders,
+            cancellationToken,
+            static provider => provider.DisplayName);
         foreach (var provider in providers
-                     .OrderBy(provider => provider.DisplayName, StringComparer.OrdinalIgnoreCase))
+                     .OrderBy(provider => provider.Metadata, StringComparer.OrdinalIgnoreCase))
         {
-            var contributed = await InvokeAsync(
-                provider.Reference,
+            var contributed = await SubagentCatalogRpcInvocation.InvokeOptionalAsync(
+                provider,
                 cancellationToken,
                 (contribution, token) => contribution.ListCapabilitiesAsync(request, token)).ConfigureAwait(false);
-            if (contributed is not null)
+            if (contributed.IsAvailable)
             {
-                capabilities.AddRange(contributed);
+                capabilities.AddRange(contributed.Value);
             }
         }
 
@@ -92,60 +110,6 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
             .ToArray();
     }
 
-    private IReadOnlyList<CapabilityProviderReference> SnapshotCapabilityProviders()
-    {
-        var providers = new List<CapabilityProviderReference>();
-        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.SelectableCapabilityProviders))
-        {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-            using (lease)
-            {
-                if (!lease.RetirementToken.IsCancellationRequested)
-                {
-                    providers.Add(new CapabilityProviderReference(reference, lease.Service.DisplayName));
-                }
-            }
-        }
-
-        return providers;
-    }
-
-    private static async ValueTask<TResult?> InvokeAsync<TContract, TResult>(
-        AgentRpcReference<TContract> reference,
-        CancellationToken cancellationToken,
-        Func<TContract, CancellationToken, ValueTask<TResult>> callback)
-        where TContract : class
-    {
-        if (!reference.TryAcquire(out var lease))
-        {
-            return default;
-        }
-
-        using (lease)
-        {
-            var retirementToken = lease.RetirementToken;
-            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken,
-                retirementToken);
-            try
-            {
-                var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
-                return retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested
-                    ? default
-                    : result;
-            }
-            catch (OperationCanceledException) when (
-                retirementToken.IsCancellationRequested
-                && !cancellationToken.IsCancellationRequested)
-            {
-                return default;
-            }
-        }
-    }
-
     private void OnChanged() => Changed?.Invoke();
 
     public void Dispose()
@@ -159,8 +123,4 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
         _changeObserver.Changed -= OnChanged;
         _changeObserver.Dispose();
     }
-
-    private sealed record CapabilityProviderReference(
-        AgentRpcReference<IAgentProfileSelectableCapabilityProvider> Reference,
-        string DisplayName);
 }

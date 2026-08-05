@@ -29,9 +29,17 @@ public sealed partial class AgentToolService(
         CancellationToken cancellationToken = default)
     {
         var effectiveProfile = profile;
-        var context = CreateSourceContext(sessionId, effectiveProfile, workspace);
+        var context = await CreateSourceContextAsync(
+                sessionId,
+                effectiveProfile,
+                workspace,
+                cancellationToken)
+            .ConfigureAwait(false);
         var catalog = new List<AgentToolCatalogEntry>();
-        foreach (var candidate in await ListOwnedRuntimeToolCandidatesAsync(context, cancellationToken)
+        foreach (var candidate in await ListOwnedRuntimeToolCandidatesAsync(
+                         context,
+                         cancellationToken,
+                         omitUnavailableSources: true)
                      .ConfigureAwait(false))
         {
             var descriptor = candidate.RuntimeTool.Descriptor;
@@ -67,9 +75,17 @@ public sealed partial class AgentToolService(
 
     public async Task<IReadOnlyList<AgentToolCatalogEntry>> ListInstalledLocalToolsAsync(CancellationToken cancellationToken = default)
     {
-        var context = CreateSourceContext(sessionId: null, profile: null, workspace: null);
+        var context = await CreateSourceContextAsync(
+                sessionId: null,
+                profile: null,
+                workspace: null,
+                cancellationToken)
+            .ConfigureAwait(false);
         var catalog = new List<AgentToolCatalogEntry>();
-        foreach (var candidate in await ListOwnedRuntimeToolCandidatesAsync(context, cancellationToken)
+        foreach (var candidate in await ListOwnedRuntimeToolCandidatesAsync(
+                         context,
+                         cancellationToken,
+                         omitUnavailableSources: true)
                      .ConfigureAwait(false))
         {
             catalog.AddRange(new[] { candidate.RuntimeTool.Descriptor }
@@ -130,7 +146,12 @@ public sealed partial class AgentToolService(
         CancellationToken cancellationToken = default)
     {
         var effectiveProfile = profile;
-        var context = CreateSourceContext(sessionId, effectiveProfile, workspace);
+        var context = await CreateSourceContextAsync(
+                sessionId,
+                effectiveProfile,
+                workspace,
+                cancellationToken)
+            .ConfigureAwait(false);
         var candidates = await ListOwnedRuntimeToolCandidatesAsync(context, cancellationToken)
             .ConfigureAwait(false);
         var tools = new List<AgentOwnedRuntimeTool>();
@@ -140,16 +161,8 @@ public sealed partial class AgentToolService(
                      .Select(static group => group.Single()))
         {
             var descriptor = candidate.RuntimeTool.Descriptor;
-            AgentToolReadiness? readiness;
-            try
-            {
-                readiness = await GetReadinessAsync(candidate, context, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (AgentPackageUnavailableException)
-            {
-                continue;
-            }
+            var readiness = await GetReadinessAsync(candidate, context, cancellationToken)
+                .ConfigureAwait(false);
             readiness ??= new AgentToolReadiness(
                 descriptor.ToolId,
                 AgentToolReadinessStatus.Ready,
@@ -183,7 +196,12 @@ public sealed partial class AgentToolService(
         string? executionTargetConfigurationGeneration,
         CancellationToken cancellationToken)
     {
-        var context = CreateSourceContext(sessionId, profile, workspace) with
+        var context = (await CreateSourceContextAsync(
+                sessionId,
+                profile,
+                workspace,
+                cancellationToken)
+            .ConfigureAwait(false)) with
         {
             ExecutionTargetConfigurationGeneration = executionTargetConfigurationGeneration,
         };

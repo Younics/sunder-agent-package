@@ -18,7 +18,6 @@ Use the Protocol package and the Sunder SDK only. Extensions must not reference 
 | Test an extension | [Testing extensions](testing-extensions.md) |
 | Release or troubleshoot a package | [Release, compatibility, and troubleshooting](release-compatibility-troubleshooting.md) |
 
-The compiled minimal example is [`samples/Sunder.Agent.Extension.Minimal`](../samples/Sunder.Agent.Extension.Minimal/README.md).
 
 ## Public API Map
 

@@ -2,6 +2,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.Gemini;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
+using Sunder.Sdk.Runtime;
 using Xunit;
 
 namespace Sunder.Package.Agent.Provider.Gemini.Tests;
@@ -62,7 +63,22 @@ public sealed class GeminiProviderTests
         var credentials = new ProviderCredentialAccessor(
             context.Secrets,
             GeminiProviderConfiguration.ApiKeySecretKey);
-        using var settings = new GeminiSettingsViewModel(context, credentials);
+        var credentialHandler = new ProviderCredentialRuntimeHandler(credentials);
+        var runtime = new ProviderTestRuntimeClient(async (operationId, request, cancellationToken) =>
+        {
+            if (operationId == ProviderCredentialRuntimeOperations.Query.OperationId)
+            {
+                return await credentialHandler.HandleAsync((ProviderCredentialQuery)request, cancellationToken);
+            }
+
+            if (operationId == ProviderCredentialRuntimeOperations.Command.OperationId)
+            {
+                return await credentialHandler.HandleAsync((ProviderCredentialCommand)request, cancellationToken);
+            }
+
+            throw new InvalidOperationException($"Unexpected Runtime operation '{operationId}'.");
+        });
+        using var settings = new GeminiSettingsViewModel(context, runtime);
         var chat = new GeminiAgentProvider(context, credentials);
         var embeddings = new GeminiEmbeddingProvider(context, credentials);
 
@@ -88,7 +104,7 @@ public sealed class GeminiProviderTests
             {
                 [GeminiProviderConfiguration.UtilityModelKey] = "gemini/unknown-model",
             });
-        using var settings = new GeminiSettingsViewModel(context);
+        using var settings = new GeminiSettingsViewModel(context, NullPackageRuntimeClient.Instance);
 
         Assert.Equal(
             GeminiProviderConfiguration.DefaultUtilityModelId,

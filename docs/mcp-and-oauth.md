@@ -53,6 +53,8 @@ The settings editor accepts one bare server object, not an outer `mcp` or `$sche
 
 Remote transport uses SDK auto-detection for supported HTTP modes, including streamable HTTP/SSE behavior. Header values are stored as package secrets; only their names remain in normal package state.
 
+When editing a saved server, Runtime returns header and environment names with empty values; stored values are never returned to App. Leave an empty value to retain it, set a non-empty value to replace it, or set it to `null` (or remove the entry) to clear it. An enabled server cannot save a new empty entry because there is no stored value to retain.
+
 `timeout` is accepted as a legacy fallback for both phases. Current defaults are 15 seconds for discovery and 120 seconds for a tool call; effective values are capped at 120 seconds and 30 minutes respectively.
 
 ## Transport Security

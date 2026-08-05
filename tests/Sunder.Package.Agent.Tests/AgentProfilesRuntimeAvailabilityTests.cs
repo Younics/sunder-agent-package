@@ -87,7 +87,7 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
         var timeProvider = new ManualTimerTimeProvider();
         using var viewModel = CreateViewModel(gateway, timeProvider);
 
-        var exception = Assert.Throws<HttpRequestException>(() => gateway.SaveProfile(
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(() => gateway.SaveProfileAsync(
             "profile",
             "Profile",
             description: null,

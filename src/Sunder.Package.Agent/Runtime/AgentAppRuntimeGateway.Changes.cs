@@ -185,7 +185,7 @@ internal sealed partial class AgentAppRuntimeGateway
                 Raise(ProfileChanged, change.ProfileId ?? string.Empty);
                 break;
             case AgentRuntimeChangeKind.Catalog:
-                _catalogs.Clear();
+                InvalidateCatalog();
                 Raise(SelectableCapabilitiesChanged);
                 break;
             case AgentRuntimeChangeKind.Workspace:
@@ -244,7 +244,7 @@ internal sealed partial class AgentAppRuntimeGateway
                     Raise(RunActivityChanged, activitySessionId, activity);
                 break;
             case AgentRuntimeChangeKind.Permission:
-                _globalPermissions = null;
+                InvalidateGlobalPermissions(change.Revision);
                 if (change.SessionId is { } permissionSessionId)
                 {
                     Raise(SessionChanged, permissionSessionId);
@@ -294,7 +294,7 @@ internal sealed partial class AgentAppRuntimeGateway
                 return;
             }
 
-            _ = await GetDashboardAsync(cancellationToken).ConfigureAwait(false);
+            _ = await LoadDashboardAsync(cancellationToken).ConfigureAwait(false);
             if (!IsCurrentObservation(generation))
             {
                 return;

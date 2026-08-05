@@ -71,6 +71,7 @@ public sealed class AgentLocalStoreMigrationTests
         var store = new AgentLocalStore(scope.Context);
 
         using var connection = OpenDatabase(store.DatabasePath);
+        Assert.Equal("wal", ExecuteString(connection, "PRAGMA journal_mode;"));
         Assert.Equal(21L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
         Assert.Equal(21L, ExecuteInt64(connection, "SELECT MAX(Version) FROM SchemaMigrations;"));
         Assert.Equal(21L, ExecuteInt64(connection,
@@ -142,6 +143,25 @@ public sealed class AgentLocalStoreMigrationTests
         Assert.True(ColumnExists(connection, "AgentSessionContextCheckpoints", "GeneratorVersion"));
         Assert.False(TableExists(connection, "AgentWorkingSummaries"));
         Assert.False(TableExists(connection, "AgentPermissionRules"));
+    }
+
+    [Fact]
+    public void CurrentSchemaValidation_DoesNotContendWithActiveWriter()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        using var writer = OpenDatabase(store.DatabasePath);
+        Assert.Equal("wal", ExecuteString(writer, "PRAGMA journal_mode;"));
+        using var activeWrite = writer.BeginTransaction(deferred: false);
+        using var candidate = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = store.DatabasePath,
+            Pooling = false,
+            DefaultTimeout = 1,
+        }.ToString());
+        candidate.Open();
+
+        AgentLocalStore.ApplySchemaMigrations(candidate, 21);
     }
 
     [Fact]
@@ -900,6 +920,13 @@ public sealed class AgentLocalStoreMigrationTests
         using var command = connection.CreateCommand();
         command.CommandText = sql;
         return Convert.ToInt64(command.ExecuteScalar());
+    }
+
+    private static string ExecuteString(SqliteConnection connection, string sql)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return Convert.ToString(command.ExecuteScalar())!;
     }
 
     private static bool TableExists(SqliteConnection connection, string tableName)

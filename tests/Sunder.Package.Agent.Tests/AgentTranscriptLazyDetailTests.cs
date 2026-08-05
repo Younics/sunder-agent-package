@@ -267,10 +267,7 @@ public sealed class AgentTranscriptLazyDetailTests
             new AgentChatSnapshotRequest(
                 InitialTranscriptLimit: 1,
                 PreferredWorkspaceId: workspace.WorkspaceId,
-                PreferredSessionId: session.SessionId),
-            storedProfileId: null,
-            storedWorkspaceId: workspace.WorkspaceId,
-            (_, _) => Task.FromResult<Guid?>(session.SessionId));
+                PreferredSessionId: session.SessionId));
         var startupHeader = Assert.Single(Assert.Single(snapshot.InitialTranscript.Turns).Items);
         AssertHeaderOnly(startupHeader);
         Assert.True(startupHeader.ToolHasDetails);

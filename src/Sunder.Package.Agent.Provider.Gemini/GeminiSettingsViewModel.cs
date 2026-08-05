@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Provider.Gemini;
 
@@ -18,16 +19,18 @@ public sealed partial class GeminiSettingsViewModel : ObservableObject,
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
         [GeminiProviderConfiguration.ApiKeySecretKey, GeminiProviderConfiguration.UtilityModelKey];
 
-    public GeminiSettingsViewModel(IPackageContext packageContext)
+    public GeminiSettingsViewModel(
+        IPackageContext packageContext,
+        IPackageRuntimeClient runtimeClient)
         : this(
             packageContext,
-            new ProviderCredentialAccessor(packageContext.Secrets, GeminiProviderConfiguration.ApiKeySecretKey))
+            new ProviderCredentialAppRuntimeGateway(runtimeClient))
     {
     }
 
     internal GeminiSettingsViewModel(
         IPackageContext packageContext,
-        ProviderCredentialAccessor credentials)
+        IProviderCredentialSettingsGateway credentials)
     {
         _settings = new ApiKeyUtilitySettingsState(
             packageContext,

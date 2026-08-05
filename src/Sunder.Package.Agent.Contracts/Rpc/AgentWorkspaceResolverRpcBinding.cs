@@ -61,7 +61,8 @@ public sealed class AgentWorkspaceExecutionResolverRpcClient(ISunderRpcClient cl
         }
         var reference = new AgentRpcReference<IAgentExecutionTarget>(client, AgentRpcServices.ExecutionTargets, provider);
         var target = new AgentExecutionTargetRpcClient(client, targetEndpoint);
-        return new AgentWorkspaceExecutionResolution(wire.Workspace, wire.Binding, target.Descriptor, wire.Scope, target)
+        var descriptor = await target.DescribeAsync(cancellationToken).ConfigureAwait(false);
+        return new AgentWorkspaceExecutionResolution(wire.Workspace, wire.Binding, descriptor, wire.Scope, target)
         {
             ExecutionTargetHandle = wire.ExecutionTarget,
             ExecutionTargetReference = reference,

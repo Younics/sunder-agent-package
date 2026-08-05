@@ -14,20 +14,28 @@ public sealed partial class AgentChatViewModel
             return false;
         }
 
-        if (DisplayedTranscriptSessionId == turn.SessionId
-            && !_timeline.IsFollowingLatest)
+        try
         {
-            RequestTranscriptTailFollow(turn.SessionId);
-        }
+            if (DisplayedTranscriptSessionId == turn.SessionId
+                && !_timeline.IsFollowingLatest)
+            {
+                RequestTranscriptTailFollow(turn.SessionId);
+            }
 
-        if (DisplayedTranscriptSessionId == turn.SessionId)
+            if (DisplayedTranscriptSessionId == turn.SessionId)
+            {
+                _runActivity.TrackTurn(turn, scheduleQuietTimer: false);
+            }
+
+            var submittedSession = Sessions.FirstOrDefault(item => item.SessionId == turn.SessionId)
+                                   ?? (SelectedSession?.SessionId == turn.SessionId ? SelectedSession : null);
+            CompleteAuthoritativeComposerReconciliation(submittedSession, submission);
+        }
+        catch (Exception exception)
         {
-            _runActivity.TrackTurn(turn, scheduleQuietTimer: false);
+            submission.FailAuthoritativeReconciliation(exception);
+            throw;
         }
-
-        var submittedSession = Sessions.FirstOrDefault(item => item.SessionId == turn.SessionId)
-                               ?? (SelectedSession?.SessionId == turn.SessionId ? SelectedSession : null);
-        ClearSubmittedComposerState(submittedSession, submission);
 
         if (submission.IsComplete)
         {
@@ -126,6 +134,9 @@ public sealed partial class AgentChatViewModel
     {
         if (submission.IsCommitted)
         {
+            await submission.AuthoritativeReconciliation
+                .WaitAsync(_lifetimeCancellation.Token)
+                .ConfigureAwait(false);
             return true;
         }
 
@@ -145,9 +156,16 @@ public sealed partial class AgentChatViewModel
         var authoritativeTurn = transcript.Turns.FirstOrDefault(submission.Matches);
         if (authoritativeTurn is not null)
         {
-            return await EnqueueTranscriptBoundaryAsync(() =>
+            var committed = await EnqueueTranscriptBoundaryAsync(() =>
                     ReconcileAuthoritativeSubmissionTurn(authoritativeTurn, submission))
                 .ConfigureAwait(false);
+            if (committed)
+            {
+                await submission.AuthoritativeReconciliation
+                    .WaitAsync(_lifetimeCancellation.Token)
+                    .ConfigureAwait(false);
+            }
+            return committed;
         }
         if (!restoreWhenMissing)
         {
@@ -229,7 +247,9 @@ public sealed partial class AgentChatViewModel
                             await InvokeOnUiThreadAsync(() =>
                             {
                                 submission.Commit();
-                                ClearSubmittedComposerState(submittedSession, submission);
+                                CompleteAuthoritativeComposerReconciliation(
+                                    submittedSession,
+                                    submission);
                                 EndPendingSend(submission);
                             });
                             continue;
@@ -292,5 +312,21 @@ public sealed partial class AgentChatViewModel
         OnDraftMessageChanged(DraftMessage);
         OnPropertyChanged(nameof(HasPendingAttachments));
         OnPropertyChanged(nameof(PendingAttachmentSummaryText));
+    }
+
+    private void CompleteAuthoritativeComposerReconciliation(
+        AgentSessionListItemViewModel? submittedSession,
+        AgentComposerSubmission submission)
+    {
+        try
+        {
+            ClearSubmittedComposerState(submittedSession, submission);
+            submission.CompleteAuthoritativeReconciliation();
+        }
+        catch (Exception exception)
+        {
+            submission.FailAuthoritativeReconciliation(exception);
+            throw;
+        }
     }
 }

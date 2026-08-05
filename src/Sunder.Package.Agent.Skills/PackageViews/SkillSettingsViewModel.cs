@@ -18,8 +18,8 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
     private const string MutationChannel = "skills-mutation";
 
     private readonly ISkillManagementGateway _gateway;
-    private readonly TimedStatusController _successStatus = new();
-    private readonly IPresentationDispatcher _uiDispatcher = PresentationDispatcher.Capture();
+    private readonly TimedStatusController _successStatus;
+    private readonly IPresentationDispatcher _uiDispatcher;
     private readonly PresentationTaskScope _tasks = new();
     private readonly LatestRequestCoordinator _requests = new();
     private readonly KeyedAdaptiveListDetailState<string, InstalledSkillItemViewModel> _listDetail;
@@ -34,9 +34,21 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
     {
     }
 
-    internal SkillSettingsViewModel(ISkillManagementGateway gateway)
+    internal SkillSettingsViewModel(
+        SkillStore store,
+        SkillImportService importService,
+        TimeProvider timeProvider)
+        : this(new SkillLocalManagementGateway(store, importService), timeProvider)
+    {
+    }
+
+    internal SkillSettingsViewModel(
+        ISkillManagementGateway gateway,
+        TimeProvider? timeProvider = null)
     {
         _gateway = gateway;
+        _uiDispatcher = PresentationDispatcher.Capture();
+        _successStatus = new TimedStatusController(timeProvider, _uiDispatcher);
         _listDetail = new KeyedAdaptiveListDetailState<string, InstalledSkillItemViewModel>(
             Skills,
             static skill => skill.SkillId,
@@ -159,6 +171,8 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
     }
 
     internal Task RuntimeRefreshIdle => _runtimeRefresh.WhenIdle;
+
+    internal bool IsDisposed => _disposed;
 
     partial void OnIsBusyChanged(bool value)
         => DeleteSelectedSkillCommand.NotifyCanExecuteChanged();
@@ -284,13 +298,35 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
         Func<CancellationToken, Task<IReadOnlyList<InstalledSkillRecord>>> action,
         string successMessage)
     {
-        BeginUserIntent();
-        var intentRevision = _listDetail.ShowNewDetail();
-        var mutation = _requests.Begin(MutationChannel);
-        IsBusy = true;
+        if (_disposed)
+        {
+            return;
+        }
+
+        LatestRequestTicket mutation = default;
+        var mutationStarted = false;
         try
         {
+            BeginUserIntent();
+            if (_disposed)
+            {
+                return;
+            }
+
+            var intentRevision = _listDetail.ShowNewDetail();
+            mutation = _requests.Begin(MutationChannel);
+            mutationStarted = true;
+            if (_disposed || !_requests.IsCurrent(mutation))
+            {
+                return;
+            }
+
+            IsBusy = true;
             var imported = await action(mutation.CancellationToken);
+            if (_disposed || !_requests.IsCurrent(mutation))
+            {
+                return;
+            }
 
             if (imported.Count == 0)
             {
@@ -336,16 +372,21 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
         catch (OperationCanceledException) when (mutation.CancellationToken.IsCancellationRequested)
         {
         }
+        catch (ObjectDisposedException) when (_disposed)
+        {
+        }
         catch (Exception ex)
         {
-            if (_requests.IsCurrent(mutation))
+            if (!_disposed && _requests.IsCurrent(mutation))
             {
                 SetStatus(ex.Message, SkillStatusKind.Error);
             }
         }
         finally
         {
-            if (_requests.Complete(mutation))
+            if (mutationStarted
+                && _requests.Complete(mutation)
+                && !_disposed)
             {
                 IsBusy = false;
             }

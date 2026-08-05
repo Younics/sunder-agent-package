@@ -130,6 +130,7 @@ public sealed partial class AgentLocalStore
         transaction.Commit();
         if (sessions.Count > 0)
         {
+            CheckpointWriteAheadLog(connection);
             SignalSessionCleanupJobsChanged();
         }
         return sessions.Select(session => session.SessionId).ToArray();
@@ -179,6 +180,7 @@ public sealed partial class AgentLocalStore
         transaction.Commit();
         if (deletedSessionIds.Count > 0)
         {
+            CheckpointWriteAheadLog(connection);
             SignalSessionCleanupJobsChanged();
         }
         return deletedSessionIds;

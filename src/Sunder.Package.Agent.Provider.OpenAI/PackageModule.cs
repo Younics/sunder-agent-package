@@ -18,6 +18,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton(new ProviderCredentialAccessor(
             context.Secrets,
             OpenAiProviderConfiguration.ApiKeySecretKey));
+        services.AddSingleton<ProviderCredentialRuntimeHandler>();
         services.AddSingleton(serviceProvider => new ApiKeyAuthStrategy(
             serviceProvider.GetRequiredService<ProviderCredentialAccessor>()));
         services.AddSingleton<CodexConnectedAuthStrategy>();
@@ -43,6 +44,9 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterRuntimeOperation(
             OpenAiRuntimeOperations.Auth,
             services.GetRequiredService<OpenAiAuthOperationHandler>());
+        var credentials = services.GetRequiredService<ProviderCredentialRuntimeHandler>();
+        registry.RegisterRuntimeOperation(ProviderCredentialRuntimeOperations.Query, credentials);
+        registry.RegisterRuntimeOperation(ProviderCredentialRuntimeOperations.Command, credentials);
     }
 }
 
@@ -51,9 +55,11 @@ public sealed class AppPackageModule : ISunderAppPackageModule
     public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
     {
         services.AddSingleton<OpenAiAuthPresentationService>();
+        services.AddSingleton<ProviderCredentialAppRuntimeGateway>();
         services.AddTransient(serviceProvider => new OpenAiSettingsViewModel(
             context,
-            serviceProvider.GetRequiredService<OpenAiAuthPresentationService>()));
+            serviceProvider.GetRequiredService<OpenAiAuthPresentationService>(),
+            serviceProvider.GetRequiredService<ProviderCredentialAppRuntimeGateway>()));
     }
 
     public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)

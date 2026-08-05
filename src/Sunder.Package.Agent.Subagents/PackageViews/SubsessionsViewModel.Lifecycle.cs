@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Subagents.Runtime;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
@@ -19,7 +20,22 @@ public sealed partial class SubsessionsViewModel
         ISubsessionCheckpointReader checkpointReader,
         ISubsessionTranscriptPageReader transcriptReader,
         ISubsessionChangeNotifications changeNotifications)
-        : this(null, null)
+        : this(
+            sessionReader,
+            checkpointReader,
+            transcriptReader,
+            changeNotifications,
+            PresentationDispatcher.Capture())
+    {
+    }
+
+    internal SubsessionsViewModel(
+        ISubsessionSessionReader sessionReader,
+        ISubsessionCheckpointReader checkpointReader,
+        ISubsessionTranscriptPageReader transcriptReader,
+        ISubsessionChangeNotifications changeNotifications,
+        IPresentationDispatcher uiDispatcher)
+        : this(null, null, uiDispatcher)
     {
         SetRuntimePorts(sessionReader, checkpointReader, transcriptReader, changeNotifications);
     }

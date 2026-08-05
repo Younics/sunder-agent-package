@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Subagents.Runtime;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
@@ -16,25 +17,30 @@ public sealed partial class SubsessionsViewModel
             return false;
         }
 
-        var loaded = await _timeline.LoadOlderAsync(
-            async (sessionId, beforeCreatedAt, beforeTurnId, limit, pageCancellationToken) =>
-            {
-                using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-                    cancellationToken,
-                    pageCancellationToken);
-                var page = await transcriptReader.ListTurnsBeforeAsync(
-                    sessionId,
-                    beforeCreatedAt,
-                    beforeTurnId,
-                    limit,
-                    linkedCancellation.Token).ConfigureAwait(false);
-                return new TranscriptTurnPage(page.Turns, page.HasMore, page.Continuation);
-            },
-            protectedAnchorKey,
-            cancellationToken);
+        Task<bool> loadOperation = Task.FromResult(false);
+        await RunOnUiThreadAsync(() =>
+        {
+            loadOperation = StartTimelineOperation(() => _timeline.LoadOlderAsync(
+                async (sessionId, beforeCreatedAt, beforeTurnId, limit, pageCancellationToken) =>
+                {
+                    using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                        cancellationToken,
+                        pageCancellationToken);
+                    var page = await transcriptReader.ListTurnsBeforeAsync(
+                        sessionId,
+                        beforeCreatedAt,
+                        beforeTurnId,
+                        limit,
+                        linkedCancellation.Token).ConfigureAwait(false);
+                    return new TranscriptTurnPage(page.Turns, page.HasMore, page.Continuation);
+                },
+                protectedAnchorKey,
+                cancellationToken));
+        }, cancellationToken);
+        var loaded = await loadOperation;
         if (loaded)
         {
-            ApplyRunActivityState();
+            await RunOnUiThreadAsync(ApplyRunActivityState, cancellationToken);
         }
         return loaded;
     }
@@ -50,32 +56,64 @@ public sealed partial class SubsessionsViewModel
             return false;
         }
 
-        var loaded = await _timeline.LoadNewerAsync(
-            async (sessionId, afterCreatedAt, afterTurnId, limit, pageCancellationToken) =>
-            {
-                using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-                    cancellationToken,
-                    pageCancellationToken);
-                var page = await transcriptReader.ListTurnsAfterAsync(
-                    sessionId,
-                    afterCreatedAt,
-                    afterTurnId,
-                    limit,
-                    linkedCancellation.Token).ConfigureAwait(false);
-                return new TranscriptTurnPage(page.Turns, page.HasMore, page.Continuation);
-            },
-            protectedAnchorKey,
-            cancellationToken);
+        Task<bool> loadOperation = Task.FromResult(false);
+        await RunOnUiThreadAsync(() =>
+        {
+            loadOperation = StartTimelineOperation(() => _timeline.LoadNewerAsync(
+                async (sessionId, afterCreatedAt, afterTurnId, limit, pageCancellationToken) =>
+                {
+                    using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                        cancellationToken,
+                        pageCancellationToken);
+                    var page = await transcriptReader.ListTurnsAfterAsync(
+                        sessionId,
+                        afterCreatedAt,
+                        afterTurnId,
+                        limit,
+                        linkedCancellation.Token).ConfigureAwait(false);
+                    return new TranscriptTurnPage(page.Turns, page.HasMore, page.Continuation);
+                },
+                protectedAnchorKey,
+                cancellationToken));
+        }, cancellationToken);
+        var loaded = await loadOperation;
         if (loaded)
         {
-            if (resumeFollowingWhenCaughtUp)
+            await RunOnUiThreadAsync(() =>
             {
-                _timeline.ResumeFollowingLatestIfCaughtUp();
-            }
-            _runActivity.NotifyFollowStateChanged();
-            ApplyRunActivityState();
+                if (resumeFollowingWhenCaughtUp)
+                {
+                    _timeline.ResumeFollowingLatestIfCaughtUp();
+                }
+                _runActivity.NotifyFollowStateChanged();
+                ApplyRunActivityState();
+            }, cancellationToken);
         }
         return loaded;
+    }
+
+    private Task<TResult> StartTimelineOperation<TResult>(Func<Task<TResult>> operation)
+    {
+        var previousContext = SynchronizationContext.Current;
+        try
+        {
+            // The shared timeline captures this context before awaiting its page loader.
+            SynchronizationContext.SetSynchronizationContext(
+                new PresentationDispatcherSynchronizationContext(_uiDispatcher, _tasks));
+            return operation();
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+        }
+    }
+
+    private sealed class PresentationDispatcherSynchronizationContext(
+        IPresentationDispatcher dispatcher,
+        PresentationTaskScope tasks) : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback callback, object? state)
+            => tasks.Run(dispatcher.InvokeAsync(() => callback(state)));
     }
 
     private void LoadTranscript(Guid? sessionId, bool forceReplacement = false)
@@ -101,7 +139,9 @@ public sealed partial class SubsessionsViewModel
             var transcriptReader = _transcriptReader;
             if (transcriptReader is null)
             {
-                _timeline.TryFailInitialLoad(ticket);
+                await RunOnUiThreadAsync(
+                    () => _timeline.TryFailInitialLoad(ticket),
+                    CancellationToken.None);
                 return;
             }
 

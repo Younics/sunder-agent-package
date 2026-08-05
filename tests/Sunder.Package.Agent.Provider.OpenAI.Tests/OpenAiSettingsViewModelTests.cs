@@ -225,7 +225,7 @@ public sealed class OpenAiSettingsViewModelTests
             context,
             new OpenAiAuthPresentationService(runtime),
             callbackFlow,
-            new ProviderCredentialAccessor(context.Secrets, OpenAiProviderConfiguration.ApiKeySecretKey));
+            new ProviderCredentialAppRuntimeGateway(runtime));
     }
 
     private static PackageCallbackSessionStatus CallbackStatus(
@@ -254,9 +254,25 @@ public sealed class OpenAiSettingsViewModelTests
             where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Assert.Equal(OpenAiRuntimeOperations.Auth.OperationId, operation.OperationId);
             InvocationCount++;
-            return ValueTask.FromResult((TResponse)(object)response);
+            if (operation.OperationId == OpenAiRuntimeOperations.Auth.OperationId)
+            {
+                return ValueTask.FromResult((TResponse)(object)response);
+            }
+
+            if (operation.OperationId == ProviderCredentialRuntimeOperations.Query.OperationId)
+            {
+                return ValueTask.FromResult((TResponse)(object)new ProviderCredentialSnapshot(false));
+            }
+
+            if (operation.OperationId == ProviderCredentialRuntimeOperations.Command.OperationId)
+            {
+                var command = Assert.IsType<ProviderCredentialCommand>(request);
+                return ValueTask.FromResult((TResponse)(object)new ProviderCredentialSnapshot(
+                    command.Kind == ProviderCredentialCommandKind.Set));
+            }
+
+            throw new InvalidOperationException($"Unexpected Runtime operation '{operation.OperationId}'.");
         }
 
         public IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(

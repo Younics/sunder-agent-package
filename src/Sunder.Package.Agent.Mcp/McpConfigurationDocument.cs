@@ -104,26 +104,34 @@ internal static class McpConfigurationDocument
             TimeoutMilliseconds = parsed.LegacyTimeoutMilliseconds,
             DiscoveryTimeoutMilliseconds = parsed.DiscoveryTimeoutMilliseconds,
             ToolTimeoutMilliseconds = parsed.ToolTimeoutMilliseconds,
-            HeaderNames = [.. parsed.Headers.Keys],
-            EnvironmentVariableNames = [.. parsed.EnvironmentVariables.Keys],
+            HeaderNames = [.. parsed.Headers.Names],
+            EnvironmentVariableNames = [.. parsed.EnvironmentVariables.Names],
             OAuthEnabled = parsed.OAuthEnabled,
             OAuthScopes = parsed.OAuthScopes,
             OAuthClientId = parsed.OAuthClientId,
             CreatedAtUtc = existingServer?.CreatedAtUtc ?? now,
             UpdatedAtUtc = now,
         };
-        McpTransportSecurity.ValidateRemoteEndpoint(server, parsed.Headers);
+        McpTransportSecurity.ValidateRemoteEndpoint(server, parsed.Headers.Replacements);
         return new ParsedMcpServerConfiguration(
             server,
-            parsed.Headers,
-            parsed.EnvironmentVariables);
+            parsed.Headers.Replacements,
+            parsed.EnvironmentVariables.Replacements);
     }
+
+    public static string BuildRedactedEditorText(ConfiguredMcpServerRecord server)
+        => BuildEditorText(
+            server,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
 
     public static string BuildEditorText(
         ConfiguredMcpServerRecord server,
         IReadOnlyDictionary<string, string> headers,
         IReadOnlyDictionary<string, string> environmentVariables)
     {
+        var editorHeaders = BuildEditorSecretMap(server.HeaderNames, headers);
+        var editorEnvironment = BuildEditorSecretMap(server.EnvironmentVariableNames, environmentVariables);
         var displayName = string.Equals(server.DisplayName, server.Name, StringComparison.OrdinalIgnoreCase)
             ? null
             : server.DisplayName;
@@ -140,7 +148,7 @@ internal static class McpConfigurationDocument
                 type = "local",
                 enabled = server.IsEnabled,
                 command = server.CommandParts,
-                env = environmentVariables.Count == 0 ? null : environmentVariables,
+                env = editorEnvironment.Count == 0 ? null : editorEnvironment,
                 timeout = legacyTimeout,
                 discoveryTimeout = server.DiscoveryTimeoutMilliseconds,
                 toolTimeout = server.ToolTimeoutMilliseconds,
@@ -153,7 +161,7 @@ internal static class McpConfigurationDocument
                 type = "remote",
                 url = server.EndpointUrl,
                 enabled = server.IsEnabled,
-                headers = headers.Count == 0 ? null : headers,
+                headers = editorHeaders.Count == 0 ? null : editorHeaders,
                 timeout = legacyTimeout,
                 discoveryTimeout = server.DiscoveryTimeoutMilliseconds,
                 toolTimeout = server.ToolTimeoutMilliseconds,
@@ -212,8 +220,8 @@ internal static class McpConfigurationDocument
             [.. commandParts],
             ReadOptionalString(root, "workingDirectory"),
             EndpointUrl: null,
-            Headers: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-            EnvironmentVariables: ReadStringMap(root, "env", "environment"),
+            Headers: ParsedEditorSecretMap.Empty,
+            EnvironmentVariables: ReadSecretMap(root, "env", "environment"),
             legacyTimeoutMilliseconds,
             discoveryTimeoutMilliseconds,
             toolTimeoutMilliseconds,
@@ -243,8 +251,8 @@ internal static class McpConfigurationDocument
             CommandParts: [],
             WorkingDirectory: null,
             endpointUrl,
-            ReadStringMap(root, "headers"),
-            EnvironmentVariables: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            ReadSecretMap(root, "headers"),
+            EnvironmentVariables: ParsedEditorSecretMap.Empty,
             legacyTimeoutMilliseconds,
             discoveryTimeoutMilliseconds,
             toolTimeoutMilliseconds,
@@ -366,13 +374,16 @@ internal static class McpConfigurationDocument
         return parsedValue;
     }
 
-    private static Dictionary<string, string> ReadStringMap(JsonElement root, string propertyName, string? legacyPropertyName = null)
+    private static ParsedEditorSecretMap ReadSecretMap(
+        JsonElement root,
+        string propertyName,
+        string? legacyPropertyName = null)
     {
         if (!root.TryGetProperty(propertyName, out var value))
         {
             if (legacyPropertyName is null || !root.TryGetProperty(legacyPropertyName, out value))
             {
-                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                return ParsedEditorSecretMap.Empty;
             }
 
             propertyName = legacyPropertyName;
@@ -383,20 +394,55 @@ internal static class McpConfigurationDocument
             throw new InvalidOperationException($"'{propertyName}' must be an object of string values.");
         }
 
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var names = new List<string>();
+        var replacements = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var uniqueNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var property in value.EnumerateObject())
         {
+            if (string.IsNullOrWhiteSpace(property.Name))
+            {
+                throw new InvalidOperationException($"'{propertyName}' entries must use non-empty names.");
+            }
+
+            var name = property.Name.Trim();
+            if (!uniqueNames.Add(name))
+            {
+                throw new InvalidOperationException(
+                    $"'{propertyName}' contains duplicate or case-colliding name '{name}'.");
+            }
+
+            if (property.Value.ValueKind == JsonValueKind.Null)
+            {
+                continue;
+            }
+
             if (property.Value.ValueKind != JsonValueKind.String)
             {
-                throw new InvalidOperationException($"'{propertyName}.{property.Name}' must be a string value.");
+                throw new InvalidOperationException(
+                    $"'{propertyName}.{property.Name}' must be a string value or null.");
             }
 
-            if (string.IsNullOrWhiteSpace(property.Name) || string.IsNullOrWhiteSpace(property.Value.GetString()))
+            names.Add(name);
+            var replacement = property.Value.GetString();
+            if (!string.IsNullOrWhiteSpace(replacement))
             {
-                throw new InvalidOperationException($"'{propertyName}' entries must use non-empty names and values.");
+                replacements[name] = replacement.Trim();
             }
+        }
 
-            result[property.Name] = property.Value.GetString()!.Trim();
+        return new ParsedEditorSecretMap(names, replacements);
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildEditorSecretMap(
+        IEnumerable<string> names,
+        IReadOnlyDictionary<string, string> replacements)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in names)
+        {
+            result[name] = replacements.TryGetValue(name, out var replacement)
+                ? replacement
+                : string.Empty;
         }
 
         return result;
@@ -446,8 +492,8 @@ internal static class McpConfigurationDocument
         string[] CommandParts,
         string? WorkingDirectory,
         string? EndpointUrl,
-        IReadOnlyDictionary<string, string> Headers,
-        IReadOnlyDictionary<string, string> EnvironmentVariables,
+        ParsedEditorSecretMap Headers,
+        ParsedEditorSecretMap EnvironmentVariables,
         int? LegacyTimeoutMilliseconds,
         int? DiscoveryTimeoutMilliseconds,
         int? ToolTimeoutMilliseconds,
@@ -456,4 +502,13 @@ internal static class McpConfigurationDocument
         bool OAuthEnabled,
         string[] OAuthScopes,
         string? OAuthClientId);
+
+    private sealed record ParsedEditorSecretMap(
+        IReadOnlyList<string> Names,
+        IReadOnlyDictionary<string, string> Replacements)
+    {
+        internal static ParsedEditorSecretMap Empty { get; } = new(
+            [],
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+    }
 }

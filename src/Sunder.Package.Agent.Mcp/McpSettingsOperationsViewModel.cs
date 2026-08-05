@@ -95,8 +95,12 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
                 snapshot.Name,
                 snapshot.EditorText,
                 existing);
-            await _host.WithSuppressedCatalogEventsAsync(() =>
-                _gateway.SaveAsync(parsed, cancellation.Token).WaitAsync(cancellation.Token));
+            string? savedDocument = null;
+            await _host.WithSuppressedCatalogEventsAsync(async () =>
+            {
+                savedDocument = await _gateway.SaveAsync(parsed, cancellation.Token)
+                    .WaitAsync(cancellation.Token);
+            });
             _host.DiscardPendingServerRefresh();
             await _host.ReloadServersAsync(
                 parsed.Server.ServerId,
@@ -114,7 +118,7 @@ internal sealed partial class McpSettingsOperationsViewModel : ObservableObject,
                 var editedDuringSave = _host.HasEditorChangedSince(snapshot.Revision);
                 if (!editedDuringSave)
                 {
-                    _host.ApplySavedDocument(parsed, snapshot.Revision);
+                    _host.ApplySavedDocument(parsed, savedDocument!, snapshot.Revision);
                 }
 
                 if (_host.IsCurrentMutationLayout(snapshot)

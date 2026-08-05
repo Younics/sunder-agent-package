@@ -20,9 +20,6 @@ public sealed partial class AgentLocalStore
     internal async Task<AgentChatSnapshotProjection> ReadChatSnapshotAsync(
         long revision,
         AgentChatSnapshotRequest request,
-        string? storedProfileId,
-        string? storedWorkspaceId,
-        Func<string, CancellationToken, Task<Guid?>> readStoredSessionIdAsync,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -32,8 +29,8 @@ public sealed partial class AgentLocalStore
 
         var profileItems = ListProfiles(connection, transaction);
         var workspaceItems = ListChatWorkspaceRecords(connection, transaction);
-        var selectedProfile = FindById(profileItems, storedProfileId);
-        var selectedWorkspaceBase = FindById(workspaceItems, storedWorkspaceId);
+        var selectedProfile = FindById(profileItems, request.PreferredProfileId);
+        var selectedWorkspaceBase = FindById(workspaceItems, request.PreferredWorkspaceId);
         var selectedWorkspace = selectedWorkspaceBase is null
             ? null
             : selectedWorkspaceBase with
@@ -44,14 +41,6 @@ public sealed partial class AgentLocalStore
                     transaction),
                 Documents = [],
             };
-
-        Guid? storedSessionId = null;
-        if (selectedWorkspace is not null)
-        {
-            storedSessionId = await readStoredSessionIdAsync(
-                selectedWorkspace.WorkspaceId,
-                cancellationToken).ConfigureAwait(false);
-        }
 
         cancellationToken.ThrowIfCancellationRequested();
         var workspaceSessionRecords = selectedWorkspace is null
@@ -66,7 +55,7 @@ public sealed partial class AgentLocalStore
         var selectedSessionRecord = ResolveSelectedRootSession(
             workspaceSessionRecords,
             rootSessions,
-            request.PreferredSessionId ?? storedSessionId);
+            request.PreferredSessionId);
         var includedSessions = SelectChatSessions(rootSessions, workspaceSessionRecords, selectedSessionRecord);
         var sessionItems = includedSessions
             .Select(session => new AgentSessionSnapshot(

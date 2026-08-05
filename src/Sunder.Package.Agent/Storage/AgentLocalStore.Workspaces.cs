@@ -144,6 +144,10 @@ public sealed partial class AgentLocalStore
             DateTimeOffset.UtcNow);
 
         transaction.Commit();
+        if (workspaceCreatedAtUtc is not null || deletedSessionIds.Count > 0)
+        {
+            CheckpointWriteAheadLog(connection);
+        }
         if (deletedSessionIds.Count > 0)
         {
             SignalSessionCleanupJobsChanged();

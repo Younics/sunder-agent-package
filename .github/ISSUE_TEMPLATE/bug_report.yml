@@ -20,9 +20,9 @@ body:
       label: Installed Agent packages
       description: List the Agent packages and versions involved.
       placeholder: |
-        sunder.package.agent 1.0.0
-        sunder.package.agent.provider.openai 1.0.0
-        sunder.package.agent.tools.files 1.0.0
+        sunder.package.agent 2.0.0
+        sunder.package.agent.provider.openai 2.0.0
+        sunder.package.agent.tools.files 2.0.0
     validations:
       required: true
   - type: textarea
@@ -54,7 +54,7 @@ body:
       label: Area
       options:
         - Core Agent
-        - Agent contracts
+        - Agent Protocol
         - Provider
         - Tools
         - Execution target

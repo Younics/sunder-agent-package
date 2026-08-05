@@ -33,18 +33,19 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
             packageContext,
             new OpenAiAuthPresentationService(runtimeClient),
             new PackageCallbackFlowRunner(packageContext.Callbacks),
-            new ProviderCredentialAccessor(packageContext.Secrets, OpenAiProviderConfiguration.ApiKeySecretKey))
+            new ProviderCredentialAppRuntimeGateway(runtimeClient))
     {
     }
 
     internal OpenAiSettingsViewModel(
         IPackageContext packageContext,
-        OpenAiAuthPresentationService authPresentation)
+        OpenAiAuthPresentationService authPresentation,
+        IProviderCredentialSettingsGateway credentials)
         : this(
             packageContext,
             authPresentation,
             new PackageCallbackFlowRunner(packageContext.Callbacks),
-            new ProviderCredentialAccessor(packageContext.Secrets, OpenAiProviderConfiguration.ApiKeySecretKey))
+            credentials)
     {
     }
 
@@ -52,7 +53,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
         IPackageContext packageContext,
         OpenAiAuthPresentationService authPresentation,
         PackageCallbackFlowRunner callbackFlow,
-        ProviderCredentialAccessor credentials)
+        IProviderCredentialSettingsGateway credentials)
     {
         _packageContext = packageContext;
         _authPresentation = authPresentation;

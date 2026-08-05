@@ -5,7 +5,7 @@ Agent 2.x exposes every cross-package capability through exactly 18 schema-first
 ## Contract Rules
 
 - Bundle every imported or provided descriptor locally. `Sunder.Package.Agent.Protocol` supplies all 18 first-party descriptors through `buildTransitive` assets.
-- Declare providers with `SunderRpcProvider` and publish the matching handler with `RegisterRpcProvider`.
+- Declare providers with `SunderRpcProvider`. Managed Runtime modules publish the matching handler with `RegisterRpcProvider`; Worker V2 targets pass immutable `SunderWorkerProviderRegistration` entries to `SunderWorkerV2.RunAsync` through `SunderWorkerV2Options`.
 - Declare consumers with `SunderUsesContract`; discovery and invocation remain default-denied unless the package manifest grants the relevant action.
 - Retain endpoint references, not provider objects. A reference names one exact activation and becomes stale when that activation retires.
 - The host validates each request, response, and stream event against the selected method schema before forwarding it.
@@ -47,7 +47,8 @@ Agent 2.x exposes every cross-package capability through exactly 18 schema-first
 - Let caller cancellation propagate.
 - Treat `StaleEndpoint` as exact-provider retirement; rediscover only when the operation is safe to retry against a replacement.
 - Treat schema validation failures as protocol defects, not transient provider failures.
+- Agent reports package-local invariant violations against the retained exact endpoint reference. The Host rejects stale or unauthorized reports and attributes an accepted report only to that endpoint's current owning package activation.
 - Durable lifecycle handlers must be idempotent by event id because delivery is at least once.
 - Session cleaners must be bounded and idempotent because pending jobs survive restart and provider absence.
 
-Generated DTOs, clients, and provider interfaces live under `Sunder.Package.Agent.Protocol.Generated.*`. First-party adapters in `Sunder.Package.Agent.Protocol` map those wire shapes to package-local implementation interfaces. Every first-party package registers handlers only through `RegisterRpcProvider` using provider ids declared in its generated manifest.
+Generated DTOs, clients, and provider interfaces live under `Sunder.Package.Agent.Protocol.Generated.*`. First-party adapters in `Sunder.Package.Agent.Protocol` map those wire shapes to package-local implementation interfaces. Managed first-party modules register handlers through `RegisterRpcProvider` using provider ids declared in their generated manifests. The Shell Worker V2 executable binds those same manifest-declared ids with immutable `SunderWorkerProviderRegistration` entries supplied to `SunderWorkerV2.RunAsync`.

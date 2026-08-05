@@ -26,7 +26,8 @@ internal sealed record ProviderModelCatalogResult(
 
 internal interface IProviderModelCatalog
 {
-    IReadOnlyList<ProviderCatalogOption> ListProviders();
+    Task<IReadOnlyList<ProviderCatalogOption>> ListProvidersAsync(
+        CancellationToken cancellationToken);
 
     Task<ProviderModelCatalogResult> LoadAsync(
         string providerId,
@@ -34,13 +35,14 @@ internal interface IProviderModelCatalog
 }
 
 internal sealed class ProviderModelCatalogAdapter(
-    Func<IReadOnlyList<ProviderCatalogOption>> listProviders,
+    Func<CancellationToken, Task<IReadOnlyList<ProviderCatalogOption>>> listProviders,
     Func<string, CancellationToken, Task<ProviderModelCatalogResult>> load) : IProviderModelCatalog
 {
-    private readonly Func<IReadOnlyList<ProviderCatalogOption>> _listProviders = listProviders;
+    private readonly Func<CancellationToken, Task<IReadOnlyList<ProviderCatalogOption>>> _listProviders = listProviders;
     private readonly Func<string, CancellationToken, Task<ProviderModelCatalogResult>> _load = load;
 
-    public IReadOnlyList<ProviderCatalogOption> ListProviders() => _listProviders();
+    public Task<IReadOnlyList<ProviderCatalogOption>> ListProvidersAsync(
+        CancellationToken cancellationToken) => _listProviders(cancellationToken);
 
     public Task<ProviderModelCatalogResult> LoadAsync(
         string providerId,
@@ -49,13 +51,18 @@ internal sealed class ProviderModelCatalogAdapter(
     public static IProviderModelCatalog ForChatProviders(AgentRpcCatalog rpcCatalog)
     {
         return new ProviderModelCatalogAdapter(
-            () => SnapshotChatProviders(rpcCatalog)
-                .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
-                .Select(provider => new ProviderCatalogOption(
-                    provider.Descriptor.ProviderId,
-                    provider.Descriptor.DisplayName,
-                    provider.PackageId))
-                .ToArray(),
+            cancellationToken =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult<IReadOnlyList<ProviderCatalogOption>>(
+                    SnapshotChatProviders(rpcCatalog)
+                        .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
+                        .Select(provider => new ProviderCatalogOption(
+                            provider.Descriptor.ProviderId,
+                            provider.Descriptor.DisplayName,
+                            provider.PackageId))
+                        .ToArray());
+            },
             (providerId, cancellationToken) => LoadChatProviderAsync(
                 rpcCatalog,
                 providerId,
@@ -163,7 +170,9 @@ internal sealed class ProviderModelLoader(IProviderModelCatalog catalog) : IDisp
     private int _generation;
     private bool _disposed;
 
-    public IReadOnlyList<ProviderCatalogOption> ListProviders() => _catalog.ListProviders();
+    public Task<IReadOnlyList<ProviderCatalogOption>> ListProvidersAsync(
+        CancellationToken cancellationToken = default)
+        => _catalog.ListProvidersAsync(cancellationToken);
 
     public async Task<ProviderModelCatalogResult?> LoadAsync(
         string providerId,

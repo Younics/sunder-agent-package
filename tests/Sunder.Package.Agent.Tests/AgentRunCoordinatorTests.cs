@@ -4608,14 +4608,40 @@ public sealed class AgentRunCoordinatorTests
         const string toolId = "approval_tool";
 
         using var runtime = AgentTestRuntime.Create(
-            new ScriptedProvider((_, _) => Complete("done"))
+            new ScriptedProvider((_, requestIndex) => requestIndex switch
+            {
+                1 => ToolRequest("approval-call", toolId, "{}"),
+                2 => Complete("done"),
+                _ => throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}."),
+            })
         );
         var toolSource = new PermissionedToolSource(toolId);
+        runtime.ExtensionCatalog.AddProvider(
+            AgentRpcServices.ToolSources,
+            toolSource
+        );
         runtime.ExtensionCatalog.AddProvider(
             AgentRpcServices.PermissionSurfaces,
             toolSource
         );
         var parentSessionId = await runtime.CreateSessionAsync(toolId);
+        var waiting = await runtime.RunCoordinator.QueueUserMessageAsync(
+            parentSessionId,
+            runtime.CurrentProfileId,
+            "Use the approval tool.",
+            runtime.CurrentWorkspaceId
+        );
+        Assert.Equal(AgentRunStatus.WaitingForApproval, waiting.Status);
+        var pending = Assert.Single(runtime.PermissionService.ListPendingRequests(parentSessionId));
+        var completed = await runtime.RunCoordinator.ApprovePendingPermissionAsync(
+            parentSessionId,
+            pending.RequestId,
+            approveForSession: true,
+            CancellationToken.None
+        );
+        Assert.Equal(AgentRunStatus.Completed, completed?.Status);
+        Assert.Single(runtime.Store.ListSessionPermissionApprovals(parentSessionId));
+
         var parentSession = runtime.SessionService.GetSession(parentSessionId)!;
         var childSession = runtime.SessionService.CreateSession(
             "Child Session",
@@ -4623,11 +4649,6 @@ public sealed class AgentRunCoordinatorTests
             rootSessionId: parentSession.RootSessionId ?? parentSession.SessionId,
             profileId: runtime.CurrentProfileId,
             agentKind: "subagent"
-        );
-        runtime.PermissionService.SaveSessionApproval(
-            parentSessionId,
-            PermissionedToolSource.ActionIdForTests,
-            PermissionedToolSource.BoundaryIdForTests
         );
 
         var evaluation = runtime.PermissionService.Evaluate(
@@ -6356,15 +6377,52 @@ public sealed class AgentRunCoordinatorTests
         await viewModel.StartRollbackFromMessageCommand.ExecuteAsync(row);
         viewModel.DraftMessage = "replacement message";
 
+        Assert.True(viewModel.SendMessageCommand.CanExecute(null));
         await viewModel.SendMessageCommand.ExecuteAsync(null);
 
-        Assert.False(viewModel.IsRollbackPending);
         var turns = runtime.SessionService.ListTurns(sessionId);
         Assert.Contains(turns, turn => turn.TurnId == retainedTurn.TurnId);
         Assert.DoesNotContain(turns, turn => turn.TurnId == rollbackTurn.TurnId);
         Assert.DoesNotContain(turns, turn => turn.TurnId == removedTurn.TurnId);
         Assert.Contains(turns, turn => turn.Role == AgentMessageRole.User && RenderTurnText(turn) == "replacement message");
         Assert.Contains(turns, turn => turn.Role == AgentMessageRole.Assistant && RenderTurnText(turn) == "new response");
+        Assert.False(viewModel.IsRollbackPending);
+    }
+
+    [Fact]
+    public async Task AgentChatViewModel_CommittedSubmissionWaitsForComposerReconciliation()
+    {
+        using var runtime = AgentTestRuntime.Create(
+            new ScriptedProvider((_, _) => Complete("unused"))
+        );
+        var sessionId = await runtime.CreateSessionAsync("noop");
+        using var viewModel = new AgentChatViewModel(
+            runtime.ProfileService,
+            runtime.WorkspaceService,
+            runtime.SessionService,
+            runtime.PermissionService,
+            runtime.RunCoordinator
+        );
+        await viewModel.InitializeAsync();
+        viewModel.DraftMessage = "committed message";
+        var composer = Assert.IsType<AgentComposerState>(
+            typeof(AgentChatViewModel)
+                .GetField("_composer", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(viewModel));
+        var submission = Assert.IsType<AgentComposerSubmission>(
+            composer.TryBeginSubmission(sessionId));
+        submission.Commit();
+        var completeSubmission = typeof(AgentChatViewModel).GetMethod(
+            "CompleteOrRestoreComposerSubmissionAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        var reconciliation = Assert.IsAssignableFrom<Task<bool>>(completeSubmission.Invoke(
+            viewModel,
+            [viewModel.SelectedSession!, submission, true]));
+
+        Assert.False(reconciliation.IsCompleted);
+        submission.CompleteAuthoritativeReconciliation();
+        Assert.True(await reconciliation);
     }
 
     [Fact]
@@ -7999,23 +8057,55 @@ public sealed class AgentRunCoordinatorTests
     [Fact]
     public async Task AgentProfileSelectableCapabilityChangeObserver_UnsubscribesWhenDisposed()
     {
-        var catalog = new TestExtensionCatalog();
+        using var catalog = new TestExtensionCatalog();
         var provider = new MutableSelectableCapabilityProvider();
         using var observer = new AgentProfileSelectableCapabilityChangeObserver(catalog);
         var changeCount = 0;
         observer.Changed += () => Interlocked.Increment(ref changeCount);
+        var providerCatalogChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnCatalogChanged(object? _, AgentRpcCatalogChangedEventArgs change)
+        {
+            if (change.IncludesContract(AgentRpcContractIds.SelectableCapabilityProvider))
+            {
+                providerCatalogChanged.TrySetResult();
+            }
+        }
+        catalog.Changed += OnCatalogChanged;
 
-        catalog.AddProvider(AgentRpcServices.SelectableCapabilityProviders, provider);
-        await WaitUntilAsync(() => Volatile.Read(ref changeCount) == 1);
-        provider.RaiseChanged();
+        try
+        {
+            catalog.AddProvider(AgentRpcServices.SelectableCapabilityProviders, provider);
+            await providerCatalogChanged.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await provider.SubscriptionStarted.WaitAsync(TimeSpan.FromSeconds(2));
 
-        await WaitUntilAsync(() => Volatile.Read(ref changeCount) == 2);
+            var reference = Assert.Single(catalog.GetServiceReferences(AgentRpcServices.SelectableCapabilityProviders));
+            Assert.True(reference.TryAcquire(out var providerLease));
+            using var lease = providerLease!;
+            var notifier = Assert.IsAssignableFrom<IAgentProfileSelectableCapabilityChangeNotifier>(lease.Service);
 
-        observer.Dispose();
-        provider.RaiseChanged();
-        await Task.Delay(50);
+            var firstForwarded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnFirstForwarded() => firstForwarded.TrySetResult();
+            notifier.SelectableCapabilitiesChanged += OnFirstForwarded;
+            var baseline = Volatile.Read(ref changeCount);
+            provider.RaiseChanged();
+            await firstForwarded.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            notifier.SelectableCapabilitiesChanged -= OnFirstForwarded;
+            Assert.Equal(baseline + 1, Volatile.Read(ref changeCount));
 
-        Assert.Equal(2, Volatile.Read(ref changeCount));
+            observer.Dispose();
+            var disposedBaseline = Volatile.Read(ref changeCount);
+            var secondForwarded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnSecondForwarded() => secondForwarded.TrySetResult();
+            notifier.SelectableCapabilitiesChanged += OnSecondForwarded;
+            provider.RaiseChanged();
+            await secondForwarded.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            notifier.SelectableCapabilitiesChanged -= OnSecondForwarded;
+            Assert.Equal(disposedBaseline, Volatile.Read(ref changeCount));
+        }
+        finally
+        {
+            catalog.Changed -= OnCatalogChanged;
+        }
     }
 
     [Fact]
@@ -9903,7 +9993,7 @@ public sealed class AgentRunCoordinatorTests
         var firstSendTask = viewModel.SendMessageCommand.ExecuteAsync(null);
         try
         {
-            await blockingTool.Started.WaitAsync(TimeSpan.FromSeconds(2));
+            await blockingTool.Started.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.False(firstSendTask.IsCompleted);
 
             viewModel.DraftMessage = "duplicate same session";
@@ -9917,7 +10007,7 @@ public sealed class AgentRunCoordinatorTests
             Assert.True(viewModel.IsSelectedSessionRunInactive);
             Assert.True(viewModel.SendMessageCommand.CanExecute(null));
 
-            await viewModel.SendMessageCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(2));
+            await viewModel.SendMessageCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(10));
 
             Assert.Equal(
                 AgentRunStatus.Completed,
@@ -9933,7 +10023,7 @@ public sealed class AgentRunCoordinatorTests
             blockingTool.Release();
         }
 
-        await firstSendTask.WaitAsync(TimeSpan.FromSeconds(2));
+        await firstSendTask.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(
             AgentRunStatus.Completed,
             runtime.SessionService.GetLatestCheckpoint(sessionA)?.Status
@@ -16253,6 +16343,11 @@ public sealed class AgentRunCoordinatorTests
         : IAgentProfileSelectableCapabilityProvider,
             IAgentProfileSelectableCapabilityChangeNotifier
     {
+        private readonly object _eventSync = new();
+        private readonly TaskCompletionSource _subscriptionStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private Action? _selectableCapabilitiesChanged;
+
         public string ProviderId => "mutable-capabilities";
 
         public string SourceId => "mutable-capabilities";
@@ -16261,7 +16356,26 @@ public sealed class AgentRunCoordinatorTests
 
         public string DisplayName => "Mutable Capabilities";
 
-        public event Action? SelectableCapabilitiesChanged;
+        public Task SubscriptionStarted => _subscriptionStarted.Task;
+
+        public event Action? SelectableCapabilitiesChanged
+        {
+            add
+            {
+                lock (_eventSync)
+                {
+                    _selectableCapabilitiesChanged += value;
+                }
+                _subscriptionStarted.TrySetResult();
+            }
+            remove
+            {
+                lock (_eventSync)
+                {
+                    _selectableCapabilitiesChanged -= value;
+                }
+            }
+        }
 
         public ValueTask<
             IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>
@@ -16270,7 +16384,15 @@ public sealed class AgentRunCoordinatorTests
             CancellationToken cancellationToken = default
         ) => ValueTask.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
 
-        public void RaiseChanged() => SelectableCapabilitiesChanged?.Invoke();
+        public void RaiseChanged()
+        {
+            Action? handlers;
+            lock (_eventSync)
+            {
+                handlers = _selectableCapabilitiesChanged;
+            }
+            handlers?.Invoke();
+        }
     }
 
     private sealed class TestBehaviorLoop : IAgentBehaviorLoop

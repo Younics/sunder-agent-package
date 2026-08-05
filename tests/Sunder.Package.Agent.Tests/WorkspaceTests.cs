@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
+using System.Collections.Specialized;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -2341,9 +2342,11 @@ public sealed class WorkspaceTests
         Assert.True(viewModel.HasNoExecutionTargetChoices);
 
         var target = new CountingExecutionTarget("docker");
-        catalog.AddProvider(AgentRpcServices.ExecutionTargets, target);
+        await WaitForExecutionTargetAddedAsync(
+            viewModel,
+            "docker",
+            () => catalog.AddProvider(AgentRpcServices.ExecutionTargets, target));
 
-        await WaitUntilAsync(() => viewModel.ExecutionTargets.Any(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase)));
         Assert.True(viewModel.HasExecutionTargetChoices);
         Assert.False(viewModel.HasNoExecutionTargetChoices);
     }
@@ -2361,8 +2364,10 @@ public sealed class WorkspaceTests
 
         viewModel.CreateWorkspaceCommand.Execute(null);
         var target = new CountingExecutionTarget("docker");
-        catalog.AddProvider(AgentRpcServices.ExecutionTargets, target);
-        await WaitUntilAsync(() => viewModel.ExecutionTargets.Any(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase)));
+        await WaitForExecutionTargetAddedAsync(
+            viewModel,
+            "docker",
+            () => catalog.AddProvider(AgentRpcServices.ExecutionTargets, target));
         viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(targetOption => string.Equals(targetOption.TargetId, "docker", StringComparison.OrdinalIgnoreCase));
         Assert.Empty(viewModel.EditorSections);
 
@@ -2572,8 +2577,25 @@ public sealed class WorkspaceTests
             var catalog = new TestExtensionCatalog();
             var target = new CountingExecutionTarget("docker");
             var contributor = new BlockingWorkspaceEditorContributor("docker");
-            catalog.AddProvider(AgentRpcServices.ExecutionTargets, target);
-            catalog.AddProvider(AgentRpcServices.WorkspaceEditors, contributor);
+            var editorProviderChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnCatalogChanged(object? _, AgentRpcCatalogChangedEventArgs change)
+            {
+                if (change.IncludesContract(AgentRpcContractIds.WorkspaceEditor))
+                {
+                    editorProviderChanged.TrySetResult();
+                }
+            }
+            catalog.Changed += OnCatalogChanged;
+            try
+            {
+                catalog.AddProvider(AgentRpcServices.ExecutionTargets, target);
+                catalog.AddProvider(AgentRpcServices.WorkspaceEditors, contributor);
+                await editorProviderChanged.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+            finally
+            {
+                catalog.Changed -= OnCatalogChanged;
+            }
             var workspaceService = new AgentWorkspaceService(store);
             var executionTargetService = new AgentExecutionTargetService(catalog);
             var workspace = workspaceService.CreateWorkspace("Original Workspace");
@@ -2583,7 +2605,7 @@ public sealed class WorkspaceTests
                 executionTargetService,
                 catalog);
             await viewModel.InitializeAsync();
-            await contributor.SectionsLoaded.WaitAsync(TimeSpan.FromSeconds(2));
+            await viewModel.CurrentEditorSectionRefresh.WaitAsync(TimeSpan.FromSeconds(2));
             var section = Assert.Single(viewModel.EditorSections);
             var contributedField = Assert.IsType<AgentEditorTextFieldViewModel>(Assert.Single(section.Fields));
             viewModel.DisplayName = "Snapshot name";
@@ -4382,6 +4404,35 @@ public sealed class WorkspaceTests
         }
     }
 
+    private static async Task WaitForExecutionTargetAddedAsync(
+        AgentWorkspacesViewModel viewModel,
+        string targetId,
+        Action trigger)
+    {
+        var added = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs eventArgs)
+        {
+            if (eventArgs.NewItems?.OfType<ExecutionTargetOption>().Any(target => string.Equals(
+                    target.TargetId,
+                    targetId,
+                    StringComparison.OrdinalIgnoreCase)) == true)
+            {
+                added.TrySetResult();
+            }
+        }
+
+        viewModel.ExecutionTargets.CollectionChanged += OnCollectionChanged;
+        try
+        {
+            trigger();
+            await added.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            viewModel.ExecutionTargets.CollectionChanged -= OnCollectionChanged;
+        }
+    }
+
     private static string ApplyPatchArgs(string patchText)
         => JsonSerializer.Serialize(new { patchText });
 
@@ -4948,10 +4999,6 @@ public sealed class WorkspaceTests
             string contributionId,
             string displayRole = AgentWorkspaceBindingRoles.PrimaryExecutionTarget)
             => throw new NotSupportedException();
-
-        public void RemovePrimaryExecutionBinding(string workspaceId)
-        {
-        }
 
         public async Task InitializeAsync(CancellationToken cancellationToken = default)
         {

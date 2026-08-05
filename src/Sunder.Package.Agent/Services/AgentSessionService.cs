@@ -63,14 +63,6 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
         CompleteSessionDeletion(deletedSessionIds);
     }
 
-    public void DeleteSessionsForWorkspace(string workspaceId)
-    {
-        var deletedSessionIds = _store.DeleteSessionTreesForWorkspace(
-            workspaceId,
-            SnapshotSessionDataCleaners());
-        CompleteSessionDeletion(deletedSessionIds);
-    }
-
     internal void CompleteSessionDeletion(IReadOnlyList<Guid> deletedSessionIds)
     {
         foreach (var deletedSessionId in deletedSessionIds)

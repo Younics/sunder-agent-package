@@ -9,12 +9,19 @@ internal static class AgentProfileProviderModelCatalog
 {
     public static IProviderModelCatalog CreateChat(IAgentProfileGateway service)
         => new ProviderModelCatalogAdapter(
-            () => service.ListChatProviderDescriptors()
-                .Select(provider => new ProviderCatalogOption(
-                    provider.ProviderId,
-                    provider.DisplayName,
-                    provider.PackageId))
-                .ToArray(),
+            async cancellationToken =>
+            {
+                var providers = service is IAgentCatalogLoader loader
+                    ? (await loader.LoadCatalogAsync(new AgentCatalogRequest(), cancellationToken)
+                        .ConfigureAwait(false)).ChatProviders
+                    : service.ListChatProviderDescriptors();
+                return providers
+                    .Select(provider => new ProviderCatalogOption(
+                        provider.ProviderId,
+                        provider.DisplayName,
+                        provider.PackageId))
+                    .ToArray();
+            },
             async (providerId, cancellationToken) =>
             {
                 var modelsTask = service.ListChatModelsAsync(providerId, cancellationToken);
@@ -33,12 +40,19 @@ internal static class AgentProfileProviderModelCatalog
 
     public static IProviderModelCatalog CreateEmbedding(IAgentProfileGateway service)
         => new ProviderModelCatalogAdapter(
-            () => service.ListEmbeddingProviderDescriptors()
-                .Select(provider => new ProviderCatalogOption(
-                    provider.ProviderId,
-                    provider.DisplayName,
-                    provider.PackageId))
-                .ToArray(),
+            async cancellationToken =>
+            {
+                var providers = service is IAgentCatalogLoader loader
+                    ? (await loader.LoadCatalogAsync(new AgentCatalogRequest(), cancellationToken)
+                        .ConfigureAwait(false)).EmbeddingProviders
+                    : service.ListEmbeddingProviderDescriptors();
+                return providers
+                    .Select(provider => new ProviderCatalogOption(
+                        provider.ProviderId,
+                        provider.DisplayName,
+                        provider.PackageId))
+                    .ToArray();
+            },
             async (providerId, cancellationToken) =>
             {
                 var modelsTask = service.ListEmbeddingModelsAsync(providerId, cancellationToken);

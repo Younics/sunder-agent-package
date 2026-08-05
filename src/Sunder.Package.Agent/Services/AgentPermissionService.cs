@@ -98,25 +98,6 @@ public sealed class AgentPermissionService(
     public IReadOnlyList<AgentPendingPermissionRequestRecord> ListPendingRequestsForSessionTree(Guid sessionId)
         => _store.ListPendingPermissionRequestsForSessionTree(sessionId);
 
-    public void SaveSessionApproval(Guid sessionId, string actionId, string boundaryId)
-    {
-        if (string.IsNullOrWhiteSpace(actionId) || string.IsNullOrWhiteSpace(boundaryId))
-        {
-            return;
-        }
-
-        _store.SaveSessionPermissionApproval(new AgentSessionPermissionApproval(
-            Guid.NewGuid().ToString("N"),
-            sessionId,
-            actionId.Trim(),
-            AgentPermissionMatcherKind.ActionId,
-            boundaryId.Trim(),
-            DateTimeOffset.UtcNow));
-    }
-
-    public AgentPendingPermissionRequestRecord? GetPendingRequest(Guid sessionId, string requestId)
-        => _store.GetPendingPermissionRequest(sessionId, requestId);
-
     internal AgentPendingPermissionRequestRecord? GetRequest(Guid sessionId, string requestId)
         => _store.GetPermissionRequest(sessionId, requestId);
 
@@ -215,9 +196,6 @@ public sealed class AgentPermissionService(
         string requestId,
         string summary)
         => _store.ExpireActivePermissionRequest(sessionId, requestId, summary);
-
-    public void DeletePendingRequest(Guid sessionId, string requestId)
-        => _store.DeletePendingPermissionRequest(sessionId, requestId);
 
     public AgentPermissionEvaluation Evaluate(Guid? sessionId, AgentPermissionRequest request)
     {

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <SunderPackageAggregateProject>true</SunderPackageAggregateProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sunder.Package.Agent.Tools.Shell.csproj"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(SunderShellUniversal)' != 'true'">
+    <SunderPackageTargetLeaf Include="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\$(TargetFramework)\$(NETCoreSdkRuntimeIdentifier)\sunder-dev"
+                             DiscoveryRoot="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\$(TargetFramework)\$(NETCoreSdkRuntimeIdentifier)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(SunderShellUniversal)' == 'true'">
+    <SunderPackageTargetLeaf Include="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\$(TargetFramework)\win-x64\sunder-dev"
+                             DiscoveryRoot="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\$(TargetFramework)\win-x64" />
+    <SunderPackageTargetLeaf Include="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\$(TargetFramework)\win-arm64\sunder-dev"
+                             DiscoveryRoot="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\$(TargetFramework)\win-arm64" />
+    <SunderPackageTargetLeaf Include="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\$(TargetFramework)\linux-x64\sunder-dev"
+                             DiscoveryRoot="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\$(TargetFramework)\linux-x64" />
+    <SunderPackageTargetLeaf Include="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\$(TargetFramework)\linux-arm64\sunder-dev"
+                             DiscoveryRoot="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\$(TargetFramework)\linux-arm64" />
+    <SunderPackageTargetLeaf Include="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\$(TargetFramework)\osx-x64\sunder-dev"
+                             DiscoveryRoot="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\$(TargetFramework)\osx-x64" />
+    <SunderPackageTargetLeaf Include="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\$(TargetFramework)\osx-arm64\sunder-dev"
+                             DiscoveryRoot="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\$(TargetFramework)\osx-arm64" />
+  </ItemGroup>
+
+</Project>

@@ -23,6 +23,7 @@ set -euo pipefail
 method=GET
 payload=''
 url=''
+authorization=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -X)
@@ -34,6 +35,9 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     -H)
+      if [[ "$2" == Authorization:\ Bearer\ * ]]; then
+        authorization="${2#Authorization: Bearer }"
+      fi
       shift 2
       ;;
     --fail-with-body|-sS)
@@ -51,6 +55,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$url" ]] || { printf 'Mock curl did not receive a URL.\n' >&2; exit 2; }
+if [[ "$method" != GET && "$authorization" != "$SUNDER_REGISTRY_CLI_TOKEN" ]]; then
+  printf 'Dist-tag mutation did not use SUNDER_REGISTRY_CLI_TOKEN.\n' >&2
+  exit 2
+fi
 relative="${url#*/api/v1/packages/}"
 package_id="${relative%%/*}"
 operation="${relative#*/}"
@@ -111,7 +119,8 @@ export MOCK_REGISTRY_STATE="$fixture_dir/registry-state.json"
 export MOCK_REGISTRY_CALLS="$fixture_dir/registry-calls.tsv"
 export MOCK_UPDATE_FAILURE_MARKER="$fixture_dir/update-failed"
 export MOCK_VERIFY_FAILURE_MARKER="$fixture_dir/verify-failed"
-export REGISTRY_TOKEN=fixture-token
+export SUNDER_REGISTRY_CLI_TOKEN=sunder_cli_0123456789012345678901234567890123456789012
+export SUNDER_REGISTRY_PUBLISH_TOKEN=sunder_pub_v1_0123456789012345678901234567890123456789012
 
 reset_fixture() {
   printf '%s\n' "$1" > "$MOCK_REGISTRY_STATE"
@@ -130,6 +139,26 @@ assert_no_mutations() {
     exit 1
   fi
 }
+
+if env -u SUNDER_REGISTRY_CLI_TOKEN REGISTRY_TOKEN="$SUNDER_REGISTRY_PUBLISH_TOKEN" \
+  bash "$promoter" 'https://registry.test' latest 1.1.0 pkg.a > "$fixture_dir/missing-cli-token.log" 2>&1; then
+  printf 'Promotion unexpectedly fell back to a non-CLI token.\n' >&2
+  exit 1
+fi
+grep -Fq 'SUNDER_REGISTRY_CLI_TOKEN is not configured' "$fixture_dir/missing-cli-token.log"
+
+if bash "$promoter" 'http://registry.test' latest 1.1.0 pkg.a > "$fixture_dir/insecure-origin.log" 2>&1; then
+  printf 'Promotion unexpectedly accepted an insecure Registry origin.\n' >&2
+  exit 1
+fi
+grep -Fq 'absolute HTTPS origin' "$fixture_dir/insecure-origin.log"
+
+if SUNDER_REGISTRY_CLI_TOKEN=sunder_cli_invalid \
+  bash "$promoter" 'https://registry.test' latest 1.1.0 pkg.a > "$fixture_dir/invalid-token.log" 2>&1; then
+  printf 'Promotion unexpectedly accepted a malformed CLI token.\n' >&2
+  exit 1
+fi
+grep -Fq 'valid interactive sunder_cli token' "$fixture_dir/invalid-token.log"
 
 reset_fixture '{"packages":{"pkg.a":{"latest":"1.0.0"},"pkg.b":{"latest":"1.0.0"}}}'
 export MOCK_DIST_TAG=latest

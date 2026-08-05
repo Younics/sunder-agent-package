@@ -18,7 +18,6 @@ public sealed partial class AgentChatViewModel
         _globalStatusText = string.Empty;
         RefreshWorkspacePathChips();
         CreateSessionCommand.NotifyCanExecuteChanged();
-        RefreshSetupState();
         ScheduleSelectedWorkspaceWarmup();
         ScheduleChatSnapshotRequest(
             SelectedProfile?.ProfileId,

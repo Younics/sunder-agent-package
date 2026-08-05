@@ -23,7 +23,7 @@ body:
       label: Area
       options:
         - Core Agent
-        - Agent contracts
+        - Agent Protocol
         - Provider
         - Tools
         - Execution target

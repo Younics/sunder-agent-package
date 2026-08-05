@@ -80,19 +80,21 @@ public sealed partial class AgentHistorySearchViewModel
             var opened = await _shellViewService.OpenViewPanelAsync(
                 result.IsChildSession ? SubsessionsViewId : ChatViewId,
                 HistorySearchNavigation.ToParameters(result.Hit),
-                _lifetimeToken);
+                _lifetimeToken).ConfigureAwait(false);
             if (!opened)
             {
-                NavigationError = result.IsChildSession
-                    ? "The Subsessions view is unavailable. Your search results are unchanged."
-                    : "Agent Chat is unavailable. Your search results are unchanged.";
+                await RunOnUiThreadAsync(() => NavigationError = result.IsChildSession
+                        ? "The Subsessions view is unavailable. Your search results are unchanged."
+                        : "Agent Chat is unavailable. Your search results are unchanged.")
+                    .ConfigureAwait(false);
             }
         }
         catch (Exception) when (!_lifetime.IsCancellationRequested)
         {
-            NavigationError = result.IsChildSession
-                ? "The Subsessions view could not open this result. Your search results are unchanged."
-                : "Agent Chat could not open this result. Your search results are unchanged.";
+            await RunOnUiThreadAsync(() => NavigationError = result.IsChildSession
+                    ? "The Subsessions view could not open this result. Your search results are unchanged."
+                    : "Agent Chat could not open this result. Your search results are unchanged.")
+                .ConfigureAwait(false);
         }
     }
 

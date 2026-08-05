@@ -47,15 +47,19 @@ public sealed partial class AgentChatViewModel
         {
             try
             {
-                var upload = await _attachmentService!.LoadUploadRequestFromFileAsync(path);
-                if (!TryAddAttachmentUpload(upload))
+                var upload = await _attachmentService!.LoadUploadRequestFromFileAsync(path)
+                    .ConfigureAwait(false);
+                var added = false;
+                await InvokeOnUiThreadAsync(() => added = TryAddAttachmentUpload(upload))
+                    .ConfigureAwait(false);
+                if (!added)
                 {
                     return;
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
-                SetAttachmentStatus(ex.Message);
+                await InvokeOnUiThreadAsync(() => SetAttachmentStatus(ex.Message)).ConfigureAwait(false);
             }
         }
     }
@@ -158,12 +162,14 @@ public sealed partial class AgentChatViewModel
 
         try
         {
-            var content = await _attachmentService.ReadAttachmentBytesAsync(attachment.Metadata);
-            ShowAttachmentPreviewImage(attachment.FileName, content);
+            var content = await _attachmentService.ReadAttachmentBytesAsync(attachment.Metadata)
+                .ConfigureAwait(false);
+            await InvokeOnUiThreadAsync(() => ShowAttachmentPreviewImage(attachment.FileName, content))
+                .ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            SetGlobalStatus(ex.Message);
+            await InvokeOnUiThreadAsync(() => SetGlobalStatus(ex.Message)).ConfigureAwait(false);
         }
     }
 

@@ -182,8 +182,14 @@ public sealed partial class RepositoryArchitectureTests
 
         foreach (var projectPath in Directory.EnumerateFiles(sourceRoot, "*.csproj", SearchOption.AllDirectories))
         {
+            var project = XDocument.Load(projectPath);
+            if (project.Descendants("SunderPackageAggregateProject")
+                .Any(static property => string.Equals(property.Value, "true", StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
             var projectName = Path.GetFileNameWithoutExtension(projectPath);
-            var referencedProductionProjects = XDocument.Load(projectPath)
+            var referencedProductionProjects = project
                 .Descendants("ProjectReference")
                 .Select(static reference => reference.Attribute("Include")?.Value)
                 .Where(static include => !string.IsNullOrWhiteSpace(include))
@@ -263,6 +269,13 @@ public sealed partial class RepositoryArchitectureTests
                                       || typeof(ISunderAppPackageModule).IsAssignableFrom(type))
                 .ToArray();
 
+            if (package.IsWorker)
+            {
+                Assert.Empty(moduleTypes);
+                Assert.NotNull(Assembly.Load(package.Name).EntryPoint);
+                continue;
+            }
+
             Assert.NotEmpty(moduleTypes);
             Assert.True(moduleTypes.Count(typeof(ISunderRuntimePackageModule).IsAssignableFrom) <= 1);
             Assert.True(moduleTypes.Count(typeof(ISunderAppPackageModule).IsAssignableFrom) <= 1);
@@ -301,6 +314,10 @@ public sealed partial class RepositoryArchitectureTests
         Assert.Equal("true", GetSingleProperty(buildProperties, "Deterministic"));
         Assert.Equal("true", GetSingleProperty(buildProperties, "EnableNETAnalyzers"));
         Assert.Equal("2.0.0", GetSingleProperty(buildProperties, "VersionPrefix"));
+        Assert.Equal("$(VersionPrefix)", GetSingleProperty(buildProperties, "SunderAgentVersion"));
+        Assert.Equal("$(SunderAgentVersion)", GetSingleProperty(buildProperties, "Version"));
+        Assert.Equal("$(SunderAgentVersion)", GetSingleProperty(buildProperties, "PackageVersion"));
+        Assert.Equal("$(SunderAgentVersion)", GetSingleProperty(buildProperties, "InformationalVersion"));
         Assert.Equal("GPL-3.0-only", GetSingleProperty(buildProperties, "PackageLicenseExpression"));
 
         var packageProperties = XDocument.Load(Path.Combine(repositoryRoot, "Directory.Packages.props"));
@@ -309,10 +326,15 @@ public sealed partial class RepositoryArchitectureTests
         var sunderPackageVersions = packageProperties.Descendants("PackageVersion")
             .Where(reference => reference.Attribute("Include")?.Value.StartsWith("Sunder.", StringComparison.Ordinal) == true)
             .ToArray();
-        Assert.Equal(4, sunderPackageVersions.Length);
-        Assert.All(sunderPackageVersions, reference => Assert.Equal(
-            "[1.1.0,1.2.0)",
-            reference.Attribute("Version")?.Value));
+        Assert.Equal(5, sunderPackageVersions.Length);
+        Assert.Equal(
+            "[1.1.0]",
+            Assert.Single(sunderPackageVersions, static reference =>
+                reference.Attribute("Include")?.Value == "Sunder.Sdk.Worker").Attribute("Version")?.Value);
+        Assert.All(
+            sunderPackageVersions.Where(static reference =>
+                reference.Attribute("Include")?.Value != "Sunder.Sdk.Worker"),
+            reference => Assert.Equal("[1.1.0,1.2.0)", reference.Attribute("Version")?.Value));
 
         foreach (var package in AgentPackageRepositoryInventory.GetRuntimePackageProjects()
                      .Where(static package => !string.Equals(package.Name, "Sunder.Package.Agent", StringComparison.Ordinal)))
@@ -324,6 +346,20 @@ public sealed partial class RepositoryArchitectureTests
         Assert.Contains("[**/obj/**/*.cs]", editorConfig, StringComparison.Ordinal);
         Assert.Contains("[**/*.g.cs]", editorConfig, StringComparison.Ordinal);
         Assert.Contains("generated_code = true", editorConfig, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Workflows_DoNotPropagateAgentVersionThroughCoreVersionProperties()
+    {
+        var repositoryRoot = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
+        foreach (var workflow in new[] { "sunder-package-smoke.yml", "sunder-package-release.yml" })
+        {
+            var source = File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", workflow));
+            Assert.Contains("-p:SunderAgentVersion=", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("-p:Version=", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("-p:PackageVersion=", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("-p:InformationalVersion=", source, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -437,6 +473,40 @@ public sealed partial class RepositoryArchitectureTests
         Assert.DoesNotContain(".GetAwaiter().GetResult()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [];", source, StringComparison.Ordinal);
         Assert.DoesNotContain("public AgentWorkspaceRecord? GetWorkspace(string workspaceId) => null;", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AppRuntimeBridges_RemainAsyncAndExecutionPackagesDoNotDuplicateWorkspaceTransport()
+    {
+        var sourceRoot = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "src");
+        var bridgePaths = new[]
+        {
+            "Sunder.Package.Agent/Runtime/AgentAppRuntimeGateway.cs",
+            "Sunder.Package.Agent/Runtime/AgentAppRuntimeGateway.Commands.cs",
+            "Sunder.Package.Agent.Memory.Semantic/Runtime/MemoryRuntimeBridge.cs",
+            "Sunder.Package.Agent.Subagents/Runtime/SubagentRuntimeBridge.cs",
+        };
+        foreach (var bridgePath in bridgePaths)
+        {
+            var source = File.ReadAllText(Path.Combine(sourceRoot, NormalizePath(bridgePath)));
+            Assert.DoesNotContain(".GetAwaiter().GetResult()", source, StringComparison.Ordinal);
+            Assert.DoesNotContain(".Result", source, StringComparison.Ordinal);
+            Assert.DoesNotContain(".Wait(", source, StringComparison.Ordinal);
+        }
+
+        var executionRoots = new[]
+        {
+            Path.Combine(sourceRoot, "Sunder.Package.Agent.Execution.Local"),
+            Path.Combine(sourceRoot, "Sunder.Package.Agent.Execution.Docker"),
+        };
+        Assert.False(File.Exists(Path.Combine(executionRoots[0], "LocalExecutionAppRuntimeClient.cs")));
+        Assert.False(File.Exists(Path.Combine(executionRoots[1], "DockerExecutionAppRuntimeClient.cs")));
+        var executionSource = string.Join('\n', executionRoots
+            .SelectMany(static root => Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
+            .Where(AgentPackageRepositoryInventory.IsSourceFile)
+            .Select(File.ReadAllText));
+        Assert.DoesNotContain("GetWorkspaceEditor", executionSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("SaveWorkspaceEditor", executionSource, StringComparison.Ordinal);
     }
 
     private static string GetSingleProperty(XDocument document, string propertyName)

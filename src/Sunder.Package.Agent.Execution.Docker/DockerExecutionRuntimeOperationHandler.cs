@@ -8,8 +8,7 @@ namespace Sunder.Package.Agent.Execution.Docker;
 internal sealed class DockerExecutionRuntimeOperationHandler(
     IPackageContext packageContext,
     DockerCliRunner dockerCliRunner,
-    DockerImageCatalogService imageCatalog,
-    DockerExecutionWorkspaceEditorContributor workspaceEditor)
+    DockerImageCatalogService imageCatalog)
     : IPackageRuntimeOperationHandler<DockerExecutionOperationRequest, DockerExecutionOperationResponse>
 {
     private const int MaximumPathLength = 1024;
@@ -32,8 +31,6 @@ internal sealed class DockerExecutionRuntimeOperationHandler(
                 DockerExecutionOperationKind.RefreshImages => await RefreshImagesAsync(cancellationToken),
                 DockerExecutionOperationKind.PullImage => await PullImageAsync(request, cancellationToken),
                 DockerExecutionOperationKind.TestDocker => await TestDockerAsync(cancellationToken),
-                DockerExecutionOperationKind.GetWorkspaceEditor => await GetWorkspaceEditorAsync(request, cancellationToken),
-                DockerExecutionOperationKind.SaveWorkspaceEditor => await SaveWorkspaceEditorAsync(request, cancellationToken),
                 _ => throw new DockerExecutionDomainException(
                     "docker.operation.unknown",
                     "The requested Docker execution operation is not supported."),
@@ -203,31 +200,6 @@ internal sealed class DockerExecutionRuntimeOperationHandler(
                 "Docker is unavailable or the configured daemon could not be reached.",
                 IsTransient: true,
                 CorrelationId: correlationId));
-    }
-
-    private async ValueTask<DockerExecutionOperationResponse> GetWorkspaceEditorAsync(
-        DockerExecutionOperationRequest request,
-        CancellationToken cancellationToken)
-    {
-        var context = request.EditorContext
-            ?? throw new InvalidOperationException("Workspace editor context is required.");
-        return new DockerExecutionOperationResponse(
-            EditorSections: await workspaceEditor.GetSectionsAsync(context, cancellationToken));
-    }
-
-    private async ValueTask<DockerExecutionOperationResponse> SaveWorkspaceEditorAsync(
-        DockerExecutionOperationRequest request,
-        CancellationToken cancellationToken)
-    {
-        var context = request.EditorContext
-            ?? throw new InvalidOperationException("Workspace editor context is required.");
-        var saveRequest = request.EditorSaveRequest
-            ?? throw new InvalidOperationException("Workspace editor values are required.");
-        return new DockerExecutionOperationResponse(
-            EditorSaveResult: await workspaceEditor.SaveSectionAsync(
-                context,
-                saveRequest,
-                cancellationToken));
     }
 
     private DockerExecutionOperationResponse CreateDomainFailure(

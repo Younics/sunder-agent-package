@@ -57,7 +57,7 @@ internal class RegressionTestExtensionCatalog : AgentRpcCatalog
     private readonly RegressionTestRpcClient _client;
 
     public RegressionTestExtensionCatalog()
-        : this(new RegressionTestRpcClient(new RegressionTestRpcState(), "test.consumer"))
+        : this(new RegressionTestRpcClient(new RegressionTestRpcState(), "sunder.package.agent"))
     {
     }
 
@@ -81,6 +81,17 @@ internal class RegressionTestExtensionCatalog : AgentRpcCatalog
     public int DiscoveryCount => _client.State.DiscoveryCount;
 
     public Exception? LastInvocationFailure => _client.State.LastInvocationFailure;
+
+    public SunderRpcEndpointReference? LastInvariantViolationEndpoint
+        => _client.State.LastInvariantViolationEndpoint;
+
+    public string? LastInvariantViolationPackageId
+        => _client.State.LastInvariantViolationPackageId;
+
+    public int InvariantViolationReportCount => _client.State.InvariantViolationReportCount;
+
+    public void SetProviderLookupFailure(string callerPackageId, SunderRpcErrorKind? errorKind)
+        => _client.State.SetProviderLookupFailure(callerPackageId, errorKind);
 
     public AgentRpcReference<TService> GetRequiredReference<TService>(AgentRpcService<TService> service)
         where TService : class
@@ -189,7 +200,17 @@ internal sealed class RegressionTestRpcClient(RegressionTestRpcState state, stri
     }
 
     public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(SunderRpcEndpointReference endpoint, CancellationToken cancellationToken = default)
-        => ValueTask.FromResult(State.GetProvider(endpoint));
+        => ValueTask.FromResult(State.GetProvider(endpoint, callerPackageId));
+
+    public ValueTask<bool> TryReportInvariantViolationAsync(
+        SunderRpcEndpointReference endpoint,
+        Exception exception,
+        CancellationToken cancellationToken = default)
+        => State.TryReportInvariantViolationAsync(
+            callerPackageId,
+            endpoint,
+            exception,
+            cancellationToken);
 
     public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(string contractId, CancellationToken cancellationToken = default)
         => ValueTask.FromResult(State.Discover(contractId));
@@ -243,7 +264,20 @@ internal sealed class RegressionTestRpcCallScope(
         CancellationToken cancellationToken = default)
     {
         ThrowIfUnavailable(cancellationToken);
-        return ValueTask.FromResult(state.GetProvider(endpoint));
+        return ValueTask.FromResult(state.GetProvider(endpoint, callerPackageId));
+    }
+
+    public ValueTask<bool> TryReportInvariantViolationAsync(
+        SunderRpcEndpointReference endpoint,
+        Exception exception,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfUnavailable(cancellationToken);
+        return state.TryReportInvariantViolationAsync(
+            callerPackageId,
+            endpoint,
+            exception,
+            cancellationToken);
     }
 
     public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(
@@ -538,17 +572,29 @@ internal sealed class RegressionTestRpcState : IDisposable
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, SunderRpcErrorKind> _providerLookupFailures = new(StringComparer.Ordinal);
     private readonly List<ChannelWriter<SunderRpcCatalogEvent>> _watchers = [];
     private readonly List<SunderRpcCatalogEvent> _events = [];
     private long _revision;
     private long _sequence;
     private int _providerSequence;
     private int _discoveryCount;
+    private int _invariantViolationReportCount;
     private Exception? _lastInvocationFailure;
+    private SunderRpcEndpointReference? _lastInvariantViolationEndpoint;
+    private string? _lastInvariantViolationPackageId;
 
     public int DiscoveryCount => Volatile.Read(ref _discoveryCount);
 
     public Exception? LastInvocationFailure => Volatile.Read(ref _lastInvocationFailure);
+
+    public SunderRpcEndpointReference? LastInvariantViolationEndpoint
+        => Volatile.Read(ref _lastInvariantViolationEndpoint);
+
+    public string? LastInvariantViolationPackageId
+        => Volatile.Read(ref _lastInvariantViolationPackageId);
+
+    public int InvariantViolationReportCount => Volatile.Read(ref _invariantViolationReportCount);
 
     public void Add(
         string packageId,
@@ -582,13 +628,78 @@ internal sealed class RegressionTestRpcState : IDisposable
         }
     }
 
-    public SunderRpcProviderSnapshot? GetProvider(SunderRpcEndpointReference endpoint)
+    public void SetProviderLookupFailure(string callerPackageId, SunderRpcErrorKind? errorKind)
     {
         lock (_gate)
         {
+            if (errorKind is { } value)
+            {
+                _providerLookupFailures[callerPackageId] = value;
+            }
+            else
+            {
+                _providerLookupFailures.Remove(callerPackageId);
+            }
+        }
+    }
+
+    public SunderRpcProviderSnapshot? GetProvider(
+        SunderRpcEndpointReference endpoint,
+        string? callerPackageId = null)
+    {
+        lock (_gate)
+        {
+            if (callerPackageId is not null
+                && _providerLookupFailures.TryGetValue(callerPackageId, out var errorKind))
+            {
+                throw new SunderRpcException(new SunderRpcError(
+                    errorKind,
+                    "test.rpc.provider-lookup-failure",
+                    $"Injected {errorKind} exact-provider lookup failure."));
+            }
             return _entries.TryGetValue(endpoint.Value, out var entry) && entry.Active
                 ? entry.Snapshot
                 : null;
+        }
+    }
+
+    public ValueTask<bool> TryReportInvariantViolationAsync(
+        string callerPackageId,
+        SunderRpcEndpointReference endpoint,
+        Exception exception,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!string.Equals(callerPackageId, "sunder.package.agent", StringComparison.Ordinal))
+        {
+            return ValueTask.FromResult(false);
+        }
+
+        lock (_gate)
+        {
+            if (!_entries.TryGetValue(endpoint.Value, out var entry) || !entry.Active)
+            {
+                return ValueTask.FromResult(false);
+            }
+
+            entry.Active = false;
+            entry.Retirement.Cancel();
+            var snapshot = entry.Snapshot with
+            {
+                CatalogRevision = ++_revision,
+                State = SunderRpcProviderState.Faulted,
+                FaultCode = "rpc.provider.invariant-violation",
+            };
+            Volatile.Write(ref _lastInvariantViolationEndpoint, endpoint);
+            Volatile.Write(ref _lastInvariantViolationPackageId, entry.Snapshot.PackageId);
+            Interlocked.Increment(ref _invariantViolationReportCount);
+            Publish(new SunderRpcCatalogEvent(
+                _revision,
+                ++_sequence,
+                SunderRpcCatalogEventKind.Faulted,
+                snapshot));
+            if (entry.ActiveCalls == 0) entry.Drained.TrySetResult();
+            return ValueTask.FromResult(true);
         }
     }
 
@@ -747,6 +858,7 @@ internal sealed class RegressionTestRpcState : IDisposable
         {
             entries = _entries.Values.ToArray();
             _entries.Clear();
+            _providerLookupFailures.Clear();
             watchers = _watchers.ToArray();
             _watchers.Clear();
         }

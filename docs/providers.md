@@ -84,6 +84,7 @@ A chat provider may additionally implement `IAgentUtilityModelProvider` to expos
 - Keep operational token caches and provider continuation state in package-owned secret/state storage as appropriate.
 - Browser authorization uses Sunder's callback abstractions. Packages must never bind their own callback port.
 - Keep App settings views as presentation clients over Runtime operations. Do not duplicate secrets or network clients in App DI.
+- Project only credential presence to App. Blank input retains the stored credential; non-empty replacements and explicit clears cross to Runtime only as commands, and Runtime responses never echo the value.
 
 ## Registration
 

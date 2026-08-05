@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Runtime.InteropServices;
 using Sunder.Sdk.Compatibility;
 using Xunit;
 
@@ -26,7 +27,15 @@ public sealed class GeneratedPackageManifestTests
         foreach (var package in runtimePackages)
         {
             var manifestPath = artifactsRoot is null
-                ? Path.Combine(package.DirectoryPath, "obj", configuration, targetFramework!, "sunder-package.json")
+                ? package.IsWorker
+                    ? Path.Combine(
+                        package.DirectoryPath,
+                        "obj",
+                        configuration,
+                        targetFramework!,
+                        RuntimeInformation.RuntimeIdentifier,
+                        "sunder-package.json")
+                    : Path.Combine(package.DirectoryPath, "obj", configuration, targetFramework!, "sunder-package.json")
                 : Path.Combine(artifactsRoot, "obj", package.Name, configuration, "sunder-package.json");
 
             Assert.True(File.Exists(manifestPath), $"Generated manifest was not found for {package.Name}: {manifestPath}");
@@ -41,6 +50,12 @@ public sealed class GeneratedPackageManifestTests
                 .ToArray();
             var targets = root.GetProperty("targets").EnumerateArray().ToArray();
             Assert.NotEmpty(targets);
+            if (package.IsWorker)
+            {
+                var target = Assert.Single(targets);
+                Assert.Equal("worker", target.GetProperty("kind").GetString());
+                Assert.Equal(RuntimeInformation.RuntimeIdentifier, target.GetProperty("rid").GetString());
+            }
             foreach (var target in targets)
             {
                 Assert.StartsWith("1.1.", target.GetProperty("sdkVersion").GetString(), StringComparison.Ordinal);
@@ -52,7 +67,14 @@ public sealed class GeneratedPackageManifestTests
             }
 
             var packageOutputPath = artifactsRoot is null
-                ? Path.Combine(package.DirectoryPath, "bin", configuration, targetFramework!)
+                ? package.IsWorker
+                    ? Path.Combine(
+                        package.DirectoryPath,
+                        "bin",
+                        configuration,
+                        targetFramework!,
+                        RuntimeInformation.RuntimeIdentifier)
+                    : Path.Combine(package.DirectoryPath, "bin", configuration, targetFramework!)
                 : Path.Combine(artifactsRoot, "bin", package.Name, configuration);
             var avaloniaSdkPath = Path.Combine(
                 packageOutputPath,

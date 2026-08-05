@@ -35,41 +35,219 @@ internal static class AgentRpcInvocation
     internal static IReadOnlyList<AgentRpcOwnedReference<TService, TMetadata>> Snapshot<TService, TMetadata>(
         AgentRpcCatalog catalog,
         AgentRpcService<TService> service,
-        Func<TService, TMetadata> metadataSelector)
+        Func<TService, TMetadata> metadataSelector,
+        CancellationToken cancellationToken = default,
+        bool omitUnavailable = false)
         where TService : class
     {
         var snapshots = new List<AgentRpcOwnedReference<TService, TMetadata>>();
-        foreach (var reference in catalog.GetServiceReferences(service))
+        cancellationToken.ThrowIfCancellationRequested();
+        IReadOnlyList<AgentRpcReference<TService>> references;
+        try
         {
-            if (!reference.TryAcquire(out var lease)) continue;
+            references = catalog.GetServiceReferences(service);
+        }
+        catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
+        {
+            throw Cancelled(exception, cancellationToken);
+        }
+        foreach (var reference in references)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            AgentRpcLease<TService>? lease;
+            try
+            {
+                if (!reference.TryAcquire(out lease))
+                {
+                    if (omitUnavailable) continue;
+                    throw Unavailable(reference.PackageId);
+                }
+            }
+            catch (Exception exception) when (IsUnavailableFailure(exception, cancellationToken))
+            {
+                if (omitUnavailable) continue;
+                throw;
+            }
+            catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
+            {
+                throw Cancelled(exception, cancellationToken);
+            }
             using (lease)
             {
-                var metadata = metadataSelector(lease.Service);
-                if (!lease.RetirementToken.IsCancellationRequested)
+                var retirementToken = lease.RetirementToken;
+                try
                 {
-                    snapshots.Add(new AgentRpcOwnedReference<TService, TMetadata>(reference, lease.PackageId, metadata));
+                    var metadata = metadataSelector(lease.Service);
+                    if (!retirementToken.IsCancellationRequested)
+                    {
+                        snapshots.Add(new AgentRpcOwnedReference<TService, TMetadata>(reference, lease.PackageId, metadata));
+                    }
+                }
+                catch (Exception exception) when (IsUnavailableFailure(exception, cancellationToken))
+                {
+                    if (!omitUnavailable) throw;
+                }
+                catch (Exception exception) when (IsRetirementCancellation(
+                    exception,
+                    retirementToken,
+                    cancellationToken))
+                {
+                    if (!omitUnavailable) throw Unavailable(reference.PackageId, exception);
+                }
+                catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
+                {
+                    throw Cancelled(exception, cancellationToken);
                 }
             }
         }
         return snapshots;
     }
 
+    internal static async Task<IReadOnlyList<AgentRpcOwnedReference<TService, TMetadata>>> SnapshotAsync<TService, TMetadata>(
+        AgentRpcCatalog catalog,
+        AgentRpcService<TService> service,
+        Func<TService, CancellationToken, ValueTask<TMetadata>> metadataSelector,
+        CancellationToken cancellationToken = default,
+        bool omitUnavailable = false)
+        where TService : class
+    {
+        var snapshots = new List<AgentRpcOwnedReference<TService, TMetadata>>();
+        cancellationToken.ThrowIfCancellationRequested();
+        IReadOnlyList<AgentRpcReference<TService>> references;
+        try
+        {
+            references = await catalog.GetServiceReferencesAsync(service, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
+        {
+            throw Cancelled(exception, cancellationToken);
+        }
+
+        foreach (var reference in references)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            AgentRpcLease<TService>? lease;
+            try
+            {
+                lease = await reference.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
+                if (lease is null)
+                {
+                    if (omitUnavailable) continue;
+                    throw Unavailable(reference.PackageId);
+                }
+            }
+            catch (Exception exception) when (IsUnavailableFailure(exception, cancellationToken))
+            {
+                if (omitUnavailable) continue;
+                throw;
+            }
+            catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
+            {
+                throw Cancelled(exception, cancellationToken);
+            }
+
+            using (lease)
+            {
+                var retirementToken = lease.RetirementToken;
+                using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    retirementToken);
+                try
+                {
+                    var metadata = await metadataSelector(lease.Service, invocation.Token)
+                        .ConfigureAwait(false);
+                    if (!retirementToken.IsCancellationRequested)
+                    {
+                        snapshots.Add(new AgentRpcOwnedReference<TService, TMetadata>(reference, lease.PackageId, metadata));
+                    }
+                }
+                catch (Exception exception) when (IsUnavailableFailure(exception, cancellationToken))
+                {
+                    if (!omitUnavailable) throw;
+                }
+                catch (Exception exception) when (IsRetirementCancellation(
+                    exception,
+                    retirementToken,
+                    cancellationToken))
+                {
+                    if (!omitUnavailable) throw Unavailable(reference.PackageId, exception);
+                }
+                catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
+                {
+                    throw Cancelled(exception, cancellationToken);
+                }
+            }
+        }
+
+        return snapshots;
+    }
+
     internal static IReadOnlyList<AgentRpcOwnedProviderReference<TService, TMetadata>> Snapshot<TService, TMetadata>(
         AgentRpcCatalog catalog,
         AgentRpcProviderService<TService> service,
-        Func<TService, TMetadata> metadataSelector)
+        Func<TService, TMetadata> metadataSelector,
+        CancellationToken cancellationToken = default,
+        bool omitUnavailable = false)
         where TService : class
     {
         var snapshots = new List<AgentRpcOwnedProviderReference<TService, TMetadata>>();
-        foreach (var reference in catalog.GetServiceReferences(service))
+        cancellationToken.ThrowIfCancellationRequested();
+        IReadOnlyList<AgentRpcProviderReference<TService>> references;
+        try
         {
-            if (!reference.TryAcquire(out var lease)) continue;
+            references = catalog.GetServiceReferences(service);
+        }
+        catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
+        {
+            throw Cancelled(exception, cancellationToken);
+        }
+        foreach (var reference in references)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            AgentRpcLease<TService>? lease;
+            try
+            {
+                if (!reference.TryAcquire(out lease))
+                {
+                    if (omitUnavailable) continue;
+                    throw Unavailable(reference.PackageId);
+                }
+            }
+            catch (Exception exception) when (IsUnavailableFailure(exception, cancellationToken))
+            {
+                if (omitUnavailable) continue;
+                throw;
+            }
+            catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
+            {
+                throw Cancelled(exception, cancellationToken);
+            }
             using (lease)
             {
-                var metadata = metadataSelector(lease.Service);
-                if (!lease.RetirementToken.IsCancellationRequested)
+                var retirementToken = lease.RetirementToken;
+                try
                 {
-                    snapshots.Add(new AgentRpcOwnedProviderReference<TService, TMetadata>(reference, lease.PackageId, metadata));
+                    var metadata = metadataSelector(lease.Service);
+                    if (!retirementToken.IsCancellationRequested)
+                    {
+                        snapshots.Add(new AgentRpcOwnedProviderReference<TService, TMetadata>(reference, lease.PackageId, metadata));
+                    }
+                }
+                catch (Exception exception) when (IsUnavailableFailure(exception, cancellationToken))
+                {
+                    if (!omitUnavailable) throw;
+                }
+                catch (Exception exception) when (IsRetirementCancellation(
+                    exception,
+                    retirementToken,
+                    cancellationToken))
+                {
+                    if (!omitUnavailable) throw Unavailable(reference.PackageId, exception);
+                }
+                catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
+                {
+                    throw Cancelled(exception, cancellationToken);
                 }
             }
         }
@@ -82,17 +260,31 @@ internal static class AgentRpcInvocation
         Func<TService, CancellationToken, ValueTask<TResult>> callback)
         where TService : class
     {
-        if (!reference.Reference.TryAcquire(out var lease))
+        AgentRpcLease<TService>? lease;
+        try
+        {
+            lease = await reference.Reference.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (IsUnavailableFailure(exception, cancellationToken))
+        {
+            throw Unavailable(reference.PackageId, exception);
+        }
+        catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
+        {
+            throw Cancelled(exception, cancellationToken);
+        }
+        if (lease is null)
         {
             throw Unavailable(reference.PackageId);
         }
         using (lease)
         using (var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.RetirementToken))
         {
+            var retirementToken = lease.RetirementToken;
             try
             {
                 var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
-                if (lease.RetirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
                     throw Unavailable(reference.PackageId);
                 }
@@ -102,9 +294,16 @@ internal static class AgentRpcInvocation
             {
                 throw Unavailable(reference.PackageId, exception);
             }
+            catch (Exception exception) when (IsRetirementCancellation(
+                exception,
+                retirementToken,
+                cancellationToken))
+            {
+                throw Unavailable(reference.PackageId, exception);
+            }
             catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
             {
-                throw new OperationCanceledException(exception.Message, exception, cancellationToken);
+                throw Cancelled(exception, cancellationToken);
             }
         }
     }
@@ -131,17 +330,31 @@ internal static class AgentRpcInvocation
         Func<TService, CancellationToken, ValueTask<TResult>> callback)
         where TService : class
     {
-        if (!reference.Reference.TryAcquire(out var lease))
+        AgentRpcLease<TService>? lease;
+        try
+        {
+            lease = await reference.Reference.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (IsUnavailableFailure(exception, cancellationToken))
+        {
+            throw Unavailable(reference.PackageId, exception);
+        }
+        catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
+        {
+            throw Cancelled(exception, cancellationToken);
+        }
+        if (lease is null)
         {
             throw Unavailable(reference.PackageId);
         }
         using (lease)
         using (var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.RetirementToken))
         {
+            var retirementToken = lease.RetirementToken;
             try
             {
                 var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
-                if (lease.RetirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
                     throw Unavailable(reference.PackageId);
                 }
@@ -151,12 +364,41 @@ internal static class AgentRpcInvocation
             {
                 throw Unavailable(reference.PackageId, exception);
             }
+            catch (Exception exception) when (IsRetirementCancellation(
+                exception,
+                retirementToken,
+                cancellationToken))
+            {
+                throw Unavailable(reference.PackageId, exception);
+            }
             catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
             {
-                throw new OperationCanceledException(exception.Message, exception, cancellationToken);
+                throw Cancelled(exception, cancellationToken);
             }
         }
     }
+
+    private static bool IsRetirementCancellation(
+        Exception exception,
+        CancellationToken retirementToken,
+        CancellationToken callerCancellationToken)
+        => retirementToken.IsCancellationRequested
+           && !callerCancellationToken.IsCancellationRequested
+           && (exception is OperationCanceledException
+               || exception is SunderRpcException
+               {
+                   Error.Kind: SunderRpcErrorKind.Cancelled,
+               });
+
+    internal static OperationCanceledException Cancelled(
+        SunderRpcException exception,
+        CancellationToken callerCancellationToken)
+        => new(
+            exception.Message,
+            exception,
+            callerCancellationToken.IsCancellationRequested
+                ? callerCancellationToken
+                : CancellationToken.None);
 }
 
 internal sealed record AgentRpcOwnedReference<TService, TMetadata>(

@@ -15,10 +15,23 @@ public sealed partial class SubagentsViewModel
             return;
         }
 
-        CancelPendingMutation();
-        var intentRevision = _listDetail.ShowNewDetail();
-        var mutation = _requests.Begin(MutationChannel, _lifetimeCancellation.Token);
-        var operation = BeginOperation(SubagentOperation.Create);
+        var intentRevision = 0L;
+        LatestRequestTicket mutation = default;
+        OperationGeneration operation = default;
+        var started = false;
+        await RunOnUiThreadAsync(() =>
+        {
+            CancelPendingMutation();
+            intentRevision = _listDetail.ShowNewDetail();
+            mutation = _requests.Begin(MutationChannel, _lifetimeCancellation.Token);
+            operation = BeginOperation(SubagentOperation.Create);
+            started = true;
+        });
+        if (!started)
+        {
+            return;
+        }
+
         Task hydration = Task.CompletedTask;
         try
         {
@@ -27,7 +40,7 @@ public sealed partial class SubagentsViewModel
                 mutation.CancellationToken)
                 .WaitAsync(mutation.CancellationToken);
             DiscardPendingSubagentRefresh();
-            await _uiDispatcher.InvokeAsync(() =>
+            await RunOnUiThreadAsync(() =>
             {
                 if (!_requests.IsCurrent(mutation))
                 {
@@ -51,7 +64,7 @@ public sealed partial class SubagentsViewModel
                     ClearStatus();
                 }
                 hydration = _currentDetailLoad;
-            }).ConfigureAwait(false);
+            });
             await hydration.WaitAsync(mutation.CancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (mutation.CancellationToken.IsCancellationRequested)
@@ -59,156 +72,215 @@ public sealed partial class SubagentsViewModel
         }
         catch (Exception ex)
         {
-            if (_requests.IsCurrent(mutation))
+            await RunOnUiThreadAsync(() =>
             {
-                SetStatus(ex.Message, SubagentStatusKind.Error);
-            }
+                if (_requests.IsCurrent(mutation))
+                {
+                    SetStatus(ex.Message, SubagentStatusKind.Error);
+                }
+            });
         }
         finally
         {
             _requests.Complete(mutation);
-            EndOperation(operation);
+            await RunOnUiThreadAsync(() => EndOperation(operation));
         }
     }
 
     [RelayCommand(CanExecute = nameof(CanSaveSubagent))]
     private async Task SaveSubagentAsync()
     {
-        var selected = SelectedSubagent;
-        if (_gateway is null || selected is null || !CanSaveSubagent())
+        if (_gateway is null)
         {
             return;
         }
 
-        var intentRevision = IntentRevision;
-        var layoutRevision = LayoutRevision;
-        var editRevision = _editRevision;
-        var request = new SubagentSaveRequest(
-            selected.SubagentId,
-            DisplayName,
-            Description,
-            Instructions,
-            ChatBinding.SelectedProvider?.Id,
-            ChatBinding.SelectedModel?.Id,
-            Capabilities.Assignments,
-            ChatBinding.SettingsJson);
-        var mutation = _requests.Begin(MutationChannel, _lifetimeCancellation.Token);
-        var operation = BeginOperation(SubagentOperation.Save);
-        try
+        SubagentRecord? selected = null;
+        SubagentSaveRequest? request = null;
+        var intentRevision = 0L;
+        var layoutRevision = 0L;
+        var editRevision = 0L;
+        LatestRequestTicket mutation = default;
+        OperationGeneration operation = default;
+        var started = false;
+        await RunOnUiThreadAsync(() =>
         {
-            var saved = await _gateway.SaveSubagentAsync(request, mutation.CancellationToken)
-                .WaitAsync(mutation.CancellationToken);
-            if (!_requests.IsCurrent(mutation)
-                || intentRevision != IntentRevision
-                || !string.Equals(
-                    SelectedSubagent?.SubagentId,
-                    selected.SubagentId,
-                    StringComparison.OrdinalIgnoreCase))
+            selected = SelectedSubagent;
+            if (selected is null || !CanSaveSubagent())
             {
                 return;
             }
 
-            var editedDuringSave = editRevision != _editRevision;
-            if (!editedDuringSave)
+            intentRevision = IntentRevision;
+            layoutRevision = LayoutRevision;
+            editRevision = _editRevision;
+            request = new SubagentSaveRequest(
+                selected.SubagentId,
+                DisplayName,
+                Description,
+                Instructions,
+                ChatBinding.SelectedProvider?.Id,
+                ChatBinding.SelectedModel?.Id,
+                Capabilities.Assignments,
+                ChatBinding.SettingsJson);
+            mutation = _requests.Begin(MutationChannel, _lifetimeCancellation.Token);
+            operation = BeginOperation(SubagentOperation.Save);
+            started = true;
+        });
+        if (!started)
+        {
+            return;
+        }
+
+        var selectedSubagent = selected!;
+        try
+        {
+            var saved = await _gateway.SaveSubagentAsync(request!, mutation.CancellationToken)
+                .WaitAsync(mutation.CancellationToken);
+            await RunOnUiThreadAsync(() =>
             {
-                _drafts.Remove(saved.SubagentId);
-            }
-            OnPropertyChanged(nameof(IsDirty));
-            DiscardPendingSubagentRefresh();
-            if (layoutRevision == LayoutRevision && IsCompactLayout && !editedDuringSave)
-            {
-                _listDetail.ShowList();
-                ClearStatus();
-            }
-            else
-            {
-                SetStatus(
-                    editedDuringSave
-                        ? "Subagent saved. New edits remain unsaved."
-                        : "Subagent saved.",
-                    SubagentStatusKind.Success,
-                    autoClear: !editedDuringSave);
-            }
-            _listDetail.Reconcile(Subagents.Select(subagent => string.Equals(
-                    subagent.SubagentId,
-                    saved.SubagentId,
-                    StringComparison.OrdinalIgnoreCase)
-                ? saved
-                : subagent).ToArray());
+                if (!_requests.IsCurrent(mutation)
+                    || intentRevision != IntentRevision
+                    || !string.Equals(
+                        SelectedSubagent?.SubagentId,
+                        selectedSubagent.SubagentId,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                var editedDuringSave = editRevision != _editRevision;
+                if (!editedDuringSave)
+                {
+                    _drafts.Remove(saved.SubagentId);
+                }
+                OnPropertyChanged(nameof(IsDirty));
+                DiscardPendingSubagentRefresh();
+                if (layoutRevision == LayoutRevision && IsCompactLayout && !editedDuringSave)
+                {
+                    _listDetail.ShowList();
+                    ClearStatus();
+                }
+                else
+                {
+                    SetStatus(
+                        editedDuringSave
+                            ? "Subagent saved. New edits remain unsaved."
+                            : "Subagent saved.",
+                        SubagentStatusKind.Success,
+                        autoClear: !editedDuringSave);
+                }
+                _listDetail.Reconcile(Subagents.Select(subagent => string.Equals(
+                        subagent.SubagentId,
+                        saved.SubagentId,
+                        StringComparison.OrdinalIgnoreCase)
+                    ? saved
+                    : subagent).ToArray());
+            });
         }
         catch (OperationCanceledException) when (mutation.CancellationToken.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            if (_requests.IsCurrent(mutation))
+            await RunOnUiThreadAsync(() =>
             {
-                SetStatus(ex.Message, SubagentStatusKind.Error);
-            }
+                if (_requests.IsCurrent(mutation))
+                {
+                    SetStatus(ex.Message, SubagentStatusKind.Error);
+                }
+            });
         }
         finally
         {
             _requests.Complete(mutation);
-            EndOperation(operation);
+            await RunOnUiThreadAsync(() => EndOperation(operation));
         }
     }
 
     [RelayCommand(CanExecute = nameof(CanEditSubagent))]
     private async Task DeleteSubagentAsync()
     {
-        var selected = SelectedSubagent;
-        if (_gateway is null || selected is null)
+        if (_gateway is null)
         {
             return;
         }
 
-        var intentRevision = IntentRevision;
-        var layoutRevision = LayoutRevision;
-        var mutation = _requests.Begin(MutationChannel, _lifetimeCancellation.Token);
-        var operation = BeginOperation(SubagentOperation.Delete);
-        try
+        SubagentRecord? selected = null;
+        var intentRevision = 0L;
+        var layoutRevision = 0L;
+        LatestRequestTicket mutation = default;
+        OperationGeneration operation = default;
+        var started = false;
+        await RunOnUiThreadAsync(() =>
         {
-            var subagentId = selected.SubagentId;
-            var deletedName = selected.DisplayName;
-            await _gateway.DeleteSubagentAsync(subagentId, mutation.CancellationToken)
-                .WaitAsync(mutation.CancellationToken);
-            if (!_requests.IsCurrent(mutation)
-                || intentRevision != IntentRevision)
+            selected = SelectedSubagent;
+            if (selected is null)
             {
                 return;
             }
 
-            _drafts.Remove(subagentId);
-            DiscardPendingSubagentRefresh();
-            var clearCurrentCompactSelection = layoutRevision == LayoutRevision && IsCompactLayout;
-            if (clearCurrentCompactSelection)
+            intentRevision = IntentRevision;
+            layoutRevision = LayoutRevision;
+            mutation = _requests.Begin(MutationChannel, _lifetimeCancellation.Token);
+            operation = BeginOperation(SubagentOperation.Delete);
+            started = true;
+        });
+        if (!started)
+        {
+            return;
+        }
+
+        var selectedSubagent = selected!;
+        try
+        {
+            var subagentId = selectedSubagent.SubagentId;
+            var deletedName = selectedSubagent.DisplayName;
+            await _gateway.DeleteSubagentAsync(subagentId, mutation.CancellationToken)
+                .WaitAsync(mutation.CancellationToken);
+            await RunOnUiThreadAsync(() =>
             {
-                _listDetail.ShowList();
-                ClearStatus();
-            }
-            else
-            {
-                SetStatus($"Deleted subagent '{deletedName}'.", SubagentStatusKind.Success, autoClear: true);
-            }
-            _listDetail.Reconcile(Subagents.Where(subagent => !string.Equals(
-                subagent.SubagentId,
-                subagentId,
-                StringComparison.OrdinalIgnoreCase)).ToArray());
+                if (!_requests.IsCurrent(mutation)
+                    || intentRevision != IntentRevision)
+                {
+                    return;
+                }
+
+                _drafts.Remove(subagentId);
+                DiscardPendingSubagentRefresh();
+                var clearCurrentCompactSelection = layoutRevision == LayoutRevision && IsCompactLayout;
+                if (clearCurrentCompactSelection)
+                {
+                    _listDetail.ShowList();
+                    ClearStatus();
+                }
+                else
+                {
+                    SetStatus($"Deleted subagent '{deletedName}'.", SubagentStatusKind.Success, autoClear: true);
+                }
+                _listDetail.Reconcile(Subagents.Where(subagent => !string.Equals(
+                    subagent.SubagentId,
+                    subagentId,
+                    StringComparison.OrdinalIgnoreCase)).ToArray());
+            });
         }
         catch (OperationCanceledException) when (mutation.CancellationToken.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            if (_requests.IsCurrent(mutation))
+            await RunOnUiThreadAsync(() =>
             {
-                SetStatus(ex.Message, SubagentStatusKind.Error);
-            }
+                if (_requests.IsCurrent(mutation))
+                {
+                    SetStatus(ex.Message, SubagentStatusKind.Error);
+                }
+            });
         }
         finally
         {
             _requests.Complete(mutation);
-            EndOperation(operation);
+            await RunOnUiThreadAsync(() => EndOperation(operation));
         }
     }
 
@@ -228,32 +300,52 @@ public sealed partial class SubagentsViewModel
     [RelayCommand]
     private async Task ReloadSubagentChatProvidersAsync()
     {
-        if (SelectedSubagent is null)
+        OperationGeneration operation = default;
+        var started = false;
+        ModelBindingSelection? selection = null;
+        await RunOnUiThreadAsync(() =>
+        {
+            if (SelectedSubagent is null)
+            {
+                return;
+            }
+
+            selection = ChatBinding.Selection;
+            operation = BeginOperation(SubagentOperation.ReloadProviders);
+            started = true;
+        });
+        if (!started)
         {
             return;
         }
 
-        var operation = BeginOperation(SubagentOperation.ReloadProviders);
         try
         {
-            await ChatBinding.RefreshAsync(ChatBinding.Selection, _lifetimeCancellation.Token)
+            await ChatBinding.RefreshAsync(selection!, _lifetimeCancellation.Token)
                 .WaitAsync(_lifetimeCancellation.Token);
-            UpdateCurrentDraft();
-            ClearStatus();
+            await RunOnUiThreadAsync(() =>
+            {
+                UpdateCurrentDraft();
+                ClearStatus();
+            });
         }
         catch (Exception ex)
         {
-            SetStatus(ex.Message, SubagentStatusKind.Error);
+            await RunOnUiThreadAsync(() => SetStatus(ex.Message, SubagentStatusKind.Error));
         }
         finally
         {
-            EndOperation(operation);
+            await RunOnUiThreadAsync(() => EndOperation(operation));
         }
     }
 
     [RelayCommand]
-    private Task OpenSelectedChatProviderSettingsAsync()
-        => OpenProviderSettingsAsync(ChatBinding.SelectedProvider?.PackageId);
+    private async Task OpenSelectedChatProviderSettingsAsync()
+    {
+        string? packageId = null;
+        await RunOnUiThreadAsync(() => packageId = ChatBinding.SelectedProvider?.PackageId);
+        await OpenProviderSettingsAsync(packageId);
+    }
 
     [RelayCommand]
     private void OpenSubagentEditor(SubagentRecord? subagent)

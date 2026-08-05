@@ -49,6 +49,11 @@ internal sealed partial class AgentAppRuntimeGateway :
     IAgentRunCommandStatusGateway,
     IAgentPresentationInitialization,
     IAgentExecutionTargetLoader,
+    IAgentDashboardLoader,
+    IAgentCatalogLoader,
+    IAgentProfileCommandGateway,
+    IAgentWorkspaceCommandGateway,
+    IAgentGlobalPermissionGateway,
     IAgentRuntimeAvailability,
     IAgentRuntimeFailureClassifier,
     IDisposable
@@ -67,7 +72,7 @@ internal sealed partial class AgentAppRuntimeGateway :
     private AgentDashboardProjection? _dashboard;
     private Task<AgentDashboardProjection>? _dashboardLoad;
     private Task<AgentDashboardProjection>? _abandonedDashboardLoad;
-    private AgentPermissionProjection? _globalPermissions;
+    private AgentCatalogProjection? _catalogSnapshot;
     private string? _runtimeInstanceId;
     private AgentChatSnapshotRequest? _pendingChatSnapshotRequest;
     private AgentChatSnapshotProjection? _pendingChatSnapshot;
@@ -106,85 +111,60 @@ internal sealed partial class AgentAppRuntimeGateway :
     public event Action<Guid, AgentRunActivityUpdate>? RunActivityChanged;
     public event Action<AgentChatSnapshotProjection>? ChatSnapshotReloaded;
 
-    public IReadOnlyList<AgentProfileRecord> ListProfiles() => GetDashboard().Profiles;
+    public IReadOnlyList<AgentProfileRecord> ListProfiles() => ReadDashboardSnapshot().Profiles;
     public AgentProfileRecord? GetProfile(string profileId)
-        => GetDashboard().Profiles.FirstOrDefault(profile => string.Equals(
+        => ReadDashboardSnapshot().Profiles.FirstOrDefault(profile => string.Equals(
             profile.ProfileId, profileId, StringComparison.OrdinalIgnoreCase));
     public AgentProfileModelBindingRecord? GetChatBinding(string profileId)
         => (GetProfile(profileId)?.ModelBindings ?? []).FirstOrDefault(binding => string.Equals(
             binding.CapabilityKind, AgentModelCapabilityKinds.Chat, StringComparison.OrdinalIgnoreCase));
-
-    public async Task<AgentProfileRecord> CreateProfileAsync(
-        string displayName, CancellationToken cancellationToken = default)
-    {
-        var result = await InvokeAsync(AgentRuntimeOperations.Profiles,
-            new AgentProfileCommand(AgentProfileCommandKind.Create, DisplayName: displayName), cancellationToken)
-            .ConfigureAwait(false);
-        InvalidateDashboard();
-        return result.Profile ?? throw new InvalidOperationException("Runtime did not return the created profile.");
-    }
 
     public void SaveProfile(string profileId, string displayName, string? description, string? instructions,
         string? chatProviderId, string? chatModelId, string? embeddingProviderId, string? embeddingModelId,
         IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord>? selectableCapabilityAssignments = null,
         string? behaviorLoopId = null, string? behaviorLoopSourceId = null,
         string? behaviorLoopSettingsJson = null, string? chatModelSettingsJson = null)
-    {
-        Invoke(AgentRuntimeOperations.Profiles, new AgentProfileCommand(
-            AgentProfileCommandKind.Save, profileId, displayName, description, instructions,
-            chatProviderId, chatModelId, embeddingProviderId, embeddingModelId,
-            selectableCapabilityAssignments, behaviorLoopId, behaviorLoopSourceId,
-            behaviorLoopSettingsJson, chatModelSettingsJson));
-        InvalidateDashboard();
-    }
+        => throw AsyncOperationRequired(nameof(SaveProfileAsync));
 
     public void DeleteProfile(string profileId)
-    {
-        Invoke(AgentRuntimeOperations.Profiles,
-            new AgentProfileCommand(AgentProfileCommandKind.Delete, ProfileId: profileId));
-        InvalidateDashboard();
-    }
+        => throw AsyncOperationRequired(nameof(DeleteProfileAsync));
 
     public IReadOnlyList<AgentBehaviorLoopDescriptor> ListBehaviorLoopDescriptors()
-        => GetCatalog().BehaviorLoops;
+        => ReadCatalogSnapshot().BehaviorLoops;
     public IReadOnlyList<AgentProviderDescriptor> ListChatProviderDescriptors()
-        => GetCatalog().ChatProviders;
+        => ReadCatalogSnapshot().ChatProviders;
     public IReadOnlyList<AgentEmbeddingProviderDescriptor> ListEmbeddingProviderDescriptors()
-        => GetCatalog().EmbeddingProviders;
+        => ReadCatalogSnapshot().EmbeddingProviders;
     public bool HasProfileCapabilityConsumers(string capabilityKind)
         => string.Equals(capabilityKind, AgentModelCapabilityKinds.Embedding, StringComparison.OrdinalIgnoreCase)
-           && GetCatalog().HasEmbeddingConsumers;
+           && ReadCatalogSnapshot().HasEmbeddingConsumers;
 
     public async Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListSelectableProfileCapabilitiesAsync(
         AgentProfileRecord? profile = null, CancellationToken cancellationToken = default)
-        => (await GetCatalogAsync(new AgentCatalogRequest(Profile: profile), cancellationToken).ConfigureAwait(false))
+        => (await LoadCatalogAsync(new AgentCatalogRequest(Profile: profile), cancellationToken).ConfigureAwait(false))
             .SelectableCapabilities;
     public async Task<IReadOnlyList<AgentToolCatalogEntry>> ListInstalledLocalToolsAsync(CancellationToken cancellationToken = default)
-        => (await GetCatalogAsync(new AgentCatalogRequest(), cancellationToken).ConfigureAwait(false)).LocalTools;
+        => (await LoadCatalogAsync(new AgentCatalogRequest(), cancellationToken).ConfigureAwait(false)).LocalTools;
     public async Task<IReadOnlyList<AgentModelDescriptor>> ListChatModelsAsync(
         string? providerId, CancellationToken cancellationToken = default)
-        => (await GetCatalogAsync(new AgentCatalogRequest(ChatProviderId: providerId), cancellationToken).ConfigureAwait(false)).ChatModels;
+        => (await LoadCatalogAsync(new AgentCatalogRequest(ChatProviderId: providerId), cancellationToken).ConfigureAwait(false)).ChatModels;
     public async Task<IReadOnlyList<AgentEmbeddingModelDescriptor>> ListEmbeddingModelsAsync(
         string? providerId, CancellationToken cancellationToken = default)
-        => (await GetCatalogAsync(new AgentCatalogRequest(EmbeddingProviderId: providerId), cancellationToken).ConfigureAwait(false)).EmbeddingModels;
+        => (await LoadCatalogAsync(new AgentCatalogRequest(EmbeddingProviderId: providerId), cancellationToken).ConfigureAwait(false)).EmbeddingModels;
     public async Task<AgentProviderReadiness?> GetChatProviderReadinessAsync(
         string? providerId, CancellationToken cancellationToken = default)
-        => (await GetCatalogAsync(new AgentCatalogRequest(ChatProviderId: providerId), cancellationToken).ConfigureAwait(false)).ChatReadiness;
+        => (await LoadCatalogAsync(new AgentCatalogRequest(ChatProviderId: providerId), cancellationToken).ConfigureAwait(false)).ChatReadiness;
     public async Task<AgentEmbeddingProviderReadiness?> GetEmbeddingProviderReadinessAsync(
         string? providerId, CancellationToken cancellationToken = default)
-        => (await GetCatalogAsync(new AgentCatalogRequest(EmbeddingProviderId: providerId), cancellationToken).ConfigureAwait(false)).EmbeddingReadiness;
+        => (await LoadCatalogAsync(new AgentCatalogRequest(EmbeddingProviderId: providerId), cancellationToken).ConfigureAwait(false)).EmbeddingReadiness;
 
-    public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => GetDashboard().Workspaces;
+    public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => ReadDashboardSnapshot().Workspaces;
     public AgentWorkspaceRecord? GetWorkspace(string workspaceId)
-        => GetDashboard().Workspaces.FirstOrDefault(workspace => string.Equals(
+        => ReadDashboardSnapshot().Workspaces.FirstOrDefault(workspace => string.Equals(
             workspace.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase));
     public AgentWorkspaceRecord CreateWorkspace(string displayName)
-    {
-        var result = Invoke(AgentRuntimeOperations.Workspaces,
-            new AgentWorkspaceCommand(AgentWorkspaceCommandKind.Create, DisplayName: displayName));
-        InvalidateDashboard();
-        return result.Workspace ?? throw new InvalidOperationException("Runtime did not return the created workspace.");
-    }
+        => throw AsyncOperationRequired(nameof(CreateWorkspaceAsync));
+
     public void SaveWorkspace(string workspaceId, string displayName, string? description)
     {
         var current = GetWorkspace(workspaceId) ?? throw new InvalidOperationException("Workspace was not found.");
@@ -194,21 +174,13 @@ internal sealed partial class AgentAppRuntimeGateway :
     public void SaveWorkspaceAggregate(string workspaceId, string displayName, string? description,
         IReadOnlyList<AgentWorkspacePathRecord> paths, IReadOnlyList<AgentWorkspaceDocumentRecord> documents,
         string? executionTargetId)
-    {
-        Invoke(AgentRuntimeOperations.Workspaces, new AgentWorkspaceCommand(
-            AgentWorkspaceCommandKind.Save, workspaceId, displayName, description, paths, documents,
-            executionTargetId));
-        InvalidateDashboard();
-    }
+        => throw AsyncOperationRequired(nameof(SaveWorkspaceAggregateAsync));
+
     public void DeleteWorkspace(string workspaceId)
-    {
-        Invoke(AgentRuntimeOperations.Workspaces,
-            new AgentWorkspaceCommand(AgentWorkspaceCommandKind.Delete, WorkspaceId: workspaceId));
-        InvalidateDashboard();
-        InvalidateSessions();
-    }
+        => throw AsyncOperationRequired(nameof(DeleteWorkspaceAsync));
+
     public IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId)
-        => GetDashboard().WorkspaceBindings.Where(binding => string.Equals(
+        => ReadDashboardSnapshot().WorkspaceBindings.Where(binding => string.Equals(
             binding.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase)).ToArray();
     public AgentWorkspaceBindingRecord SavePrimaryExecutionBinding(string workspaceId, string contributionId,
         string displayRole = AgentWorkspaceBindingRoles.PrimaryExecutionTarget)
@@ -220,16 +192,10 @@ internal sealed partial class AgentAppRuntimeGateway :
             workspaceId, AgentRpcContractIds.ExecutionTarget, contributionId, displayRole,
             true, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
     }
-    public void RemovePrimaryExecutionBinding(string workspaceId)
-    {
-        var workspace = GetWorkspace(workspaceId) ?? throw new InvalidOperationException("Workspace was not found.");
-        SaveWorkspaceAggregate(workspaceId, workspace.DisplayName, workspace.Description,
-            workspace.Paths, workspace.Documents, null);
-    }
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         StartObservingChanges();
-        _ = await GetDashboardAsync(cancellationToken).ConfigureAwait(false);
+        _ = await LoadDashboardAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public IReadOnlyList<AgentSessionRecord> ListSessions()
@@ -261,12 +227,7 @@ internal sealed partial class AgentAppRuntimeGateway :
         {
             throw new NotSupportedException("App may only create root Agent sessions.");
         }
-        var result = Invoke(AgentRuntimeOperations.SessionCommands,
-            new AgentSessionCommand(AgentSessionCommandKind.Create, Title: title, ProfileId: profileId,
-                BehaviorLoopId: behaviorLoopId, WorkspaceId: workspaceId));
-        var created = result.Session ?? throw new InvalidOperationException("Runtime did not return the created session.");
-        CacheSession(created);
-        return created.Session;
+        throw AsyncOperationRequired(nameof(CreateRootSessionAsync));
     }
     public AgentSessionRecord? GetSession(Guid sessionId)
     {
@@ -281,22 +242,9 @@ internal sealed partial class AgentAppRuntimeGateway :
         return null;
     }
     public void UpdateSession(AgentSessionRecord session)
-    {
-        var result = Invoke(AgentRuntimeOperations.SessionCommands,
-            new AgentSessionCommand(AgentSessionCommandKind.Update, Session: session));
-        if (result.Session is not null)
-        {
-            CacheSession(result.Session);
-        }
-    }
+        => throw AsyncOperationRequired(nameof(UpdateSessionAsync));
     public void DeleteSession(Guid sessionId)
-    {
-        var session = GetSession(sessionId) ?? new AgentSessionRecord(sessionId, string.Empty,
-            AgentSessionState.Active, default, default);
-        Invoke(AgentRuntimeOperations.SessionCommands,
-            new AgentSessionCommand(AgentSessionCommandKind.Delete, Session: session));
-        RemoveCachedSession(sessionId);
-    }
+        => throw AsyncOperationRequired(nameof(DeleteSessionAsync));
     public async Task<AgentSessionSnapshot> CreateRootSessionAsync(
         string title,
         string profileId,
@@ -348,20 +296,30 @@ internal sealed partial class AgentAppRuntimeGateway :
         RemoveCachedSession(sessionId);
     }
     public IReadOnlyList<AgentTurnRecord> ListTurns(Guid sessionId)
-        => ReadTranscript(new AgentTranscriptPageRequest(sessionId, AgentTranscriptPageDirection.Recent, 500)).Turns;
+        => SnapshotTurns(sessionId);
     public IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit)
-        => ReadTranscript(new AgentTranscriptPageRequest(sessionId, AgentTranscriptPageDirection.Recent, limit)).Turns;
+        => SnapshotTurns(sessionId).TakeLast(Math.Max(0, limit)).ToArray();
     public IReadOnlyList<AgentTurnRecord> ListTurnsBefore(Guid sessionId, DateTimeOffset beforeCreatedAtUtc,
         Guid beforeTurnId, int limit)
-        => ReadTranscript(new AgentTranscriptPageRequest(sessionId, AgentTranscriptPageDirection.Before, limit,
-            beforeCreatedAtUtc, beforeTurnId)).Turns;
+        => SnapshotTurns(sessionId)
+            .Where(turn => turn.CreatedAtUtc < beforeCreatedAtUtc
+                           || turn.CreatedAtUtc == beforeCreatedAtUtc && turn.TurnId.CompareTo(beforeTurnId) < 0)
+            .TakeLast(Math.Max(0, limit))
+            .ToArray();
     public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(Guid sessionId, DateTimeOffset afterCreatedAtUtc,
         Guid afterTurnId, int limit)
-        => ReadTranscript(new AgentTranscriptPageRequest(sessionId, AgentTranscriptPageDirection.After, limit,
-            afterCreatedAtUtc, afterTurnId)).Turns;
+        => SnapshotTurns(sessionId)
+            .Where(turn => turn.CreatedAtUtc > afterCreatedAtUtc
+                           || turn.CreatedAtUtc == afterCreatedAtUtc && turn.TurnId.CompareTo(afterTurnId) > 0)
+            .Take(Math.Max(0, limit))
+            .ToArray();
     public AgentTurnRecord? GetTurn(Guid turnId)
-        => ReadTranscript(new AgentTranscriptPageRequest(Guid.Empty, AgentTranscriptPageDirection.Turn, 1,
-            AnchorTurnId: turnId)).Turns.FirstOrDefault();
+    {
+        lock (_cacheLock)
+        {
+            return _knownTurns.GetValueOrDefault(turnId);
+        }
+    }
     public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId)
     {
         lock (_cacheLock)
@@ -376,31 +334,22 @@ internal sealed partial class AgentAppRuntimeGateway :
     }
 
     public AgentSessionPermissionState GetSessionState(Guid sessionId)
-        => ReadPermissions(sessionId).SessionState ?? new AgentSessionPermissionState(sessionId, false);
+        => throw AsyncOperationRequired(nameof(LoadSessionPermissionsAsync));
     public void SetSessionUnrestrictedMode(Guid sessionId, bool isEnabled)
-        => Invoke(AgentRuntimeOperations.Permissions, new AgentPermissionCommand(
-            AgentPermissionCommandKind.SetUnrestricted, sessionId, isEnabled));
+        => throw AsyncOperationRequired(nameof(SetSessionUnrestrictedModeAsync));
     public IReadOnlyList<AgentPermissionActionDescriptor> ListActions()
-        => GetGlobalPermissions().Actions;
+        => ReadGlobalPermissionsSnapshot().Actions;
     public IReadOnlyList<AgentPermissionOverride> ListOverrides()
-        => GetGlobalPermissions().Overrides;
+        => ReadGlobalPermissionsSnapshot().Overrides;
     public void SaveOverride(string actionId, string boundaryId, AgentPermissionDecision decision)
-    {
-        Invoke(AgentRuntimeOperations.Permissions, new AgentPermissionCommand(
-            AgentPermissionCommandKind.SaveOverride, ActionId: actionId, BoundaryId: boundaryId, Decision: decision));
-        _globalPermissions = null;
-    }
+        => throw AsyncOperationRequired(nameof(SaveOverrideAsync));
+
     public void DeleteOverride(string actionId, string boundaryId)
-    {
-        Invoke(AgentRuntimeOperations.Permissions, new AgentPermissionCommand(
-            AgentPermissionCommandKind.DeleteOverride, ActionId: actionId, BoundaryId: boundaryId));
-        _globalPermissions = null;
-    }
+        => throw AsyncOperationRequired(nameof(DeleteOverrideAsync));
+
     public IReadOnlyList<AgentPendingPermissionRequestRecord> ListPendingRequestsForSessionTree(Guid sessionId)
-        => ReadPermissions(sessionId).PendingRequests;
-    public void SaveSessionApproval(Guid sessionId, string actionId, string boundaryId)
-        => Invoke(AgentRuntimeOperations.Permissions, new AgentPermissionCommand(
-            AgentPermissionCommandKind.SaveSessionApproval, sessionId, ActionId: actionId, BoundaryId: boundaryId));
+        => throw AsyncOperationRequired(nameof(LoadSessionPermissionsAsync));
+
     public async Task<AgentChatPermissionProjection> LoadSessionPermissionsAsync(
         Guid sessionId,
         CancellationToken cancellationToken = default)
@@ -521,10 +470,10 @@ internal sealed partial class AgentAppRuntimeGateway :
         return page;
     }
 
-    public IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets() => GetCatalog().ExecutionTargets;
+    public IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets() => ReadCatalogSnapshot().ExecutionTargets;
     public async Task<IReadOnlyList<AgentExecutionTargetDescriptor>> ListTargetsAsync(
         CancellationToken cancellationToken = default)
-        => (await GetCatalogAsync(new AgentCatalogRequest(), cancellationToken).ConfigureAwait(false)).ExecutionTargets;
+        => (await LoadCatalogAsync(new AgentCatalogRequest(), cancellationToken).ConfigureAwait(false)).ExecutionTargets;
     public async Task<AgentExecutionTargetWarmupResult> WarmWorkspaceAsync(
         AgentWorkspaceRecord workspace, CancellationToken cancellationToken = default)
         => (await InvokeAsync(AgentRuntimeOperations.Workspaces,
@@ -532,10 +481,8 @@ internal sealed partial class AgentAppRuntimeGateway :
             cancellationToken).ConfigureAwait(false)).Warmup
            ?? AgentExecutionTargetWarmupResult.Skipped("Workspace has no execution target.");
 
-    private AgentDashboardProjection GetDashboard()
-        => GetDashboardAsync(_lifetime.Token).GetAwaiter().GetResult();
-
-    private async Task<AgentDashboardProjection> GetDashboardAsync(CancellationToken cancellationToken)
+    public async Task<AgentDashboardProjection> LoadDashboardAsync(
+        CancellationToken cancellationToken = default)
     {
         Task<AgentDashboardProjection> load;
         bool retryIfFaulted;
@@ -600,14 +547,15 @@ internal sealed partial class AgentAppRuntimeGateway :
             }
             if (retryIfFaulted)
             {
-                return await GetDashboardAsync(cancellationToken).ConfigureAwait(false);
+                return await LoadDashboardAsync(cancellationToken).ConfigureAwait(false);
             }
             throw;
         }
     }
-    private AgentCatalogProjection GetCatalog() => GetCatalogAsync(new AgentCatalogRequest(), _lifetime.Token)
-        .GetAwaiter().GetResult();
-    private Task<AgentCatalogProjection> GetCatalogAsync(AgentCatalogRequest request, CancellationToken cancellationToken)
+
+    public Task<AgentCatalogProjection> LoadCatalogAsync(
+        AgentCatalogRequest request,
+        CancellationToken cancellationToken = default)
     {
         var key = $"{request.Profile?.ProfileId}|{request.Profile?.UpdatedAtUtc.UtcTicks}|{request.ChatProviderId}|{request.EmbeddingProviderId}";
         var lazy = _catalogs.GetOrAdd(key, _ => new Lazy<Task<AgentCatalogProjection>>(
@@ -620,24 +568,53 @@ internal sealed partial class AgentAppRuntimeGateway :
         Lazy<Task<AgentCatalogProjection>> lazy,
         CancellationToken cancellationToken)
     {
-        try { return await lazy.Value.WaitAsync(cancellationToken).ConfigureAwait(false); }
+        try
+        {
+            var projection = await lazy.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+            lock (_cacheLock)
+            {
+                _catalogSnapshot = projection;
+            }
+            return projection;
+        }
         catch { _catalogs.TryRemove(key, out _); throw; }
     }
-    private AgentTranscriptPage ReadTranscript(AgentTranscriptPageRequest request)
-    {
-        var page = Invoke(AgentRuntimeOperations.Transcript, request);
-        CacheTurns(page.Turns);
-        return page;
-    }
-    private AgentPermissionProjection ReadPermissions(Guid? sessionId)
-        => Invoke(AgentRuntimeOperations.Permissions,
-            new AgentPermissionCommand(AgentPermissionCommandKind.Read, sessionId));
-    private AgentPermissionProjection GetGlobalPermissions()
-        => _globalPermissions ??= ReadPermissions(null);
 
-    private TResponse Invoke<TRequest, TResponse>(PackageRuntimeOperation<TRequest, TResponse> operation, TRequest request)
-        where TRequest : class where TResponse : class
-        => InvokeAsync(operation, request, _lifetime.Token).AsTask().GetAwaiter().GetResult();
+    private AgentDashboardProjection ReadDashboardSnapshot()
+    {
+        lock (_cacheLock)
+        {
+            return _dashboard
+                   ?? throw new InvalidOperationException(
+                       "Agent dashboard data must be loaded asynchronously before it is read.");
+        }
+    }
+
+    private AgentCatalogProjection ReadCatalogSnapshot()
+    {
+        lock (_cacheLock)
+        {
+            return _catalogSnapshot
+                   ?? throw new InvalidOperationException(
+                       "Agent catalog data must be loaded asynchronously before it is read.");
+        }
+    }
+
+    private IReadOnlyList<AgentTurnRecord> SnapshotTurns(Guid sessionId)
+    {
+        lock (_cacheLock)
+        {
+            return _knownTurns.Values
+                .Where(turn => turn.SessionId == sessionId)
+                .OrderBy(turn => turn.CreatedAtUtc)
+                .ThenBy(turn => turn.TurnId)
+                .ToArray();
+        }
+    }
+
+    private static NotSupportedException AsyncOperationRequired(string operation)
+        => new($"App Runtime operation '{operation}' must be invoked asynchronously.");
+
     private async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
         PackageRuntimeOperation<TRequest, TResponse> operation, TRequest request, CancellationToken cancellationToken)
         where TRequest : class where TResponse : class
@@ -706,6 +683,14 @@ internal sealed partial class AgentAppRuntimeGateway :
         => TimeSpan.FromMilliseconds(Math.Min(current.TotalMilliseconds * 2, MaximumReconnectDelay.TotalMilliseconds));
 
     private void InvalidateDashboard() { lock (_cacheLock) { _dashboard = null; _dashboardLoad = null; } }
+    private void InvalidateCatalog()
+    {
+        lock (_cacheLock)
+        {
+            _catalogSnapshot = null;
+        }
+        _catalogs.Clear();
+    }
     private void InvalidateSessions()
     {
         lock (_cacheLock)
@@ -724,6 +709,9 @@ internal sealed partial class AgentAppRuntimeGateway :
             _knownSessions.Clear();
             _knownTurns.Clear();
             _globalPermissions = null;
+            _globalPermissionRevision = -1;
+            _globalPermissionGeneration++;
+            _catalogSnapshot = null;
         }
         _catalogs.Clear();
     }

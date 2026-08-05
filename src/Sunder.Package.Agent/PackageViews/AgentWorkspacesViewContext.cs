@@ -5,12 +5,25 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed class AgentWorkspacesViewContext : IDisposable
 {
+    private readonly IPresentationDispatcher _uiDispatcher;
     private readonly PresentationTaskScope _tasks;
     private bool _disposed;
 
     public AgentWorkspacesViewContext()
+        : this(PresentationDispatcher.Capture())
     {
-        _tasks = new PresentationTaskScope(exception => Failed?.Invoke(exception));
+    }
+
+    internal AgentWorkspacesViewContext(IPresentationDispatcher uiDispatcher)
+    {
+        _uiDispatcher = uiDispatcher;
+        _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed)
+            {
+                Failed?.Invoke(exception);
+            }
+        }));
     }
 
     internal event Action<Exception>? Failed;

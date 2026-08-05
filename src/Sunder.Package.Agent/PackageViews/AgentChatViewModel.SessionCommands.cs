@@ -40,13 +40,16 @@ public sealed partial class AgentChatViewModel
                 profile.ProfileId,
                 profile.BehaviorLoopId,
                 workspaceId,
-                _lifetimeCancellation.Token)).Session;
-        if (!string.Equals(session.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase))
+                _lifetimeCancellation.Token).ConfigureAwait(false)).Session;
+        await InvokeOnUiThreadAsync(() =>
         {
-            throw new InvalidOperationException("Created session workspace did not match the selected workspace.");
-        }
+            if (!string.Equals(session.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Created session workspace did not match the selected workspace.");
+            }
 
-        ScheduleChatSnapshotRequest(profile.ProfileId, workspaceId, session.SessionId);
+            ScheduleChatSnapshotRequest(profile.ProfileId, workspaceId, session.SessionId);
+        }).ConfigureAwait(false);
     }
 
     [RelayCommand]
@@ -89,13 +92,16 @@ public sealed partial class AgentChatViewModel
         {
             _ = await _chatSessionCommandGateway.UpdateSessionAsync(
                 updated,
-                _lifetimeCancellation.Token);
+                _lifetimeCancellation.Token).ConfigureAwait(false);
         }
-        ScheduleChatSnapshotRequest(
-            SelectedProfile?.ProfileId,
-            SelectedWorkspace?.WorkspaceId,
-            updated.SessionId);
-        session.CancelRename();
+        await InvokeOnUiThreadAsync(() =>
+        {
+            ScheduleChatSnapshotRequest(
+                SelectedProfile?.ProfileId,
+                SelectedWorkspace?.WorkspaceId,
+                updated.SessionId);
+            session.CancelRename();
+        }).ConfigureAwait(false);
     }
 
     [RelayCommand]
@@ -119,12 +125,13 @@ public sealed partial class AgentChatViewModel
         {
             await _chatSessionCommandGateway.DeleteSessionAsync(
                 session.SessionId,
-                _lifetimeCancellation.Token);
+                _lifetimeCancellation.Token).ConfigureAwait(false);
         }
-        ScheduleChatSnapshotRequest(
-            SelectedProfile?.ProfileId,
-            SelectedWorkspace?.WorkspaceId,
-            preferredSessionId: null);
+        await InvokeOnUiThreadAsync(() =>
+            ScheduleChatSnapshotRequest(
+                SelectedProfile?.ProfileId,
+                SelectedWorkspace?.WorkspaceId,
+                preferredSessionId: null)).ConfigureAwait(false);
     }
 
     private bool CanCreateSession()

@@ -12,25 +12,25 @@ internal interface IMemoryInspectorGateway
         => Task.CompletedTask;
     event Action<Guid>? SessionChanged;
     event Action? SemanticWorkerStatusChanged;
-    IReadOnlyList<AgentSessionRecord> ListSessions();
-    AgentSessionContextCheckpointRecord? GetSessionContextCheckpoint(Guid sessionId);
-    AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId);
-    IReadOnlyList<StoredMemoryRecord> ListMemories(Guid sessionId, string? searchText = null, bool includeInactive = false);
-    IReadOnlyList<StoredMemoryEvidenceRecord> ListEvidence(Guid memoryId);
-    StoredMemoryRecord? GetSupersedingMemory(Guid memoryId);
-    IReadOnlyList<StoredMemoryRecord> ListSupersededMemories(Guid memoryId);
-    IReadOnlyList<StoredMemoryRecord> ListCorrectionLineage(Guid memoryId);
-    StoredMemoryRecord UpdateMemory(Guid memoryId, string category, string content, string? note);
-    StoredMemoryRecord SetPinned(Guid memoryId, bool isPinned);
-    StoredMemoryRecord ContestMemory(Guid memoryId);
-    StoredMemoryRecord ForgetMemory(Guid memoryId);
-    StoredMemoryRecord SupersedeMemory(Guid memoryId);
-    MemoryCorrectionResult CreateCorrectedMemory(Guid sourceMemoryId, string category, string content);
-    MemorySemanticIndexStatusRecord GetSemanticIndexStatus(StoredMemoryRecord memory, SemanticEmbeddingContext? context);
+    Task<IReadOnlyList<AgentSessionRecord>> ListSessionsAsync(CancellationToken cancellationToken = default);
+    Task<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(Guid sessionId, CancellationToken cancellationToken = default);
+    Task<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(Guid sessionId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<StoredMemoryRecord>> ListMemoriesAsync(Guid sessionId, string? searchText = null, bool includeInactive = false, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<StoredMemoryEvidenceRecord>> ListEvidenceAsync(Guid memoryId, CancellationToken cancellationToken = default);
+    Task<StoredMemoryRecord?> GetSupersedingMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<StoredMemoryRecord>> ListSupersededMemoriesAsync(Guid memoryId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<StoredMemoryRecord>> ListCorrectionLineageAsync(Guid memoryId, CancellationToken cancellationToken = default);
+    Task<StoredMemoryRecord> UpdateMemoryAsync(Guid memoryId, string category, string content, string? note, CancellationToken cancellationToken = default);
+    Task<StoredMemoryRecord> SetPinnedAsync(Guid memoryId, bool isPinned, CancellationToken cancellationToken = default);
+    Task<StoredMemoryRecord> ContestMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default);
+    Task<StoredMemoryRecord> ForgetMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default);
+    Task<StoredMemoryRecord> SupersedeMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default);
+    Task<MemoryCorrectionResult> CreateCorrectedMemoryAsync(Guid sourceMemoryId, string category, string content, CancellationToken cancellationToken = default);
+    Task<MemorySemanticIndexStatusRecord> GetSemanticIndexStatusAsync(StoredMemoryRecord memory, SemanticEmbeddingContext? context, CancellationToken cancellationToken = default);
     Task<SemanticMemorySessionStateRecord> GetSemanticSessionStateAsync(Guid sessionId, string? profileId = null, CancellationToken cancellationToken = default);
     Task<SemanticMemoryReindexResult> ReindexSessionAsync(Guid sessionId, string? profileId = null, CancellationToken cancellationToken = default);
-    SemanticMemoryWorkerStatusRecord GetSemanticWorkerStatus();
-    SemanticMemoryMetricsSnapshot GetMetricsSnapshot();
+    Task<SemanticMemoryWorkerStatusRecord> GetSemanticWorkerStatusAsync(CancellationToken cancellationToken = default);
+    Task<SemanticMemoryMetricsSnapshot> GetMetricsSnapshotAsync(CancellationToken cancellationToken = default);
 }
 
 internal static class MemoryRuntimeOperations
@@ -112,40 +112,68 @@ internal sealed class MemoryAppRuntimeGateway : IMemoryInspectorGateway, IDispos
     public event Action<Guid>? SessionChanged;
     public event Action? SemanticWorkerStatusChanged;
 
-    public IReadOnlyList<AgentSessionRecord> ListSessions() => Query(new(MemoryQueryKind.Sessions)).Sessions ?? [];
-    public AgentSessionContextCheckpointRecord? GetSessionContextCheckpoint(Guid sessionId) => Query(new(MemoryQueryKind.SessionCheckpoint, SessionId: sessionId)).Checkpoint;
-    public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => Query(new(MemoryQueryKind.WorkingSummary, SessionId: sessionId)).WorkingSummary;
-    public IReadOnlyList<StoredMemoryRecord> ListMemories(Guid sessionId, string? searchText = null, bool includeInactive = false)
-        => Query(new(MemoryQueryKind.Memories, SessionId: sessionId, SearchText: searchText, IncludeInactive: includeInactive)).Memories ?? [];
-    public IReadOnlyList<StoredMemoryEvidenceRecord> ListEvidence(Guid memoryId) => Details(memoryId).Evidence ?? [];
-    public StoredMemoryRecord? GetSupersedingMemory(Guid memoryId) => Details(memoryId).SupersedingMemory;
-    public IReadOnlyList<StoredMemoryRecord> ListSupersededMemories(Guid memoryId) => Details(memoryId).SupersededMemories ?? [];
-    public IReadOnlyList<StoredMemoryRecord> ListCorrectionLineage(Guid memoryId) => Details(memoryId).CorrectionLineage ?? [];
-    public StoredMemoryRecord UpdateMemory(Guid memoryId, string category, string content, string? note)
-        => Command(new(MemoryCommandKind.Update, memoryId, category, content, note)).Memory!;
-    public StoredMemoryRecord SetPinned(Guid memoryId, bool isPinned)
-        => Command(new(MemoryCommandKind.Pin, memoryId, IsPinned: isPinned)).Memory!;
-    public StoredMemoryRecord ContestMemory(Guid memoryId) => Command(new(MemoryCommandKind.Contest, memoryId)).Memory!;
-    public StoredMemoryRecord ForgetMemory(Guid memoryId) => Command(new(MemoryCommandKind.Forget, memoryId)).Memory!;
-    public StoredMemoryRecord SupersedeMemory(Guid memoryId) => Command(new(MemoryCommandKind.Supersede, memoryId)).Memory!;
-    public MemoryCorrectionResult CreateCorrectedMemory(Guid sourceMemoryId, string category, string content)
-        => Command(new(MemoryCommandKind.Correct, sourceMemoryId, category, content)).Correction!;
-    public MemorySemanticIndexStatusRecord GetSemanticIndexStatus(StoredMemoryRecord memory, SemanticEmbeddingContext? context)
-        => Query(new(MemoryQueryKind.SemanticIndexStatus, Memory: memory, SemanticContext: context)).IndexStatus!;
+    public async Task<IReadOnlyList<AgentSessionRecord>> ListSessionsAsync(CancellationToken cancellationToken = default)
+        => (await QueryAsync(new(MemoryQueryKind.Sessions), cancellationToken).ConfigureAwait(false)).Sessions ?? [];
+    public async Task<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(Guid sessionId, CancellationToken cancellationToken = default)
+        => (await QueryAsync(new(MemoryQueryKind.SessionCheckpoint, SessionId: sessionId), cancellationToken).ConfigureAwait(false)).Checkpoint;
+    public async Task<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(Guid sessionId, CancellationToken cancellationToken = default)
+        => (await QueryAsync(new(MemoryQueryKind.WorkingSummary, SessionId: sessionId), cancellationToken).ConfigureAwait(false)).WorkingSummary;
+    public async Task<IReadOnlyList<StoredMemoryRecord>> ListMemoriesAsync(Guid sessionId, string? searchText = null, bool includeInactive = false, CancellationToken cancellationToken = default)
+        => (await QueryAsync(new(MemoryQueryKind.Memories, SessionId: sessionId, SearchText: searchText, IncludeInactive: includeInactive), cancellationToken).ConfigureAwait(false)).Memories ?? [];
+    public async Task<IReadOnlyList<StoredMemoryEvidenceRecord>> ListEvidenceAsync(Guid memoryId, CancellationToken cancellationToken = default)
+        => (await DetailsAsync(memoryId, cancellationToken).ConfigureAwait(false)).Evidence ?? [];
+    public async Task<StoredMemoryRecord?> GetSupersedingMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default)
+        => (await DetailsAsync(memoryId, cancellationToken).ConfigureAwait(false)).SupersedingMemory;
+    public async Task<IReadOnlyList<StoredMemoryRecord>> ListSupersededMemoriesAsync(Guid memoryId, CancellationToken cancellationToken = default)
+        => (await DetailsAsync(memoryId, cancellationToken).ConfigureAwait(false)).SupersededMemories ?? [];
+    public async Task<IReadOnlyList<StoredMemoryRecord>> ListCorrectionLineageAsync(Guid memoryId, CancellationToken cancellationToken = default)
+        => (await DetailsAsync(memoryId, cancellationToken).ConfigureAwait(false)).CorrectionLineage ?? [];
+    public async Task<StoredMemoryRecord> UpdateMemoryAsync(Guid memoryId, string category, string content, string? note, CancellationToken cancellationToken = default)
+        => (await CommandAsync(new(MemoryCommandKind.Update, memoryId, category, content, note), cancellationToken).ConfigureAwait(false)).Memory!;
+    public async Task<StoredMemoryRecord> SetPinnedAsync(Guid memoryId, bool isPinned, CancellationToken cancellationToken = default)
+        => (await CommandAsync(new(MemoryCommandKind.Pin, memoryId, IsPinned: isPinned), cancellationToken).ConfigureAwait(false)).Memory!;
+    public async Task<StoredMemoryRecord> ContestMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default)
+        => (await CommandAsync(new(MemoryCommandKind.Contest, memoryId), cancellationToken).ConfigureAwait(false)).Memory!;
+    public async Task<StoredMemoryRecord> ForgetMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default)
+        => (await CommandAsync(new(MemoryCommandKind.Forget, memoryId), cancellationToken).ConfigureAwait(false)).Memory!;
+    public async Task<StoredMemoryRecord> SupersedeMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default)
+        => (await CommandAsync(new(MemoryCommandKind.Supersede, memoryId), cancellationToken).ConfigureAwait(false)).Memory!;
+    public async Task<MemoryCorrectionResult> CreateCorrectedMemoryAsync(Guid sourceMemoryId, string category, string content, CancellationToken cancellationToken = default)
+        => (await CommandAsync(new(MemoryCommandKind.Correct, sourceMemoryId, category, content), cancellationToken).ConfigureAwait(false)).Correction!;
+    public async Task<MemorySemanticIndexStatusRecord> GetSemanticIndexStatusAsync(StoredMemoryRecord memory, SemanticEmbeddingContext? context, CancellationToken cancellationToken = default)
+        => (await QueryAsync(new(MemoryQueryKind.SemanticIndexStatus, Memory: memory, SemanticContext: context), cancellationToken).ConfigureAwait(false)).IndexStatus!;
     public async Task<SemanticMemorySessionStateRecord> GetSemanticSessionStateAsync(Guid sessionId, string? profileId = null, CancellationToken cancellationToken = default)
-        => (await _client.InvokeAsync(MemoryRuntimeOperations.Query,
+        => (await QueryAsync(
             new MemoryQuery(MemoryQueryKind.SemanticState, SessionId: sessionId, ProfileId: profileId), cancellationToken)
             .ConfigureAwait(false)).SemanticState!;
     public async Task<SemanticMemoryReindexResult> ReindexSessionAsync(Guid sessionId, string? profileId = null, CancellationToken cancellationToken = default)
-        => (await _client.InvokeAsync(MemoryRuntimeOperations.Command,
+        => (await CommandAsync(
             new MemoryCommand(MemoryCommandKind.Reindex, sessionId, ProfileId: profileId), cancellationToken)
             .ConfigureAwait(false)).ReindexResult!;
-    public SemanticMemoryWorkerStatusRecord GetSemanticWorkerStatus() => Query(new(MemoryQueryKind.WorkerStatus)).WorkerStatus!;
-    public SemanticMemoryMetricsSnapshot GetMetricsSnapshot() => Query(new(MemoryQueryKind.Metrics)).Metrics!;
+    public async Task<SemanticMemoryWorkerStatusRecord> GetSemanticWorkerStatusAsync(CancellationToken cancellationToken = default)
+        => (await QueryAsync(new(MemoryQueryKind.WorkerStatus), cancellationToken).ConfigureAwait(false)).WorkerStatus!;
+    public async Task<SemanticMemoryMetricsSnapshot> GetMetricsSnapshotAsync(CancellationToken cancellationToken = default)
+        => (await QueryAsync(new(MemoryQueryKind.Metrics), cancellationToken).ConfigureAwait(false)).Metrics!;
 
-    private MemoryProjection Details(Guid memoryId) => Query(new(MemoryQueryKind.Details, MemoryId: memoryId));
-    private MemoryProjection Query(MemoryQuery request) => _client.InvokeAsync(MemoryRuntimeOperations.Query, request, _lifetime.Token).AsTask().GetAwaiter().GetResult();
-    private MemoryProjection Command(MemoryCommand request) => _client.InvokeAsync(MemoryRuntimeOperations.Command, request, _lifetime.Token).AsTask().GetAwaiter().GetResult();
+    private Task<MemoryProjection> DetailsAsync(Guid memoryId, CancellationToken cancellationToken)
+        => QueryAsync(new(MemoryQueryKind.Details, MemoryId: memoryId), cancellationToken);
+    private async Task<MemoryProjection> QueryAsync(MemoryQuery request, CancellationToken cancellationToken)
+    {
+        using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetime.Token);
+        return await _client.InvokeAsync(MemoryRuntimeOperations.Query, request, invocation.Token)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<MemoryProjection> CommandAsync(MemoryCommand request, CancellationToken cancellationToken)
+    {
+        using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetime.Token);
+        return await _client.InvokeAsync(MemoryRuntimeOperations.Command, request, invocation.Token)
+            .ConfigureAwait(false);
+    }
 
     private async Task ObserveChangesAsync(CancellationToken cancellationToken)
     {

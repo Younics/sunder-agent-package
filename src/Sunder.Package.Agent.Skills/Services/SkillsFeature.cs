@@ -2,6 +2,7 @@ using System.Text;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Skills.Services;
 
@@ -136,6 +137,10 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
                 SkillConstants.SkillResourceToolId => await ExecuteSkillResourceAsync(profile, context, request, cancellationToken),
                 _ => Error(request.ToolId, $"Unknown skill tool '{request.ToolId}'.", "skills-tool-unknown"),
             };
+        }
+        catch (SunderRpcException)
+        {
+            throw;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -390,10 +395,6 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
 
         if (!TryAcquireExecutionTarget(executionTargetReference, executionBinding, out var targetLease))
         {
-            if (executionTargetReference is not null)
-            {
-                throw new InvalidOperationException("The selected execution-target package is unavailable.");
-            }
             return [];
         }
 
@@ -406,7 +407,8 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
                     new AgentExecutionTargetContext(sessionId, profile.ProfileId, workspace, executionBinding),
                     descriptors,
                     invocationToken)
-                : ValueTask.FromResult<IReadOnlyList<AgentResolvedExecutionResource>>([]));
+                : ValueTask.FromResult<IReadOnlyList<AgentResolvedExecutionResource>>([]),
+            static () => []);
     }
 
     private static bool TryAcquireExecutionTarget(
@@ -440,11 +442,11 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
     private static async ValueTask<TResult> InvokeTargetAsync<TResult>(
         AgentRpcLease<IAgentExecutionTarget> lease,
         CancellationToken cancellationToken,
-        Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback)
+        Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback,
+        Func<TResult> unavailableResult)
     {
         using (lease)
         {
-            var packageId = lease.PackageId;
             var retirementToken = lease.RetirementToken;
             using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken,
@@ -454,21 +456,32 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
                 var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
                 if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
-                    throw new InvalidOperationException(
-                        $"Execution-target package '{packageId}' became unavailable while the callback was running.");
+                    return unavailableResult();
                 }
                 return result;
             }
-            catch (OperationCanceledException exception) when (
-                retirementToken.IsCancellationRequested
-                && !cancellationToken.IsCancellationRequested)
+            catch (Exception exception) when (IsTargetUnavailable(
+                exception,
+                retirementToken,
+                cancellationToken))
             {
-                throw new InvalidOperationException(
-                    $"Execution-target package '{packageId}' became unavailable while the callback was running.",
-                    exception);
+                return unavailableResult();
             }
         }
     }
+
+    private static bool IsTargetUnavailable(
+        Exception exception,
+        CancellationToken retirementToken,
+        CancellationToken callerCancellationToken)
+        => !callerCancellationToken.IsCancellationRequested
+           && (exception is SunderRpcException
+               {
+                   Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable,
+               }
+               || retirementToken.IsCancellationRequested
+               && (exception is OperationCanceledException
+                   || exception is SunderRpcException { Error.Kind: SunderRpcErrorKind.Cancelled }));
 
     private AgentProfileRecord? ResolveProfile(string? profileId)
     {

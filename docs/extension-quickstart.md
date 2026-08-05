@@ -1,6 +1,6 @@
 # Extension Quickstart
 
-This quickstart creates a headless Runtime package with one fixed, read-only Agent tool. The compiled version is in [`samples/Sunder.Agent.Extension.Minimal`](../samples/Sunder.Agent.Extension.Minimal).
+This quickstart creates a headless Runtime package with one fixed, read-only Agent tool.
 
 ## 1. Create The Project
 

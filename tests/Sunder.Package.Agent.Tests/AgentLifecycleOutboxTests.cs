@@ -1484,10 +1484,11 @@ public sealed class AgentLifecycleOutboxTests
 
     private static void AssertDatabaseContainsCanaries(string databasePath, IReadOnlyList<string> canaries)
     {
-        var databaseBytes = File.ReadAllBytes(databasePath);
+        var databaseFiles = ReadSqliteDataFiles(databasePath);
         foreach (var canary in canaries)
         {
-            Assert.NotEqual(-1, databaseBytes.AsSpan().IndexOf(Encoding.UTF8.GetBytes(canary)));
+            var canaryBytes = Encoding.UTF8.GetBytes(canary);
+            Assert.Contains(databaseFiles, bytes => bytes.AsSpan().IndexOf(canaryBytes) >= 0);
         }
     }
 
@@ -1500,12 +1501,19 @@ public sealed class AgentLifecycleOutboxTests
             AssertNoCanaries(command.ExecuteScalar() as string ?? string.Empty, canaries);
         }
 
-        var databaseBytes = File.ReadAllBytes(databasePath);
+        var databaseFiles = ReadSqliteDataFiles(databasePath);
         foreach (var canary in canaries)
         {
-            Assert.Equal(-1, databaseBytes.AsSpan().IndexOf(Encoding.UTF8.GetBytes(canary)));
+            var canaryBytes = Encoding.UTF8.GetBytes(canary);
+            Assert.All(databaseFiles, bytes => Assert.Equal(-1, bytes.AsSpan().IndexOf(canaryBytes)));
         }
     }
+
+    private static IReadOnlyList<byte[]> ReadSqliteDataFiles(string databasePath)
+        => new[] { databasePath, databasePath + "-wal", databasePath + "-journal" }
+            .Where(File.Exists)
+            .Select(File.ReadAllBytes)
+            .ToArray();
 
     private static void AssertNoMissingCanaries(string value, IReadOnlyList<string> canaries)
     {

@@ -88,6 +88,12 @@ internal sealed record AgentDashboardProjection(
     IReadOnlyList<AgentWorkspaceRecord> Workspaces,
     IReadOnlyList<AgentWorkspaceBindingRecord> WorkspaceBindings);
 
+internal interface IAgentDashboardLoader
+{
+    Task<AgentDashboardProjection> LoadDashboardAsync(
+        CancellationToken cancellationToken = default);
+}
+
 internal sealed record AgentSessionSnapshot(AgentSessionRecord Session, AgentRunCheckpointRecord? Checkpoint);
 
 internal enum AgentTranscriptPageDirection { Recent, Before, After, Turn }
@@ -205,6 +211,13 @@ internal sealed record AgentCatalogProjection(
     AgentProviderReadiness? ChatReadiness,
     AgentEmbeddingProviderReadiness? EmbeddingReadiness);
 
+internal interface IAgentCatalogLoader
+{
+    Task<AgentCatalogProjection> LoadCatalogAsync(
+        AgentCatalogRequest request,
+        CancellationToken cancellationToken = default);
+}
+
 internal enum AgentProfileCommandKind { Create, Save, Delete }
 internal sealed record AgentProfileCommand(
     AgentProfileCommandKind Kind,
@@ -223,6 +236,29 @@ internal sealed record AgentProfileCommand(
     string? ChatModelSettingsJson = null);
 internal sealed record AgentProfileCommandResult(long Revision, AgentProfileRecord? Profile);
 
+internal interface IAgentProfileCommandGateway
+{
+    Task SaveProfileAsync(
+        string profileId,
+        string displayName,
+        string? description,
+        string? instructions,
+        string? chatProviderId,
+        string? chatModelId,
+        string? embeddingProviderId,
+        string? embeddingModelId,
+        IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord>? selectableCapabilityAssignments = null,
+        string? behaviorLoopId = null,
+        string? behaviorLoopSourceId = null,
+        string? behaviorLoopSettingsJson = null,
+        string? chatModelSettingsJson = null,
+        CancellationToken cancellationToken = default);
+
+    Task DeleteProfileAsync(
+        string profileId,
+        CancellationToken cancellationToken = default);
+}
+
 internal enum AgentWorkspaceCommandKind { Create, Save, Delete, Warmup }
 internal sealed record AgentWorkspaceCommand(
     AgentWorkspaceCommandKind Kind,
@@ -236,6 +272,26 @@ internal sealed record AgentWorkspaceCommandResult(
     long Revision,
     AgentWorkspaceRecord? Workspace,
     AgentExecutionTargetWarmupResult? Warmup = null);
+
+internal interface IAgentWorkspaceCommandGateway
+{
+    Task<AgentWorkspaceRecord> CreateWorkspaceAsync(
+        string displayName,
+        CancellationToken cancellationToken = default);
+
+    Task SaveWorkspaceAggregateAsync(
+        string workspaceId,
+        string displayName,
+        string? description,
+        IReadOnlyList<AgentWorkspacePathRecord> paths,
+        IReadOnlyList<AgentWorkspaceDocumentRecord> documents,
+        string? executionTargetId,
+        CancellationToken cancellationToken = default);
+
+    Task DeleteWorkspaceAsync(
+        string workspaceId,
+        CancellationToken cancellationToken = default);
+}
 
 internal enum AgentSessionCommandKind { Create, Update, Delete }
 internal sealed record AgentSessionCommand(
@@ -268,7 +324,7 @@ internal sealed record AgentRunCommandStatusRequest(Guid SessionId, Guid UserTur
 internal enum AgentRunCommandStatus { Pending, Committed, Absent }
 internal sealed record AgentRunCommandStatusResult(long Revision, AgentRunCommandStatus Status);
 
-internal enum AgentPermissionCommandKind { Read, SetUnrestricted, SaveOverride, DeleteOverride, SaveSessionApproval }
+internal enum AgentPermissionCommandKind { Read, SetUnrestricted, SaveOverride, DeleteOverride }
 internal sealed record AgentPermissionCommand(
     AgentPermissionCommandKind Kind,
     Guid? SessionId = null,
@@ -282,6 +338,23 @@ internal sealed record AgentPermissionProjection(
     IReadOnlyList<AgentPermissionActionDescriptor> Actions,
     IReadOnlyList<AgentPermissionOverride> Overrides,
     IReadOnlyList<AgentPendingPermissionRequestRecord> PendingRequests);
+
+internal interface IAgentGlobalPermissionGateway
+{
+    Task<AgentPermissionProjection> LoadGlobalPermissionsAsync(
+        CancellationToken cancellationToken = default);
+
+    Task SaveOverrideAsync(
+        string actionId,
+        string boundaryId,
+        AgentPermissionDecision decision,
+        CancellationToken cancellationToken = default);
+
+    Task DeleteOverrideAsync(
+        string actionId,
+        string boundaryId,
+        CancellationToken cancellationToken = default);
+}
 
 internal enum AgentAttachmentTransferKind
 {

@@ -5,6 +5,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 using Sunder.Sdk.Stacks;
+using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
@@ -48,10 +49,8 @@ public sealed class AppPackageModule : ISunderAppPackageModule
 {
     public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
     {
-        services.AddSingleton<DockerExecutionAppRuntimeClient>();
-        services.AddSingleton<DockerExecutionWorkspaceEditorPresentationContributor>();
         services.AddTransient(provider => new DockerExecutionSettingsViewModel(
-            provider.GetRequiredService<DockerExecutionAppRuntimeClient>(),
+            provider.GetRequiredService<IPackageRuntimeClient>(),
             provider.GetRequiredService<IBackgroundProcessQueue>(),
             context.Logging.LoggerFactory.CreateLogger<DockerExecutionSettingsViewModel>()));
     }

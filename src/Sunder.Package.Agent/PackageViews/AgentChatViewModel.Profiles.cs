@@ -22,15 +22,18 @@ public sealed partial class AgentChatViewModel
 
     private void OnProfilesChanged(string profileId)
     {
-        if (!_isInitialized)
+        RunOnUiThread(() =>
         {
-            return;
-        }
+            if (_disposed || !_isInitialized)
+            {
+                return;
+            }
 
-        ScheduleChatSnapshotRequest(
-            SelectedProfile?.ProfileId,
-            SelectedWorkspace?.WorkspaceId,
-            SelectedSession?.SessionId);
+            ScheduleChatSnapshotRequest(
+                SelectedProfile?.ProfileId,
+                SelectedWorkspace?.WorkspaceId,
+                SelectedSession?.SessionId);
+        });
     }
 
     private void NotifyProfileStateChanged()

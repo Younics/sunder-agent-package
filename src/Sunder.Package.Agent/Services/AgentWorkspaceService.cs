@@ -80,17 +80,11 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
         WorkspacesChanged?.Invoke();
     }
 
-    public IReadOnlyList<AgentWorkspacePathRecord> ListWorkspacePaths(string workspaceId)
-        => _store.ListWorkspacePaths(workspaceId);
-
     public void SaveWorkspacePaths(string workspaceId, IReadOnlyList<AgentWorkspacePathRecord> paths)
     {
         SaveWorkspacePathsCore(workspaceId, paths);
         WorkspacesChanged?.Invoke();
     }
-
-    public IReadOnlyList<AgentWorkspaceDocumentRecord> ListWorkspaceDocuments(string workspaceId)
-        => _store.ListWorkspaceDocuments(workspaceId);
 
     public void SaveWorkspaceDocuments(string workspaceId, IReadOnlyList<AgentWorkspaceDocumentRecord> documents)
     {
@@ -163,15 +157,6 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
         _sessionService?.CompleteSessionDeletion(deletedSessionIds);
     }
 
-    internal void DeleteWorkspacePersistence(string workspaceId)
-    {
-        lock (GetExecutionContextSyncRoot(workspaceId))
-        {
-            _store.DeleteWorkspace(workspaceId);
-        }
-        WorkspacesChanged?.Invoke();
-    }
-
     public void ImportWorkspace(
         AgentWorkspaceRecord workspace,
         IReadOnlyList<AgentWorkspacePathRecord>? paths = null,
@@ -238,9 +223,6 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
     public IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId)
         => _store.ListWorkspaceBindings(workspaceId);
 
-    public AgentWorkspaceBindingRecord? GetBinding(string bindingId)
-        => _store.GetWorkspaceBinding(bindingId);
-
     public AgentWorkspaceBindingRecord SavePrimaryExecutionBinding(
         string workspaceId,
         string contributionId,
@@ -278,20 +260,6 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
 
     public static string BuildPrimaryBindingId(string workspaceId, string role = AgentWorkspaceBindingRoles.PrimaryExecutionTarget)
         => $"{workspaceId}:{role}";
-
-    public void RemovePrimaryExecutionBinding(string workspaceId)
-    {
-        lock (GetExecutionContextSyncRoot(workspaceId))
-        {
-            foreach (var binding in _store.ListWorkspaceBindings(workspaceId)
-                         .Where(binding => string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase)))
-            {
-                _store.DeleteWorkspaceBinding(binding.BindingId);
-            }
-        }
-
-        WorkspacesChanged?.Invoke();
-    }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {

@@ -332,9 +332,14 @@ public sealed record PromptContextRequestWire(
             AvailableTools = AvailableTools,
             MemoryConsistencyBarrier = MemoryConsistencyBarrier,
             TranscriptEpoch = TranscriptEpoch,
-            ExecutionTargetReference = ExecutionTarget is null || rpcCatalog is null
-                ? null
-                : rpcCatalog.GetServiceReference(AgentRpcServices.ExecutionTargets, ExecutionTarget),
+            ExecutionTargetReference = ExecutionTarget is not null
+                                       && rpcCatalog is not null
+                                       && rpcCatalog.TryGetServiceReference(
+                                           AgentRpcServices.ExecutionTargets,
+                                           ExecutionTarget,
+                                           out var reference)
+                ? reference
+                : null,
         };
 }
 

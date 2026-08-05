@@ -4,12 +4,14 @@ using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.PackageViews;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.PackageViews;
 
 internal sealed class AgentPermissionPanelState(
     IAgentPermissionGateway permissionService,
-    IAgentRunGateway runCoordinator)
+    IAgentRunGateway runCoordinator,
+    IPresentationDispatcher uiDispatcher)
 {
     private Guid? _sessionId;
 
@@ -76,24 +78,14 @@ internal sealed class AgentPermissionPanelState(
         AgentPendingPermissionRequestRecord request,
         bool approveForSession)
     {
-        if (runCoordinator is IAgentChatRunGateway chatRuns)
-        {
-            var chatCheckpoint = await chatRuns.ApprovePendingPermissionAsync(
-                request.SessionId,
-                request.RequestId,
-                approveForSession).ConfigureAwait(false);
-            return chatCheckpoint?.Summary ?? "Permission request was no longer pending.";
-        }
-
-        if (approveForSession)
-        {
-            permissionService.SaveSessionApproval(request.SessionId, request.ActionId, request.BoundaryId);
-        }
-
-        var checkpoint = await runCoordinator.ApprovePendingPermissionAsync(
+        var checkpoint = await ((IAgentChatRunGateway)runCoordinator).ApprovePendingPermissionAsync(
             request.SessionId,
-            request.RequestId);
-        Reload();
+            request.RequestId,
+            approveForSession).ConfigureAwait(false);
+        if (permissionService is not IAgentChatPermissionCommandGateway)
+        {
+            await uiDispatcher.InvokeAsync(Reload).ConfigureAwait(false);
+        }
         return checkpoint?.Summary ?? "Permission request was no longer pending.";
     }
 
@@ -104,7 +96,7 @@ internal sealed class AgentPermissionPanelState(
             request.RequestId).ConfigureAwait(false);
         if (permissionService is not IAgentChatPermissionCommandGateway)
         {
-            Reload();
+            await uiDispatcher.InvokeAsync(Reload).ConfigureAwait(false);
         }
         return "Permission request denied.";
     }

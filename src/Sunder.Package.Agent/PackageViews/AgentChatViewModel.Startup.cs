@@ -196,6 +196,10 @@ public sealed partial class AgentChatViewModel
         int generation,
         CancellationToken cancellationToken)
     {
+        if (_chatSnapshotGateway is not null)
+        {
+            request = await ResolveAppSelectionAsync(request, cancellationToken).ConfigureAwait(false);
+        }
         var snapshot = _chatSnapshotGateway is not null
             ? await _chatSnapshotGateway.LoadChatSnapshotAsync(request, cancellationToken).ConfigureAwait(false)
             : await LoadInProcessChatSnapshotAsync(request, cancellationToken).ConfigureAwait(false);
@@ -223,6 +227,36 @@ public sealed partial class AgentChatViewModel
         {
             _chatSnapshotGateway?.CompleteChatSnapshot(snapshot, applied);
         }
+    }
+
+    private async Task<AgentChatSnapshotRequest> ResolveAppSelectionAsync(
+        AgentChatSnapshotRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (_selectionState is null)
+        {
+            return request;
+        }
+
+        var profileId = NormalizeSelection(request.PreferredProfileId)
+                        ?? await _selectionState.GetSelectedProfileIdAsync(cancellationToken)
+                            .ConfigureAwait(false);
+        var workspaceId = NormalizeSelection(request.PreferredWorkspaceId)
+                          ?? await _selectionState.GetSelectedWorkspaceIdAsync(cancellationToken)
+                              .ConfigureAwait(false);
+        var sessionId = request.PreferredSessionId;
+        if (sessionId is null && workspaceId is not null)
+        {
+            sessionId = await _selectionState.GetSelectedSessionIdAsync(workspaceId, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return request with
+        {
+            PreferredProfileId = profileId,
+            PreferredWorkspaceId = workspaceId,
+            PreferredSessionId = sessionId,
+        };
     }
 
     private async Task PersistAppliedSelectionAsync(

@@ -22,7 +22,7 @@ public sealed class LMStudioConnectionTests
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = LMStudioProviderConfiguration.DefaultBaseUrl,
             });
-        var viewModel = new LMStudioSettingsViewModel(context);
+        var viewModel = CreateSettings(context);
         await viewModel.InitializeAsync();
         viewModel.BaseUrl = invalidUrl;
 
@@ -113,7 +113,7 @@ public sealed class LMStudioConnectionTests
                 [LMStudioProviderConfiguration.ApiKeyKey] = "local-key",
             });
         var credentials = new ProviderCredentialAccessor(context.Secrets, LMStudioProviderConfiguration.ApiKeyKey);
-        using var settings = new LMStudioSettingsViewModel(context, credentials);
+        using var settings = new LMStudioSettingsViewModel(context, CreateCredentialRuntime(credentials));
         using var connection = new LMStudioConnection(
             context,
             credentials,
@@ -145,7 +145,7 @@ public sealed class LMStudioConnectionTests
         var context = new ProviderTestPackageContext(
             "sunder.package.agent.provider.lmstudio",
             settings: settings);
-        using var viewModel = new LMStudioSettingsViewModel(context);
+        using var viewModel = CreateSettings(context);
 
         var prepared = await viewModel.PrepareNavigationAsync(CreateNavigationContext());
 
@@ -178,7 +178,7 @@ public sealed class LMStudioConnectionTests
         var context = new ProviderTestPackageContext(
             "sunder.package.agent.provider.lmstudio",
             settings: settings);
-        using var viewModel = new LMStudioSettingsViewModel(context);
+        using var viewModel = CreateSettings(context);
 
         Assert.True(await viewModel.PrepareNavigationAsync(CreateNavigationContext()));
 
@@ -203,7 +203,7 @@ public sealed class LMStudioConnectionTests
         var context = new ProviderTestPackageContext(
             "sunder.package.agent.provider.lmstudio",
             settings: settings);
-        using var viewModel = new LMStudioSettingsViewModel(context);
+        using var viewModel = CreateSettings(context);
         await viewModel.InitializeAsync();
         await settings.SetValueAsync(
             LMStudioProviderConfiguration.BaseUrlKey,
@@ -236,7 +236,7 @@ public sealed class LMStudioConnectionTests
         var context = new ProviderTestPackageContext(
             "sunder.package.agent.provider.lmstudio",
             settings: settings);
-        using var viewModel = new LMStudioSettingsViewModel(context);
+        using var viewModel = CreateSettings(context);
         await viewModel.InitializeAsync();
         await settings.SetValueAsync(
             LMStudioProviderConfiguration.BaseUrlKey,
@@ -271,7 +271,7 @@ public sealed class LMStudioConnectionTests
         var context = new ProviderTestPackageContext(
             "sunder.package.agent.provider.lmstudio",
             settings: settings);
-        var viewModel = new LMStudioSettingsViewModel(context);
+        var viewModel = CreateSettings(context);
 
         var initialization = viewModel.InitializeAsync();
         await settings.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -312,6 +312,32 @@ public sealed class LMStudioConnectionTests
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = "http://lmstudio.test/v1",
             });
+
+    private static LMStudioSettingsViewModel CreateSettings(ProviderTestPackageContext context)
+        => new(
+            context,
+            CreateCredentialRuntime(new ProviderCredentialAccessor(
+                context.Secrets,
+                LMStudioProviderConfiguration.ApiKeyKey)));
+
+    private static ProviderTestRuntimeClient CreateCredentialRuntime(ProviderCredentialAccessor credentials)
+    {
+        var handler = new ProviderCredentialRuntimeHandler(credentials);
+        return new ProviderTestRuntimeClient(async (operationId, request, cancellationToken) =>
+        {
+            if (operationId == ProviderCredentialRuntimeOperations.Query.OperationId)
+            {
+                return await handler.HandleAsync((ProviderCredentialQuery)request, cancellationToken);
+            }
+
+            if (operationId == ProviderCredentialRuntimeOperations.Command.OperationId)
+            {
+                return await handler.HandleAsync((ProviderCredentialCommand)request, cancellationToken);
+            }
+
+            throw new InvalidOperationException($"Unexpected Runtime operation '{operationId}'.");
+        });
+    }
 
     private static PackageViewNavigationContext CreateNavigationContext()
         => new(

@@ -2,7 +2,15 @@
 
   <PropertyGroup>
     <SunderPackageProject>true</SunderPackageProject>
+    <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <SelfContained>true</SelfContained>
+    <UseAppHost>true</UseAppHost>
+    <PublishSingleFile>false</PublishSingleFile>
+    <SunderGeneratedPackageManifest>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\sunder-package.json'))</SunderGeneratedPackageManifest>
   </PropertyGroup>
 
   <ItemGroup>
@@ -10,6 +18,18 @@
     <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
     <Compile Include="..\Sunder.Package.Agent.Shared\Presentation\AgentToolPresentationMarkdown.cs"
              Link="Presentation\AgentToolPresentationMarkdown.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Aggregate\**\*" />
+    <None Remove="Aggregate\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
   </ItemGroup>
 
 </Project>

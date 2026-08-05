@@ -39,7 +39,8 @@ public sealed class EditorSharedStateTests
         using var releaseCatalog = new ManualResetEventSlim();
         var catalogStarted = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         var catalog = new ProviderModelCatalogAdapter(
-            () => [new ProviderCatalogOption("provider", "Provider")],
+            _ => Task.FromResult<IReadOnlyList<ProviderCatalogOption>>(
+                [new ProviderCatalogOption("provider", "Provider")]),
             (_, _) =>
             {
                 catalogStarted.TrySetResult(Environment.CurrentManagedThreadId);
@@ -144,7 +145,8 @@ public sealed class EditorSharedStateTests
     {
         using var dispatcher = new DedicatedPresentationDispatcher();
         var catalog = new ProviderModelCatalogAdapter(
-            () => [new ProviderCatalogOption("provider", "Provider")],
+            _ => Task.FromResult<IReadOnlyList<ProviderCatalogOption>>(
+                [new ProviderCatalogOption("provider", "Provider")]),
             (_, _) => Task.FromResult(new ProviderModelCatalogResult(
             [
                 new ProviderModelCatalogOption(
@@ -195,7 +197,8 @@ public sealed class EditorSharedStateTests
         var completion = new TaskCompletionSource<ProviderModelCatalogResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var catalog = new ProviderModelCatalogAdapter(
-            () => [new ProviderCatalogOption("provider", "Provider")],
+            _ => Task.FromResult<IReadOnlyList<ProviderCatalogOption>>(
+                [new ProviderCatalogOption("provider", "Provider")]),
             (_, _) => completion.Task);
         using var state = new ModelBindingEditorState(
             new ProviderModelLoader(catalog),
@@ -223,7 +226,8 @@ public sealed class EditorSharedStateTests
         var completion = new TaskCompletionSource<ProviderModelCatalogResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var catalog = new ProviderModelCatalogAdapter(
-            () => [new ProviderCatalogOption("provider", "Provider")],
+            _ => Task.FromResult<IReadOnlyList<ProviderCatalogOption>>(
+                [new ProviderCatalogOption("provider", "Provider")]),
             (_, _) => completion.Task);
         var state = new ModelBindingEditorState(
             new ProviderModelLoader(catalog),
@@ -315,11 +319,16 @@ public sealed class EditorSharedStateTests
         IReadOnlyDictionary<string, Task<ProviderModelCatalogResult>> loads)
         : IProviderModelCatalog
     {
-        public IReadOnlyList<ProviderCatalogOption> ListProviders() =>
-        [
-            new ProviderCatalogOption("provider-a", "Provider A"),
-            new ProviderCatalogOption("provider-b", "Provider B"),
-        ];
+        public Task<IReadOnlyList<ProviderCatalogOption>> ListProvidersAsync(
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyList<ProviderCatalogOption>>(
+            [
+                new ProviderCatalogOption("provider-a", "Provider A"),
+                new ProviderCatalogOption("provider-b", "Provider B"),
+            ]);
+        }
 
         public Task<ProviderModelCatalogResult> LoadAsync(
             string providerId,
@@ -346,7 +355,12 @@ public sealed class EditorSharedStateTests
 
         public int MaximumConcurrency;
 
-        public IReadOnlyList<ProviderCatalogOption> ListProviders() => [];
+        public Task<IReadOnlyList<ProviderCatalogOption>> ListProvidersAsync(
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyList<ProviderCatalogOption>>([]);
+        }
 
         public Task WaitForStartAsync(int index, CancellationToken cancellationToken)
             => _started[index].Task.WaitAsync(cancellationToken);

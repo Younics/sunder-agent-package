@@ -57,6 +57,97 @@ public sealed class MemoryInspectorService(
         remove => _indexingBackgroundService.StatusChanged -= value;
     }
 
+    Task<IReadOnlyList<AgentSessionRecord>> IMemoryInspectorGateway.ListSessionsAsync(
+        CancellationToken cancellationToken)
+        => FromResult(ListSessions(), cancellationToken);
+
+    Task<AgentSessionContextCheckpointRecord?> IMemoryInspectorGateway.GetSessionContextCheckpointAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken)
+        => FromResult(GetSessionContextCheckpoint(sessionId), cancellationToken);
+
+    Task<AgentWorkingSummaryRecord?> IMemoryInspectorGateway.GetWorkingSummaryAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken)
+        => FromResult(GetWorkingSummary(sessionId), cancellationToken);
+
+    Task<IReadOnlyList<StoredMemoryRecord>> IMemoryInspectorGateway.ListMemoriesAsync(
+        Guid sessionId,
+        string? searchText,
+        bool includeInactive,
+        CancellationToken cancellationToken)
+        => FromResult(ListMemories(sessionId, searchText, includeInactive), cancellationToken);
+
+    Task<IReadOnlyList<StoredMemoryEvidenceRecord>> IMemoryInspectorGateway.ListEvidenceAsync(
+        Guid memoryId,
+        CancellationToken cancellationToken)
+        => FromResult(ListEvidence(memoryId), cancellationToken);
+
+    Task<StoredMemoryRecord?> IMemoryInspectorGateway.GetSupersedingMemoryAsync(
+        Guid memoryId,
+        CancellationToken cancellationToken)
+        => FromResult(GetSupersedingMemory(memoryId), cancellationToken);
+
+    Task<IReadOnlyList<StoredMemoryRecord>> IMemoryInspectorGateway.ListSupersededMemoriesAsync(
+        Guid memoryId,
+        CancellationToken cancellationToken)
+        => FromResult(ListSupersededMemories(memoryId), cancellationToken);
+
+    Task<IReadOnlyList<StoredMemoryRecord>> IMemoryInspectorGateway.ListCorrectionLineageAsync(
+        Guid memoryId,
+        CancellationToken cancellationToken)
+        => FromResult(ListCorrectionLineage(memoryId), cancellationToken);
+
+    Task<StoredMemoryRecord> IMemoryInspectorGateway.UpdateMemoryAsync(
+        Guid memoryId,
+        string category,
+        string content,
+        string? note,
+        CancellationToken cancellationToken)
+        => FromResult(UpdateMemory(memoryId, category, content, note), cancellationToken);
+
+    Task<StoredMemoryRecord> IMemoryInspectorGateway.SetPinnedAsync(
+        Guid memoryId,
+        bool isPinned,
+        CancellationToken cancellationToken)
+        => FromResult(SetPinned(memoryId, isPinned), cancellationToken);
+
+    Task<StoredMemoryRecord> IMemoryInspectorGateway.ContestMemoryAsync(
+        Guid memoryId,
+        CancellationToken cancellationToken)
+        => FromResult(ContestMemory(memoryId), cancellationToken);
+
+    Task<StoredMemoryRecord> IMemoryInspectorGateway.ForgetMemoryAsync(
+        Guid memoryId,
+        CancellationToken cancellationToken)
+        => FromResult(ForgetMemory(memoryId), cancellationToken);
+
+    Task<StoredMemoryRecord> IMemoryInspectorGateway.SupersedeMemoryAsync(
+        Guid memoryId,
+        CancellationToken cancellationToken)
+        => FromResult(SupersedeMemory(memoryId), cancellationToken);
+
+    Task<MemoryCorrectionResult> IMemoryInspectorGateway.CreateCorrectedMemoryAsync(
+        Guid sourceMemoryId,
+        string category,
+        string content,
+        CancellationToken cancellationToken)
+        => FromResult(CreateCorrectedMemory(sourceMemoryId, category, content), cancellationToken);
+
+    Task<MemorySemanticIndexStatusRecord> IMemoryInspectorGateway.GetSemanticIndexStatusAsync(
+        StoredMemoryRecord memory,
+        SemanticEmbeddingContext? context,
+        CancellationToken cancellationToken)
+        => FromResult(GetSemanticIndexStatus(memory, context), cancellationToken);
+
+    Task<SemanticMemoryWorkerStatusRecord> IMemoryInspectorGateway.GetSemanticWorkerStatusAsync(
+        CancellationToken cancellationToken)
+        => FromResult(GetSemanticWorkerStatus(), cancellationToken);
+
+    Task<SemanticMemoryMetricsSnapshot> IMemoryInspectorGateway.GetMetricsSnapshotAsync(
+        CancellationToken cancellationToken)
+        => FromResult(GetMetricsSnapshot(), cancellationToken);
+
     public IReadOnlyList<AgentSessionRecord> ListSessions()
         => _modelRuntimeResolver.InvokeRuntimeCatalog(
             static catalog => catalog.ListSessions().ToArray(),
@@ -327,6 +418,12 @@ public sealed class MemoryInspectorService(
         {
             _indexingBackgroundService.QueueSessionReconciliation(memory.SessionId, profileId);
         }
+    }
+
+    private static Task<T> FromResult<T>(T result, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(result);
     }
 
     private void OnRuntimeSessionChanged(Guid sessionId)

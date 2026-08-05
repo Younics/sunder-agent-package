@@ -294,7 +294,8 @@ public sealed class SkillPackageTests
             var context = new TestPackageContext(Path.Combine(root, "install"));
             var store = new SkillStore(context);
             var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
-            using var viewModel = new SkillSettingsViewModel(store, importer);
+            var timeProvider = new ManualTimerTimeProvider();
+            using var viewModel = new SkillSettingsViewModel(store, importer, timeProvider);
 
             await viewModel.ImportLocalFolderAsync(source);
 
@@ -305,7 +306,17 @@ public sealed class SkillPackageTests
             Assert.False(viewModel.IsStatusWarning);
             Assert.False(viewModel.IsStatusError);
 
-            await WaitUntilAsync(() => string.IsNullOrWhiteSpace(viewModel.StatusText), TimeSpan.FromSeconds(4));
+            var statusCleared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            viewModel.PropertyChanged += (_, change) =>
+            {
+                if (change.PropertyName == nameof(viewModel.StatusText)
+                    && string.IsNullOrWhiteSpace(viewModel.StatusText))
+                {
+                    statusCleared.TrySetResult();
+                }
+            };
+            await timeProvider.FireAsync();
+            await statusCleared.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
             Assert.Empty(viewModel.StatusText);
             Assert.Equal(SkillStatusKind.None, viewModel.StatusKind);
@@ -748,6 +759,56 @@ public sealed class SkillPackageTests
             => string.IsNullOrWhiteSpace(folderPath) ? relativePath : folderPath.Trim().Trim('/') + "/" + relativePath.Trim().Trim('/');
 
         private sealed record TestGitHubFolder(GitHubSkillFolder Folder, IReadOnlyDictionary<string, byte[]> Files);
+    }
+
+    private sealed class ManualTimerTimeProvider : TimeProvider
+    {
+        private readonly TaskCompletionSource<ManualTimer> _timerCreated =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            var timer = new ManualTimer(callback, state);
+            if (!_timerCreated.TrySetResult(timer))
+            {
+                throw new InvalidOperationException("The test expected one status timer.");
+            }
+            return timer;
+        }
+
+        public async Task FireAsync()
+        {
+            var timer = await _timerCreated.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            timer.Fire();
+        }
+
+        private sealed class ManualTimer(TimerCallback callback, object? state) : ITimer
+        {
+            private int _disposed;
+
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+                => Volatile.Read(ref _disposed) == 0;
+
+            public void Dispose() => Interlocked.Exchange(ref _disposed, 1);
+
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return ValueTask.CompletedTask;
+            }
+
+            public void Fire()
+            {
+                if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                {
+                    callback(state);
+                }
+            }
+        }
     }
 
     private sealed class TestPackageContext(string rootPath) : IPackageContext

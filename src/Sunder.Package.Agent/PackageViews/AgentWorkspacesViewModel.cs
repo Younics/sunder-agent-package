@@ -16,9 +16,12 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 {
     private static readonly TimeSpan SuccessStatusDisplayDuration = TimeSpan.FromSeconds(3);
     private const string ListRefreshChannel = "workspaces-list";
+    private const string ExecutionTargetRefreshChannel = "execution-targets";
 
     private readonly IAgentWorkspaceGateway _workspaceService;
     private readonly IAgentExecutionGateway _executionGateway;
+    private readonly IAgentDashboardLoader? _dashboardLoader;
+    private readonly IAgentWorkspaceCommandGateway? _workspaceCommands;
     private readonly AgentRpcCatalog _rpcCatalog;
     private readonly IPackageSettingsNavigationService? _settingsNavigationService;
     private readonly IAgentRuntimeAvailability? _runtimeAvailability;
@@ -36,11 +39,14 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private bool _suppressDraftTracking;
     private bool _suppressWorkspaceRefresh;
     private bool _initializationRefreshPending;
+    private bool _initializationCatalogRefreshPending;
     private bool _isInitialized;
     private bool _disposed;
     private string? _initializationFailureStatus;
+    private Task _currentExecutionTargetRefresh = Task.CompletedTask;
     private Task _currentEditorSectionRefresh = Task.CompletedTask;
     private Task _currentEditorSectionRetry = Task.CompletedTask;
+    private long _executionTargetSelectionRevision;
     private long _editorIntentRevision;
     private long _workspaceDraftRevision;
 
@@ -49,13 +55,36 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         IAgentExecutionGateway executionGateway,
         AgentRpcCatalog rpcCatalog,
         IPackageSettingsNavigationService? settingsNavigationService = null)
+        : this(
+            workspaceService,
+            executionGateway,
+            rpcCatalog,
+            settingsNavigationService,
+            PresentationDispatcher.Capture())
+    {
+    }
+
+    internal AgentWorkspacesViewModel(
+        IAgentWorkspaceGateway workspaceService,
+        IAgentExecutionGateway executionGateway,
+        AgentRpcCatalog rpcCatalog,
+        IPackageSettingsNavigationService? settingsNavigationService,
+        IPresentationDispatcher uiDispatcher)
     {
         _workspaceService = workspaceService;
         _executionGateway = executionGateway;
+        _dashboardLoader = workspaceService as IAgentDashboardLoader;
+        _workspaceCommands = workspaceService as IAgentWorkspaceCommandGateway;
         _rpcCatalog = rpcCatalog;
         _settingsNavigationService = settingsNavigationService;
-        _uiDispatcher = PresentationDispatcher.Capture();
-        _tasks = new PresentationTaskScope(exception => ReportPresentationFailure(exception));
+        _uiDispatcher = uiDispatcher;
+        _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed)
+            {
+                ReportPresentationFailure(exception);
+            }
+        }));
         _statusClear = new TimedStatusController(dispatcher: _uiDispatcher);
         _listDetail = new KeyedAdaptiveListDetailState<string, AgentWorkspaceRecord>(
             Workspaces,
@@ -205,6 +234,8 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     internal Task CurrentEditorSectionRetry => _currentEditorSectionRetry;
 
+    internal Task CurrentExecutionTargetRefresh => _currentExecutionTargetRefresh;
+
     internal Task CurrentRuntimeRefresh => _runtimeRefresh.WhenIdle;
 
     [ObservableProperty]
@@ -274,6 +305,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     partial void OnSelectedExecutionTargetChanged(ExecutionTargetOption? value)
     {
+        _executionTargetSelectionRevision++;
         if (_suppressDraftTracking)
         {
             return;
@@ -298,7 +330,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         => DeleteSelectedWorkspaceDocumentCommand.NotifyCanExecuteChanged();
 
     [RelayCommand]
-    private void CreateWorkspace()
+    private async Task CreateWorkspaceAsync()
     {
         try
         {
@@ -306,14 +338,18 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             _suppressWorkspaceRefresh = true;
             try
             {
-                workspace = _workspaceService.CreateWorkspace("New Workspace");
+                workspace = _workspaceCommands is null
+                    ? _workspaceService.CreateWorkspace("New Workspace")
+                    : await _workspaceCommands.CreateWorkspaceAsync(
+                        "New Workspace",
+                        _lifetimeCancellation.Token);
             }
             finally
             {
                 _suppressWorkspaceRefresh = false;
             }
             var intentRevision = _listDetail.ShowNewDetail();
-            _listDetail.Reconcile(_workspaceService.ListWorkspaces());
+            _listDetail.Reconcile(await LoadWorkspacesAsync(_lifetimeCancellation.Token));
             _listDetail.TryShowCreatedDetail(workspace.WorkspaceId, intentRevision);
             DiscardPendingWorkspaceRefresh();
             ClearStatus();
@@ -325,7 +361,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     }
 
     [RelayCommand(CanExecute = nameof(CanDeleteWorkspace))]
-    private void DeleteWorkspace()
+    private async Task DeleteWorkspaceAsync()
     {
         if (SelectedWorkspace is null)
         {
@@ -339,7 +375,16 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             _suppressWorkspaceRefresh = true;
             try
             {
-                _workspaceService.DeleteWorkspace(workspaceId);
+                if (_workspaceCommands is null)
+                {
+                    _workspaceService.DeleteWorkspace(workspaceId);
+                }
+                else
+                {
+                    await _workspaceCommands.DeleteWorkspaceAsync(
+                        workspaceId,
+                        _lifetimeCancellation.Token);
+                }
             }
             finally
             {
@@ -352,7 +397,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             {
                 _listDetail.ShowList();
             }
-            _listDetail.Reconcile(_workspaceService.ListWorkspaces());
+            _listDetail.Reconcile(await LoadWorkspacesAsync(_lifetimeCancellation.Token));
             if (shouldClearSelection)
             {
                 ClearStatus();
@@ -423,7 +468,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             }
             if (state == AgentRuntimeConnectionState.Connected && _isInitialized)
             {
-                ReloadTargets(SelectedExecutionTarget?.TargetId);
+                StartExecutionTargetRefresh();
                 _tasks.Run(_runtimeRefresh.MarkDirty());
                 ClearStatus();
             }
@@ -444,6 +489,8 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             var request = _requests.Begin(ListRefreshChannel, cancellationToken);
             var applied = false;
             var replayPendingRefresh = false;
+            var replayPendingCatalogRefresh = false;
+            Task targetReplay = Task.CompletedTask;
             try
             {
                 var targetsTask = _executionGateway is IAgentExecutionTargetLoader loader
@@ -455,7 +502,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
                     .WaitAsync(request.CancellationToken)
                     .ConfigureAwait(false);
                 var targets = await targetsTask.WaitAsync(request.CancellationToken).ConfigureAwait(false);
-                var workspaces = _workspaceService.ListWorkspaces();
+                var workspaces = await LoadWorkspacesAsync(request.CancellationToken).ConfigureAwait(false);
                 request.CancellationToken.ThrowIfCancellationRequested();
                 await _uiDispatcher.InvokeAsync(() =>
                 {
@@ -469,6 +516,12 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
                     _isInitialized = true;
                     replayPendingRefresh = _initializationRefreshPending;
                     _initializationRefreshPending = false;
+                    replayPendingCatalogRefresh = _initializationCatalogRefreshPending;
+                    _initializationCatalogRefreshPending = false;
+                    if (replayPendingCatalogRefresh)
+                    {
+                        targetReplay = StartExecutionTargetRefresh();
+                    }
                     applied = true;
                 }).ConfigureAwait(false);
             }
@@ -490,6 +543,10 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             if (replayPendingRefresh)
             {
                 await _runtimeRefresh.MarkDirty().WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            if (replayPendingCatalogRefresh)
+            {
+                await targetReplay.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
             return;
         }
@@ -707,7 +764,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         var request = _requests.Begin(ListRefreshChannel, cancellationToken);
         try
         {
-            var workspaces = _workspaceService.ListWorkspaces();
+            var workspaces = await LoadWorkspacesAsync(request.CancellationToken).ConfigureAwait(false);
             await _uiDispatcher.InvokeAsync(() =>
             {
                 if (_requests.IsCurrent(request))
@@ -727,6 +784,12 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         _runtimeRefresh.DiscardPending();
         _requests.Invalidate(ListRefreshChannel);
     }
+
+    private async Task<IReadOnlyList<AgentWorkspaceRecord>> LoadWorkspacesAsync(
+        CancellationToken cancellationToken)
+        => _dashboardLoader is null
+            ? _workspaceService.ListWorkspaces()
+            : (await _dashboardLoader.LoadDashboardAsync(cancellationToken).ConfigureAwait(false)).Workspaces;
 }
 
 internal enum AgentWorkspaceOperation

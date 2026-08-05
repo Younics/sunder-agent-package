@@ -24,41 +24,29 @@ public sealed partial class AgentProfilesViewModel
                 _drafts[profile.ProfileId] = document;
             }
 
-            var localToolsTask = _profileService.ListInstalledLocalToolsAsync(cancellationToken);
-            var packageCapabilitiesTask = _profileService.ListSelectableProfileCapabilitiesAsync(
-                BuildCapabilityRequestProfile(profile, draft),
-                cancellationToken);
-            var behaviorLoops = _profileService.ListBehaviorLoopDescriptors()
-                .Select(loop => new BehaviorLoopOption(
-                    loop.LoopId,
-                    loop.SourceId,
-                    loop.DisplayName,
-                    loop.Description))
-                .ToArray();
-
             _suppressDraftTracking = true;
             try
             {
                 DisplayName = draft.DisplayName;
                 Description = draft.Description;
                 Instructions = draft.Instructions;
-                HasEmbeddingConsumers = _profileService.HasProfileCapabilityConsumers(
-                    AgentModelCapabilityKinds.Embedding);
             }
             finally
             {
                 _suppressDraftTracking = false;
             }
 
+            var catalogTask = LoadEditorCatalogAsync(
+                BuildCapabilityRequestProfile(profile, draft),
+                cancellationToken);
+
             await Task.WhenAll(
                     ChatBinding.RefreshAsync(draft.ChatBinding, cancellationToken),
                     EmbeddingBinding.RefreshAsync(draft.EmbeddingBinding, cancellationToken),
-                    localToolsTask,
-                    packageCapabilitiesTask)
+                    catalogTask)
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
-            var localTools = await localToolsTask.WaitAsync(cancellationToken).ConfigureAwait(false);
-            var packageCapabilities = await packageCapabilitiesTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var catalog = await catalogTask.WaitAsync(cancellationToken).ConfigureAwait(false);
             await _uiDispatcher.InvokeAsync(() =>
             {
                 if (!_listDetail.IsCurrentDetail(ticket))
@@ -69,10 +57,14 @@ public sealed partial class AgentProfilesViewModel
                 _suppressDraftTracking = true;
                 try
                 {
-                    ApplyBehaviorLoopSelection(behaviorLoops, draft.BehaviorLoopId, draft.BehaviorLoopSourceId);
+                    HasEmbeddingConsumers = catalog.HasEmbeddingConsumers;
+                    ApplyBehaviorLoopSelection(
+                        catalog.BehaviorLoops,
+                        draft.BehaviorLoopId,
+                        draft.BehaviorLoopSourceId);
                     ApplyCapabilityOptions(
-                        localTools,
-                        packageCapabilities,
+                        catalog.LocalTools,
+                        catalog.PackageCapabilities,
                         draft.CapabilityAssignments,
                         preserveCurrent: false);
                 }
@@ -111,6 +103,44 @@ public sealed partial class AgentProfilesViewModel
             }).ConfigureAwait(false);
         }
     }
+
+    private async Task<AgentProfileEditorCatalog> LoadEditorCatalogAsync(
+        AgentProfileRecord profile,
+        CancellationToken cancellationToken)
+    {
+        if (_catalogLoader is not null)
+        {
+            var catalog = await _catalogLoader.LoadCatalogAsync(
+                    new AgentCatalogRequest(Profile: profile),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return new AgentProfileEditorCatalog(
+                catalog.BehaviorLoops.Select(ToBehaviorLoopOption).ToArray(),
+                catalog.LocalTools,
+                catalog.SelectableCapabilities,
+                catalog.HasEmbeddingConsumers);
+        }
+
+        var localToolsTask = _profileService.ListInstalledLocalToolsAsync(cancellationToken);
+        var packageCapabilitiesTask = _profileService.ListSelectableProfileCapabilitiesAsync(
+            profile,
+            cancellationToken);
+        await Task.WhenAll(localToolsTask, packageCapabilitiesTask).ConfigureAwait(false);
+        return new AgentProfileEditorCatalog(
+            _profileService.ListBehaviorLoopDescriptors().Select(ToBehaviorLoopOption).ToArray(),
+            await localToolsTask.ConfigureAwait(false),
+            await packageCapabilitiesTask.ConfigureAwait(false),
+            _profileService.HasProfileCapabilityConsumers(AgentModelCapabilityKinds.Embedding));
+    }
+
+    private static BehaviorLoopOption ToBehaviorLoopOption(AgentBehaviorLoopDescriptor loop)
+        => new(loop.LoopId, loop.SourceId, loop.DisplayName, loop.Description);
+
+    private sealed record AgentProfileEditorCatalog(
+        IReadOnlyList<BehaviorLoopOption> BehaviorLoops,
+        IReadOnlyList<AgentToolCatalogEntry> LocalTools,
+        IReadOnlyList<AgentProfileSelectableCapabilityDescriptor> PackageCapabilities,
+        bool HasEmbeddingConsumers);
 
     private async Task RefreshSelectedProfileCapabilitiesAsync()
     {

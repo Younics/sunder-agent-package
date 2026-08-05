@@ -81,42 +81,46 @@ public sealed partial class AgentToolService
 
     private async Task<IReadOnlyList<OwnedRuntimeToolCandidate>> ListOwnedRuntimeToolCandidatesAsync(
         AgentToolSourceContext context,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool omitUnavailableSources = false)
     {
         var candidates = new List<OwnedRuntimeToolCandidate>();
-        var sourceReferences = AgentRpcInvocation.Snapshot(
-            _rpcCatalog,
-            AgentRpcServices.ToolSources,
-            static source => new AgentToolSourceMetadata(
-                source.SourceId,
-                source.DisplayName,
-                source.SourceKind,
-                SupportsPermission: true,
-                SupportsPreflight: true));
+        var descriptorContext = context with
+        {
+            ExecutionTargetReference = null,
+            ExecutionTargetConfigurationGeneration = null,
+        };
+        var sourceReferences = await AgentRpcInvocation.SnapshotAsync(
+                _rpcCatalog,
+                AgentRpcServices.ToolSources,
+                static (source, token) => DescribeToolSourceAsync(source, token),
+                cancellationToken,
+                omitUnavailableSources)
+            .ConfigureAwait(false);
         foreach (var sourceReference in sourceReferences
                      .OrderBy(source => source.Metadata.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
             IReadOnlyList<AgentRuntimeTool> runtimeTools;
             try
             {
-                runtimeTools = await InvokeTargetBoundAsync(
-                    context.ExecutionTargetReference,
+                runtimeTools = await AgentRpcInvocation.InvokeAsync(
+                    sourceReference,
                     cancellationToken,
-                    token => AgentRpcInvocation.InvokeAsync(
-                        sourceReference,
-                        token,
-                        (source, invocationToken) => new ValueTask<IReadOnlyList<AgentRuntimeTool>>(
-                            ListRuntimeToolsAsync(source, context, invocationToken)))).ConfigureAwait(false);
+                    (source, invocationToken) => new ValueTask<IReadOnlyList<AgentRuntimeTool>>(
+                        ListRuntimeToolsAsync(source, descriptorContext, invocationToken))).ConfigureAwait(false);
             }
-            catch (AgentPackageUnavailableException)
+            catch (AgentPackageUnavailableException) when (omitUnavailableSources)
             {
                 continue;
             }
 
+            var targetSnapshot = await SnapshotExecutionTargetAsync(
+                    context.ExecutionTargetReference,
+                    cancellationToken)
+                .ConfigureAwait(false);
             foreach (var runtimeTool in runtimeTools)
             {
                 var descriptor = WithSourceIdentity(sourceReference.Metadata, runtimeTool.Descriptor);
-                var targetSnapshot = SnapshotExecutionTarget(context.ExecutionTargetReference);
                 var invocation = new AgentToolInvocationReference(
                     sourceReference.PackageId,
                     descriptor,
@@ -146,4 +150,19 @@ public sealed partial class AgentToolService
                 candidate.RuntimeTool.Descriptor.ToolId,
                 context,
                 token));
+
+    private static async ValueTask<AgentToolSourceMetadata> DescribeToolSourceAsync(
+        IAgentToolSource source,
+        CancellationToken cancellationToken)
+    {
+        var description = source is AgentToolSourceRpcClient rpcSource
+            ? await rpcSource.DescribeAsync(cancellationToken).ConfigureAwait(false)
+            : new ToolSourceDescription(source.SourceId, source.DisplayName, source.SourceKind);
+        return new AgentToolSourceMetadata(
+            description.SourceId,
+            description.DisplayName,
+            description.SourceKind,
+            SupportsPermission: true,
+            SupportsPreflight: true);
+    }
 }

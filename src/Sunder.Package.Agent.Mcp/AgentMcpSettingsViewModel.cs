@@ -429,7 +429,10 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
 
     internal bool HasEditorChangedSince(long revision) => _editorRevision != revision;
 
-    internal void ApplySavedDocument(ParsedMcpServerConfiguration parsed, long revision)
+    internal void ApplySavedDocument(
+        ParsedMcpServerConfiguration parsed,
+        string editorDocument,
+        long revision)
     {
         if (_disposed || HasEditorChangedSince(revision))
         {
@@ -438,10 +441,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
 
         ApplyEditorDocument(
             parsed.Server.Name,
-            McpConfigurationDocument.BuildEditorText(
-                parsed.Server,
-                parsed.Headers,
-                parsed.EnvironmentVariables),
+            editorDocument,
             parsed.Server.ServerId);
     }
 

@@ -12,7 +12,7 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject,
     IDisposable
 {
     private readonly IPackageContext _packageContext;
-    private readonly ProviderCredentialAccessor _credentials;
+    private readonly IProviderCredentialSettingsGateway _credentials;
     private readonly ILogger _logger;
     private readonly object _initializationSyncRoot = new();
     private readonly SemaphoreSlim _navigationLoadGate = new(1, 1);
@@ -28,16 +28,18 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject,
         LMStudioProviderConfiguration.UtilityModelKey,
     ];
 
-    public LMStudioSettingsViewModel(IPackageContext packageContext)
+    public LMStudioSettingsViewModel(
+        IPackageContext packageContext,
+        IPackageRuntimeClient runtimeClient)
         : this(
             packageContext,
-            new ProviderCredentialAccessor(packageContext.Secrets, LMStudioProviderConfiguration.ApiKeyKey))
+            new ProviderCredentialAppRuntimeGateway(runtimeClient))
     {
     }
 
     internal LMStudioSettingsViewModel(
         IPackageContext packageContext,
-        ProviderCredentialAccessor credentials)
+        IProviderCredentialSettingsGateway credentials)
     {
         _packageContext = packageContext;
         _credentials = credentials;
@@ -131,7 +133,7 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject,
                     LMStudioProviderConfiguration.UtilityModelKey,
                     cancellationToken)
                 ?? string.Empty;
-            var hasCredential = await _credentials.HasCredentialAsync(cancellationToken);
+            var credentialStatus = await _credentials.GetStatusAsync(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (!CanApplyLoad(generation))
             {
@@ -140,7 +142,7 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject,
 
             BaseUrl = baseUrl;
             UtilityModelId = utilityModelId;
-            ApiKeySettings.ApplyCredentialStatus(hasCredential);
+            ApiKeySettings.ApplyCredentialStatus(credentialStatus.HasStoredCredential);
             ClearRuntimeError();
             StatusText = string.Empty;
             RefreshConnectionStatus();

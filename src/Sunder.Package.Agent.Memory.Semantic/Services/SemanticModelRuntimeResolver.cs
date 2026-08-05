@@ -3,6 +3,7 @@ using System.Text;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Memory.Semantic.Services;
 
@@ -301,18 +302,18 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
                 {
                     return null;
                 }
-                var descriptor = lease.Service.Descriptor;
-                if (!string.Equals(descriptor.ProviderId, providerId, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
                 using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
                     cancellationToken,
                     retirementToken);
+                AgentEmbeddingProviderDescriptor descriptor;
                 string providerSpaceIdentity;
                 try
                 {
+                    descriptor = lease.Service.Descriptor;
+                    if (!string.Equals(descriptor.ProviderId, providerId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
                     if (lease.Service is IAgentEmbeddingSpaceIdentityProvider
                         && !await CanInvokeProviderAsync(canInvokeProvider, cancellationToken).ConfigureAwait(false))
                     {
@@ -322,8 +323,13 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
                         ? await identityProvider.GetEmbeddingSpaceIdentityAsync(binding.ModelId, invocation.Token).ConfigureAwait(false)
                         : string.Empty;
                 }
-                catch (Exception) when (retirementToken.IsCancellationRequested
-                                        && !cancellationToken.IsCancellationRequested)
+                catch (Exception exception) when (
+                    !cancellationToken.IsCancellationRequested
+                    && (retirementToken.IsCancellationRequested
+                        || exception is SunderRpcException
+                        {
+                            Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable,
+                        }))
                 {
                     continue;
                 }
@@ -591,8 +597,13 @@ public sealed class ResolvedEmbeddingProvider
             {
                 return await callback(lease.Service, state, invocation.Token).ConfigureAwait(false);
             }
-            catch (Exception ex) when (retirementToken.IsCancellationRequested
-                                       && !cancellationToken.IsCancellationRequested)
+            catch (Exception ex) when (
+                !cancellationToken.IsCancellationRequested
+                && (retirementToken.IsCancellationRequested
+                    || ex is SunderRpcException
+                    {
+                        Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable,
+                    }))
             {
                 throw new EmbeddingProviderRetiredException(ProviderId, ex);
             }

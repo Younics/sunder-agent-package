@@ -1624,18 +1624,22 @@ public sealed class ViewLifecycleTests
     }
 
     [AvaloniaFact]
-    public void AgentPermissionsViewModel_EmptySuccessfulRetryClearsUnavailableStatus()
+    public async Task AgentPermissionsViewModel_EmptySuccessfulRetryClearsUnavailableStatus()
     {
         var gateway = new TogglePermissionGateway();
         using var viewModel = new AgentPermissionsViewModel(gateway);
+        await viewModel.PrepareNavigationAsync(new PackageViewNavigationContext(
+            "settings:sunder.package.agent.permissions",
+            new Dictionary<string, string?>()));
         Assert.Contains("unavailable", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
 
         gateway.IsAvailable = true;
-        var reloaded = Assert.IsType<bool>(typeof(AgentPermissionsViewModel)
+        var reload = Assert.IsAssignableFrom<Task<bool>>(typeof(AgentPermissionsViewModel)
             .GetMethod(
-                "TryReload",
+                "TryReloadAsync",
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .Invoke(viewModel, null));
+            .Invoke(viewModel, [CancellationToken.None]));
+        var reloaded = await reload;
 
         Assert.True(reloaded);
         Assert.Empty(viewModel.Rows);
@@ -1862,6 +1866,11 @@ public sealed class ViewLifecycleTests
 
         var navigation = Task.Run(async () => await view.OnNavigatedToAsync(context, cancellation.Token));
         await placementStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            transcript.InvalidateMeasure();
+            window.UpdateLayout();
+        }, DispatcherPriority.Render);
         await cancellationTriggered.Task.WaitAsync(TimeSpan.FromSeconds(3));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => navigation);
         await GetSettledScrollOperation(view).WaitAsync(TimeSpan.FromSeconds(3));
@@ -3248,6 +3257,18 @@ public sealed class ViewLifecycleTests
             await GetPendingCoordinatorOperations(view);
             AssertSubsessionFollowingParity(coordinator, viewModel, expected: false);
 
+            var detachedBottomGap = transcript.Viewport.Height * 0.4;
+            transcript.Offset = new Vector(
+                0,
+                Math.Max(
+                    0,
+                    transcript.Extent.Height - transcript.Viewport.Height - detachedBottomGap));
+            await WaitForTranscriptGeometrySettledAsync(window, transcript, coordinator);
+            Assert.True(
+                transcript.Extent.Height - transcript.Viewport.Height - transcript.Offset.Y
+                > transcript.Viewport.Height * 0.25);
+            AssertSubsessionFollowingParity(coordinator, viewModel, expected: false);
+
             services.SessionService.AppendTextTurn(
                 child.SessionId,
                 AgentMessageRole.Assistant,
@@ -3292,11 +3313,8 @@ public sealed class ViewLifecycleTests
 
             GetToolHeader().RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
             await WaitUntilAsync(
-                () => !toolRow.IsPreparing,
+                () => toolRow.IsExpanded || toolRow.IsDetailLoadFailed,
                 () => DescribeToolExpansionState("detached-expansion-timeout"));
-            Assert.True(
-                toolRow.IsExpanded || toolRow.IsDetailLoadFailed,
-                DescribeToolExpansionState("detached-expansion-settled-unexpectedly"));
             Assert.False(
                 toolRow.IsDetailLoadFailed,
                 $"{toolRow.DetailLoadFailureText} {DescribeToolExpansionState("detached-expansion-failed")}");
@@ -4061,16 +4079,27 @@ public sealed class ViewLifecycleTests
             where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Assert.Equal("openai.auth.v1", operation.OperationId);
             InvocationCount++;
-            var response = Activator.CreateInstance(
-                typeof(TResponse),
-                System.Reflection.BindingFlags.Instance
-                | System.Reflection.BindingFlags.Public
-                | System.Reflection.BindingFlags.NonPublic,
-                binder: null,
-                args: [true, true, _expiresAtUtc, null],
-                culture: null);
+            var response = operation.OperationId switch
+            {
+                "provider.credential.query.v1" => Activator.CreateInstance(
+                    typeof(TResponse),
+                    System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.NonPublic,
+                    binder: null,
+                    args: [true],
+                    culture: null),
+                "openai.auth.v1" => Activator.CreateInstance(
+                    typeof(TResponse),
+                    System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.NonPublic,
+                    binder: null,
+                    args: [true, true, _expiresAtUtc, null],
+                    culture: null),
+                _ => throw new InvalidOperationException($"Unexpected runtime operation '{operation.OperationId}'."),
+            };
             return ValueTask.FromResult(Assert.IsType<TResponse>(response));
         }
 
@@ -4129,9 +4158,6 @@ public sealed class ViewLifecycleTests
             string contributionId,
             string displayRole = AgentWorkspaceBindingRoles.PrimaryExecutionTarget)
             => inner.SavePrimaryExecutionBinding(workspaceId, contributionId, displayRole);
-        public void RemovePrimaryExecutionBinding(string workspaceId)
-            => inner.RemovePrimaryExecutionBinding(workspaceId);
-
         public async Task InitializeAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -5424,7 +5450,6 @@ public sealed class ViewLifecycleTests
         public void SaveOverride(string actionId, string boundaryId, AgentPermissionDecision decision) { }
         public void DeleteOverride(string actionId, string boundaryId) { }
         public IReadOnlyList<AgentPendingPermissionRequestRecord> ListPendingRequestsForSessionTree(Guid sessionId) => [];
-        public void SaveSessionApproval(Guid sessionId, string actionId, string boundaryId) { }
     }
 
     private sealed class NoOpRunGateway : IAgentRunGateway
@@ -5568,10 +5593,6 @@ public sealed class ViewLifecycleTests
         public IReadOnlyList<AgentPendingPermissionRequestRecord> ListPendingRequestsForSessionTree(
             Guid sessionId) => [];
 
-        public void SaveSessionApproval(Guid sessionId, string actionId, string boundaryId)
-        {
-        }
-
         private void ThrowIfUnavailable()
         {
             if (!IsAvailable)
@@ -5652,14 +5673,12 @@ public sealed class ViewLifecycleTests
                     System.Reflection.BindingFlags.Instance
                     | System.Reflection.BindingFlags.Public
                     | System.Reflection.BindingFlags.NonPublic),
-                candidate => candidate.GetParameters().Length == 9);
+                candidate => candidate.GetParameters().Length == 7);
             return Assert.IsType<TResponse>(constructor.Invoke(
             [
                 _timeoutSeconds,
                 _dockerCliPath,
                 _images,
-                null,
-                null,
                 true,
                 null,
                 _catalogRevision,
@@ -5918,6 +5937,12 @@ public sealed class ViewLifecycleTests
             SunderRpcEndpointReference endpoint,
             CancellationToken cancellationToken = default)
             => ValueTask.FromException<SunderRpcProviderSnapshot?>(Failure());
+
+        public ValueTask<bool> TryReportInvariantViolationAsync(
+            SunderRpcEndpointReference endpoint,
+            Exception exception,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<bool>(Failure());
 
         public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(
             string contractId,

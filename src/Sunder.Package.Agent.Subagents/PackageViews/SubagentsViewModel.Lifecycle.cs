@@ -43,7 +43,9 @@ public sealed partial class SubagentsViewModel
         }
 
         await ReloadAsync(cancellationToken);
-        await _currentDetailLoad.WaitAsync(cancellationToken);
+        Task detailLoad = Task.CompletedTask;
+        await RunOnUiThreadAsync(() => detailLoad = _currentDetailLoad);
+        await detailLoad.WaitAsync(cancellationToken);
     }
 
     public void Dispose()

@@ -325,7 +325,7 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var providers = _loader.ListProviders();
+        var providers = await _loader.ListProvidersAsync(cancellationToken).ConfigureAwait(false);
         var selectedProviderId = ResolveProviderId(providers, selection.ProviderId);
         string? providerId = null;
         var hasProviders = false;

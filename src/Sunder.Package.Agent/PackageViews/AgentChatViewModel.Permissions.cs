@@ -87,10 +87,14 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        var summary = await _permissionPanel.ApproveAsync(request, approveForSession: false);
-        NotifyPermissionPanelChanged();
-        ApplySessionStatus(selectedSession, summary);
-        SyncSelectedSessionState(selectedSession.SessionId);
+        var summary = await _permissionPanel.ApproveAsync(request, approveForSession: false)
+            .ConfigureAwait(false);
+        await InvokeOnUiThreadAsync(() =>
+        {
+            NotifyPermissionPanelChanged();
+            ApplySessionStatus(selectedSession, summary);
+            SyncSelectedSessionState(selectedSession.SessionId);
+        }).ConfigureAwait(false);
     }
 
     [RelayCommand]
@@ -104,10 +108,14 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        var summary = await _permissionPanel.ApproveAsync(request, approveForSession: true);
-        NotifyPermissionPanelChanged();
-        ApplySessionStatus(selectedSession, summary);
-        SyncSelectedSessionState(selectedSession.SessionId);
+        var summary = await _permissionPanel.ApproveAsync(request, approveForSession: true)
+            .ConfigureAwait(false);
+        await InvokeOnUiThreadAsync(() =>
+        {
+            NotifyPermissionPanelChanged();
+            ApplySessionStatus(selectedSession, summary);
+            SyncSelectedSessionState(selectedSession.SessionId);
+        }).ConfigureAwait(false);
     }
 
     [RelayCommand]
@@ -121,8 +129,12 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        ApplySessionStatus(selectedSession, await _permissionPanel.DenyAsync(request));
-        NotifyPermissionPanelChanged();
-        SyncSelectedSessionState(selectedSession.SessionId);
+        var summary = await _permissionPanel.DenyAsync(request).ConfigureAwait(false);
+        await InvokeOnUiThreadAsync(() =>
+        {
+            ApplySessionStatus(selectedSession, summary);
+            NotifyPermissionPanelChanged();
+            SyncSelectedSessionState(selectedSession.SessionId);
+        }).ConfigureAwait(false);
     }
 }

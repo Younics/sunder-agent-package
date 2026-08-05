@@ -105,6 +105,8 @@ public sealed class PackageModuleCompositionTests
                 Configuration("sunder.package.agent.provider.anthropic"),
                 SettingsView("Sunder.Package.Agent.Provider.Anthropic.AnthropicSettingsView"),
                 RpcProvider("anthropic.chat"),
+                RuntimeOperation("provider.credential.query.v1", "Sunder.Package.Agent.Provider.Shared.ProviderCredentialRuntimeHandler"),
+                RuntimeOperation("provider.credential.command.v1", "Sunder.Package.Agent.Provider.Shared.ProviderCredentialRuntimeHandler"),
             ],
             ["Sunder.Package.Agent.Provider.Gemini"] =
             [
@@ -112,6 +114,8 @@ public sealed class PackageModuleCompositionTests
                 SettingsView("Sunder.Package.Agent.Provider.Gemini.GeminiSettingsView"),
                 RpcProvider("gemini.chat"),
                 RpcProvider("gemini.embedding"),
+                RuntimeOperation("provider.credential.query.v1", "Sunder.Package.Agent.Provider.Shared.ProviderCredentialRuntimeHandler"),
+                RuntimeOperation("provider.credential.command.v1", "Sunder.Package.Agent.Provider.Shared.ProviderCredentialRuntimeHandler"),
             ],
             ["Sunder.Package.Agent.Provider.LMStudio"] =
             [
@@ -119,6 +123,8 @@ public sealed class PackageModuleCompositionTests
                 SettingsView("Sunder.Package.Agent.Provider.LMStudio.LMStudioSettingsView"),
                 RpcProvider("lmstudio.chat"),
                 RpcProvider("lmstudio.embedding"),
+                RuntimeOperation("provider.credential.query.v1", "Sunder.Package.Agent.Provider.Shared.ProviderCredentialRuntimeHandler"),
+                RuntimeOperation("provider.credential.command.v1", "Sunder.Package.Agent.Provider.Shared.ProviderCredentialRuntimeHandler"),
             ],
             ["Sunder.Package.Agent.Provider.OpenAI"] =
             [
@@ -128,6 +134,8 @@ public sealed class PackageModuleCompositionTests
                 RpcProvider("openai.embedding"),
                 RpcProvider("openai.continuation.cleaner"),
                 RuntimeOperation("openai.auth.v1", "Sunder.Package.Agent.Provider.OpenAI.OpenAiAuthOperationHandler"),
+                RuntimeOperation("provider.credential.query.v1", "Sunder.Package.Agent.Provider.Shared.ProviderCredentialRuntimeHandler"),
+                RuntimeOperation("provider.credential.command.v1", "Sunder.Package.Agent.Provider.Shared.ProviderCredentialRuntimeHandler"),
             ],
             ["Sunder.Package.Agent.Skills"] =
             [
@@ -175,6 +183,7 @@ public sealed class PackageModuleCompositionTests
 
     public static IEnumerable<object[]> RuntimePackageNames
         => AgentPackageRepositoryInventory.GetRuntimePackageProjects()
+            .Where(static package => !package.IsWorker)
             .Select(static package => new object[] { package.Name });
 
     [Theory]

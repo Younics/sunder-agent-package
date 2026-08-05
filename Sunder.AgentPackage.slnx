@@ -15,6 +15,7 @@
     <Project Path="src/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj" />
     <Project Path="src/Sunder.Package.Agent.Tools.Files/Sunder.Package.Agent.Tools.Files.csproj" />
     <Project Path="src/Sunder.Package.Agent.Tools.Shell/Sunder.Package.Agent.Tools.Shell.csproj" />
+    <Project Path="src/Sunder.Package.Agent.Tools.Shell/Aggregate/ShellPackage.csproj" />
     <Project Path="src/Sunder.Package.Agent.Tools.Web/Sunder.Package.Agent.Tools.Web.csproj" />
     <Project Path="src/Sunder.Package.Agent/Sunder.Package.Agent.csproj" />
   </Folder>

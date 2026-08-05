@@ -118,22 +118,6 @@ public sealed partial class AgentLocalStore
         return approvals;
     }
 
-    public void SaveSessionPermissionApproval(AgentSessionPermissionApproval approval)
-    {
-        using var connection = CreateConnection();
-        connection.Open();
-
-        using var command = connection.CreateCommand();
-        command.CommandText = "INSERT OR REPLACE INTO AgentSessionPermissionApprovals (ApprovalId, SessionId, ActionId, MatcherKind, Pattern, CreatedAtUtc) VALUES ($approvalId, $sessionId, $actionId, $matcherKind, $pattern, $createdAtUtc);";
-        command.Parameters.AddWithValue("$approvalId", approval.ApprovalId);
-        command.Parameters.AddWithValue("$sessionId", approval.SessionId.ToString());
-        command.Parameters.AddWithValue("$actionId", approval.ActionId);
-        command.Parameters.AddWithValue("$matcherKind", approval.MatcherKind.ToString());
-        command.Parameters.AddWithValue("$pattern", approval.Pattern);
-        command.Parameters.AddWithValue("$createdAtUtc", approval.CreatedAtUtc.ToString("O"));
-        command.ExecuteNonQuery();
-    }
-
     public AgentPendingPermissionRequestRecord SavePendingPermissionRequest(AgentPendingPermissionRequestRecord record)
     {
         record = NormalizeResourceClaims(record);

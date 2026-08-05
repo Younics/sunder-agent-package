@@ -1,6 +1,4 @@
 using System.Collections.ObjectModel;
-using Avalonia;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
@@ -82,96 +80,6 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private bool _isInitialized;
     private bool _hasStartupError;
     private bool _disposed;
-
-    public AgentChatViewModel(
-        IAgentProfileGateway profileService,
-        IAgentWorkspaceGateway workspaceService,
-        IAgentSessionGateway sessionService,
-        IAgentPermissionGateway permissionService,
-        IAgentRunGateway runCoordinator,
-        AgentChatSelectionStateService? selectionState = null,
-        AgentToolPresentationService? toolPresentationService = null,
-        TimeSpan? activityQuietDelay = null,
-        IAgentExecutionGateway? warmupService = null,
-        IPackageShellViewService? shellViewService = null,
-        IAgentAttachmentGateway? attachmentService = null
-    )
-    {
-        _activityTicker.SetEnabled(false);
-        _profileService = profileService;
-        _workspaceService = workspaceService;
-        _sessionService = sessionService;
-        _turnMutationGateway = sessionService as IAgentTurnMutationGateway;
-        _permissionService = permissionService;
-        _attachmentService = attachmentService;
-        _runCoordinator = runCoordinator;
-        _correlatedRunCoordinator = runCoordinator as IAgentCorrelatedRunGateway;
-        _runCommandStatusGateway = runCoordinator as IAgentRunCommandStatusGateway;
-        _warmupService = warmupService;
-        _selectionState = selectionState;
-        _toolPresentationService = toolPresentationService ?? new AgentToolPresentationService();
-        _shellViewService = shellViewService;
-        _permissionPanel = new AgentPermissionPanelState(permissionService, runCoordinator);
-        _runtimeAvailability = profileService as IAgentRuntimeAvailability;
-        _runtimeFailureClassifier = profileService as IAgentRuntimeFailureClassifier;
-        _chatSnapshotGateway = profileService as IAgentChatSnapshotGateway;
-        _transcriptPageGateway = sessionService as IAgentTranscriptPageGateway;
-        _chatSessionCommandGateway = sessionService as IAgentChatSessionCommandGateway;
-        _chatPermissionCommandGateway = permissionService as IAgentChatPermissionCommandGateway;
-        if (_chatSnapshotGateway is not null)
-        {
-            _chatSnapshotGateway.ChatSnapshotReloaded += OnChatSnapshotReloaded;
-        }
-        if (_runtimeAvailability is not null)
-        {
-            _runtimeAvailability.ConnectionStateChanged += OnRuntimeConnectionStateChanged;
-        }
-        var rowFactory = new AgentTranscriptRowFactory(
-            _toolPresentationService,
-            LoadToolDetailAsync,
-            _activityTicker,
-            ResolveTurnSenderDisplayName,
-            ResolveChildSessionLinksFromStore);
-        var rowProjector = new TranscriptRowProjector<AgentTranscriptRowViewModel>(
-            Messages,
-            rowFactory,
-            TranscriptVisibleRowLimit * 2);
-        _timeline = new TranscriptTimelineState<AgentTranscriptRowViewModel>(
-            rowProjector,
-            InitialTranscriptTurnLimit,
-            OlderTranscriptTurnPageSize,
-            TranscriptVisibleRowLimit);
-        RunActivityRow = new AgentActivityTranscriptRowViewModel(_activityTicker);
-        TailSentinelRow = new AgentTranscriptTailSentinelRowViewModel();
-        _transcriptItemsProjection = new TranscriptItemsProjection<AgentTranscriptRowViewModel>(
-            Messages,
-            RunActivityRow,
-            TailSentinelRow);
-        TranscriptItems = _transcriptItemsProjection.Items;
-        _runActivity = new AgentRunActivityState(
-            () => IsDisplayedSessionRunActive,
-            () => _timeline.IsFollowingLatest,
-            activityQuietDelay);
-        _timeline.RowsChanging += OnTimelineRowsChanging;
-        _timeline.RowsChanged += OnTimelineRowsChanged;
-        _timeline.PropertyChanged += OnTimelinePropertyChanged;
-        _timeline.TurnProjected += OnTimelineTurnProjected;
-        _runActivity.Changed += OnRunActivityStateChanged;
-        PendingAttachments.CollectionChanged += OnPendingAttachmentsChanged;
-        _profileService.ProfileChanged += OnProfilesChanged;
-        _workspaceService.WorkspacesChanged += OnWorkspacesChanged;
-        _sessionService.SessionChanged += OnSessionChanged;
-        if (_turnMutationGateway is not null)
-        {
-            _turnMutationGateway.TurnMutated += OnTurnMutated;
-        }
-        else
-        {
-            _sessionService.TurnChanged += OnTurnChanged;
-        }
-        _sessionService.TranscriptReset += OnTranscriptReset;
-        _sessionService.RunActivityChanged += OnRunActivityChanged;
-    }
 
     internal void SetTranscriptAnchorGateway(IAgentTranscriptAnchorGateway gateway)
         => _transcriptAnchorGateway = gateway;
@@ -476,24 +384,32 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                 sessionId,
                 AgentTranscriptPageDirection.Recent,
                 500),
-            _lifetimeCancellation.Token);
-        var submission = _composer.TryBeginSubmission(
-            sessionId,
-            draftSnapshot,
-            pendingAttachments,
-            rollbackTurnId,
-            existingTranscript.Turns.Select(turn => turn.TurnId).ToHashSet(),
-            useUserTurnCorrelation: _correlatedRunCoordinator is not null);
+            _lifetimeCancellation.Token).ConfigureAwait(false);
+        AgentComposerSubmission? submission = null;
+        await InvokeOnUiThreadAsync(() =>
+        {
+            submission = _composer.TryBeginSubmission(
+                sessionId,
+                draftSnapshot,
+                pendingAttachments,
+                rollbackTurnId,
+                existingTranscript.Turns.Select(turn => turn.TurnId).ToHashSet(),
+                useUserTurnCorrelation: _correlatedRunCoordinator is not null);
+            if (submission is null)
+            {
+                ApplySessionStatus(
+                    selectedSession,
+                    "A message is already being sent for this session.");
+                return;
+            }
+
+            NotifySendPendingStateChanged(sessionId);
+        }).ConfigureAwait(false);
         if (submission is null)
         {
-            ApplySessionStatus(
-                selectedSession,
-                "A message is already being sent for this session."
-            );
             return;
         }
 
-        NotifySendPendingStateChanged(sessionId);
         var shouldEndSubmission = true;
 
         try
@@ -501,19 +417,21 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             var readiness = await _profileService.GetChatProviderReadinessAsync(
                 chatBinding.ProviderId,
                 _lifetimeCancellation.Token
-            );
+            ).ConfigureAwait(false);
             if (readiness is null)
             {
-                ApplySessionStatus(
-                    selectedSession,
-                    "The selected provider is unavailable. Review package status and profile configuration before chatting."
-                );
+                await InvokeOnUiThreadAsync(() =>
+                    ApplySessionStatus(
+                        selectedSession,
+                        "The selected provider is unavailable. Review package status and profile configuration before chatting."))
+                    .ConfigureAwait(false);
                 return;
             }
 
             if (readiness.Status != AgentProviderReadinessStatus.Ready)
             {
-                ApplySessionStatus(selectedSession, readiness.Message);
+                await InvokeOnUiThreadAsync(() => ApplySessionStatus(selectedSession, readiness.Message))
+                    .ConfigureAwait(false);
                 return;
             }
 
@@ -531,7 +449,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                         attachments,
                         submission.UserTurnId,
                         _lifetimeCancellation.Token
-                    );
+                    ).ConfigureAwait(false);
                 }
                 else
                 {
@@ -543,7 +461,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                         workspaceId,
                         attachments,
                         _lifetimeCancellation.Token
-                    );
+                    ).ConfigureAwait(false);
                 }
             }
             else
@@ -558,7 +476,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                         attachments,
                         submission.UserTurnId,
                         _lifetimeCancellation.Token
-                    );
+                    ).ConfigureAwait(false);
                 }
                 else
                 {
@@ -569,42 +487,48 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                         workspaceId,
                         attachments,
                         _lifetimeCancellation.Token
-                    );
+                    ).ConfigureAwait(false);
                 }
             }
 
             shouldEndSubmission = await CompleteOrRestoreComposerSubmissionAsync(
                 selectedSession,
-                submission);
+                submission).ConfigureAwait(false);
 
-            if (SelectedSession?.SessionId == sessionId)
+            await InvokeOnUiThreadAsync(() =>
             {
-                SyncSelectedSessionState(sessionId);
-            }
-            else
-            {
-                UpdateSessionState(sessionId, markUnread: true);
-            }
+                if (SelectedSession?.SessionId == sessionId)
+                {
+                    SyncSelectedSessionState(sessionId);
+                }
+                else
+                {
+                    UpdateSessionState(sessionId, markUnread: true);
+                }
+            }).ConfigureAwait(false);
         }
         catch
         {
             shouldEndSubmission = await CompleteOrRestoreComposerSubmissionAsync(
                 selectedSession,
                 submission,
-                restoreWhenMissing: _runCommandStatusGateway is null);
+                restoreWhenMissing: _runCommandStatusGateway is null).ConfigureAwait(false);
             throw;
         }
         finally
         {
-            var isSubmissionComplete = submission.CompleteCommand();
-            if (shouldEndSubmission || isSubmissionComplete)
+            await InvokeOnUiThreadAsync(() =>
             {
-                EndPendingSend(submission);
-            }
-            else
-            {
-                ScheduleCompletedSubmissionReconciliation();
-            }
+                var isSubmissionComplete = submission.CompleteCommand();
+                if (shouldEndSubmission || isSubmissionComplete)
+                {
+                    EndPendingSend(submission);
+                }
+                else
+                {
+                    ScheduleCompletedSubmissionReconciliation();
+                }
+            }).ConfigureAwait(false);
         }
     }
 
@@ -624,22 +548,25 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         }
 
         var sessionId = selectedSession.SessionId;
-        var checkpoint = await _runCoordinator.StopAsync(sessionId, _lifetimeCancellation.Token);
+        var checkpoint = await _runCoordinator.StopAsync(sessionId, _lifetimeCancellation.Token)
+            .ConfigureAwait(false);
+        await InvokeOnUiThreadAsync(() =>
+        {
+            if (checkpoint is null)
+            {
+                ApplySessionStatus(selectedSession, "No active run to stop.");
+                return;
+            }
 
-        if (checkpoint is null)
-        {
-            ApplySessionStatus(selectedSession, "No active run to stop.");
-            return;
-        }
-
-        if (SelectedSession?.SessionId == sessionId)
-        {
-            SyncSelectedSessionState(sessionId);
-        }
-        else
-        {
-            UpdateSessionState(sessionId, markUnread: true);
-        }
+            if (SelectedSession?.SessionId == sessionId)
+            {
+                SyncSelectedSessionState(sessionId);
+            }
+            else
+            {
+                UpdateSessionState(sessionId, markUnread: true);
+            }
+        }).ConfigureAwait(false);
     }
 
     public void Dispose()
@@ -743,30 +670,6 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                 SetGlobalStatus(exception.Message);
             }
         });
-
-    private void RunOnUiThread(Action action)
-    {
-        _backgroundTasks.Run(_ => InvokeOnUiThreadAsync(action));
-    }
-
-    private static async Task InvokeOnUiThreadAsync(Action action)
-    {
-        if (Application.Current is null || Dispatcher.UIThread.CheckAccess())
-        {
-            action();
-            return;
-        }
-
-        await Dispatcher.UIThread.InvokeAsync(action, DispatcherPriority.Background);
-    }
-
-    private void TrackBackgroundTask(Task? task)
-    {
-        if (task is not null)
-        {
-            _backgroundTasks.Run(task);
-        }
-    }
 
 }
 

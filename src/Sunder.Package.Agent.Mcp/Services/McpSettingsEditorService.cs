@@ -31,8 +31,18 @@ public sealed class McpSettingsEditorService(McpServerCatalogService catalog)
         return McpConfigurationDocument.BuildEditorText(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
     }
 
-    internal Task SaveAsync(ParsedMcpServerConfiguration parsed, CancellationToken cancellationToken = default)
-        => catalog.SaveServerAsync(parsed.Server, parsed.Headers, parsed.EnvironmentVariables, cancellationToken);
+    internal async Task<string> SaveAsync(
+        ParsedMcpServerConfiguration parsed,
+        CancellationToken cancellationToken = default)
+    {
+        await catalog.SaveEditorServerAsync(
+            parsed.Server,
+            parsed.Headers,
+            parsed.EnvironmentVariables,
+            cancellationToken).ConfigureAwait(false);
+        return await LoadDocumentAsync(parsed.Server.ServerId, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("The saved MCP server could not be reloaded.");
+    }
 
     internal Task DeleteAsync(string serverId, CancellationToken cancellationToken = default)
         => catalog.DeleteServerAsync(serverId, cancellationToken);

@@ -112,10 +112,7 @@ public sealed class McpServerCatalogService
         var server = await GetServerAsync(serverId, cancellationToken).ConfigureAwait(false);
         return server is null
             ? null
-            : McpConfigurationDocument.BuildEditorText(
-                server,
-                await GetHeadersAsync(server, cancellationToken),
-                await GetEnvironmentVariablesAsync(server, cancellationToken));
+            : McpConfigurationDocument.BuildRedactedEditorText(server);
     }
 
     public async Task SaveServerAsync(
@@ -125,6 +122,20 @@ public sealed class McpServerCatalogService
         CancellationToken cancellationToken = default)
         => await ApplyBatchAsync(
             [new McpServerCatalogWrite(server, headers, environmentVariables)],
+            [],
+            cancellationToken).ConfigureAwait(false);
+
+    internal async Task SaveEditorServerAsync(
+        ConfiguredMcpServerRecord server,
+        IReadOnlyDictionary<string, string> headerReplacements,
+        IReadOnlyDictionary<string, string> environmentReplacements,
+        CancellationToken cancellationToken = default)
+        => await ApplyBatchAsync(
+            [new McpServerCatalogWrite(
+                server,
+                headerReplacements,
+                environmentReplacements,
+                RetainMissingSecretValues: true)],
             [],
             cancellationToken).ConfigureAwait(false);
 
@@ -177,24 +188,27 @@ public sealed class McpServerCatalogService
         {
             cancellationToken.ThrowIfCancellationRequested();
             existingById.TryGetValue(write.Server.ServerId, out var existing);
-            var normalizedName = NormalizeServerName(write.Server.Name);
+            var resolvedWrite = write.RetainMissingSecretValues
+                ? await ResolveEditorSecretValuesAsync(write, existing, cancellationToken).ConfigureAwait(false)
+                : write;
+            var normalizedName = NormalizeServerName(resolvedWrite.Server.Name);
             if (finalNames.TryGetValue(normalizedName, out var conflictingId)
-                && !string.Equals(conflictingId, write.Server.ServerId, StringComparison.OrdinalIgnoreCase))
+                && !string.Equals(conflictingId, resolvedWrite.Server.ServerId, StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException($"An MCP server named '{normalizedName}' already exists.");
             }
 
-            finalNames[normalizedName] = write.Server.ServerId;
-            var persisted = write.Server with
+            finalNames[normalizedName] = resolvedWrite.Server.ServerId;
+            var persisted = resolvedWrite.Server with
             {
-                ServerId = existing?.ServerId ?? write.Server.ServerId,
+                ServerId = existing?.ServerId ?? resolvedWrite.Server.ServerId,
                 Name = normalizedName,
                 PersistenceVersion = Math.Max(existing?.PersistenceVersion ?? 0, 0) + 1,
-                HeaderNames = NormalizeSecretNames(write.Server.HeaderNames, "header"),
-                EnvironmentVariableNames = NormalizeSecretNames(write.Server.EnvironmentVariableNames, "environment variable"),
+                HeaderNames = NormalizeSecretNames(resolvedWrite.Server.HeaderNames, "header"),
+                EnvironmentVariableNames = NormalizeSecretNames(resolvedWrite.Server.EnvironmentVariableNames, "environment variable"),
             };
-            McpTransportSecurity.ValidateRemoteEndpoint(persisted, write.Headers);
-            stagedWrites.Add(new StagedCatalogWrite(write, existing, persisted));
+            McpTransportSecurity.ValidateRemoteEndpoint(persisted, resolvedWrite.Headers);
+            stagedWrites.Add(new StagedCatalogWrite(resolvedWrite, existing, persisted));
         }
 
         var persistedWriteIds = stagedWrites
@@ -308,6 +322,54 @@ public sealed class McpServerCatalogService
         }
 
         return [.. result];
+    }
+
+    private async Task<McpServerCatalogWrite> ResolveEditorSecretValuesAsync(
+        McpServerCatalogWrite write,
+        ConfiguredMcpServerRecord? existing,
+        CancellationToken cancellationToken)
+    {
+        var currentHeaders = existing is null
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : await GetHeadersAsync(existing, cancellationToken).ConfigureAwait(false);
+        var currentEnvironment = existing is null
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : await GetEnvironmentVariablesAsync(existing, cancellationToken).ConfigureAwait(false);
+        return write with
+        {
+            Headers = ResolveEditorSecretValues(
+                write.Server.HeaderNames,
+                write.Headers,
+                currentHeaders),
+            EnvironmentVariables = ResolveEditorSecretValues(
+                write.Server.EnvironmentVariableNames,
+                write.EnvironmentVariables,
+                currentEnvironment),
+            RetainMissingSecretValues = false,
+        };
+    }
+
+    private static IReadOnlyDictionary<string, string> ResolveEditorSecretValues(
+        IEnumerable<string> desiredNames,
+        IReadOnlyDictionary<string, string> replacements,
+        IReadOnlyDictionary<string, string> currentValues)
+    {
+        var resolved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in desiredNames)
+        {
+            if (replacements.TryGetValue(name, out var replacement)
+                && !string.IsNullOrWhiteSpace(replacement))
+            {
+                resolved[name] = replacement.Trim();
+            }
+            else if (currentValues.TryGetValue(name, out var currentValue)
+                     && !string.IsNullOrWhiteSpace(currentValue))
+            {
+                resolved[name] = currentValue;
+            }
+        }
+
+        return resolved;
     }
 
     public Task<IReadOnlyDictionary<string, string>> GetHeadersAsync(

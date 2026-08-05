@@ -12,7 +12,7 @@ public sealed class DockerSettingsRaceTests
     {
         var runtime = new BlockingDockerRuntimeClient();
         using var viewModel = new DockerExecutionSettingsViewModel(
-            new DockerExecutionAppRuntimeClient(runtime),
+            runtime,
             new EmptyBackgroundProcessQueue());
 
         var first = viewModel.InitializeAsync();
@@ -44,7 +44,7 @@ public sealed class DockerSettingsRaceTests
     {
         var runtime = new BlockingDockerRuntimeClient();
         using var viewModel = new DockerExecutionSettingsViewModel(
-            new DockerExecutionAppRuntimeClient(runtime),
+            runtime,
             new EmptyBackgroundProcessQueue());
 
         var initialization = viewModel.InitializeAsync();
@@ -74,7 +74,7 @@ public sealed class DockerSettingsRaceTests
     {
         var runtime = new BlockingDockerRuntimeClient();
         using var viewModel = new DockerExecutionSettingsViewModel(
-            new DockerExecutionAppRuntimeClient(runtime),
+            runtime,
             new EmptyBackgroundProcessQueue());
         var initialization = viewModel.InitializeAsync();
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -113,7 +113,7 @@ public sealed class DockerSettingsRaceTests
     {
         var runtime = new BlockingDockerRuntimeClient();
         using var viewModel = new DockerExecutionSettingsViewModel(
-            new DockerExecutionAppRuntimeClient(runtime),
+            runtime,
             new EmptyBackgroundProcessQueue());
         var initialization = viewModel.InitializeAsync();
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -145,7 +145,7 @@ public sealed class DockerSettingsRaceTests
     {
         var runtime = new BlockingDockerRuntimeClient();
         using var viewModel = new DockerExecutionSettingsViewModel(
-            new DockerExecutionAppRuntimeClient(runtime),
+            runtime,
             new EmptyBackgroundProcessQueue());
         var initialization = viewModel.InitializeAsync();
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -175,7 +175,7 @@ public sealed class DockerSettingsRaceTests
     {
         var runtime = new BlockingDockerRuntimeClient();
         using var viewModel = new DockerExecutionSettingsViewModel(
-            new DockerExecutionAppRuntimeClient(runtime),
+            runtime,
             new EmptyBackgroundProcessQueue());
         var initialization = viewModel.InitializeAsync();
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -243,7 +243,7 @@ public sealed class DockerSettingsRaceTests
     {
         var runtime = new BlockingDockerRuntimeClient();
         using var viewModel = new DockerExecutionSettingsViewModel(
-            new DockerExecutionAppRuntimeClient(runtime),
+            runtime,
             new EmptyBackgroundProcessQueue());
         var initialization = viewModel.InitializeAsync();
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -297,7 +297,7 @@ public sealed class DockerSettingsRaceTests
     {
         var runtime = new BlockingDockerRuntimeClient();
         using var viewModel = new DockerExecutionSettingsViewModel(
-            new DockerExecutionAppRuntimeClient(runtime),
+            runtime,
             new EmptyBackgroundProcessQueue());
 
         var first = viewModel.InitializeAsync();
@@ -323,7 +323,7 @@ public sealed class DockerSettingsRaceTests
     {
         var runtime = new BlockingDockerRuntimeClient();
         var viewModel = new DockerExecutionSettingsViewModel(
-            new DockerExecutionAppRuntimeClient(runtime),
+            runtime,
             new EmptyBackgroundProcessQueue());
         var initialization = viewModel.InitializeAsync();
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));

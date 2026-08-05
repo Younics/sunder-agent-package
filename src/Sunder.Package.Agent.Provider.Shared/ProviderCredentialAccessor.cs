@@ -14,17 +14,16 @@ internal sealed class ProviderCredentialAccessor(IPackageSecrets secrets, string
     internal Task<string?> GetCredentialAsync(CancellationToken cancellationToken = default)
         => secrets.GetSecretAsync(SecretKey, cancellationToken);
 
-    internal async Task<bool> SetCredentialIfProvidedAsync(
-        string? value,
+    internal Task SetCredentialAsync(
+        string value,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            return false;
+            throw new ArgumentException("A non-empty credential is required.", nameof(value));
         }
 
-        await secrets.SetSecretAsync(SecretKey, value.Trim(), cancellationToken).ConfigureAwait(false);
-        return true;
+        return secrets.SetSecretAsync(SecretKey, value.Trim(), cancellationToken);
     }
 
     internal Task DeleteCredentialAsync(CancellationToken cancellationToken = default)

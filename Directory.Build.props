@@ -10,19 +10,24 @@
         <AnalysisLevel>latest</AnalysisLevel>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <VersionPrefix>2.0.0</VersionPrefix>
+        <SunderAgentVersion Condition="'$(SunderAgentVersion)' == ''">$(VersionPrefix)</SunderAgentVersion>
+        <Version>$(SunderAgentVersion)</Version>
+        <PackageVersion>$(SunderAgentVersion)</PackageVersion>
+        <InformationalVersion>$(SunderAgentVersion)</InformationalVersion>
         <Authors>Younics</Authors>
         <Company>Younics</Company>
         <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
         <PackageTags>sunder;agent;ai</PackageTags>
         <RepositoryType>git</RepositoryType>
         <RepositoryUrl>https://github.com/Younics/sunder-agent-package</RepositoryUrl>
-        <SunderSdkProject>$(MSBuildThisFileDirectory)..\sunder-core\src\Sdk\Sunder.Sdk\Sunder.Sdk.csproj</SunderSdkProject>
-        <SunderSdkAvaloniaProject>$(MSBuildThisFileDirectory)..\sunder-core\src\Sdk\Sunder.Sdk.Avalonia\Sunder.Sdk.Avalonia.csproj</SunderSdkAvaloniaProject>
-        <SunderSdkStacksProject>$(MSBuildThisFileDirectory)..\sunder-core\src\Sdk\Sunder.Sdk.Stacks\Sunder.Sdk.Stacks.csproj</SunderSdkStacksProject>
-        <SunderAppProject>$(MSBuildThisFileDirectory)..\sunder-core\src\Host\Sunder.App\Sunder.App.csproj</SunderAppProject>
-        <SunderRuntimeClientProject>$(MSBuildThisFileDirectory)..\sunder-core\src\Host\Sunder.Runtime.Client\Sunder.Runtime.Client.csproj</SunderRuntimeClientProject>
-        <SunderRuntimeLocalStateProject>$(MSBuildThisFileDirectory)..\sunder-core\src\Host\Sunder.Runtime.LocalState\Sunder.Runtime.LocalState.csproj</SunderRuntimeLocalStateProject>
-        <SunderPackageBuildTargets>$(MSBuildThisFileDirectory)..\sunder-core\src\Sdk\Sunder.Package.Build\build\Sunder.Package.Build.targets</SunderPackageBuildTargets>
+        <SunderSdkProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Sdk\Sunder.Sdk.csproj</SunderSdkProject>
+        <SunderSdkAvaloniaProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Sdk.Avalonia\Sunder.Sdk.Avalonia.csproj</SunderSdkAvaloniaProject>
+        <SunderSdkStacksProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Sdk.Stacks\Sunder.Sdk.Stacks.csproj</SunderSdkStacksProject>
+        <SunderSdkWorkerProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Sdk.Worker\Sunder.Sdk.Worker.csproj</SunderSdkWorkerProject>
+        <SunderAppProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\host\Sunder.App\Sunder.App.csproj</SunderAppProject>
+        <SunderRuntimeClientProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\host\Sunder.Runtime.Client\Sunder.Runtime.Client.csproj</SunderRuntimeClientProject>
+        <SunderRuntimeLocalStateProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\host\Sunder.Runtime.LocalState\Sunder.Runtime.LocalState.csproj</SunderRuntimeLocalStateProject>
+        <SunderPackageBuildTargets>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Package.Build\build\Sunder.Package.Build.targets</SunderPackageBuildTargets>
         <SunderUseSourceSdk Condition="'$(SunderUseSourceSdk)' == '' and Exists('$(SunderSdkProject)')">true</SunderUseSourceSdk>
         <SunderUseSourceSdk Condition="'$(SunderUseSourceSdk)' == ''">false</SunderUseSourceSdk>
         <RestorePackagesWithLockFile Condition="'$(SunderUseSourceSdk)' == 'false'">true</RestorePackagesWithLockFile>

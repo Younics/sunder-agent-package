@@ -16,6 +16,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton(new ProviderCredentialAccessor(
             context.Secrets,
             GeminiProviderConfiguration.ApiKeySecretKey));
+        services.AddSingleton<ProviderCredentialRuntimeHandler>();
         services.AddSingleton(serviceProvider => new GeminiAgentProvider(
             context,
             serviceProvider.GetRequiredService<ProviderCredentialAccessor>()));
@@ -31,13 +32,21 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterSettingsSchema(GeminiProviderConfiguration.Schema);
         registry.RegisterRpcProvider("gemini.chat", AgentChatProviderRpc.CreateHandler(services.GetRequiredService<GeminiAgentProvider>()));
         registry.RegisterRpcProvider("gemini.embedding", AgentEmbeddingProviderRpc.CreateHandler(services.GetRequiredService<GeminiEmbeddingProvider>()));
+        var credentials = services.GetRequiredService<ProviderCredentialRuntimeHandler>();
+        registry.RegisterRuntimeOperation(ProviderCredentialRuntimeOperations.Query, credentials);
+        registry.RegisterRuntimeOperation(ProviderCredentialRuntimeOperations.Command, credentials);
     }
 }
 
 public sealed class AppPackageModule : ISunderAppPackageModule
 {
     public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
-        => services.AddTransient(_ => new GeminiSettingsViewModel(context));
+    {
+        services.AddSingleton<ProviderCredentialAppRuntimeGateway>();
+        services.AddTransient(serviceProvider => new GeminiSettingsViewModel(
+            context,
+            serviceProvider.GetRequiredService<ProviderCredentialAppRuntimeGateway>()));
+    }
 
     public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
         => registry.RegisterSettingsView<GeminiSettingsView>();

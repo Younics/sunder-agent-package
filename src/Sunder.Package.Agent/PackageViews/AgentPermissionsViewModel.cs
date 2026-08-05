@@ -4,7 +4,6 @@ using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
-using Avalonia.Threading;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 
@@ -15,22 +14,36 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
     IDisposable
 {
     private readonly IAgentPermissionGateway _permissionService;
+    private readonly IAgentGlobalPermissionGateway? _globalPermissionGateway;
     private readonly IAgentRuntimeAvailability? _runtimeAvailability;
     private readonly PresentationTaskScope _tasks = new();
+    private readonly CancellationToken _lifetimeToken;
+    private readonly IPresentationDispatcher _uiDispatcher;
     private readonly Task _initialization;
+    private long _appliedPermissionRevision = -1;
+    private long _reloadGeneration;
     private bool _disposed;
 
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } = [];
 
     public AgentPermissionsViewModel(IAgentPermissionGateway permissionService)
+        : this(permissionService, PresentationDispatcher.Capture())
+    {
+    }
+
+    internal AgentPermissionsViewModel(
+        IAgentPermissionGateway permissionService,
+        IPresentationDispatcher uiDispatcher)
     {
         _permissionService = permissionService;
+        _globalPermissionGateway = permissionService as IAgentGlobalPermissionGateway;
         _runtimeAvailability = permissionService as IAgentRuntimeAvailability;
+        _uiDispatcher = uiDispatcher;
+        _lifetimeToken = _tasks.CancellationToken;
         if (_runtimeAvailability is not null)
         {
             _runtimeAvailability.ConnectionStateChanged += OnRuntimeConnectionStateChanged;
         }
-        TryReload();
         _initialization = InitializeCoreAsync();
     }
 
@@ -38,6 +51,15 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
 
     [ObservableProperty]
     private string _statusText = string.Empty;
+
+    [ObservableProperty]
+    private bool _isBusy;
+
+    partial void OnIsBusyChanged(bool value)
+    {
+        SaveCommand.NotifyCanExecuteChanged();
+        ResetToPackageDefaultsCommand.NotifyCanExecuteChanged();
+    }
 
     public async ValueTask<bool> PrepareNavigationAsync(
         PackageViewNavigationContext context,
@@ -55,43 +77,210 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
         return ValueTask.CompletedTask;
     }
 
-    [RelayCommand]
-    private void Save()
+    [RelayCommand(CanExecute = nameof(CanMutatePermissions))]
+    private async Task SaveAsync()
     {
-        foreach (var row in Rows)
+        PermissionOverrideChange[]? changes = null;
+        await _uiDispatcher.InvokeAsync(() =>
         {
-            if (row.SelectedDecision == row.DefaultDecision)
+            if (!CanMutatePermissions())
             {
-                _permissionService.DeleteOverride(row.ActionId, row.BoundaryId);
+                return;
             }
-            else
-            {
-                _permissionService.SaveOverride(row.ActionId, row.BoundaryId, row.SelectedDecision);
-            }
+
+            IsBusy = true;
+            changes = Rows
+                .Select(row => new PermissionOverrideChange(
+                    row.ActionId,
+                    row.BoundaryId,
+                    row.DefaultDecision,
+                    row.SelectedDecision))
+                .ToArray();
+        }).ConfigureAwait(false);
+        if (changes is null)
+        {
+            return;
         }
 
-        Reload();
-        StatusText = "Permission defaults saved.";
+        var cancellationToken = _lifetimeToken;
+        try
+        {
+            foreach (var change in changes)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (change.SelectedDecision == change.DefaultDecision)
+                {
+                    if (_globalPermissionGateway is null)
+                    {
+                        _permissionService.DeleteOverride(change.ActionId, change.BoundaryId);
+                    }
+                    else
+                    {
+                        await _globalPermissionGateway.DeleteOverrideAsync(
+                                change.ActionId,
+                                change.BoundaryId,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                }
+                else
+                {
+                    if (_globalPermissionGateway is null)
+                    {
+                        _permissionService.SaveOverride(
+                            change.ActionId,
+                            change.BoundaryId,
+                            change.SelectedDecision);
+                    }
+                    else
+                    {
+                        await _globalPermissionGateway.SaveOverrideAsync(
+                                change.ActionId,
+                                change.BoundaryId,
+                                change.SelectedDecision,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                }
+            }
+
+            _ = await ReloadAsync(cancellationToken, "Permission defaults saved.")
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (_disposed)
+        {
+        }
+        finally
+        {
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed)
+                {
+                    IsBusy = false;
+                }
+            }).ConfigureAwait(false);
+        }
     }
 
-    [RelayCommand]
-    private void ResetToPackageDefaults()
+    [RelayCommand(CanExecute = nameof(CanMutatePermissions))]
+    private async Task ResetToPackageDefaultsAsync()
     {
-        foreach (var row in Rows)
+        (string ActionId, string BoundaryId)[]? overrides = null;
+        await _uiDispatcher.InvokeAsync(() =>
         {
-            _permissionService.DeleteOverride(row.ActionId, row.BoundaryId);
+            if (!CanMutatePermissions())
+            {
+                return;
+            }
+
+            IsBusy = true;
+            overrides = Rows
+                .Select(row => (row.ActionId, row.BoundaryId))
+                .ToArray();
+        }).ConfigureAwait(false);
+        if (overrides is null)
+        {
+            return;
         }
 
-        Reload();
-        StatusText = "Permission defaults restored.";
+        var cancellationToken = _lifetimeToken;
+        try
+        {
+            foreach (var (actionId, boundaryId) in overrides)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_globalPermissionGateway is null)
+                {
+                    _permissionService.DeleteOverride(actionId, boundaryId);
+                }
+                else
+                {
+                    await _globalPermissionGateway.DeleteOverrideAsync(
+                            actionId,
+                            boundaryId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+
+            _ = await ReloadAsync(cancellationToken, "Permission defaults restored.")
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (_disposed)
+        {
+        }
+        finally
+        {
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed)
+                {
+                    IsBusy = false;
+                }
+            }).ConfigureAwait(false);
+        }
     }
 
-    private void Reload()
+    private bool CanMutatePermissions() => !_disposed && !IsBusy;
+
+    private Task<bool> ReloadAsync(
+        CancellationToken cancellationToken,
+        string? statusText = null)
+        => ReloadCoreAsync(
+            cancellationToken,
+            Interlocked.Increment(ref _reloadGeneration),
+            statusText);
+
+    private async Task<bool> ReloadCoreAsync(
+        CancellationToken cancellationToken,
+        long reloadGeneration,
+        string? statusText)
     {
-        var overrides = _permissionService.ListOverrides()
+        cancellationToken.ThrowIfCancellationRequested();
+        var projection = _globalPermissionGateway is null
+            ? new AgentPermissionProjection(
+                0,
+                null,
+                _permissionService.ListActions(),
+                _permissionService.ListOverrides(),
+                [])
+            : await _globalPermissionGateway.LoadGlobalPermissionsAsync(cancellationToken)
+                .ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        var applied = false;
+        await _uiDispatcher.InvokeAsync(() =>
+        {
+            if (_disposed
+                || cancellationToken.IsCancellationRequested
+                || projection.Revision < _appliedPermissionRevision)
+            {
+                return;
+            }
+
+            _appliedPermissionRevision = projection.Revision;
+            ApplyProjection(projection);
+            if (statusText is not null
+                && reloadGeneration == Volatile.Read(ref _reloadGeneration))
+            {
+                StatusText = statusText;
+            }
+            applied = true;
+        }).ConfigureAwait(false);
+        return applied;
+    }
+
+    private void ApplyProjection(AgentPermissionProjection projection)
+    {
+        var overrides = projection.Overrides
             .ToDictionary(item => (item.ActionId, item.BoundaryId), item => item.Decision);
         Rows.Clear();
-        foreach (var action in _permissionService.ListActions())
+        foreach (var action in projection.Actions)
         {
             foreach (var boundary in action.Boundaries)
             {
@@ -110,73 +299,84 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
         }
     }
 
-    private bool TryReload()
+    private async Task<bool> TryReloadAsync(CancellationToken cancellationToken = default)
     {
+        var reloadGeneration = Interlocked.Increment(ref _reloadGeneration);
         try
         {
-            Reload();
-            StatusText = string.Empty;
-            return true;
+            return await ReloadCoreAsync(cancellationToken, reloadGeneration, string.Empty)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (ObjectDisposedException) when (_disposed)
+        {
+            return false;
         }
         catch (Exception ex)
         {
-            StatusText = $"Agent Runtime is unavailable: {ex.Message}";
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed
+                    && !cancellationToken.IsCancellationRequested
+                    && reloadGeneration == Volatile.Read(ref _reloadGeneration))
+                {
+                    StatusText = $"Agent Runtime is unavailable: {ex.Message}";
+                }
+            }).ConfigureAwait(false);
             return false;
         }
     }
 
     private async Task InitializeCoreAsync()
     {
-        if (_permissionService is not IAgentPresentationInitialization initialization)
-        {
-            return;
-        }
-
-        var cancellationToken = _tasks.CancellationToken;
+        var cancellationToken = _lifetimeToken;
         try
         {
-            await initialization.InitializeAsync(cancellationToken).ConfigureAwait(false);
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            if (_permissionService is IAgentPresentationInitialization initialization)
             {
-                if (!_disposed)
-                {
-                    TryReload();
-                }
-            }, DispatcherPriority.Background);
+                await initialization.InitializeAsync(cancellationToken).ConfigureAwait(false);
+            }
+            _ = await TryReloadAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
+        catch (ObjectDisposedException) when (_disposed)
+        {
+        }
         catch (Exception ex)
         {
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await _uiDispatcher.InvokeAsync(() =>
             {
                 if (!_disposed)
                 {
                     StatusText = $"Agent Runtime is unavailable: {ex.Message}";
                 }
-            }, DispatcherPriority.Background);
+            }).ConfigureAwait(false);
         }
     }
 
     private void OnRuntimeConnectionStateChanged(AgentRuntimeConnectionState state)
         => _tasks.Run(async cancellationToken =>
         {
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            if (state == AgentRuntimeConnectionState.Connected)
             {
-                if (_disposed || cancellationToken.IsCancellationRequested)
+                _ = await TryReloadAsync(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (state is AgentRuntimeConnectionState.Unavailable or AgentRuntimeConnectionState.Reconnecting)
+            {
+                await _uiDispatcher.InvokeAsync(() =>
                 {
-                    return;
-                }
-                if (state == AgentRuntimeConnectionState.Connected)
-                {
-                    TryReload();
-                }
-                else if (state is AgentRuntimeConnectionState.Unavailable or AgentRuntimeConnectionState.Reconnecting)
-                {
-                    StatusText = "Agent Runtime is unavailable. Reconnecting...";
-                }
-            }, DispatcherPriority.Background);
+                    if (!_disposed && !cancellationToken.IsCancellationRequested)
+                    {
+                        StatusText = "Agent Runtime is unavailable. Reconnecting...";
+                    }
+                }).ConfigureAwait(false);
+            }
         });
 
     public void Dispose()
@@ -186,12 +386,21 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
             return;
         }
         _disposed = true;
+        Interlocked.Increment(ref _reloadGeneration);
         _tasks.Dispose();
         if (_runtimeAvailability is not null)
         {
             _runtimeAvailability.ConnectionStateChanged -= OnRuntimeConnectionStateChanged;
         }
+        SaveCommand.NotifyCanExecuteChanged();
+        ResetToPackageDefaultsCommand.NotifyCanExecuteChanged();
     }
+
+    private readonly record struct PermissionOverrideChange(
+        string ActionId,
+        string BoundaryId,
+        AgentPermissionDecision DefaultDecision,
+        AgentPermissionDecision SelectedDecision);
 }
 
 public sealed partial class PermissionBoundaryRowViewModel(

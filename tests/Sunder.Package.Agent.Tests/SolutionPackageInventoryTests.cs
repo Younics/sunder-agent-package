@@ -56,13 +56,19 @@ public sealed class SolutionPackageInventoryTests
             .Select(Path.GetFullPath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var runtimeProjects = AgentPackageRepositoryInventory.GetRuntimePackageProjects()
+            .Where(static package => !package.IsWorker)
             .Select(static package => package.ProjectPath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         Assert.NotEmpty(moduleProjects);
         Assert.True(
             moduleProjects.SetEquals(runtimeProjects),
-            "Every PackageModule must belong to the runtime package inventory exercised by PackageModuleCompositionTests.");
+            "Every managed PackageModule must belong to the managed Runtime package inventory exercised by PackageModuleCompositionTests.");
+        foreach (var worker in AgentPackageRepositoryInventory.GetRuntimePackageProjects().Where(static package => package.IsWorker))
+        {
+            Assert.False(File.Exists(Path.Combine(worker.DirectoryPath, "PackageModule.cs")));
+            Assert.True(File.Exists(Path.Combine(worker.DirectoryPath, "Program.cs")));
+        }
     }
 
     [Fact]
@@ -95,10 +101,10 @@ public sealed class SolutionPackageInventoryTests
         var workflowPath = Path.Combine(repositoryRoot, ".github", "workflows", "sunder-package-release.yml");
         var workflow = File.ReadAllText(workflowPath);
         var nugetVerifier = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-nuget-package.sh"));
+        var registryPublisher = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "publish-registry-package.sh"));
         var familyPromoter = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "promote-family-dist-tag.sh"));
         var expected = AgentPackageRepositoryInventory.GetRuntimePackageProjects().ToDictionary(
             static package => GetReleaseKey(package.Name),
-            package => NormalizeRepositoryPath(package.ProjectPath),
             StringComparer.Ordinal);
         using var inventory = JsonDocument.Parse(File.ReadAllText(Path.Combine(repositoryRoot, "packages.json")));
         var releaseProjects = inventory.RootElement.GetProperty("packages").EnumerateArray()
@@ -114,18 +120,48 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("--skip-duplicate", workflow, StringComparison.Ordinal);
         Assert.Contains("group: sunder-agent-family-dist-tag-promotion", workflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/verify-nuget-package.sh \"$protocol_path\" \"$remote\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/release/publish-registry-package.sh", workflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/promote-family-dist-tag.sh", workflow, StringComparison.Ordinal);
+        Assert.Contains("secrets.SUNDER_REGISTRY_PUBLISH_TOKEN", workflow, StringComparison.Ordinal);
+        Assert.Contains("secrets.SUNDER_REGISTRY_CLI_TOKEN", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("secrets.SUNDER_REGISTRY_TOKEN", workflow, StringComparison.Ordinal);
         Assert.Contains("-e 's/\\[/[[]/g'", nugetVerifier, StringComparison.Ordinal);
         Assert.Contains("if ! entry_hash=", nugetVerifier, StringComparison.Ordinal);
+        Assert.Contains("Authorization: Bearer $SUNDER_REGISTRY_PUBLISH_TOKEN", registryPublisher, StringComparison.Ordinal);
+        Assert.Contains("X-Sunder-Expected-Resource-Id: $package_id", registryPublisher, StringComparison.Ordinal);
+        Assert.Contains("X-Sunder-Set-Latest: false", registryPublisher, StringComparison.Ordinal);
+        Assert.Contains("-F \"package=@$archive\"", registryPublisher, StringComparison.Ordinal);
+        Assert.Contains("-F 'setLatest=false'", registryPublisher, StringComparison.Ordinal);
+        Assert.Contains(".canonicalArtifact.downloadUrl", registryPublisher, StringComparison.Ordinal);
+        Assert.Contains(".sourceArchiveSha256", registryPublisher, StringComparison.Ordinal);
         Assert.Contains("rollback_changed_tags", familyPromoter, StringComparison.Ordinal);
         Assert.Contains("Refusing to regress", familyPromoter, StringComparison.Ordinal);
+        Assert.Contains("Authorization: Bearer $SUNDER_REGISTRY_CLI_TOKEN", familyPromoter, StringComparison.Ordinal);
         Assert.Contains("existing_published_release=true", workflow, StringComparison.Ordinal);
         Assert.Contains("Published release asset '$name' differs from this verified build.", workflow, StringComparison.Ordinal);
         Assert.Equal(expected.Count, releaseProjects.Count);
-        foreach (var (releaseKey, projectPath) in expected)
+        foreach (var (releaseKey, package) in expected)
         {
             Assert.True(releaseProjects.TryGetValue(releaseKey, out var releaseProject));
-            Assert.Equal(projectPath, releaseProject);
+            if (!package.IsWorker)
+            {
+                Assert.Equal(NormalizeRepositoryPath(package.ProjectPath), releaseProject);
+                continue;
+            }
+
+            var aggregatePath = Path.GetFullPath(Path.Combine(repositoryRoot, releaseProject));
+            var aggregate = System.Xml.Linq.XDocument.Load(aggregatePath);
+            Assert.Contains(
+                aggregate.Descendants("SunderPackageAggregateProject"),
+                static property => string.Equals(property.Value, "true", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(
+                aggregate.Descendants("ProjectReference"),
+                reference => string.Equals(
+                    Path.GetFullPath(Path.Combine(
+                        Path.GetDirectoryName(aggregatePath)!,
+                        reference.Attribute("Include")!.Value.Replace('\\', Path.DirectorySeparatorChar))),
+                    package.ProjectPath,
+                    StringComparison.OrdinalIgnoreCase));
         }
     }
 

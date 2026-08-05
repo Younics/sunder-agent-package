@@ -11,8 +11,7 @@ public sealed class LocalSettingsLifecycleTests
     public async Task DelayedInitialization_DisablesMutationsUntilRequiredSnapshotArrives()
     {
         var runtime = new BlockingLocalRuntimeClient();
-        using var viewModel = new LocalExecutionSettingsViewModel(
-            new LocalExecutionAppRuntimeClient(runtime));
+        using var viewModel = new LocalExecutionSettingsViewModel(runtime);
 
         var first = viewModel.InitializeAsync();
         var second = viewModel.InitializeAsync();
@@ -39,8 +38,7 @@ public sealed class LocalSettingsLifecycleTests
     public async Task AddSaveDelete_UsesRevisionedCustomSnapshotAndPreservesNewerEdit()
     {
         var runtime = new BlockingLocalRuntimeClient();
-        using var viewModel = new LocalExecutionSettingsViewModel(
-            new LocalExecutionAppRuntimeClient(runtime));
+        using var viewModel = new LocalExecutionSettingsViewModel(runtime);
         var initialization = viewModel.InitializeAsync();
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         runtime.Requests[0].Response.TrySetResult(SettingsResponse(
@@ -90,8 +88,7 @@ public sealed class LocalSettingsLifecycleTests
     public async Task NavigationRefresh_ReconcilesByShellIdAndPreservesDraftSelectionAndFieldRevisions()
     {
         var runtime = new BlockingLocalRuntimeClient();
-        using var viewModel = new LocalExecutionSettingsViewModel(
-            new LocalExecutionAppRuntimeClient(runtime));
+        using var viewModel = new LocalExecutionSettingsViewModel(runtime);
         var initialization = viewModel.InitializeAsync();
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         runtime.Requests[0].Response.TrySetResult(SettingsResponse(
@@ -130,8 +127,7 @@ public sealed class LocalSettingsLifecycleTests
     public async Task MissingRequiredFields_AreRetryableProtocolError()
     {
         var runtime = new BlockingLocalRuntimeClient();
-        using var viewModel = new LocalExecutionSettingsViewModel(
-            new LocalExecutionAppRuntimeClient(runtime));
+        using var viewModel = new LocalExecutionSettingsViewModel(runtime);
         var initialization = viewModel.InitializeAsync();
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         runtime.Requests[0].Response.TrySetResult(new LocalExecutionOperationResponse(
@@ -148,8 +144,7 @@ public sealed class LocalSettingsLifecycleTests
     public async Task Dispose_CancelsHydrationAndPreventsLateMutation()
     {
         var runtime = new BlockingLocalRuntimeClient();
-        var viewModel = new LocalExecutionSettingsViewModel(
-            new LocalExecutionAppRuntimeClient(runtime));
+        var viewModel = new LocalExecutionSettingsViewModel(runtime);
         var initialization = viewModel.InitializeAsync();
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         var notifications = 0;

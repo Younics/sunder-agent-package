@@ -14,7 +14,7 @@ An implementation provides:
 - Optional `IAgentPermissionAwareTool` for a specific approval request.
 - Optional `IAgentToolPresentationResolver` for deterministic transcript presentation.
 
-The [minimal sample](../samples/Sunder.Agent.Extension.Minimal/CurrentUtcTimeTool.cs) is a complete read-only static tool.
+A fixed, read-only static tool is the smallest implementation of this contract.
 
 ## Dynamic Tool Sources
 

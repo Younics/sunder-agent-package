@@ -1,13 +1,20 @@
 #nullable enable
+static Sunder.Package.Agent.Protocol.AgentRpcCatalog.CreateDormant(Sunder.Sdk.Rpc.ISunderRpcClient! client) -> Sunder.Package.Agent.Protocol.AgentRpcCatalog!
+Sunder.Package.Agent.Protocol.AgentRpcCatalog.StartWatching() -> void
 Sunder.Package.Agent.Protocol.AgentRpcCatalog.Availability.get -> Sunder.Package.Agent.Protocol.AgentRpcCatalogAvailability
 Sunder.Package.Agent.Protocol.AgentRpcCatalog.AvailabilityChanged -> System.EventHandler?
 Sunder.Package.Agent.Protocol.AgentRpcCatalog.AvailabilityError.get -> Sunder.Sdk.Rpc.SunderRpcError?
+Sunder.Package.Agent.Protocol.AgentRpcCatalog.GetServiceReferencesAsync<TClient>(Sunder.Package.Agent.Protocol.AgentRpcService<TClient!>! service, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Protocol.AgentRpcReference<TClient!>!>!>
 Sunder.Package.Agent.Protocol.AgentRpcCatalogAvailability
 Sunder.Package.Agent.Protocol.AgentRpcCatalogAvailability.Available = 1 -> Sunder.Package.Agent.Protocol.AgentRpcCatalogAvailability
 Sunder.Package.Agent.Protocol.AgentRpcCatalogAvailability.Faulted = 4 -> Sunder.Package.Agent.Protocol.AgentRpcCatalogAvailability
 Sunder.Package.Agent.Protocol.AgentRpcCatalogAvailability.PermissionDenied = 3 -> Sunder.Package.Agent.Protocol.AgentRpcCatalogAvailability
 Sunder.Package.Agent.Protocol.AgentRpcCatalogAvailability.Unavailable = 2 -> Sunder.Package.Agent.Protocol.AgentRpcCatalogAvailability
 Sunder.Package.Agent.Protocol.AgentRpcCatalogAvailability.Unknown = 0 -> Sunder.Package.Agent.Protocol.AgentRpcCatalogAvailability
+Sunder.Package.Agent.Protocol.AgentExecutionTargetRpcClient.DescribeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetDescriptor!>
+Sunder.Package.Agent.Protocol.AgentRpcProviderReference<TClient>.TryAcquireAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Protocol.AgentRpcLease<TClient!>?>
+Sunder.Package.Agent.Protocol.AgentRpcReference<TClient>.TryAcquireAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Protocol.AgentRpcLease<TClient!>?>
+Sunder.Package.Agent.Protocol.AgentToolSourceRpcClient.DescribeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Protocol.ToolSourceDescription!>
 Sunder.Package.Agent.Protocol.Generated.BehaviorLoop.BehaviorLoopClient.BehaviorLoopClient(Sunder.Sdk.Rpc.ISunderRpcCallScope! scope, Sunder.Sdk.Rpc.SunderRpcEndpointReference! endpoint) -> void
 Sunder.Package.Agent.Protocol.Generated.BehaviorLoop.IBehaviorLoopProvider.DescribeAsync(Sunder.Sdk.Rpc.SunderRpcInvocationContext! context, Sunder.Package.Agent.Protocol.Generated.BehaviorLoop.AgentRpcEmpty! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Protocol.Generated.BehaviorLoop.AgentBehaviorLoopDescriptor!>
 Sunder.Package.Agent.Protocol.Generated.BehaviorLoop.IBehaviorLoopProvider.RunAsync(Sunder.Sdk.Rpc.SunderRpcInvocationContext! context, Sunder.Package.Agent.Protocol.Generated.BehaviorLoop.BehaviorLoopRunRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Protocol.Generated.BehaviorLoop.AgentBehaviorLoopResult!>

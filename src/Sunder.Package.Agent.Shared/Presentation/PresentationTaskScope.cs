@@ -5,10 +5,10 @@ internal sealed class PresentationTaskScope : IDisposable
     private readonly object _syncRoot = new();
     private readonly CancellationTokenSource _lifetime = new();
     private readonly HashSet<Task> _operations = [];
-    private readonly Action<Exception>? _failureHandler;
+    private readonly Func<Exception, Task>? _failureHandler;
     private bool _disposed;
 
-    public PresentationTaskScope(Action<Exception>? failureHandler = null)
+    public PresentationTaskScope(Func<Exception, Task>? failureHandler = null)
     {
         _failureHandler = failureHandler;
     }
@@ -32,8 +32,7 @@ internal sealed class PresentationTaskScope : IDisposable
             }
             catch (Exception ex)
             {
-                ReportFailure(ex);
-                return;
+                task = Task.FromException(ex);
             }
 
             _operations.Add(task);
@@ -75,7 +74,7 @@ internal sealed class PresentationTaskScope : IDisposable
         }
         catch (Exception ex)
         {
-            ReportFailure(ex);
+            await ReportFailureAsync(ex).ConfigureAwait(false);
         }
         finally
         {
@@ -86,11 +85,11 @@ internal sealed class PresentationTaskScope : IDisposable
         }
     }
 
-    private void ReportFailure(Exception exception)
+    private async Task ReportFailureAsync(Exception exception)
     {
-        if (!_lifetime.IsCancellationRequested)
+        if (!_lifetime.IsCancellationRequested && _failureHandler is not null)
         {
-            _failureHandler?.Invoke(exception);
+            await _failureHandler(exception).ConfigureAwait(false);
         }
     }
 }

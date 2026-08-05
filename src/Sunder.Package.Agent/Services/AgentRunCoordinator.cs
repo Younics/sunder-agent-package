@@ -10,7 +10,7 @@ public sealed class AgentRunCoordinator(
     AgentRunStopCoordinator stopCoordinator,
     AgentChildRunSessionService childRunSessionService,
     AgentPermissionResumeCoordinator permissionResumeCoordinator)
-    : IAgentChildRunExecutor, IAgentRunGateway, IAgentCorrelatedRunGateway
+    : IAgentChildRunExecutor, IAgentRunGateway, IAgentChatRunGateway, IAgentCorrelatedRunGateway
 {
     private readonly AgentUserMessageRunCoordinator _userMessageRunCoordinator = userMessageRunCoordinator;
     private readonly AgentRunStopCoordinator _stopCoordinator = stopCoordinator;
@@ -161,6 +161,17 @@ public sealed class AgentRunCoordinator(
         bool approveForSession,
         CancellationToken cancellationToken)
         => _permissionResumeCoordinator.ApproveAsync(
+            sessionId,
+            requestId,
+            approveForSession,
+            cancellationToken);
+
+    Task<AgentRunCheckpointRecord?> IAgentChatRunGateway.ApprovePendingPermissionAsync(
+        Guid sessionId,
+        string requestId,
+        bool approveForSession,
+        CancellationToken cancellationToken)
+        => ApprovePendingPermissionAsync(
             sessionId,
             requestId,
             approveForSession,

@@ -300,9 +300,9 @@ public sealed class SemanticMemoryIndexingReliabilityTests
 
         const string firstNewContent = "First missing memory survives a later batch failure.";
         const string secondNewContent = "Second missing memory is retried after the partial failure.";
+        harness.Provider.FailOnBatchCall = harness.Provider.BatchCallCount + 2;
         harness.AddMemory(firstNewContent);
         harness.AddMemory(secondNewContent);
-        harness.Provider.FailOnBatchCall = harness.Provider.BatchCallCount + 2;
 
         await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 3
                                    && harness.Worker.GetStatus().PendingItemCount == 0);
@@ -411,7 +411,8 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         harness.Provider.FailuresRemaining = 2;
 
         await harness.StartWorkerAsync();
-        await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1);
+        await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1
+                                   && harness.Worker.GetStatus().PendingItemCount == 0);
 
         var status = harness.Worker.GetStatus();
         Assert.True(status.ProcessedItemCount >= 3);

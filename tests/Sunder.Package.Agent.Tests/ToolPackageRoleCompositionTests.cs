@@ -48,7 +48,15 @@ public sealed class ToolPackageRoleCompositionTests
             .Where(static type => !type.IsAbstract)
             .ToArray();
 
-        Assert.Single(moduleTypes, typeof(ISunderRuntimePackageModule).IsAssignableFrom);
+        if (string.Equals(assemblyName, "Sunder.Package.Agent.Tools.Shell", StringComparison.Ordinal))
+        {
+            Assert.DoesNotContain(moduleTypes, typeof(ISunderRuntimePackageModule).IsAssignableFrom);
+            Assert.NotNull(Assembly.Load(assemblyName).EntryPoint);
+        }
+        else
+        {
+            Assert.Single(moduleTypes, typeof(ISunderRuntimePackageModule).IsAssignableFrom);
+        }
         Assert.DoesNotContain(moduleTypes, typeof(ISunderAppPackageModule).IsAssignableFrom);
     }
 
@@ -56,6 +64,31 @@ public sealed class ToolPackageRoleCompositionTests
     [MemberData(nameof(ToolPackages))]
     public async Task RuntimeRole_BuildsAndRegistersExactContributions(string assemblyName, string[] expectedRegistrations)
     {
+        if (string.Equals(assemblyName, "Sunder.Package.Agent.Tools.Shell", StringComparison.Ordinal))
+        {
+            var package = Assert.Single(
+                AgentPackageRepositoryInventory.GetRuntimePackageProjects(),
+                static package => package.Name == "Sunder.Package.Agent.Tools.Shell");
+            var configuration = new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar)).Parent?.Name ?? "Debug";
+            var manifestPath = Path.Combine(
+                package.DirectoryPath,
+                "obj",
+                configuration,
+                "net10.0",
+                System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier,
+                "sunder-package.json");
+            using var manifest = System.Text.Json.JsonDocument.Parse(File.ReadAllText(manifestPath));
+            var actual = manifest.RootElement.GetProperty("provides")
+                .EnumerateArray()
+                .Select(static provider => "rpc-provider:" + provider.GetProperty("providerId").GetString())
+                .Order(StringComparer.Ordinal);
+
+            Assert.Equal(expectedRegistrations.Order(StringComparer.Ordinal), actual);
+            return;
+        }
+
         using var packageScope = RegressionTestPackageScope.Create();
         var services = new ServiceCollection();
         services.AddSingleton(packageScope.Context);

@@ -43,9 +43,6 @@ public sealed partial class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton<AgentAttachmentTransferService>();
         services.AddSingleton<AgentRunAttachmentStore>();
         services.AddSingleton<AgentRuntimeCatalog>();
-        services.AddSingleton(provider => new AgentChatSelectionStateService(
-            context,
-            provider.GetRequiredService<AgentPackageStorageMigration>()));
         services.AddSingleton<AgentToolPresentationService>();
         services.AddSingleton<AgentToolService>();
         services.AddSingleton<AgentPermissionService>();

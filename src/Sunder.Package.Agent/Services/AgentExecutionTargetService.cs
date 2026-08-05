@@ -7,10 +7,11 @@ namespace Sunder.Package.Agent.Services;
 
 public sealed class AgentExecutionTargetService(AgentRpcCatalog rpcCatalog) : IAgentExecutionGateway
 {
+    internal AgentRpcCatalog RpcCatalog => rpcCatalog;
+
     public IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets()
-        => GetTargetReferences()
-            .Select(TryDescribe)
-            .OfType<AgentExecutionTargetDescriptor>()
+        => SnapshotTargets(omitUnavailable: true)
+            .Select(static target => target.Metadata)
             .OrderBy(target => target.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(target => target.TargetKind, StringComparer.OrdinalIgnoreCase)
             .ThenBy(target => target.TargetId, StringComparer.OrdinalIgnoreCase)
@@ -24,26 +25,68 @@ public sealed class AgentExecutionTargetService(AgentRpcCatalog rpcCatalog) : IA
             return null;
         }
 
-        foreach (var target in GetTargetReferences())
+        foreach (var target in SnapshotTargets(omitUnavailable: false))
         {
-            var descriptor = TryDescribe(target);
-            if (descriptor is not null
-                && (string.Equals(descriptor.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase)))
+            if (string.Equals(target.Metadata.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(target.Metadata.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase))
             {
-                return target;
+                return target.Reference;
             }
         }
         return null;
     }
 
-    private IReadOnlyList<AgentRpcReference<IAgentExecutionTarget>> GetTargetReferences()
-        => rpcCatalog.GetServiceReferences(AgentRpcServices.ExecutionTargets);
-
-    private static AgentExecutionTargetDescriptor? TryDescribe(AgentRpcReference<IAgentExecutionTarget> target)
+    internal async ValueTask<AgentRpcReference<IAgentExecutionTarget>?> ResolveTargetReferenceAsync(
+        AgentWorkspaceBindingRecord? binding,
+        CancellationToken cancellationToken = default)
     {
-        if (!target.TryAcquire(out var lease)) return null;
-        using (lease) return lease.Service.Descriptor;
+        if (binding is null || !binding.IsEnabled)
+        {
+            return null;
+        }
+
+        var targets = await SnapshotTargetsAsync(omitUnavailable: false, cancellationToken)
+            .ConfigureAwait(false);
+        foreach (var target in targets)
+        {
+            if (string.Equals(target.Metadata.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(target.Metadata.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase))
+            {
+                return target.Reference;
+            }
+        }
+
+        return null;
+    }
+
+    private IReadOnlyList<AgentRpcOwnedReference<IAgentExecutionTarget, AgentExecutionTargetDescriptor>>
+        SnapshotTargets(bool omitUnavailable)
+        => AgentRpcInvocation.Snapshot(
+            rpcCatalog,
+            AgentRpcServices.ExecutionTargets,
+            static target => target.Descriptor with
+            {
+                Facets = target.Descriptor.Facets.ToArray(),
+            },
+            omitUnavailable: omitUnavailable);
+
+    private Task<IReadOnlyList<AgentRpcOwnedReference<IAgentExecutionTarget, AgentExecutionTargetDescriptor>>>
+        SnapshotTargetsAsync(bool omitUnavailable, CancellationToken cancellationToken)
+        => AgentRpcInvocation.SnapshotAsync(
+            rpcCatalog,
+            AgentRpcServices.ExecutionTargets,
+            static (target, token) => DescribeTargetAsync(target, token),
+            cancellationToken,
+            omitUnavailable);
+
+    private static async ValueTask<AgentExecutionTargetDescriptor> DescribeTargetAsync(
+        IAgentExecutionTarget target,
+        CancellationToken cancellationToken)
+    {
+        var descriptor = target is AgentExecutionTargetRpcClient rpcTarget
+            ? await rpcTarget.DescribeAsync(cancellationToken).ConfigureAwait(false)
+            : target.Descriptor;
+        return descriptor with { Facets = descriptor.Facets.ToArray() };
     }
 
     public Task<AgentExecutionTargetWarmupResult> WarmWorkspaceAsync(

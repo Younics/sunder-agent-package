@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Provider.Anthropic;
 
@@ -18,16 +19,18 @@ public sealed partial class AnthropicSettingsViewModel : ObservableObject,
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
         [AnthropicProviderConfiguration.ApiKeySecretKey, AnthropicProviderConfiguration.UtilityModelKey];
 
-    public AnthropicSettingsViewModel(IPackageContext packageContext)
+    public AnthropicSettingsViewModel(
+        IPackageContext packageContext,
+        IPackageRuntimeClient runtimeClient)
         : this(
             packageContext,
-            new ProviderCredentialAccessor(packageContext.Secrets, AnthropicProviderConfiguration.ApiKeySecretKey))
+            new ProviderCredentialAppRuntimeGateway(runtimeClient))
     {
     }
 
     internal AnthropicSettingsViewModel(
         IPackageContext packageContext,
-        ProviderCredentialAccessor credentials)
+        IProviderCredentialSettingsGateway credentials)
     {
         _settings = new ApiKeyUtilitySettingsState(
             packageContext,

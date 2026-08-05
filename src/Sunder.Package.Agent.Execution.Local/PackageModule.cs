@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
+using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
@@ -40,10 +41,8 @@ public sealed class AppPackageModule : ISunderAppPackageModule
 {
     public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
     {
-        services.AddSingleton<LocalExecutionAppRuntimeClient>();
-        services.AddSingleton<LocalExecutionWorkspaceEditorPresentationContributor>();
         services.AddTransient(provider => new LocalExecutionSettingsViewModel(
-            provider.GetRequiredService<LocalExecutionAppRuntimeClient>()));
+            provider.GetRequiredService<IPackageRuntimeClient>()));
     }
 
     public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)

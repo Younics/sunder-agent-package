@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Tools.Files;
 
@@ -64,10 +65,17 @@ public sealed class FilesToolSource
             return new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "File tools require a selected workspace.");
         }
 
-        if (context.ExecutionBinding is null
-            || !TryAcquireTarget(context.ExecutionTargetReference, context.ExecutionBinding, out var targetLease))
+        if (context.ExecutionBinding is null)
         {
-            ThrowIfExactTargetUnavailable(context.ExecutionTargetReference);
+            return new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "The selected workspace is not bound to an installed execution target.");
+        }
+        var targetLease = await AcquireTargetAsync(
+                context.ExecutionTargetReference,
+                context.ExecutionBinding,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (targetLease is null)
+        {
             return new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "The selected workspace is not bound to an installed execution target.");
         }
 
@@ -111,7 +119,11 @@ public sealed class FilesToolSource
                             ? "Workspace file tools are ready. Scoped AGENTS.md enforcement is disabled by legacy FilesToolSource composition."
                             : "Workspace file tools are ready with scoped AGENTS.md enforcement.")
                     : new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, readiness.Message);
-            });
+            },
+            () => new AgentToolReadiness(
+                toolId,
+                AgentToolReadinessStatus.Failed,
+                "The selected execution target became unavailable while readiness was being checked."));
     }
 
     public async ValueTask<AgentToolResult> ExecuteAsync(
@@ -124,10 +136,17 @@ public sealed class FilesToolSource
             return FileToolResult.Error(request.ToolId, "File tools require a selected workspace.", "files-workspace-required");
         }
 
-        if (context.ExecutionBinding is null
-            || !TryAcquireTarget(context.ExecutionTargetReference, context.ExecutionBinding, out var targetLease))
+        if (context.ExecutionBinding is null)
         {
-            ThrowIfExactTargetUnavailable(context.ExecutionTargetReference);
+            return FileToolResult.Error(request.ToolId, "The selected workspace is not bound to an installed execution target.", "files-target-required");
+        }
+        var targetLease = await AcquireTargetAsync(
+                context.ExecutionTargetReference,
+                context.ExecutionBinding,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (targetLease is null)
+        {
             return FileToolResult.Error(request.ToolId, "The selected workspace is not bound to an installed execution target.", "files-target-required");
         }
 
@@ -242,6 +261,10 @@ public sealed class FilesToolSource
                         {
                             throw;
                         }
+                        catch (SunderRpcException)
+                        {
+                            throw;
+                        }
                         catch (Exception ex)
                         {
                             return WithheldAccessResult(
@@ -255,7 +278,7 @@ public sealed class FilesToolSource
 
                     return result;
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (ex is not OperationCanceledException and not SunderRpcException)
                 {
                     return FileToolResult.Error(request.ToolId, ex.Message, "files-execution");
                 }
@@ -267,7 +290,11 @@ public sealed class FilesToolSource
                         authorityTarget.ReleaseResourceAuthority(targetContext.ApprovedResourceCapabilities);
                     }
                 }
-            });
+            },
+            () => FileToolResult.Error(
+                request.ToolId,
+                "The selected execution target became unavailable while the file operation was running.",
+                AgentToolResultErrorCodes.PackageUnavailable));
     }
 
     public async ValueTask<AgentPermissionRequest?> BuildPermissionRequestAsync(
@@ -275,17 +302,25 @@ public sealed class FilesToolSource
         AgentToolRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (context.ExecutionBinding is null
-            || !TryAcquireTarget(context.ExecutionTargetReference, context.ExecutionBinding, out var targetLease))
+        if (context.ExecutionBinding is null)
         {
-            ThrowIfExactTargetUnavailable(context.ExecutionTargetReference);
+            return await FilePermissionPlanner.BuildAsync(null, context, request, cancellationToken);
+        }
+        var targetLease = await AcquireTargetAsync(
+                context.ExecutionTargetReference,
+                context.ExecutionBinding,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (targetLease is null)
+        {
             return await FilePermissionPlanner.BuildAsync(null, context, request, cancellationToken);
         }
 
         return await InvokeTargetAsync(
             targetLease,
             cancellationToken,
-            (target, invocationToken) => FilePermissionPlanner.BuildAsync(target, context, request, invocationToken));
+            (target, invocationToken) => FilePermissionPlanner.BuildAsync(target, context, request, invocationToken),
+            static () => null);
     }
 
     public IReadOnlyList<AgentPermissionActionDescriptor> ListActions()
@@ -295,10 +330,17 @@ public sealed class FilesToolSource
         AgentPromptContextRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (request.ExecutionBinding is null
-            || !TryAcquireTarget(request.ExecutionTargetReference, request.ExecutionBinding, out var targetLease))
+        if (request.ExecutionBinding is null)
         {
-            ThrowIfExactTargetUnavailable(request.ExecutionTargetReference);
+            return null;
+        }
+        var targetLease = await AcquireTargetAsync(
+                request.ExecutionTargetReference,
+                request.ExecutionBinding,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (targetLease is null)
+        {
             return null;
         }
 
@@ -315,7 +357,8 @@ public sealed class FilesToolSource
                 }
 
                 return blocks.Count == 0 ? null : new AgentPromptContextContribution(blocks);
-            });
+            },
+            static () => null);
     }
 
     public async ValueTask<AgentToolResult?> PreflightExecutionAsync(
@@ -332,9 +375,13 @@ public sealed class FilesToolSource
         {
             return null;
         }
-        if (!TryAcquireTarget(context.ExecutionTargetReference, context.ExecutionBinding, out var targetLease))
+        var targetLease = await AcquireTargetAsync(
+                context.ExecutionTargetReference,
+                context.ExecutionBinding,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (targetLease is null)
         {
-            ThrowIfExactTargetUnavailable(context.ExecutionTargetReference);
             return null;
         }
 
@@ -390,7 +437,11 @@ public sealed class FilesToolSource
                     request,
                     probes,
                     invocationToken);
-            });
+            },
+            () => FileToolResult.Error(
+                request.ToolId,
+                "The selected execution target became unavailable during file preflight.",
+                AgentToolResultErrorCodes.PackageUnavailable));
     }
 
     public void DeleteSessionData(Guid sessionId)
@@ -404,26 +455,52 @@ public sealed class FilesToolSource
                 "Scoped instruction acknowledgment is unavailable because this Files source uses the legacy disabled constructor."))
             : _scopedInstructions.AcknowledgePromptContextAsync(receipt, cancellationToken);
 
-    private static bool TryAcquireTarget(
+    private static async ValueTask<AgentRpcLease<IAgentExecutionTarget>?> AcquireTargetAsync(
         AgentRpcReference<IAgentExecutionTarget>? selectedReference,
         AgentWorkspaceBindingRecord binding,
-        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-        out AgentRpcLease<IAgentExecutionTarget>? lease)
+        CancellationToken cancellationToken)
     {
-        if (selectedReference is null || !selectedReference.TryAcquire(out lease))
+        if (selectedReference is null)
         {
-            lease = null;
-            return false;
-        }
-        if (lease.RetirementToken.IsCancellationRequested
-            || !IsBindingMatch(lease.Service.Descriptor, binding))
-        {
-            lease.Dispose();
-            lease = null;
-            return false;
+            return null;
         }
 
-        return true;
+        var lease = await selectedReference.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
+        if (lease is null)
+        {
+            return null;
+        }
+
+        var retirementToken = lease.RetirementToken;
+        using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            retirementToken);
+        try
+        {
+            var descriptor = lease.Service is AgentExecutionTargetRpcClient rpcTarget
+                ? await rpcTarget.DescribeAsync(invocation.Token).ConfigureAwait(false)
+                : lease.Service.Descriptor;
+            if (retirementToken.IsCancellationRequested || !IsBindingMatch(descriptor, binding))
+            {
+                lease.Dispose();
+                return null;
+            }
+
+            return lease;
+        }
+        catch (Exception exception) when (IsTargetUnavailable(
+            exception,
+            retirementToken,
+            cancellationToken))
+        {
+            lease.Dispose();
+            return null;
+        }
+        catch
+        {
+            lease.Dispose();
+            throw;
+        }
     }
 
     private static bool IsBindingMatch(
@@ -435,11 +512,11 @@ public sealed class FilesToolSource
     private static async ValueTask<TResult> InvokeTargetAsync<TResult>(
         AgentRpcLease<IAgentExecutionTarget> lease,
         CancellationToken cancellationToken,
-        Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback)
+        Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback,
+        Func<TResult> unavailableResult)
     {
         using (lease)
         {
-            var packageId = lease.PackageId;
             var retirementToken = lease.RetirementToken;
             using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken,
@@ -449,30 +526,32 @@ public sealed class FilesToolSource
                 var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
                 if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
-                    throw new InvalidOperationException(
-                        $"Execution-target package '{packageId}' became unavailable while the callback was running.");
+                    return unavailableResult();
                 }
                 return result;
             }
-            catch (OperationCanceledException exception) when (
-                retirementToken.IsCancellationRequested
-                && !cancellationToken.IsCancellationRequested)
+            catch (Exception exception) when (IsTargetUnavailable(
+                exception,
+                retirementToken,
+                cancellationToken))
             {
-                throw new InvalidOperationException(
-                    $"Execution-target package '{packageId}' became unavailable while the callback was running.",
-                    exception);
+                return unavailableResult();
             }
         }
     }
 
-    private static void ThrowIfExactTargetUnavailable(
-        AgentRpcReference<IAgentExecutionTarget>? selectedReference)
-    {
-        if (selectedReference is not null)
-        {
-            throw new InvalidOperationException("The selected execution-target package is unavailable.");
-        }
-    }
+    private static bool IsTargetUnavailable(
+        Exception exception,
+        CancellationToken retirementToken,
+        CancellationToken callerCancellationToken)
+        => !callerCancellationToken.IsCancellationRequested
+           && (exception is SunderRpcException
+               {
+                   Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable,
+               }
+               || retirementToken.IsCancellationRequested
+               && (exception is OperationCanceledException
+                   || exception is SunderRpcException { Error.Kind: SunderRpcErrorKind.Cancelled }));
 
     private static bool IsMutation(string toolId)
         => toolId.Equals("write", StringComparison.OrdinalIgnoreCase)
@@ -577,6 +656,10 @@ public sealed class FilesToolSource
                 Content: $"### Patch not dispatched\n\n{ex.Message} No files were changed.",
                 IsError: true,
                 ErrorCode: "files-scoped-instruction-path-limit");
+        }
+        catch (SunderRpcException)
+        {
+            throw;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

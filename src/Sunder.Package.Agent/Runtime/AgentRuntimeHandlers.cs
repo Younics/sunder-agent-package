@@ -266,7 +266,6 @@ internal sealed class AgentDashboardHandler(
 
 internal sealed class AgentChatSnapshotHandler(
     AgentLocalStore store,
-    AgentChatSelectionStateService selectionState,
     AgentRuntimeChangeHub changes)
     : IPackageRuntimeOperationHandler<AgentChatSnapshotRequest, AgentChatSnapshotProjection>
 {
@@ -277,23 +276,8 @@ internal sealed class AgentChatSnapshotHandler(
         AgentChatSnapshotRequest request,
         CancellationToken cancellationToken = default)
     {
-        var storedProfileIdTask = selectionState.GetSelectedProfileIdAsync(cancellationToken);
-        var storedWorkspaceIdTask = selectionState.GetSelectedWorkspaceIdAsync(cancellationToken);
-        await Task.WhenAll(storedProfileIdTask, storedWorkspaceIdTask).ConfigureAwait(false);
         var revision = changes.Revision;
-        var storedProfileId = Normalize(request.PreferredProfileId)
-                              ?? await storedProfileIdTask.ConfigureAwait(false);
-        var storedWorkspaceId = Normalize(request.PreferredWorkspaceId)
-                                ?? await storedWorkspaceIdTask.ConfigureAwait(false);
-        var storedSessionId = storedWorkspaceId is null
-            ? null
-            : await selectionState.GetSelectedSessionIdAsync(storedWorkspaceId, cancellationToken).ConfigureAwait(false);
-        var key = new ChatSnapshotCacheKey(
-            revision,
-            request,
-            storedProfileId,
-            storedWorkspaceId,
-            storedSessionId);
+        var key = new ChatSnapshotCacheKey(revision, request);
         lock (_cacheGate)
         {
             if (_cache is { } cached && cached.Key == key)
@@ -305,12 +289,6 @@ internal sealed class AgentChatSnapshotHandler(
         var snapshot = await store.ReadChatSnapshotAsync(
             revision,
             request,
-            storedProfileId,
-            storedWorkspaceId,
-            (workspaceId, _) => Task.FromResult(
-                string.Equals(workspaceId, storedWorkspaceId, StringComparison.OrdinalIgnoreCase)
-                    ? storedSessionId
-                    : null),
             cancellationToken).ConfigureAwait(false);
         snapshot = snapshot with { RuntimeInstanceId = changes.InstanceId };
         if (changes.Revision == revision)
@@ -323,15 +301,9 @@ internal sealed class AgentChatSnapshotHandler(
         return snapshot;
     }
 
-    private static string? Normalize(string? value)
-        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-
     private readonly record struct ChatSnapshotCacheKey(
         long Revision,
-        AgentChatSnapshotRequest Request,
-        string? StoredProfileId,
-        string? StoredWorkspaceId,
-        Guid? StoredSessionId);
+        AgentChatSnapshotRequest Request);
 
     private sealed record ChatSnapshotCacheEntry(
         ChatSnapshotCacheKey Key,
@@ -669,9 +641,6 @@ internal sealed class AgentPermissionCommandHandler(
                 break;
             case AgentPermissionCommandKind.DeleteOverride:
                 permissions.DeleteOverride(Require(request.ActionId), Require(request.BoundaryId));
-                break;
-            case AgentPermissionCommandKind.SaveSessionApproval:
-                permissions.SaveSessionApproval(RequireSession(request), Require(request.ActionId), Require(request.BoundaryId));
                 break;
         }
         if (request.Kind != AgentPermissionCommandKind.Read)

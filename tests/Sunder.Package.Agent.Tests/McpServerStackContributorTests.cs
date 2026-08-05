@@ -105,8 +105,11 @@ public sealed class McpServerStackContributorTests
             Assert.True(importedServer.IsEnabled);
             var editorText = await targetCatalog.ExportServerJsonAsync("server-1");
             Assert.NotNull(editorText);
-            Assert.Contains("Bearer imported-token", editorText, StringComparison.Ordinal);
+            Assert.DoesNotContain("Bearer imported-token", editorText, StringComparison.Ordinal);
             Assert.DoesNotContain("original-token", editorText, StringComparison.Ordinal);
+            Assert.Equal(
+                "Bearer imported-token",
+                (await targetCatalog.GetHeadersAsync(importedServer))["Authorization"]);
         }
         finally
         {

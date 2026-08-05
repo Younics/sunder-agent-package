@@ -63,7 +63,7 @@ Binary compatibility is not the only requirement. Descriptor ids, permission bou
 9. Exercise migration from the previous extension version with a backup of test data.
 10. Publish immutable bytes, then move a Registry dist tag only after verification.
 
-The first-party family releases all 15 runtime packages and `Sunder.Package.Agent.Protocol` from one Agent commit against one Core `main` commit resolved at workflow start. Third-party extensions should not assume a mixed family patch set is valid.
+The first-party family releases all 15 runtime packages and `Sunder.Package.Agent.Protocol` from one Agent commit. For a new release, the workflow resolves Core `main` once at workflow start and reuses that full SHA for every Core checkout. A recovery rerun reuses the Core SHA from preserved release evidence instead of resolving `main` again. Third-party extensions should not assume a mixed family patch set is valid.
 
 ## Troubleshooting
 

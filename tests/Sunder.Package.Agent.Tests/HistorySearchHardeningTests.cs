@@ -1129,12 +1129,12 @@ public sealed class HistorySearchHardeningTests
         await indexer.StartAsync();
         await WaitUntilAsync(() => projection.GetSnapshot().ActiveTextGenerationId is not null
                                    && projection.GetSnapshot().DocumentCount == 0);
+        await indexer.StopAsync();
 
         AssertDatabaseFilesDoNotContain(databasePath, canary);
         Assert.Equal(
             HistorySearchVersions.Redaction,
             Assert.IsType<HistoryProjectionGeneration>(projection.GetActiveTextGeneration()).RedactionVersion);
-        await indexer.StopAsync();
     }
 
     [Fact]
@@ -1293,7 +1293,8 @@ public sealed class HistorySearchHardeningTests
     public async Task FailedTextGenerationStart_RetriesAfterCooldownWithoutIdleRevisionSpin()
     {
         using var scope = RegressionTestPackageScope.Create();
-        await using var services = CreateRuntime(scope, new RegressionTestExtensionCatalog());
+        var timeProvider = new ManualUtcTimeProvider();
+        await using var services = CreateRuntime(scope, new RegressionTestExtensionCatalog(), timeProvider);
         var workspace = services.GetRequiredService<AgentWorkspaceService>().CreateWorkspace("Begin retry");
         var sessions = services.GetRequiredService<AgentSessionService>();
         var session = sessions.CreateSession("Begin retry", workspaceId: workspace.WorkspaceId);
@@ -1330,6 +1331,8 @@ public sealed class HistorySearchHardeningTests
             command.CommandText = "DROP TRIGGER RejectHistoryGenerationBegin;";
             command.ExecuteNonQuery();
         }
+        timeProvider.Advance(TimeSpan.FromSeconds(2));
+        sessions.UpdateSession(session with { Title = "Begin retry updated" });
 
         await WaitUntilAsync(() => projection.GetSnapshot().DocumentCount == 2
                                    && state.Current.FailureCode is null);
@@ -1915,7 +1918,8 @@ public sealed class HistorySearchHardeningTests
 
     private static ServiceProvider CreateRuntime(
         RegressionTestPackageScope scope,
-        RegressionTestExtensionCatalog catalog)
+        RegressionTestExtensionCatalog catalog,
+        TimeProvider? timeProvider = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(scope.Context);
@@ -1923,7 +1927,40 @@ public sealed class HistorySearchHardeningTests
         services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(catalog);
         services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
         new PackageModule().ConfigureRuntimeServices(services, scope.Context);
+        if (timeProvider is not null)
+        {
+            var registration = services.Single(descriptor =>
+                descriptor.ServiceType == typeof(HistorySearchIndexingService));
+            services.Remove(registration);
+            services.AddSingleton(provider => new HistorySearchIndexingService(
+                provider.GetRequiredService<HistorySearchStore>(),
+                provider.GetRequiredService<AgentLocalStore>(),
+                provider.GetRequiredService<AgentSessionService>(),
+                provider.GetRequiredService<AgentWorkspaceService>(),
+                provider.GetRequiredService<HistoryEmbeddingProviderCatalog>(),
+                provider.GetRequiredService<HistorySemanticOperationFence>(),
+                provider.GetRequiredService<HistorySearchRuntimeState>(),
+                timeProvider));
+        }
         return services.BuildServiceProvider();
+    }
+
+    private sealed class ManualUtcTimeProvider : TimeProvider
+    {
+        private long _utcTicks;
+
+        public override DateTimeOffset GetUtcNow()
+            => DateTimeOffset.UnixEpoch.AddTicks(Volatile.Read(ref _utcTicks));
+
+        public void Advance(TimeSpan elapsed)
+        {
+            if (elapsed < TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(elapsed));
+            }
+
+            Interlocked.Add(ref _utcTicks, elapsed.Ticks);
+        }
     }
 
     private static HistorySearchStore CreateReadyEmbeddingProjection(IPackageContext context)

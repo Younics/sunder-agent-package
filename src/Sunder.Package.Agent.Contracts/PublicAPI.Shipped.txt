@@ -4167,7 +4167,6 @@ Sunder.Package.Agent.Protocol.AgentRpcCatalog.Dispose() -> void
 Sunder.Package.Agent.Protocol.AgentRpcCatalog.GetServiceReference<TClient>(Sunder.Package.Agent.Protocol.AgentRpcService<TClient!>! service, Sunder.Package.Agent.Protocol.AgentRpcProviderHandle! handle) -> Sunder.Package.Agent.Protocol.AgentRpcReference<TClient!>!
 Sunder.Package.Agent.Protocol.AgentRpcCatalog.GetServiceReferences<TClient>(Sunder.Package.Agent.Protocol.AgentRpcProviderService<TClient!>! service) -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Protocol.AgentRpcProviderReference<TClient!>!>!
 Sunder.Package.Agent.Protocol.AgentRpcCatalog.GetServiceReferences<TClient>(Sunder.Package.Agent.Protocol.AgentRpcService<TClient!>! service) -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Protocol.AgentRpcReference<TClient!>!>!
-Sunder.Package.Agent.Protocol.AgentRpcCatalog.GetServices<TClient>(Sunder.Package.Agent.Protocol.AgentRpcService<TClient!>! service) -> System.Collections.Generic.IReadOnlyList<TClient!>!
 Sunder.Package.Agent.Protocol.AgentRpcCatalog.TryReportInvariantViolation<TClient>(Sunder.Package.Agent.Protocol.AgentRpcReference<TClient!>! reference, System.Exception! exception) -> bool
 Sunder.Package.Agent.Protocol.AgentRpcCatalogChangedEventArgs
 Sunder.Package.Agent.Protocol.AgentRpcCatalogChangedEventArgs.AgentRpcCatalogChangedEventArgs(System.Collections.Generic.IReadOnlySet<string!>! contractIds, bool reset) -> void
@@ -4198,7 +4197,6 @@ Sunder.Package.Agent.Protocol.AgentRpcIdentity.Id.get -> string!
 Sunder.Package.Agent.Protocol.AgentRpcIdentity.Id.init -> void
 Sunder.Package.Agent.Protocol.AgentRpcLease<TClient>
 Sunder.Package.Agent.Protocol.AgentRpcLease<TClient>.AgentRpcLease(string! packageId, TClient! service, System.Threading.CancellationToken retirementToken) -> void
-Sunder.Package.Agent.Protocol.AgentRpcLease<TClient>.Contribution.get -> TClient!
 Sunder.Package.Agent.Protocol.AgentRpcLease<TClient>.Dispose() -> void
 Sunder.Package.Agent.Protocol.AgentRpcLease<TClient>.PackageId.get -> string!
 Sunder.Package.Agent.Protocol.AgentRpcLease<TClient>.RetirementToken.get -> System.Threading.CancellationToken

@@ -129,10 +129,7 @@ public sealed partial class SubagentsViewModel
     private void OnCapabilitiesChanged() => OnEditorChanged();
 
     private void OnSelectableCapabilitiesChanged()
-        => RunOnUiThread(() => _tasks.Run(_ => RefreshSelectedSubagentCapabilitiesAsync()));
+        => _tasks.Run(_ => RefreshSelectedSubagentCapabilitiesAsync());
 
-    private void OnSubagentsChanged() => RunOnUiThread(() =>
-    {
-        _tasks.Run(_runtimeRefresh.MarkDirty());
-    });
+    private void OnSubagentsChanged() => _tasks.Run(_runtimeRefresh.MarkDirty());
 }

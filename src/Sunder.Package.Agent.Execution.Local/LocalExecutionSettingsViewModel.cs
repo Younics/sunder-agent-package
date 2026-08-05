@@ -15,7 +15,7 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
 {
     private const string SettingsChannel = "local-settings";
     private const string ShellCatalogChannel = "local-shell-catalog";
-    private readonly LocalExecutionAppRuntimeClient _runtimeClient;
+    private readonly IPackageRuntimeClient _runtimeClient;
     private readonly LatestRequestCoordinator _requests = new();
     private readonly CancellationTokenSource _lifetime = new();
     private readonly object _initializationSyncRoot = new();
@@ -28,7 +28,7 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
     private long _shellListRevision;
     private long _shellCatalogRevision;
 
-    internal LocalExecutionSettingsViewModel(LocalExecutionAppRuntimeClient runtimeClient)
+    internal LocalExecutionSettingsViewModel(IPackageRuntimeClient runtimeClient)
     {
         _runtimeClient = runtimeClient;
         SyntaxOptions =
@@ -237,7 +237,7 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
         var authority = CaptureShellAuthority();
         try
         {
-            var response = await _runtimeClient.InvokeAsync(
+            var response = await InvokeRuntimeAsync(
                     new LocalExecutionOperationRequest(LocalExecutionOperationKind.GetSettings),
                     settingsRequest.CancellationToken)
                 .AsTask()
@@ -303,6 +303,17 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
         }
     }
 
+    private ValueTask<LocalExecutionOperationResponse> InvokeRuntimeAsync(
+        LocalExecutionOperationRequest request,
+        CancellationToken cancellationToken)
+        => _runtimeClient.IsAvailable
+            ? _runtimeClient.InvokeAsync(LocalExecutionRuntimeOperations.Execute, request, cancellationToken)
+            : ValueTask.FromException<LocalExecutionOperationResponse>(
+                new PackageRuntimeInvocationException(
+                    "runtime.v1.unavailable",
+                    isTransient: true,
+                    statusCode: 503));
+
     private async Task SaveShellsCoreAsync(string? deletedShellId)
     {
         if (!CanSaveShells)
@@ -335,7 +346,7 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
         var operation = BeginBusyOperation();
         try
         {
-            var response = await _runtimeClient.InvokeAsync(
+            var response = await InvokeRuntimeAsync(
                     new LocalExecutionOperationRequest(
                         LocalExecutionOperationKind.SaveShells,
                         Shells: shells,
@@ -402,7 +413,7 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
             _lifetime.Token);
         try
         {
-            var response = await _runtimeClient.InvokeAsync(operationRequest, linked.Token)
+            var response = await InvokeRuntimeAsync(operationRequest, linked.Token)
                 .AsTask()
                 .WaitAsync(linked.Token);
             if (_disposed || !IsBusyOperationCurrent(operation))

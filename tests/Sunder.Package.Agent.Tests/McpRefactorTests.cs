@@ -5,10 +5,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol.Client;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Mcp;
+using Sunder.Package.Agent.Mcp.Runtime;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Callbacks;
+using Sunder.Sdk.Runtime;
 using Sunder.Sdk.Storage;
 using Xunit;
 
@@ -124,6 +126,177 @@ public sealed class McpRefactorTests
         Assert.True(PackageStorageValidation.IsValidKey(McpOAuthSecretKeys.TokenCache(serverId)));
         Assert.True(PackageStorageValidation.IsValidKey(McpOAuthSecretKeys.ClientRegistration(serverId)));
         Assert.True(PackageStorageValidation.IsValidKey(McpOAuthSecretKeys.ClientSecret(serverId)));
+    }
+
+    [Fact]
+    public async Task RuntimeEditorDocuments_RedactSecretsAndSaveTreatsValuesAsCommands()
+    {
+        const string retainedCanary = "retained-header-secret-canary";
+        const string clearedCanary = "cleared-header-secret-canary";
+        const string replacedCanary = "replaced-header-secret-canary";
+        const string replacementCanary = "replacement-header-command-canary";
+        const string retainedEnvironmentCanary = "retained-environment-secret-canary";
+        const string clearedEnvironmentCanary = "cleared-environment-secret-canary";
+        const string replacedEnvironmentCanary = "replaced-environment-secret-canary";
+        const string environmentReplacementCanary = "replacement-environment-command-canary";
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var remote = McpConfigurationDocument.Parse(
+            "remote-server",
+            "remote_server",
+            $$"""
+            {
+              "type": "remote",
+              "url": "https://example.com/mcp",
+              "headers": {
+                "X-Retain": "{{retainedCanary}}",
+                "X-Clear": "{{clearedCanary}}",
+                "X-Replace": "{{replacedCanary}}"
+              }
+            }
+            """);
+        var local = McpConfigurationDocument.Parse(
+            "local-server",
+            "local_server",
+            $$"""
+            {
+              "type": "local",
+              "command": ["example-mcp"],
+              "env": {
+                "ENV_RETAIN": "{{retainedEnvironmentCanary}}",
+                "ENV_CLEAR": "{{clearedEnvironmentCanary}}",
+                "ENV_REPLACE": "{{replacedEnvironmentCanary}}"
+              }
+            }
+            """);
+        await catalog.SaveServerAsync(remote.Server, remote.Headers, remote.EnvironmentVariables);
+        await catalog.SaveServerAsync(local.Server, local.Headers, local.EnvironmentVariables);
+        var editor = new McpSettingsEditorService(catalog);
+        await using var connections = new McpClientConnectionManager(
+            NullLoggerFactory.Instance,
+            new FakeConnectionFactory());
+        var connectionService = new McpServerConnectionService(catalog, connections, oauthService: null);
+        var handler = new McpRuntimeHandler(
+            catalog,
+            editor,
+            configuration: null!,
+            connectionService,
+            oauth: null!,
+            context);
+        using var appGateway = new McpAppRuntimeGateway(
+            new McpHandlerRuntimeClient(handler),
+            NullPackageCallbackClient.Instance);
+
+        var remoteDocument = (await appGateway.LoadDocumentAsync(remote.Server.ServerId))!;
+        var localDocument = (await appGateway.LoadDocumentAsync(local.Server.ServerId))!;
+
+        Assert.DoesNotContain(retainedCanary, remoteDocument, StringComparison.Ordinal);
+        Assert.DoesNotContain(clearedCanary, remoteDocument, StringComparison.Ordinal);
+        Assert.DoesNotContain(replacedCanary, remoteDocument, StringComparison.Ordinal);
+        Assert.DoesNotContain(retainedEnvironmentCanary, localDocument, StringComparison.Ordinal);
+        Assert.DoesNotContain(clearedEnvironmentCanary, localDocument, StringComparison.Ordinal);
+        Assert.DoesNotContain(replacedEnvironmentCanary, localDocument, StringComparison.Ordinal);
+        using (var remoteJson = JsonDocument.Parse(remoteDocument))
+        {
+            Assert.All(
+                remoteJson.RootElement.GetProperty("headers").EnumerateObject(),
+                property => Assert.Equal(string.Empty, property.Value.GetString()));
+        }
+        using (var localJson = JsonDocument.Parse(localDocument))
+        {
+            Assert.All(
+                localJson.RootElement.GetProperty("env").EnumerateObject(),
+                property => Assert.Equal(string.Empty, property.Value.GetString()));
+        }
+
+        var persistedRemote = Assert.IsType<ConfiguredMcpServerRecord>(
+            await catalog.GetServerAsync(remote.Server.ServerId));
+        var clearedSecretKey = McpServerCatalogService.BuildHeaderSecretKey(
+            persistedRemote.ServerId,
+            persistedRemote.PersistenceVersion,
+            "X-Clear");
+        var update = McpConfigurationDocument.Parse(
+            persistedRemote.ServerId,
+            persistedRemote.Name,
+            $$"""
+            {
+              "type": "remote",
+              "url": "https://example.com/mcp",
+              "headers": {
+                "X-Retain": "",
+                "X-Clear": null,
+                "X-Replace": "{{replacementCanary}}"
+              }
+            }
+            """,
+            persistedRemote);
+        var command = new McpCommand(McpCommandKind.Save, Configuration: update);
+        var commandJson = JsonSerializer.Serialize(command);
+
+        var saveProjection = await handler.HandleAsync(command);
+        var responseJson = JsonSerializer.Serialize(saveProjection);
+
+        Assert.Contains(replacementCanary, commandJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(retainedCanary, responseJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(clearedCanary, responseJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(replacedCanary, responseJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(replacementCanary, responseJson, StringComparison.Ordinal);
+        var saved = Assert.IsType<ConfiguredMcpServerRecord>(
+            await catalog.GetServerAsync(remote.Server.ServerId));
+        var storedHeaders = await catalog.GetHeadersAsync(saved);
+        Assert.Equal(retainedCanary, storedHeaders["X-Retain"]);
+        Assert.False(storedHeaders.ContainsKey("X-Clear"));
+        Assert.Equal(replacementCanary, storedHeaders["X-Replace"]);
+        Assert.Null(await context.Secrets.GetSecretAsync(clearedSecretKey));
+        using var savedDocument = JsonDocument.Parse(saveProjection.Document!);
+        var savedHeaders = savedDocument.RootElement.GetProperty("headers");
+        Assert.Equal(string.Empty, savedHeaders.GetProperty("X-Retain").GetString());
+        Assert.False(savedHeaders.TryGetProperty("X-Clear", out _));
+        Assert.Equal(string.Empty, savedHeaders.GetProperty("X-Replace").GetString());
+
+        var persistedLocal = Assert.IsType<ConfiguredMcpServerRecord>(
+            await catalog.GetServerAsync(local.Server.ServerId));
+        var clearedEnvironmentKey = McpServerCatalogService.BuildEnvironmentSecretKey(
+            persistedLocal.ServerId,
+            persistedLocal.PersistenceVersion,
+            "ENV_CLEAR");
+        var environmentUpdate = McpConfigurationDocument.Parse(
+            persistedLocal.ServerId,
+            persistedLocal.Name,
+            $$"""
+            {
+              "type": "local",
+              "command": ["example-mcp"],
+              "env": {
+                "ENV_RETAIN": "",
+                "ENV_CLEAR": null,
+                "ENV_REPLACE": "{{environmentReplacementCanary}}"
+              }
+            }
+            """,
+            persistedLocal);
+        var environmentCommand = new McpCommand(
+            McpCommandKind.Save,
+            Configuration: environmentUpdate);
+
+        var environmentProjection = await handler.HandleAsync(environmentCommand);
+        var environmentResponseJson = JsonSerializer.Serialize(environmentProjection);
+
+        Assert.Contains(
+            environmentReplacementCanary,
+            JsonSerializer.Serialize(environmentCommand),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(retainedEnvironmentCanary, environmentResponseJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(clearedEnvironmentCanary, environmentResponseJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(replacedEnvironmentCanary, environmentResponseJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(environmentReplacementCanary, environmentResponseJson, StringComparison.Ordinal);
+        var savedLocal = Assert.IsType<ConfiguredMcpServerRecord>(
+            await catalog.GetServerAsync(local.Server.ServerId));
+        var storedEnvironment = await catalog.GetEnvironmentVariablesAsync(savedLocal);
+        Assert.Equal(retainedEnvironmentCanary, storedEnvironment["ENV_RETAIN"]);
+        Assert.False(storedEnvironment.ContainsKey("ENV_CLEAR"));
+        Assert.Equal(environmentReplacementCanary, storedEnvironment["ENV_REPLACE"]);
+        Assert.Null(await context.Secrets.GetSecretAsync(clearedEnvironmentKey));
     }
 
     [Fact]
@@ -909,6 +1082,39 @@ public sealed class McpRefactorTests
         public IPackageSettings Settings { get; } = new EmptySettings();
         IPackageSecrets IPackageContext.Secrets => Secrets;
         public IPackageLogging Logging { get; } = NullPackageLogging.Instance;
+    }
+
+    private sealed class McpHandlerRuntimeClient(McpRuntimeHandler handler) : IPackageRuntimeClient
+    {
+        public bool IsAvailable => true;
+
+        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            PackageRuntimeOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            if (operation.OperationId == McpRuntimeOperations.Query.OperationId)
+            {
+                return (TResponse)(object)await handler.HandleAsync((McpQuery)(object)request, cancellationToken);
+            }
+
+            if (operation.OperationId == McpRuntimeOperations.Command.OperationId)
+            {
+                return (TResponse)(object)await handler.HandleAsync((McpCommand)(object)request, cancellationToken);
+            }
+
+            throw new InvalidOperationException($"Unexpected Runtime operation '{operation.OperationId}'.");
+        }
+
+        public IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            PackageRuntimeStream<TRequest, TEvent> stream,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+            => throw new NotSupportedException();
     }
 
     private sealed class TestStorage(IPackageKeyValueStore state) : IPackageStorageContext

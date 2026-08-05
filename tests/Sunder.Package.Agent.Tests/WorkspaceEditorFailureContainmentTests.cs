@@ -138,7 +138,8 @@ public sealed class WorkspaceEditorFailureContainmentTests
             (healthy, "healthy.package"));
 
         Assert.Equal("Healthy settings", Assert.Single(host.ViewModel.EditorSections, static section => !section.IsError).Title);
-        Assert.Contains("package-unavailable", Assert.Single(host.ViewModel.EditorSections, static section => section.IsError).DiagnosticText);
+        Assert.Contains("package-invariant-failure", Assert.Single(host.ViewModel.EditorSections, static section => section.IsError).DiagnosticText);
+        Assert.Equal("local.package", host.Catalog.LastInvariantViolationPackageId);
         await host.ViewModel.CurrentEditorSectionRefresh;
     }
 
@@ -161,9 +162,14 @@ public sealed class WorkspaceEditorFailureContainmentTests
             host.ViewModel.EditorSections,
             static section => !section.IsError).Title);
         Assert.Contains(
-            "package-unavailable",
+            "package-invariant-failure",
             Assert.Single(host.ViewModel.EditorSections, static section => section.IsError).DiagnosticText,
             StringComparison.Ordinal);
+        Assert.Equal("malformed.package", host.Catalog.LastInvariantViolationPackageId);
+        Assert.Equal(1, host.Catalog.InvariantViolationReportCount);
+        Assert.Equal(
+            "healthy.package",
+            Assert.Single(host.Catalog.GetServiceReferences(AgentRpcServices.WorkspaceEditors)).PackageId);
     }
 
     [Fact]

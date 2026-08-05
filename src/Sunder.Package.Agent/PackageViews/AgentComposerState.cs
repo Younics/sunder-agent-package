@@ -178,6 +178,8 @@ internal sealed class AgentComposerSubmission(
     private const int CommittedFlag = 1;
     private const int CommandCompletedFlag = 2;
     private const int CompleteState = CommittedFlag | CommandCompletedFlag;
+    private readonly TaskCompletionSource _authoritativeReconciliation =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _state;
 
     public Guid SessionId { get; } = sessionId;
@@ -202,9 +204,17 @@ internal sealed class AgentComposerSubmission(
 
     public bool IsComplete => Volatile.Read(ref _state) == CompleteState;
 
+    public Task AuthoritativeReconciliation => _authoritativeReconciliation.Task;
+
     public bool Commit() => SetState(CommittedFlag);
 
     public bool CompleteCommand() => SetState(CommandCompletedFlag);
+
+    public void CompleteAuthoritativeReconciliation()
+        => _authoritativeReconciliation.TrySetResult();
+
+    public void FailAuthoritativeReconciliation(Exception exception)
+        => _authoritativeReconciliation.TrySetException(exception);
 
     public bool Matches(AgentTurnRecord turn)
     {

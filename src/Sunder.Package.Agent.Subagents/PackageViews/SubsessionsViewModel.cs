@@ -1,8 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using Avalonia;
 using Avalonia.Media;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -26,6 +24,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private const string NavigationChannel = "subsessions-navigation";
 
     private readonly AgentRpcCatalog? _rpcCatalog;
+    private readonly IPresentationDispatcher _uiDispatcher;
     private readonly TranscriptTimelineState<SubsessionTranscriptRowViewModel> _timeline;
     private readonly TranscriptItemsProjection<SubsessionTranscriptRowViewModel> _transcriptItemsProjection;
     private readonly ActivityTicker _activityTicker = new();
@@ -52,7 +51,16 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     public SubsessionsViewModel(
         AgentRpcCatalog? rpcCatalog,
         TimeSpan? activityQuietDelay = null)
+        : this(rpcCatalog, activityQuietDelay, PresentationDispatcher.Capture())
     {
+    }
+
+    internal SubsessionsViewModel(
+        AgentRpcCatalog? rpcCatalog,
+        TimeSpan? activityQuietDelay,
+        IPresentationDispatcher uiDispatcher)
+    {
+        _uiDispatcher = uiDispatcher;
         _activityTicker.SetEnabled(false);
         _rpcCatalog = rpcCatalog;
         var toolPresentation = new TranscriptToolPresentationService(() =>
@@ -106,11 +114,6 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         CancellationToken cancellationToken)
         => _transcriptReader?.LoadToolDetailAsync(request, cancellationToken)
            ?? Task.FromResult<AgentTranscriptToolDetailRecord?>(null);
-
-    public SubsessionsViewModel()
-        : this(null, null)
-    {
-    }
 
     public ObservableCollection<SubsessionListItemViewModel> Subsessions { get; } = [];
 
@@ -336,10 +339,22 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         }
 
         var refresh = _requests.Begin(ListRefreshChannel, cancellationToken);
-        var selectionAuthorityRevision = IntentRevision;
-        var currentSelectionId = selectedSessionId ?? SelectedSubsession?.SessionId;
+        var selectionAuthorityRevision = 0L;
+        var currentSelectionId = selectedSessionId;
+        var active = false;
         try
         {
+            await RunOnUiThreadAsync(() =>
+            {
+                selectionAuthorityRevision = IntentRevision;
+                currentSelectionId ??= SelectedSubsession?.SessionId;
+                active = true;
+            }, refresh.CancellationToken);
+            if (!active)
+            {
+                return;
+            }
+
             var sessionsTask = _sessionReader.ListSessionsAsync(refresh.CancellationToken);
             var checkpointsTask = _checkpointReader.ListLatestCheckpointsAsync(refresh.CancellationToken);
             await Task.WhenAll(sessionsTask, checkpointsTask);
@@ -546,10 +561,11 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     }
 
     private void OnRunActivityStateChanged()
-    {
-        ApplyRunActivityState();
-        _timeline.NotifyRowsChanged();
-    }
+        => RunOnUiThread(() =>
+        {
+            ApplyRunActivityState();
+            _timeline.NotifyRowsChanged();
+        });
 
     private void ApplyRunActivityState()
         => RunActivityRow.SetPresentation(
@@ -597,25 +613,16 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     private void RunOnUiThread(Action action)
     {
-        _tasks.Run(async cancellationToken =>
+        if (_uiDispatcher.CheckAccess())
         {
-            if (Application.Current is null || Dispatcher.UIThread.CheckAccess())
+            if (!_disposed)
             {
-                if (!cancellationToken.IsCancellationRequested)
-                {
-                    action();
-                }
-                return;
+                action();
             }
+            return;
+        }
 
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                if (!cancellationToken.IsCancellationRequested)
-                {
-                    action();
-                }
-            }, DispatcherPriority.Background);
-        });
+        _tasks.Run(cancellationToken => RunOnUiThreadAsync(action, cancellationToken));
     }
 
     private void OnListDetailPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -726,19 +733,13 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private async Task RunOnUiThreadAsync(Action action, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (Application.Current is null || Dispatcher.UIThread.CheckAccess())
+        await _uiDispatcher.InvokeAsync(() =>
         {
-            action();
-            return;
-        }
-
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            if (!cancellationToken.IsCancellationRequested)
+            if (!_disposed && !cancellationToken.IsCancellationRequested)
             {
                 action();
             }
-        }, DispatcherPriority.Background);
+        });
         cancellationToken.ThrowIfCancellationRequested();
     }
 

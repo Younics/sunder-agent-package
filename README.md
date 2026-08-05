@@ -39,17 +39,17 @@ The packages in this repository are normal Sunder runtime packages built with `S
 Install packages through the configured Sunder Registry when they are available:
 
 ```powershell
-sunder install sunder.package.agent
-sunder install sunder.package.agent.provider.openai
-sunder install sunder.package.agent.execution.local
-sunder install sunder.package.agent.tools.files
+sunder package install sunder.package.agent
+sunder package install sunder.package.agent.provider.openai
+sunder package install sunder.package.agent.execution.local
+sunder package install sunder.package.agent.tools.files
 ```
 
 For local development, build package archives from source or load generated `sunder-dev` folders into Sunder App.
 
 ## Documentation
 
-Extension authors should start with the **[Agent Extension Author Guide](docs/README.md)**. It includes the [quickstart](docs/extension-quickstart.md), the complete [extension-point catalog](docs/extension-points.md), capability-specific guides, testing guidance, and compatibility/troubleshooting policy. A compiled minimal extension is available under [`samples/Sunder.Agent.Extension.Minimal`](samples/Sunder.Agent.Extension.Minimal/README.md).
+Extension authors should start with the **[Agent Extension Author Guide](docs/README.md)**. It includes the [quickstart](docs/extension-quickstart.md), the complete [extension-point catalog](docs/extension-points.md), capability-specific guides, testing guidance, and compatibility/troubleshooting policy.
 
 The Agent workspace includes [local History Search](docs/history-search.md): it opens on recent history for the current workspace, searches lexical text and safe path/activity metadata locally, and maintains its disposable index automatically without embedding-provider calls.
 
@@ -100,7 +100,7 @@ sunder.package.agent
   +-- orchestration: behavior loops, subagents, child runs
 ```
 
-Extension packages use `Sunder.Package.Agent.Protocol` and `RegisterRpcProvider` to publish schema-validated capabilities to the core Agent package. That keeps providers, tools, execution targets, and memory features independently installable without sharing live extension objects across package activations.
+Extension packages use `Sunder.Package.Agent.Protocol` to publish schema-validated capabilities to the core Agent package. Managed Runtime modules publish handlers with `RegisterRpcProvider`; Worker V2 targets pass immutable `SunderWorkerProviderRegistration` entries in `SunderWorkerV2Options` to `SunderWorkerV2.RunAsync`. Both routes keep providers, tools, execution targets, and memory features independently installable without sharing live extension objects across package activations.
 
 Extension ownership is mandatory. Stack exporters use owned catalog contributions to include provider, execution-target, behavior-loop, skill, and subagent package dependencies; an ownerless catalog result is rejected by the SDK.
 
@@ -144,7 +144,7 @@ Package projects support two development modes:
 | Inside the private `sunder` workspace | Local source references to `repos/sunder-core` |
 | Standalone public clone | NuGet references to `Sunder.Sdk` and `Sunder.Package.Build` |
 
-GitHub CI resolves `Younics/sunder-core` `main` once at the start of each run and reuses that full commit SHA for every Core checkout in the run. Land coordinated Core changes on `main` before expecting Agent CI to consume them, and publish the required Core developer-package version before creating an Agent release tag; see [`docs/RELEASES.md`](docs/RELEASES.md).
+GitHub smoke CI and each new release run resolve `Younics/sunder-core` `main` once at workflow start and reuse that full commit SHA for every Core checkout in the run. A recovery rerun of the same release tag instead reuses the Core SHA recorded in preserved release evidence rather than resolving a newer `main`. Land coordinated Core changes on `main` before expecting Agent CI to consume them, and publish the required Core developer-package version before creating an Agent release tag; see [`docs/RELEASES.md`](docs/RELEASES.md).
 
 ## Tests
 
@@ -156,7 +156,7 @@ dotnet test tests/Sunder.Package.Agent.Provider.OpenAI.Tests/Sunder.Package.Agen
 
 ## Release Tags
 
-`agent/vX.Y.Z` releases `Sunder.Package.Agent.Protocol` and all 15 runtime packages as one family. The workflow builds once from one Agent commit and one Core `main` commit resolved at workflow start, validates the exact artifacts through Package Format, Runtime lifecycle, and App snapshot activation, publishes immutable versions without moving Registry tags, verifies downloaded bytes, and only then promotes `latest` for stable releases or `preview` for prereleases.
+`agent/vX.Y.Z` releases `Sunder.Package.Agent.Protocol` and all 15 runtime packages as one family. For a new release, the workflow builds once from one Agent commit and one Core `main` commit resolved once at workflow start; a recovery rerun reuses the preserved evidence's Core SHA. It validates the exact artifacts through Package Format, Runtime lifecycle, and App snapshot activation, publishes immutable versions without moving Registry tags, verifies downloaded bytes, and only then promotes `latest` for stable releases or `preview` for prereleases.
 
 Stable releases require `PublicAPI.Unshipped.txt` to contain no API entries. The 2.x baseline belongs to the `Sunder.Package.Agent.Protocol` package and assembly identity. The retained `Sunder.Package.Agent.Contracts.*` source namespaces are types inside that artifact, not a second package. Full operator steps and required repository configuration are in [`docs/RELEASES.md`](docs/RELEASES.md).
 

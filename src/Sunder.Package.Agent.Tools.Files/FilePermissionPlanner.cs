@@ -2,6 +2,7 @@ using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Tools.Files;
 
@@ -198,6 +199,10 @@ internal static class FilePermissionPlanner
                 {
                     hasUnknown = true;
                 }
+            }
+            catch (SunderRpcException)
+            {
+                throw;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

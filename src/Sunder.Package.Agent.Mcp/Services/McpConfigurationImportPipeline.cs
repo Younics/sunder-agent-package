@@ -70,4 +70,5 @@ internal static class McpJsonShapeValidator
 internal sealed record McpServerCatalogWrite(
     ConfiguredMcpServerRecord Server,
     IReadOnlyDictionary<string, string> Headers,
-    IReadOnlyDictionary<string, string> EnvironmentVariables);
+    IReadOnlyDictionary<string, string> EnvironmentVariables,
+    bool RetainMissingSecretValues = false);

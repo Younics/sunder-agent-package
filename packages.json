@@ -117,7 +117,7 @@
     {
       "key": "agent-tools-shell",
       "packageId": "sunder.package.agent.tools.shell",
-      "projectPath": "src/Sunder.Package.Agent.Tools.Shell/Sunder.Package.Agent.Tools.Shell.csproj",
+      "projectPath": "src/Sunder.Package.Agent.Tools.Shell/Aggregate/ShellPackage.csproj",
       "releaseTitle": "Sunder Agent Tools Shell",
       "artifactName": "sunder-agent-tools-shell-package",
       "artifactType": "sunderpkg"
@@ -165,12 +165,12 @@
     ],
     "sunder.package.agent.provider.anthropic": [
       "contributions.v1", "core.v1", "logging.v1",
-      "packaging.v1", "rpc.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1",
+      "packaging.v1", "rpc.v1", "runtime-operations.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1",
       "settings.schema.v1", "settings.v1", "shell-view.v1", "theming.v1", "view-navigation-preparation.v1"
     ],
     "sunder.package.agent.provider.gemini": [
       "contributions.v1", "core.v1", "logging.v1",
-      "packaging.v1", "rpc.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1",
+      "packaging.v1", "rpc.v1", "runtime-operations.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1",
       "settings.schema.v1", "settings.v1", "shell-view.v1", "theming.v1", "view-navigation-preparation.v1"
     ],
     "sunder.package.agent.provider.lmstudio": [
@@ -202,7 +202,7 @@
     ],
     "sunder.package.agent.tools.shell": [
       "contributions.v1", "core.v1", "logging.v1",
-      "packaging.v1", "rpc.v1", "sdk-baseline-1-1.v1"
+      "packaging.v1", "rpc.v1", "sdk-baseline-1-1.v1", "worker-protocol.v2"
     ],
     "sunder.package.agent.tools.web": [
       "contributions.v1", "core.v1", "logging.v1",

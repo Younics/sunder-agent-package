@@ -6,17 +6,6 @@ public sealed class AgentActiveRunRegistry
     private readonly Dictionary<Guid, AgentActiveRunHandle> _activeRuns = new();
     private readonly Dictionary<Guid, Dictionary<Guid, AgentActiveRunHandle>> _inFlightRuns = new();
 
-    public void Set(Guid sessionId, AgentActiveRunHandle activeRun)
-    {
-        var activation = Activate(sessionId, activeRun);
-        if (activation.Outcome == AgentRunActivationOutcome.Rejected)
-        {
-            return;
-        }
-
-        activation.DisplacedRun?.CancellationTokenSource.Cancel();
-    }
-
     internal AgentRunActivationResult Activate(Guid sessionId, AgentActiveRunHandle candidate)
     {
         lock (_syncRoot)
@@ -61,23 +50,6 @@ public sealed class AgentActiveRunRegistry
         }
     }
 
-    public IReadOnlyDictionary<Guid, AgentActiveRunHandle> RemoveMany(IReadOnlySet<Guid> sessionIds)
-    {
-        var removedRuns = new Dictionary<Guid, AgentActiveRunHandle>();
-        lock (_syncRoot)
-        {
-            foreach (var sessionId in sessionIds)
-            {
-                if (_activeRuns.Remove(sessionId, out var activeRun))
-                {
-                    removedRuns[sessionId] = activeRun;
-                }
-            }
-        }
-
-        return removedRuns;
-    }
-
     public bool IsCurrent(Guid sessionId, Guid runId, long runRevision)
     {
         lock (_syncRoot)
@@ -86,10 +58,6 @@ public sealed class AgentActiveRunRegistry
                 && Matches(activeRun, runId, runRevision);
         }
     }
-
-    [Obsolete("Legacy continuation compatibility only. Use the RunId-aware overload.")]
-    public bool IsCurrent(Guid sessionId, long runRevision)
-        => IsCurrent(sessionId, Guid.Empty, runRevision);
 
     public bool IsActive(Guid sessionId)
     {
@@ -167,10 +135,6 @@ public sealed class AgentActiveRunRegistry
 
         return removedRun is not null;
     }
-
-    [Obsolete("Legacy continuation compatibility only. Use the RunId-aware overload.")]
-    public void CleanupCurrent(Guid sessionId, long runRevision)
-        => CleanupCurrent(sessionId, Guid.Empty, runRevision);
 
     private static bool Matches(AgentActiveRunHandle activeRun, Guid runId, long runRevision)
         => activeRun.RunRevision == runRevision

@@ -6,8 +6,7 @@ namespace Sunder.Package.Agent.Execution.Local;
 
 internal sealed class LocalExecutionRuntimeOperationHandler(
     IPackageContext packageContext,
-    LocalShellCatalogService shellCatalog,
-    LocalExecutionWorkspaceEditorContributor workspaceEditor)
+    LocalShellCatalogService shellCatalog)
     : IPackageRuntimeOperationHandler<LocalExecutionOperationRequest, LocalExecutionOperationResponse>
 {
     private const int MaximumShellCount = 32;
@@ -24,8 +23,6 @@ internal sealed class LocalExecutionRuntimeOperationHandler(
                 LocalExecutionOperationKind.GetSettings => await GetSettingsAsync(cancellationToken),
                 LocalExecutionOperationKind.SaveSettings => await SaveSettingsAsync(request, cancellationToken),
                 LocalExecutionOperationKind.SaveShells => await SaveShellsAsync(request, cancellationToken),
-                LocalExecutionOperationKind.GetWorkspaceEditor => await GetWorkspaceEditorAsync(request, cancellationToken),
-                LocalExecutionOperationKind.SaveWorkspaceEditor => await SaveWorkspaceEditorAsync(request, cancellationToken),
                 _ => throw new LocalExecutionDomainException(
                     "local.operation.unknown",
                     "The requested local execution operation is not supported."),
@@ -127,23 +124,6 @@ internal sealed class LocalExecutionRuntimeOperationHandler(
             CustomShells: snapshot.CustomShells,
             ShellCatalogRevision: snapshot.Revision,
             Message: "Shell settings saved.");
-    }
-
-    private async ValueTask<LocalExecutionOperationResponse> GetWorkspaceEditorAsync(
-        LocalExecutionOperationRequest request,
-        CancellationToken cancellationToken)
-    {
-        var context = request.EditorContext ?? throw new InvalidOperationException("Workspace editor context is required.");
-        return new(EditorSections: await workspaceEditor.GetSectionsAsync(context, cancellationToken));
-    }
-
-    private async ValueTask<LocalExecutionOperationResponse> SaveWorkspaceEditorAsync(
-        LocalExecutionOperationRequest request,
-        CancellationToken cancellationToken)
-    {
-        var context = request.EditorContext ?? throw new InvalidOperationException("Workspace editor context is required.");
-        var saveRequest = request.EditorSaveRequest ?? throw new InvalidOperationException("Workspace editor values are required.");
-        return new(EditorSaveResult: await workspaceEditor.SaveSectionAsync(context, saveRequest, cancellationToken));
     }
 
 }

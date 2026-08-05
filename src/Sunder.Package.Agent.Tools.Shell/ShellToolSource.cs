@@ -4,6 +4,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Presentation;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Tools.Shell;
 
@@ -71,9 +72,13 @@ public sealed class ShellToolSource
         {
             return null;
         }
-        if (!TryAcquireTarget(request.ExecutionTargetReference, request.ExecutionBinding, out var targetLease))
+        var targetLease = await AcquireTargetAsync(
+                request.ExecutionTargetReference,
+                request.ExecutionBinding,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (targetLease is null)
         {
-            ThrowIfExactTargetUnavailable(request.ExecutionTargetReference);
             return null;
         }
 
@@ -99,7 +104,8 @@ public sealed class ShellToolSource
                         Provenance: AgentContextProvenance.Extension,
                         Trust: AgentContextTrust.Untrusted),
                 ]);
-            });
+            },
+            static () => (AgentPromptContextContribution?)null);
     }
 
     public async ValueTask<AgentToolReadiness?> GetReadinessAsync(
@@ -117,10 +123,17 @@ public sealed class ShellToolSource
             return new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "Shell tools require a selected workspace.");
         }
 
-        if (context.ExecutionBinding is null
-            || !TryAcquireTarget(context.ExecutionTargetReference, context.ExecutionBinding, out var targetLease))
+        if (context.ExecutionBinding is null)
         {
-            ThrowIfExactTargetUnavailable(context.ExecutionTargetReference);
+            return new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "The selected workspace is not bound to an installed execution target.");
+        }
+        var targetLease = await AcquireTargetAsync(
+                context.ExecutionTargetReference,
+                context.ExecutionBinding,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (targetLease is null)
+        {
             return new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "The selected workspace is not bound to an installed execution target.");
         }
 
@@ -138,7 +151,11 @@ public sealed class ShellToolSource
                 return readiness.Status == AgentExecutionTargetReadinessStatus.Ready && target.Descriptor.SupportsShell
                     ? new AgentToolReadiness(toolId, AgentToolReadinessStatus.Ready, "Workspace shell is ready.")
                     : new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, readiness.Message);
-            });
+            },
+            () => new AgentToolReadiness(
+                toolId,
+                AgentToolReadinessStatus.Failed,
+                "The selected execution target became unavailable while readiness was being checked."));
     }
 
     public async ValueTask<AgentToolResult> ExecuteAsync(
@@ -151,10 +168,17 @@ public sealed class ShellToolSource
             return Error(request.ToolId, "Shell tools require a selected workspace.", "shell-workspace-required");
         }
 
-        if (context.ExecutionBinding is null
-            || !TryAcquireTarget(context.ExecutionTargetReference, context.ExecutionBinding, out var targetLease))
+        if (context.ExecutionBinding is null)
         {
-            ThrowIfExactTargetUnavailable(context.ExecutionTargetReference);
+            return Error(request.ToolId, "The selected workspace is not bound to an installed execution target.", "shell-target-required");
+        }
+        var targetLease = await AcquireTargetAsync(
+                context.ExecutionTargetReference,
+                context.ExecutionBinding,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (targetLease is null)
+        {
             return Error(request.ToolId, "The selected workspace is not bound to an installed execution target.", "shell-target-required");
         }
 
@@ -190,7 +214,11 @@ public sealed class ShellToolSource
                 {
                     RequiresPromptContextRefresh = true,
                 };
-            });
+            },
+            () => Error(
+                request.ToolId,
+                "The selected execution target became unavailable while the command was running.",
+                AgentToolResultErrorCodes.PackageUnavailable));
     }
 
     public ValueTask<AgentPermissionRequest?> BuildPermissionRequestAsync(
@@ -225,26 +253,52 @@ public sealed class ShellToolSource
             ]),
         ];
 
-    private static bool TryAcquireTarget(
+    private static async ValueTask<AgentRpcLease<IAgentExecutionTarget>?> AcquireTargetAsync(
         AgentRpcReference<IAgentExecutionTarget>? selectedReference,
         AgentWorkspaceBindingRecord binding,
-        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-        out AgentRpcLease<IAgentExecutionTarget>? lease)
+        CancellationToken cancellationToken)
     {
-        if (selectedReference is null || !selectedReference.TryAcquire(out lease))
+        if (selectedReference is null)
         {
-            lease = null;
-            return false;
-        }
-        if (lease.RetirementToken.IsCancellationRequested
-            || !IsBindingMatch(lease.Service.Descriptor, binding))
-        {
-            lease.Dispose();
-            lease = null;
-            return false;
+            return null;
         }
 
-        return true;
+        var lease = await selectedReference.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
+        if (lease is null)
+        {
+            return null;
+        }
+
+        var retirementToken = lease.RetirementToken;
+        using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            retirementToken);
+        try
+        {
+            var descriptor = lease.Service is AgentExecutionTargetRpcClient rpcTarget
+                ? await rpcTarget.DescribeAsync(invocation.Token).ConfigureAwait(false)
+                : lease.Service.Descriptor;
+            if (retirementToken.IsCancellationRequested || !IsBindingMatch(descriptor, binding))
+            {
+                lease.Dispose();
+                return null;
+            }
+
+            return lease;
+        }
+        catch (Exception exception) when (IsTargetUnavailable(
+            exception,
+            retirementToken,
+            cancellationToken))
+        {
+            lease.Dispose();
+            return null;
+        }
+        catch
+        {
+            lease.Dispose();
+            throw;
+        }
     }
 
     private static bool IsBindingMatch(
@@ -256,11 +310,11 @@ public sealed class ShellToolSource
     private static async ValueTask<TResult> InvokeTargetAsync<TResult>(
         AgentRpcLease<IAgentExecutionTarget> lease,
         CancellationToken cancellationToken,
-        Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback)
+        Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback,
+        Func<TResult> unavailableResult)
     {
         using (lease)
         {
-            var packageId = lease.PackageId;
             var retirementToken = lease.RetirementToken;
             using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken,
@@ -270,30 +324,32 @@ public sealed class ShellToolSource
                 var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
                 if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
-                    throw new InvalidOperationException(
-                        $"Execution-target package '{packageId}' became unavailable while the callback was running.");
+                    return unavailableResult();
                 }
                 return result;
             }
-            catch (OperationCanceledException exception) when (
-                retirementToken.IsCancellationRequested
-                && !cancellationToken.IsCancellationRequested)
+            catch (Exception exception) when (IsTargetUnavailable(
+                exception,
+                retirementToken,
+                cancellationToken))
             {
-                throw new InvalidOperationException(
-                    $"Execution-target package '{packageId}' became unavailable while the callback was running.",
-                    exception);
+                return unavailableResult();
             }
         }
     }
 
-    private static void ThrowIfExactTargetUnavailable(
-        AgentRpcReference<IAgentExecutionTarget>? selectedReference)
-    {
-        if (selectedReference is not null)
-        {
-            throw new InvalidOperationException("The selected execution-target package is unavailable.");
-        }
-    }
+    private static bool IsTargetUnavailable(
+        Exception exception,
+        CancellationToken retirementToken,
+        CancellationToken callerCancellationToken)
+        => !callerCancellationToken.IsCancellationRequested
+           && (exception is SunderRpcException
+               {
+                   Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable,
+               }
+               || retirementToken.IsCancellationRequested
+               && (exception is OperationCanceledException
+                   || exception is SunderRpcException { Error.Kind: SunderRpcErrorKind.Cancelled }));
 
     private static bool IsShellToolId(string toolId)
         => string.Equals(toolId, Descriptor.ToolId, StringComparison.OrdinalIgnoreCase)

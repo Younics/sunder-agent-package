@@ -58,6 +58,27 @@ public sealed class SkillSettingsRaceTests
         Assert.Same(created, viewModel.SelectedSkill);
     }
 
+    [Fact]
+    public async Task ImportCompletionAndRetryAfterDisposalAreIgnored()
+    {
+        var gateway = new BlockingImportSkillGateway();
+        var viewModel = new SkillSettingsViewModel(gateway);
+        await viewModel.InitializeAsync();
+
+        var import = viewModel.ImportLocalFolderAsync("/first");
+        await gateway.ImportStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.Dispose();
+
+        await viewModel.ImportLocalFolderAsync("/after-disposal");
+        Assert.Equal(1, gateway.ImportCount);
+
+        gateway.ReleaseImport.TrySetResult();
+        await import.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Empty(viewModel.Skills);
+        Assert.Empty(viewModel.StatusText);
+    }
+
     private static InstalledSkillRecord Skill(string id, string name)
     {
         var now = DateTimeOffset.UtcNow;
@@ -194,5 +215,50 @@ public sealed class SkillSettingsRaceTests
             SkillsChanged?.Invoke();
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class BlockingImportSkillGateway : ISkillManagementGateway
+    {
+        private int _importCount;
+
+        public event Action? SkillsChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public int ImportCount => Volatile.Read(ref _importCount);
+
+        public TaskCompletionSource ImportStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseImport { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<IReadOnlyList<InstalledSkillRecord>> ListAsync(
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<InstalledSkillRecord>>([]);
+
+        public Task<IReadOnlyList<InstalledSkillRecord>> ImportGitHubAsync(
+            string url,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<InstalledSkillRecord>> ImportCommonAsync(
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async Task<IReadOnlyList<InstalledSkillRecord>> ImportLocalAsync(
+            string folderPath,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _importCount);
+            ImportStarted.TrySetResult();
+            await ReleaseImport.Task;
+            return [Skill("late", "Late skill")];
+        }
+
+        public Task DeleteAsync(string skillId, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
     }
 }

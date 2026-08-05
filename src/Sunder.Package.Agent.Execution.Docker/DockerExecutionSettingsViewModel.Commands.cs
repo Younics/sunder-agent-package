@@ -29,26 +29,31 @@ public sealed partial class DockerExecutionSettingsViewModel
                     ImageReference: imageReference),
                 request.CancellationToken,
                 showBusy: true,
-                () => _requests.IsCurrent(request));
+                () => _requests.IsCurrent(request)).ConfigureAwait(false);
             if (response is null)
             {
                 return;
             }
-            if (!TryGetImageSnapshot(response, "AddImage", out var images, out var catalogRevision))
+
+            await InvokePresentationAsync(() =>
             {
-                return;
-            }
-            if (fieldRevision == _newImageReferenceRevision)
-            {
-                NewImageReference = string.Empty;
-            }
-            ApplyImages(
-                images,
-                imageReference,
-                selectionRevision);
-            _catalogRevision = catalogRevision;
-            ClearRuntimeError();
-            StatusText = response.Message ?? "Docker image added.";
+                if (!_requests.IsCurrent(request)
+                    || !TryGetImageSnapshot(response, "AddImage", out var images, out var catalogRevision))
+                {
+                    return;
+                }
+                if (fieldRevision == _newImageReferenceRevision)
+                {
+                    NewImageReference = string.Empty;
+                }
+                ApplyImages(
+                    images,
+                    imageReference,
+                    selectionRevision);
+                _catalogRevision = catalogRevision;
+                ClearRuntimeError();
+                StatusText = response.Message ?? "Docker image added.";
+            }).ConfigureAwait(false);
         }
         finally
         {
@@ -74,16 +79,24 @@ public sealed partial class DockerExecutionSettingsViewModel
                     ImageReference: imageReference),
                 request.CancellationToken,
                 showBusy: true,
-                () => _requests.IsCurrent(request));
-            if (response is null
-                || !TryGetImageSnapshot(response, "DeleteImage", out var images, out var catalogRevision))
+                () => _requests.IsCurrent(request)).ConfigureAwait(false);
+            if (response is null)
             {
                 return;
             }
-            ApplyImages(images, expectedSelectionRevision: selectionRevision);
-            _catalogRevision = catalogRevision;
-            ClearRuntimeError();
-            StatusText = response.Message ?? $"Deleted Docker image '{imageReference}'.";
+
+            await InvokePresentationAsync(() =>
+            {
+                if (!_requests.IsCurrent(request)
+                    || !TryGetImageSnapshot(response, "DeleteImage", out var images, out var catalogRevision))
+                {
+                    return;
+                }
+                ApplyImages(images, expectedSelectionRevision: selectionRevision);
+                _catalogRevision = catalogRevision;
+                ClearRuntimeError();
+                StatusText = response.Message ?? $"Deleted Docker image '{imageReference}'.";
+            }).ConfigureAwait(false);
         }
         finally
         {
@@ -114,7 +127,7 @@ public sealed partial class DockerExecutionSettingsViewModel
                     async context =>
                     {
                         context.ReportIndeterminate($"Pulling Docker image '{imageReference}'...");
-                        var response = await _runtimeClient.InvokeAsync(new DockerExecutionOperationRequest(
+                        var response = await InvokeRuntimeAsync(new DockerExecutionOperationRequest(
                             DockerExecutionOperationKind.PullImage,
                             ImageReference: imageReference), context.CancellationToken).ConfigureAwait(false);
                         if (response.Error is not null)
@@ -173,10 +186,19 @@ public sealed partial class DockerExecutionSettingsViewModel
                     ImageReference: selected.ImageReference),
                 request.CancellationToken,
                 showBusy: true,
-                () => _requests.IsCurrent(request));
-            if (response is not null
-                && TryGetImageSnapshot(response, "RefreshImage", out var images, out var catalogRevision))
+                () => _requests.IsCurrent(request)).ConfigureAwait(false);
+            if (response is null)
             {
+                return;
+            }
+
+            await InvokePresentationAsync(() =>
+            {
+                if (!_requests.IsCurrent(request)
+                    || !TryGetImageSnapshot(response, "RefreshImage", out var images, out var catalogRevision))
+                {
+                    return;
+                }
                 ApplyImages(
                     images,
                     selected.ImageReference,
@@ -184,7 +206,7 @@ public sealed partial class DockerExecutionSettingsViewModel
                 _catalogRevision = catalogRevision;
                 ClearRuntimeError();
                 StatusText = response.Message ?? $"Refreshed Docker image '{selected.ImageReference}'.";
-            }
+            }).ConfigureAwait(false);
         }
         finally
         {
@@ -208,15 +230,24 @@ public sealed partial class DockerExecutionSettingsViewModel
                 new DockerExecutionOperationRequest(DockerExecutionOperationKind.RefreshImages),
                 request.CancellationToken,
                 showBusy: true,
-                () => _requests.IsCurrent(request));
-            if (response is not null
-                && TryGetImageSnapshot(response, "RefreshImages", out var images, out var catalogRevision))
+                () => _requests.IsCurrent(request)).ConfigureAwait(false);
+            if (response is null)
             {
+                return;
+            }
+
+            await InvokePresentationAsync(() =>
+            {
+                if (!_requests.IsCurrent(request)
+                    || !TryGetImageSnapshot(response, "RefreshImages", out var images, out var catalogRevision))
+                {
+                    return;
+                }
                 ApplyImages(images, selectedReference, selectionRevision);
                 _catalogRevision = catalogRevision;
                 ClearRuntimeError();
                 StatusText = response.Message ?? "Docker image status refreshed.";
-            }
+            }).ConfigureAwait(false);
         }
         finally
         {
@@ -252,22 +283,26 @@ public sealed partial class DockerExecutionSettingsViewModel
                 TimeoutSeconds: timeoutSeconds.ToString(),
                 DockerCliPath: dockerCliPath),
             linkedCancellation.Token,
-            showBusy: true);
+            showBusy: true).ConfigureAwait(false);
         if (response is null)
         {
             return;
         }
-        if (response.TimeoutSeconds is null || response.DockerCliPath is null)
-        {
-            SetProtocolError("SaveSettings response omitted required fields.");
-            return;
-        }
 
-        ApplyTimeoutSeconds(response.TimeoutSeconds, timeoutRevision);
-        ApplyDockerCliPath(response.DockerCliPath, pathRevision);
-        AdvanceSettingsAuthority();
-        ClearRuntimeError();
-        StatusText = response.Message ?? "Docker execution settings saved.";
+        await InvokePresentationAsync(() =>
+        {
+            if (response.TimeoutSeconds is null || response.DockerCliPath is null)
+            {
+                SetProtocolError("SaveSettings response omitted required fields.");
+                return;
+            }
+
+            ApplyTimeoutSeconds(response.TimeoutSeconds, timeoutRevision);
+            ApplyDockerCliPath(response.DockerCliPath, pathRevision);
+            AdvanceSettingsAuthority();
+            ClearRuntimeError();
+            StatusText = response.Message ?? "Docker execution settings saved.";
+        }).ConfigureAwait(false);
     }
 
     [RelayCommand(CanExecute = nameof(CanRunBusyCommand))]
@@ -283,12 +318,15 @@ public sealed partial class DockerExecutionSettingsViewModel
         var response = await RunOperationAsync(
             new DockerExecutionOperationRequest(DockerExecutionOperationKind.TestDocker),
             linkedCancellation.Token,
-            showBusy: true);
+            showBusy: true).ConfigureAwait(false);
         if (response is not null)
         {
-            ClearRuntimeError();
-            StatusText = response.Message
-                ?? (response.Success ? "Docker is available." : "Docker is unavailable.");
+            await InvokePresentationAsync(() =>
+            {
+                ClearRuntimeError();
+                StatusText = response.Message
+                    ?? (response.Success ? "Docker is available." : "Docker is unavailable.");
+            }).ConfigureAwait(false);
         }
     }
 

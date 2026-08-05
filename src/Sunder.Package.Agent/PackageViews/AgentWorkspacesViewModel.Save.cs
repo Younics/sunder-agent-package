@@ -60,21 +60,39 @@ public sealed partial class AgentWorkspacesViewModel
             _suppressWorkspaceRefresh = true;
             try
             {
-                _workspaceService.SaveWorkspaceAggregate(
-                    snapshot.Workspace.WorkspaceId,
-                    snapshot.DisplayName,
-                    snapshot.Description,
-                    snapshot.Paths,
-                    snapshot.Documents,
-                    snapshot.ExecutionTargetId);
+                if (_workspaceCommands is null)
+                {
+                    _workspaceService.SaveWorkspaceAggregate(
+                        snapshot.Workspace.WorkspaceId,
+                        snapshot.DisplayName,
+                        snapshot.Description,
+                        snapshot.Paths,
+                        snapshot.Documents,
+                        snapshot.ExecutionTargetId);
+                }
+                else
+                {
+                    await _workspaceCommands.SaveWorkspaceAggregateAsync(
+                        snapshot.Workspace.WorkspaceId,
+                        snapshot.DisplayName,
+                        snapshot.Description,
+                        snapshot.Paths,
+                        snapshot.Documents,
+                        snapshot.ExecutionTargetId,
+                        _lifetimeCancellation.Token);
+                }
             }
             finally
             {
                 _suppressWorkspaceRefresh = false;
             }
+            var refreshedWorkspaces = await LoadWorkspacesAsync(_lifetimeCancellation.Token);
             if (snapshot.ExecutionTargetId is not null)
             {
-                var warmupWorkspace = _workspaceService.GetWorkspace(snapshot.Workspace.WorkspaceId)
+                var warmupWorkspace = refreshedWorkspaces.FirstOrDefault(workspace => string.Equals(
+                        workspace.WorkspaceId,
+                        snapshot.Workspace.WorkspaceId,
+                        StringComparison.OrdinalIgnoreCase))
                     ?? snapshot.Workspace;
                 if (IsCurrentSaveIntent(snapshot))
                 {
@@ -106,7 +124,7 @@ public sealed partial class AgentWorkspacesViewModel
                 ClearStatus();
             }
             var currentSelection = SelectedWorkspace;
-            var workspaces = _workspaceService.ListWorkspaces()
+            var workspaces = refreshedWorkspaces
                 .Select(workspace => currentSelection is not null
                     && (!intentIsCurrent || editedDuringSave)
                     && string.Equals(

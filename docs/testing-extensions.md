@@ -2,22 +2,6 @@
 
 Test at three levels: contract behavior, package composition, and generated artifact/runtime lifecycle. A project compiling is necessary but does not prove role placement, package dependency metadata, permissions, or unload safety.
 
-## Compile The Minimal Sample
-
-From this repository:
-
-```powershell
-dotnet restore samples/Sunder.Agent.Extension.Minimal/Sunder.Agent.Extension.Minimal.csproj
-dotnet build samples/Sunder.Agent.Extension.Minimal/Sunder.Agent.Extension.Minimal.csproj --no-restore
-```
-
-The project is intentionally outside `Sunder.AgentPackage.slnx` because it is not a first-party release artifact. Its normal build is a compile fixture. To exercise generated manifest/archive output without adding the sample to the coordinated repository inventory, opt in for that command only:
-
-```powershell
-dotnet restore samples/Sunder.Agent.Extension.Minimal/Sunder.Agent.Extension.Minimal.csproj -p:BuildAuthorSamplePackage=true
-dotnet publish samples/Sunder.Agent.Extension.Minimal/Sunder.Agent.Extension.Minimal.csproj -c Release --no-restore -p:BuildAuthorSamplePackage=true
-```
-
 ## Unit Tests
 
 Instantiate the public contract directly with deterministic fakes for package context, storage, secrets, HTTP/process backends, and time where applicable.

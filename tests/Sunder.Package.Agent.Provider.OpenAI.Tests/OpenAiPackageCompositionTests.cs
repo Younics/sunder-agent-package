@@ -24,6 +24,7 @@ public sealed class OpenAiPackageCompositionTests
         runtimeModule.ConfigureRuntimeServices(runtimeServices, context);
 
         Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialAccessor));
+        Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialRuntimeHandler));
         Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(ApiKeyAuthStrategy));
         Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(CodexConnectedAuthStrategy));
         Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(OpenAiPackageAuthHandler));
@@ -49,8 +50,20 @@ public sealed class OpenAiPackageCompositionTests
             runtimeRegistry.RpcProviderIds);
         Assert.All(runtimeRegistry.RpcHandlerTypes, type => Assert.Equal(typeof(AgentRpcServiceHandler), type));
         Assert.Same(OpenAiProviderConfiguration.Schema, Assert.Single(runtimeRegistry.SettingsSchemas));
-        Assert.Equal([OpenAiRuntimeOperations.Auth.OperationId], runtimeRegistry.RuntimeOperationIds);
-        Assert.Equal([typeof(OpenAiAuthOperationHandler)], runtimeRegistry.RuntimeOperationHandlerTypes);
+        Assert.Equal(
+            [
+                OpenAiRuntimeOperations.Auth.OperationId,
+                ProviderCredentialRuntimeOperations.Query.OperationId,
+                ProviderCredentialRuntimeOperations.Command.OperationId,
+            ],
+            runtimeRegistry.RuntimeOperationIds);
+        Assert.Equal(
+            [
+                typeof(OpenAiAuthOperationHandler),
+                typeof(ProviderCredentialRuntimeHandler),
+                typeof(ProviderCredentialRuntimeHandler),
+            ],
+            runtimeRegistry.RuntimeOperationHandlerTypes);
 
         var appServices = new ServiceCollection();
         appServices.AddSingleton<IPackageRuntimeClient>(NullPackageRuntimeClient.Instance);
@@ -58,7 +71,9 @@ public sealed class OpenAiPackageCompositionTests
         appModule.ConfigureAppServices(appServices, context);
         Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiSettingsViewModel));
         Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiAuthPresentationService));
+        Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialAppRuntimeGateway));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialAccessor));
+        Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialRuntimeHandler));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(ApiKeyAuthStrategy));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(CodexConnectedAuthStrategy));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiPackageAuthHandler));

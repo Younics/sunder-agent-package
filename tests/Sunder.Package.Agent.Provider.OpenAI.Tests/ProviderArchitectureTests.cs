@@ -41,6 +41,24 @@ public sealed partial class ProviderArchitectureTests
     }
 
     [Fact]
+    public void ProviderSettingsViewModels_DoNotAccessRuntimeSecretsDirectly()
+    {
+        var sourceDirectory = Path.Combine(GetRepositoryRoot(), "src");
+        var settingsViewModels = Directory.EnumerateDirectories(sourceDirectory, "Sunder.Package.Agent.Provider.*")
+            .Where(path => !path.EndsWith(".Shared", StringComparison.Ordinal))
+            .SelectMany(path => Directory.EnumerateFiles(path, "*SettingsViewModel.cs", SearchOption.TopDirectoryOnly))
+            .ToArray();
+
+        Assert.Equal(4, settingsViewModels.Length);
+        foreach (var path in settingsViewModels)
+        {
+            var source = File.ReadAllText(path);
+            Assert.DoesNotContain("ProviderCredentialAccessor", source, StringComparison.Ordinal);
+            Assert.DoesNotContain(".Secrets", source, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void ProviderAssemblies_PublicTypesStayWithinTheApprovedArchitectureSurface()
     {
         var expectedTypes = new HashSet<string>(StringComparer.Ordinal)

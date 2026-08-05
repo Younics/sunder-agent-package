@@ -26,22 +26,40 @@ public sealed class AgentRpcProviderService<TClient>(
         => createClient(client, provider);
 }
 
-public class AgentRpcCatalog : IDisposable
+public partial class AgentRpcCatalog : IDisposable
 {
     private static readonly TimeSpan WatchRetryDelay = TimeSpan.FromMilliseconds(250);
     private readonly ISunderRpcClient _client;
     private readonly object _gate = new();
     private readonly Dictionary<string, Dictionary<string, IRetirableAgentRpcReference>> _references = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _lifetime = new();
-    private readonly Task _watchTask;
+    private Task? _watchTask;
     private AgentRpcCatalogAvailability _availability;
     private SunderRpcError? _availabilityError;
     private int _disposed;
 
     public AgentRpcCatalog(ISunderRpcClient client)
+        : this(client, startWatching: true)
+    {
+    }
+
+    private AgentRpcCatalog(ISunderRpcClient client, bool startWatching)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
-        _watchTask = WatchAsync();
+        if (startWatching) StartWatching();
+    }
+
+    public static AgentRpcCatalog CreateDormant(ISunderRpcClient client)
+        => new(client, startWatching: false);
+
+    public void StartWatching()
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            _watchTask ??= WatchAsync();
+        }
     }
 
     public event EventHandler<AgentRpcCatalogChangedEventArgs>? Changed;
@@ -142,18 +160,6 @@ public class AgentRpcCatalog : IDisposable
         }
     }
 
-    public IReadOnlyList<TClient> GetServices<TClient>(AgentRpcService<TClient> service)
-        where TClient : class
-    {
-        var clients = new List<TClient>();
-        foreach (var reference in GetServiceReferences(service))
-        {
-            if (!reference.TryAcquire(out var lease)) continue;
-            using (lease) clients.Add(lease.Service);
-        }
-        return clients;
-    }
-
     public AgentRpcReference<TClient> GetServiceReference<TClient>(
         AgentRpcService<TClient> service,
         AgentRpcProviderHandle handle)
@@ -198,24 +204,74 @@ public class AgentRpcCatalog : IDisposable
         }
     }
 
+    internal bool TryGetServiceReference<TClient>(
+        AgentRpcService<TClient> service,
+        AgentRpcProviderHandle handle,
+        [NotNullWhen(true)] out AgentRpcReference<TClient>? reference)
+        where TClient : class
+    {
+        try
+        {
+            reference = GetServiceReference(service, handle);
+            return true;
+        }
+        catch (SunderRpcException exception) when (
+            exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+        {
+            reference = null;
+            return false;
+        }
+    }
+
     public bool TryReportInvariantViolation<TClient>(AgentRpcReference<TClient> reference, Exception exception)
         where TClient : class
     {
         ArgumentNullException.ThrowIfNull(reference);
         ArgumentNullException.ThrowIfNull(exception);
-        return false;
+        lock (_gate)
+        {
+            if (Volatile.Read(ref _disposed) != 0
+                || !_references.TryGetValue(reference.Provider.ContractId, out var known)
+                || !known.TryGetValue(reference.Endpoint.Value, out var current)
+                || !ReferenceEquals(current, reference)
+                || !reference.CanReuse(reference.Provider))
+            {
+                return false;
+            }
+        }
+
+        try
+        {
+            return Task.Run(async () => await _client.TryReportInvariantViolationAsync(
+                    reference.Endpoint,
+                    exception,
+                    _lifetime.Token).ConfigureAwait(false))
+                .GetAwaiter()
+                .GetResult();
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _lifetime.Cancel();
+        Task? watchTask;
         lock (_gate)
         {
             foreach (var reference in _references.Values.SelectMany(static values => values.Values)) reference.Retire();
             _references.Clear();
+            watchTask = _watchTask;
         }
-        _ = _watchTask.ContinueWith(
+        if (watchTask is null)
+        {
+            _lifetime.Dispose();
+            return;
+        }
+        _ = watchTask.ContinueWith(
             static (_, state) => ((CancellationTokenSource)state!).Dispose(),
             _lifetime,
             CancellationToken.None,
@@ -310,6 +366,54 @@ public class AgentRpcCatalog : IDisposable
         }
     }
 
+    private async ValueTask<SunderRpcCatalogSnapshot?> DiscoverAsync(
+        string contractId,
+        CancellationToken cancellationToken)
+    {
+        using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetime.Token);
+        try
+        {
+            var snapshot = await _client.DiscoverAsync(contractId, invocation.Token).ConfigureAwait(false);
+            SetAvailability(AgentRpcCatalogAvailability.Available, null);
+            return snapshot;
+        }
+        catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Unavailable)
+        {
+            SetAvailability(AgentRpcCatalogAvailability.Unavailable, exception.Error);
+            return null;
+        }
+        catch (SunderRpcException exception) when (
+            exception.Error.Kind == SunderRpcErrorKind.Cancelled
+            && cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(exception.Message, exception, cancellationToken);
+        }
+        catch (SunderRpcException exception) when (
+            exception.Error.Kind == SunderRpcErrorKind.Cancelled
+            && _lifetime.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (SunderRpcException exception)
+        {
+            SetAvailability(MapAvailability(exception), exception.Error);
+            throw;
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested
+            || _lifetime.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            SetAvailability(AgentRpcCatalogAvailability.Faulted, null);
+            throw;
+        }
+    }
+
     private static AgentRpcCatalogAvailability MapAvailability(SunderRpcException exception)
         => exception.Error.Kind switch
         {
@@ -379,7 +483,7 @@ public class AgentRpcCatalog : IDisposable
     }
 }
 
-public sealed class AgentRpcProviderReference<TClient> : IRetirableAgentRpcReference
+public sealed partial class AgentRpcProviderReference<TClient> : IRetirableAgentRpcReference
     where TClient : class
 {
     private readonly ISunderRpcClient _client;
@@ -429,7 +533,9 @@ public sealed class AgentRpcProviderReference<TClient> : IRetirableAgentRpcRefer
             lease = null;
             return false;
         }
-        if (current is null || current.ActivationId != Provider.ActivationId || current.State != SunderRpcProviderState.Active)
+        if (current is null
+            || current.State != SunderRpcProviderState.Active
+            || !AgentRpcProviderHandle.From(Provider).Matches(current))
         {
             Retire();
             lease = null;
@@ -474,7 +580,7 @@ public sealed class AgentRpcCatalogChangedEventArgs(IReadOnlySet<string> contrac
     public bool IncludesContract(string contractId) => IsReset || ContractIds.Contains(contractId);
 }
 
-public sealed class AgentRpcReference<TClient> : IRetirableAgentRpcReference
+public sealed partial class AgentRpcReference<TClient> : IRetirableAgentRpcReference
     where TClient : class
 {
     private readonly ISunderRpcClient _client;
@@ -532,8 +638,8 @@ public sealed class AgentRpcReference<TClient> : IRetirableAgentRpcReference
             return false;
         }
         if (current is null
-            || current.ActivationId != Provider.ActivationId
-            || current.State != SunderRpcProviderState.Active)
+            || current.State != SunderRpcProviderState.Active
+            || !ToHandle().Matches(current))
         {
             Retire();
             lease = null;
@@ -577,8 +683,6 @@ public sealed class AgentRpcLease<TClient>(string packageId, TClient service, Ca
 
     public TClient Service
         => Volatile.Read(ref _disposed) == 0 ? service : throw new ObjectDisposedException(nameof(AgentRpcLease<TClient>));
-
-    public TClient Contribution => Service;
 
     public CancellationToken RetirementToken
         => Volatile.Read(ref _disposed) == 0 ? retirementToken : throw new ObjectDisposedException(nameof(AgentRpcLease<TClient>));

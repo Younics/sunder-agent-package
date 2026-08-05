@@ -38,7 +38,7 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     [Fact]
-    public async Task ChatSnapshotHandler_ResolvesSelectionsWithoutPersistingBeforeUiApply()
+    public async Task ChatSnapshotHandler_ResolvesExplicitSelectionsWithoutReadingAppState()
     {
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
@@ -54,7 +54,6 @@ public sealed class AgentRuntimeCorrectnessTests
         using var profiles = new AgentProfileService(store, tools, catalog, catalog.BehaviorLoops);
         var permissions = new AgentPermissionService(store, catalog);
         using var changes = new AgentRuntimeChangeHub(profiles, workspaces, sessions);
-        var selections = new AgentChatSelectionStateService(scope.Context);
         var profile = await profiles.CreateProfileAsync("Snapshot profile");
         var workspace = workspaces.CreateWorkspace("Snapshot workspace");
         var rootSession = sessions.CreateSession(
@@ -77,13 +76,7 @@ public sealed class AgentRuntimeCorrectnessTests
             AgentMessageRole.Assistant,
             transcriptContent);
         permissions.SetSessionUnrestrictedMode(rootSession.SessionId, true);
-        await selections.SaveSelectedProfileIdAsync("missing-profile");
-        await selections.SaveSelectedWorkspaceIdAsync("missing-workspace");
-        await selections.SaveSelectedSessionIdAsync(workspace.WorkspaceId, Guid.NewGuid());
-        var handler = new AgentChatSnapshotHandler(
-            store,
-            selections,
-            changes);
+        var handler = new AgentChatSnapshotHandler(store, changes);
 
         var snapshot = await handler.HandleAsync(new AgentChatSnapshotRequest(
             PreferredProfileId: "missing-preferred-profile",
@@ -105,11 +98,6 @@ public sealed class AgentRuntimeCorrectnessTests
         var transcriptItem = Assert.Single(snapshot.InitialTranscript.Turns).Items[0];
         Assert.Equal(transcriptContent, transcriptItem.TextContent);
         Assert.False(transcriptItem.WasTruncated);
-        Assert.Equal("missing-profile", await selections.GetSelectedProfileIdAsync());
-        Assert.Equal("missing-workspace", await selections.GetSelectedWorkspaceIdAsync());
-        Assert.NotEqual(
-            rootSession.SessionId,
-            await selections.GetSelectedSessionIdAsync(workspace.WorkspaceId));
     }
 
     [Fact]
@@ -129,7 +117,6 @@ public sealed class AgentRuntimeCorrectnessTests
         using var profiles = new AgentProfileService(store, tools, catalog, catalog.BehaviorLoops);
         var permissions = new AgentPermissionService(store, catalog);
         using var changes = new AgentRuntimeChangeHub(profiles, workspaces, sessions);
-        var selections = new AgentChatSelectionStateService(scope.Context);
         var storedProfile = await profiles.CreateProfileAsync("Stored profile");
         var preferredProfile = await profiles.CreateProfileAsync("Preferred profile");
         var storedWorkspace = workspaces.CreateWorkspace("Stored workspace");
@@ -140,13 +127,7 @@ public sealed class AgentRuntimeCorrectnessTests
         var preferredSession = sessions.CreateSession(
             "Preferred session",
             workspaceId: preferredWorkspace.WorkspaceId);
-        await selections.SaveSelectedProfileIdAsync(storedProfile.ProfileId);
-        await selections.SaveSelectedWorkspaceIdAsync(storedWorkspace.WorkspaceId);
-        await selections.SaveSelectedSessionIdAsync(storedWorkspace.WorkspaceId, storedSession.SessionId);
-        var handler = new AgentChatSnapshotHandler(
-            store,
-            selections,
-            changes);
+        var handler = new AgentChatSnapshotHandler(store, changes);
 
         var snapshot = await handler.HandleAsync(new AgentChatSnapshotRequest(
             PreferredProfileId: preferredProfile.ProfileId,
@@ -156,11 +137,9 @@ public sealed class AgentRuntimeCorrectnessTests
         Assert.Equal(preferredProfile.ProfileId, snapshot.SelectedProfile?.ProfileId);
         Assert.Equal(preferredWorkspace.WorkspaceId, snapshot.SelectedWorkspace?.WorkspaceId);
         Assert.Equal(preferredSession.SessionId, snapshot.SelectedSession?.Session.SessionId);
-        Assert.Equal(storedProfile.ProfileId, await selections.GetSelectedProfileIdAsync());
-        Assert.Equal(storedWorkspace.WorkspaceId, await selections.GetSelectedWorkspaceIdAsync());
-        Assert.Equal(
-            storedSession.SessionId,
-            await selections.GetSelectedSessionIdAsync(storedWorkspace.WorkspaceId));
+        Assert.NotEqual(storedProfile.ProfileId, snapshot.SelectedProfile?.ProfileId);
+        Assert.NotEqual(storedWorkspace.WorkspaceId, snapshot.SelectedWorkspace?.WorkspaceId);
+        Assert.NotEqual(storedSession.SessionId, snapshot.SelectedSession?.Session.SessionId);
     }
 
     [Fact]
@@ -179,18 +158,17 @@ public sealed class AgentRuntimeCorrectnessTests
             catalog);
         using var profiles = new AgentProfileService(store, tools, catalog, catalog.BehaviorLoops);
         using var changes = new AgentRuntimeChangeHub(profiles, workspaces, sessions);
-        var selections = new AgentChatSelectionStateService(scope.Context);
         var profile = await profiles.CreateProfileAsync("Cached profile");
         var workspace = workspaces.CreateWorkspace("Cached workspace");
         var session = sessions.CreateSession(
             "Cached session",
             profileId: profile.ProfileId,
             workspaceId: workspace.WorkspaceId);
-        await selections.SaveSelectedProfileIdAsync(profile.ProfileId);
-        await selections.SaveSelectedWorkspaceIdAsync(workspace.WorkspaceId);
-        await selections.SaveSelectedSessionIdAsync(workspace.WorkspaceId, session.SessionId);
-        var handler = new AgentChatSnapshotHandler(store, selections, changes);
-        var request = new AgentChatSnapshotRequest();
+        var handler = new AgentChatSnapshotHandler(store, changes);
+        var request = new AgentChatSnapshotRequest(
+            PreferredProfileId: profile.ProfileId,
+            PreferredWorkspaceId: workspace.WorkspaceId,
+            PreferredSessionId: session.SessionId);
 
         var first = await handler.HandleAsync(request);
         var cached = await handler.HandleAsync(request);
@@ -204,7 +182,7 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     [Fact]
-    public async Task ChatSnapshotHandler_InvalidatesWhenStoredSessionSelectionChanges()
+    public async Task ChatSnapshotHandler_InvalidatesWhenRequestedSessionSelectionChanges()
     {
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
@@ -219,22 +197,51 @@ public sealed class AgentRuntimeCorrectnessTests
             catalog);
         using var profiles = new AgentProfileService(store, tools, catalog, catalog.BehaviorLoops);
         using var changes = new AgentRuntimeChangeHub(profiles, workspaces, sessions);
-        var selections = new AgentChatSelectionStateService(scope.Context);
         var workspace = workspaces.CreateWorkspace("Selection workspace");
         var firstSession = sessions.CreateSession("First session", workspaceId: workspace.WorkspaceId);
         var secondSession = sessions.CreateSession("Second session", workspaceId: workspace.WorkspaceId);
-        await selections.SaveSelectedWorkspaceIdAsync(workspace.WorkspaceId);
-        await selections.SaveSelectedSessionIdAsync(workspace.WorkspaceId, firstSession.SessionId);
-        var handler = new AgentChatSnapshotHandler(store, selections, changes);
-        var request = new AgentChatSnapshotRequest();
+        var handler = new AgentChatSnapshotHandler(store, changes);
+        var firstRequest = new AgentChatSnapshotRequest(
+            PreferredWorkspaceId: workspace.WorkspaceId,
+            PreferredSessionId: firstSession.SessionId);
+        var secondRequest = firstRequest with { PreferredSessionId = secondSession.SessionId };
 
-        var first = await handler.HandleAsync(request);
-        await selections.SaveSelectedSessionIdAsync(workspace.WorkspaceId, secondSession.SessionId);
-        var second = await handler.HandleAsync(request);
+        var first = await handler.HandleAsync(firstRequest);
+        var second = await handler.HandleAsync(secondRequest);
 
         Assert.NotSame(first, second);
         Assert.Equal(firstSession.SessionId, first.SelectedSession?.Session.SessionId);
         Assert.Equal(secondSession.SessionId, second.SelectedSession?.Session.SessionId);
+    }
+
+    [Fact]
+    public async Task ChatViewModel_InitialSnapshotRequestIncludesPersistedAppSelections()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var selectionState = new AgentChatSelectionStateService(scope.Context);
+        var snapshot = CreateChatSnapshot(revision: 16);
+        var profileId = snapshot.SelectedProfile!.ProfileId;
+        var workspaceId = snapshot.SelectedWorkspace!.WorkspaceId;
+        var sessionId = snapshot.SelectedSession!.Session.SessionId;
+        await selectionState.SaveSelectedProfileIdAsync(profileId);
+        await selectionState.SaveSelectedWorkspaceIdAsync(workspaceId);
+        await selectionState.SaveSelectedSessionIdAsync(workspaceId, sessionId);
+        var client = new StaticChatSnapshotRuntimeClient(snapshot);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        using var viewModel = new AgentChatViewModel(
+            gateway,
+            gateway,
+            gateway,
+            gateway,
+            gateway,
+            selectionState);
+
+        await viewModel.InitializeAsync();
+
+        var request = Assert.Single(client.ChatSnapshotRequests);
+        Assert.Equal(profileId, request.PreferredProfileId);
+        Assert.Equal(workspaceId, request.PreferredWorkspaceId);
+        Assert.Equal(sessionId, request.PreferredSessionId);
     }
 
     [Fact]
@@ -813,9 +820,7 @@ public sealed class AgentRuntimeCorrectnessTests
             "Atomic session",
             profileId: profile.ProfileId,
             workspaceId: workspace.WorkspaceId);
-        var selections = new AgentChatSelectionStateService(scope.Context);
-        await selections.SaveSelectedWorkspaceIdAsync(workspace.WorkspaceId);
-        var handler = new AgentChatSnapshotHandler(runtime.Store, selections, changes);
+        var handler = new AgentChatSnapshotHandler(runtime.Store, changes);
         var mutationReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseMutation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         runtime.Store.WorkspaceAggregateStageCompleted = stage =>
@@ -874,7 +879,6 @@ public sealed class AgentRuntimeCorrectnessTests
             "Running now.");
         var handler = new AgentChatSnapshotHandler(
             runtime.Store,
-            new AgentChatSelectionStateService(scope.Context),
             changes);
 
         var snapshot = await handler.HandleAsync(new AgentChatSnapshotRequest(
@@ -918,7 +922,6 @@ public sealed class AgentRuntimeCorrectnessTests
         }
         var handler = new AgentChatSnapshotHandler(
             runtime.Store,
-            new AgentChatSelectionStateService(scope.Context),
             changes);
 
         var snapshot = await handler.HandleAsync(new AgentChatSnapshotRequest(
@@ -970,7 +973,6 @@ public sealed class AgentRuntimeCorrectnessTests
             new string('x', 6 * 1024 * 1024));
         var handler = new AgentChatSnapshotHandler(
             runtime.Store,
-            new AgentChatSelectionStateService(scope.Context),
             changes);
 
         var snapshot = await handler.HandleAsync(new AgentChatSnapshotRequest(
@@ -1012,7 +1014,6 @@ public sealed class AgentRuntimeCorrectnessTests
         var baselineCalls = catalog.InvocationCount;
         var handler = new AgentChatSnapshotHandler(
             runtime.Store,
-            new AgentChatSelectionStateService(scope.Context),
             changes);
 
         _ = await handler.HandleAsync(new AgentChatSnapshotRequest(
@@ -1552,6 +1553,7 @@ public sealed class AgentRuntimeCorrectnessTests
         using var viewModel = new AgentPermissionsViewModel(gateway);
 
         await WaitUntilAsync(() => client.SubscriptionCount > 0);
+        await WaitUntilAsync(() => viewModel.Rows.Count > 0);
 
         Assert.Single(viewModel.Rows);
         Assert.Equal("test.mutate", viewModel.Rows[0].ActionId);
@@ -1936,12 +1938,6 @@ public sealed class AgentRuntimeCorrectnessTests
 
         public IReadOnlyList<AgentPendingPermissionRequestRecord> ListPendingRequestsForSessionTree(
             Guid requestedSessionId) => [];
-
-        public void SaveSessionApproval(
-            Guid requestedSessionId,
-            string actionId,
-            string boundaryId)
-        { }
 
         public async Task<AgentChatPermissionProjection> LoadSessionPermissionsAsync(
             Guid requestedSessionId,
@@ -2705,6 +2701,7 @@ public sealed class AgentRuntimeCorrectnessTests
         : IPackageRuntimeClient
     {
         public bool IsAvailable => true;
+        public ConcurrentQueue<AgentChatSnapshotRequest> ChatSnapshotRequests { get; } = new();
 
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
             PackageRuntimeOperation<TRequest, TResponse> operation,
@@ -2714,6 +2711,10 @@ public sealed class AgentRuntimeCorrectnessTests
             where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (ReferenceEquals(operation, AgentRuntimeOperations.ChatSnapshot))
+            {
+                ChatSnapshotRequests.Enqueue((AgentChatSnapshotRequest)(object)request);
+            }
             return ReferenceEquals(operation, AgentRuntimeOperations.ChatSnapshot)
                 ? ValueTask.FromResult((TResponse)(object)snapshot)
                 : ValueTask.FromException<TResponse>(new NotSupportedException(operation.OperationId));

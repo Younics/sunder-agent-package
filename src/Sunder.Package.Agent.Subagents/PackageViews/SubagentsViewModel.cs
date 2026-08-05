@@ -67,7 +67,9 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         _listDetail.PropertyChanged += OnListDetailPropertyChanged;
         _runtimeRefresh = new SerializedRefreshLoop(ReloadAsync, ReportRuntimeRefreshFailure);
         ChatBinding = SubagentModelBindingEditor.Create(
-            new ProviderModelCatalogAdapter(gateway.ListChatProviders, gateway.LoadChatModelsAsync),
+            new ProviderModelCatalogAdapter(
+                gateway.ListChatProvidersAsync,
+                gateway.LoadChatModelsAsync),
             uiDispatcher);
         Subscribe();
     }
@@ -77,25 +79,6 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         IPackageSettingsNavigationService? settingsNavigationService = null)
         : this(gateway, settingsNavigationService, PresentationDispatcher.Capture())
     {
-    }
-
-    public SubagentsViewModel()
-    {
-        _uiDispatcher = PresentationDispatcher.Capture();
-        _tasks = new PresentationTaskScope();
-        _statusClear = new TimedStatusController(dispatcher: _uiDispatcher);
-        _listDetail = new KeyedAdaptiveListDetailState<string, SubagentRecord>(
-            Subagents,
-            static subagent => subagent.SubagentId,
-            keyComparer: StringComparer.OrdinalIgnoreCase);
-        _listDetail.SelectionChanging += OnSubagentSelectionChanging;
-        _listDetail.PropertyChanged += OnListDetailPropertyChanged;
-        _runtimeRefresh = new SerializedRefreshLoop(ReloadAsync, ReportRuntimeRefreshFailure);
-        ChatBinding = SubagentModelBindingEditor.Create(new ProviderModelCatalogAdapter(
-            () => [],
-            (_, _) => Task.FromResult(new ProviderModelCatalogResult([], string.Empty))),
-            _uiDispatcher);
-        Subscribe();
     }
 
     public ObservableCollection<SubagentRecord> Subagents { get; } = [];
@@ -296,7 +279,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     {
         if (_gateway is null)
         {
-            ClearEditor();
+            await RunOnUiThreadAsync(ClearEditor);
             return;
         }
 
@@ -332,46 +315,63 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         AdaptiveDetailTicket<string> ticket)
     {
         var cancellationToken = ticket.Request.CancellationToken;
-        var startEditRevision = _editRevision;
+        var startEditRevision = 0L;
+        EditableDocumentState<SubagentEditorDraft>? document = null;
+        SubagentEditorDraft? draft = null;
+        var preserveDirtyDraft = false;
+        var prepared = false;
         try
         {
-            var hasDraft = _drafts.TryGetValue(subagent.SubagentId, out var document);
-            var preserveDirtyDraft = hasDraft && document!.IsDirty;
-            var draft = preserveDirtyDraft
-                ? document!.Value
-                : CreatePersistedDraft(subagent);
-            if (!preserveDirtyDraft)
+            await RunOnUiThreadAsync(() =>
             {
-                document = new EditableDocumentState<SubagentEditorDraft>(draft, DraftComparer);
-                _drafts[subagent.SubagentId] = document;
+                if (!_listDetail.IsCurrentDetail(ticket))
+                {
+                    return;
+                }
+
+                startEditRevision = _editRevision;
+                var hasDraft = _drafts.TryGetValue(subagent.SubagentId, out document);
+                preserveDirtyDraft = hasDraft && document!.IsDirty;
+                draft = preserveDirtyDraft
+                    ? document!.Value
+                    : CreatePersistedDraft(subagent);
+                if (!preserveDirtyDraft)
+                {
+                    document = new EditableDocumentState<SubagentEditorDraft>(draft, DraftComparer);
+                    _drafts[subagent.SubagentId] = document;
+                }
+
+                _suppressDraftTracking = true;
+                try
+                {
+                    DisplayName = draft.DisplayName;
+                    Description = draft.Description;
+                    Instructions = draft.Instructions;
+                }
+                finally
+                {
+                    _suppressDraftTracking = false;
+                }
+                prepared = true;
+            });
+            if (!prepared)
+            {
+                return;
             }
 
             var localToolsTask = _gateway?.ListLocalToolsAsync(cancellationToken)
                 ?? Task.FromResult<IReadOnlyList<AgentToolDescriptor>>([]);
             var packageCapabilitiesTask = _gateway?.ListPackageCapabilitiesAsync(cancellationToken)
                 ?? Task.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
-
-            _suppressDraftTracking = true;
-            try
-            {
-                DisplayName = draft.DisplayName;
-                Description = draft.Description;
-                Instructions = draft.Instructions;
-            }
-            finally
-            {
-                _suppressDraftTracking = false;
-            }
-
             await Task.WhenAll(
-                    ChatBinding.RefreshAsync(draft.ChatBinding, cancellationToken),
+                    ChatBinding.RefreshAsync(draft!.ChatBinding, cancellationToken),
                     localToolsTask,
                     packageCapabilitiesTask)
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
             var localTools = await localToolsTask.WaitAsync(cancellationToken).ConfigureAwait(false);
             var packageCapabilities = await packageCapabilitiesTask.WaitAsync(cancellationToken).ConfigureAwait(false);
-            await _uiDispatcher.InvokeAsync(() =>
+            await RunOnUiThreadAsync(() =>
             {
                 if (!_listDetail.IsCurrentDetail(ticket))
                 {
@@ -406,36 +406,50 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
                 OnPropertyChanged(nameof(IsDirty));
                 _listDetail.TrySetDetailReady(ticket);
-            }).ConfigureAwait(false);
+            });
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            await _uiDispatcher.InvokeAsync(() =>
-                _listDetail.TryCancelDetailLoad(ticket)).ConfigureAwait(false);
+            await RunOnUiThreadAsync(() => _listDetail.TryCancelDetailLoad(ticket));
         }
         catch (Exception ex)
         {
-            await _uiDispatcher.InvokeAsync(() =>
+            await RunOnUiThreadAsync(() =>
             {
                 if (_listDetail.TrySetDetailError(ticket, ex))
                 {
                     SetStatus(ex.Message, SubagentStatusKind.Error);
                 }
-            }).ConfigureAwait(false);
+            });
         }
     }
 
     private async Task RefreshSelectedSubagentCapabilitiesAsync()
     {
-        var subagent = SelectedSubagent;
-        if (subagent is null)
+        SubagentRecord? subagent = null;
+        var intentRevision = 0L;
+        LatestRequestTicket request = default;
+        OperationGeneration operation = default;
+        var started = false;
+        await RunOnUiThreadAsync(() =>
+        {
+            subagent = SelectedSubagent;
+            if (subagent is null)
+            {
+                return;
+            }
+
+            intentRevision = IntentRevision;
+            request = _requests.Begin(CapabilitiesChannel, _lifetimeCancellation.Token);
+            operation = BeginOperation(SubagentOperation.RefreshCapabilities);
+            started = true;
+        });
+        if (!started)
         {
             return;
         }
 
-        var intentRevision = IntentRevision;
-        var request = _requests.Begin(CapabilitiesChannel, _lifetimeCancellation.Token);
-        var operation = BeginOperation(SubagentOperation.RefreshCapabilities);
+        var selectedSubagent = subagent!;
         try
         {
             var localToolsTask = _gateway?.ListLocalToolsAsync(request.CancellationToken)
@@ -447,13 +461,13 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
                 .ConfigureAwait(false);
             var localTools = await localToolsTask.WaitAsync(request.CancellationToken).ConfigureAwait(false);
             var packageCapabilities = await packageCapabilitiesTask.WaitAsync(request.CancellationToken).ConfigureAwait(false);
-            await _uiDispatcher.InvokeAsync(() =>
+            await RunOnUiThreadAsync(() =>
             {
                 if (!_requests.IsCurrent(request)
                     || intentRevision != IntentRevision
                     || !string.Equals(
                         SelectedSubagent?.SubagentId,
-                        subagent.SubagentId,
+                        selectedSubagent.SubagentId,
                         StringComparison.OrdinalIgnoreCase))
                 {
                     return;
@@ -474,30 +488,30 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
                 }
 
                 UpdateCurrentDraft();
-            }).ConfigureAwait(false);
+            });
         }
         catch (OperationCanceledException) when (request.CancellationToken.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            await _uiDispatcher.InvokeAsync(() =>
+            await RunOnUiThreadAsync(() =>
             {
                 if (_requests.IsCurrent(request)
                     && intentRevision == IntentRevision
                     && string.Equals(
                         SelectedSubagent?.SubagentId,
-                        subagent.SubagentId,
+                        selectedSubagent.SubagentId,
                         StringComparison.OrdinalIgnoreCase))
                 {
                     SetStatus(ex.Message, SubagentStatusKind.Error);
                 }
-            }).ConfigureAwait(false);
+            });
         }
         finally
         {
             _requests.Complete(request);
-            await _uiDispatcher.InvokeAsync(() => EndOperation(operation)).ConfigureAwait(false);
+            await RunOnUiThreadAsync(() => EndOperation(operation));
         }
     }
 
@@ -579,7 +593,8 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     {
         if (_settingsNavigationService is null || string.IsNullOrWhiteSpace(packageId))
         {
-            SetStatus("Package settings cannot be opened from this host.", SubagentStatusKind.Warning);
+            await RunOnUiThreadAsync(() =>
+                SetStatus("Package settings cannot be opened from this host.", SubagentStatusKind.Warning));
             return;
         }
 
@@ -587,24 +602,28 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         {
             if (!await _settingsNavigationService.OpenPackageSettingsAsync(packageId))
             {
-                SetStatus("Package settings could not be opened.", SubagentStatusKind.Warning);
+                await RunOnUiThreadAsync(() =>
+                    SetStatus("Package settings could not be opened.", SubagentStatusKind.Warning));
             }
         }
         catch (Exception ex)
         {
-            SetStatus(ex.Message, SubagentStatusKind.Error);
+            await RunOnUiThreadAsync(() => SetStatus(ex.Message, SubagentStatusKind.Error));
         }
     }
 
-    private void RunOnUiThread(Action action)
-    {
-        _tasks.Run(_uiDispatcher.InvokeAsync(() =>
+    private Task RunOnUiThreadAsync(Action action)
+        => _uiDispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
             {
                 action();
             }
-        }));
+        });
+
+    private void RunOnUiThread(Action action)
+    {
+        _tasks.Run(RunOnUiThreadAsync(action));
     }
 
     private void OnSubagentSelectionChanging(SubagentRecord? previous, SubagentRecord? current)

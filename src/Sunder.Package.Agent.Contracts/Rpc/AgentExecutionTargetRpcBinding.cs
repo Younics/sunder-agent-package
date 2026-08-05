@@ -139,6 +139,21 @@ public sealed class AgentExecutionTargetRpcClient :
     }
 
     public AgentExecutionTargetDescriptor Descriptor => _descriptor ??= Invoke<AgentRpcEmpty, AgentExecutionTargetDescriptor>("describe", new AgentRpcEmpty());
+    public async ValueTask<AgentExecutionTargetDescriptor> DescribeAsync(CancellationToken cancellationToken = default)
+    {
+        var cached = Volatile.Read(ref _descriptor);
+        if (cached is not null)
+        {
+            return cached;
+        }
+
+        var descriptor = await InvokeAsync<AgentRpcEmpty, AgentExecutionTargetDescriptor>(
+                "describe",
+                new AgentRpcEmpty(),
+                cancellationToken)
+            .ConfigureAwait(false);
+        return Interlocked.CompareExchange(ref _descriptor, descriptor, null) ?? descriptor;
+    }
     public async ValueTask<string?> GetConfigurationGenerationAsync(AgentExecutionTargetContext context, CancellationToken cancellationToken = default)
         => (await InvokeAsync<AgentExecutionTargetContextWire, AgentRpcOptional<string>>("configuration-generation", AgentExecutionTargetContextWire.FromContext(context), cancellationToken).ConfigureAwait(false)).Value;
     public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(AgentExecutionTargetContext context, CancellationToken cancellationToken = default) => InvokeAsync<AgentExecutionTargetContextWire, AgentExecutionTargetReadiness>("readiness", AgentExecutionTargetContextWire.FromContext(context), cancellationToken);
@@ -166,7 +181,12 @@ public sealed class AgentExecutionTargetRpcClient :
     private TResponse Invoke<TRequest, TResponse>(string method, TRequest request) where TRequest : notnull where TResponse : notnull => InvokeAsync<TRequest, TResponse>(method, request).AsTask().GetAwaiter().GetResult();
     private ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(string method, TRequest request, CancellationToken token = default) where TRequest : notnull where TResponse : notnull => AgentRpcServiceHandler.InvokeAsync<TRequest, TResponse>(_client, _endpoint, AgentExecutionTargetRpc.ServiceId, method, request, token);
     private TResponse InvokeFacet<TRequest, TResponse>(string facet, string method, TRequest request) where TRequest : notnull where TResponse : notnull { RequireFacet(facet); return Invoke<TRequest, TResponse>(method, request); }
-    private ValueTask<TResponse> InvokeFacetAsync<TRequest, TResponse>(string facet, string method, TRequest request, CancellationToken token) where TRequest : notnull where TResponse : notnull { RequireFacet(facet); return InvokeAsync<TRequest, TResponse>(method, request, token); }
+    private async ValueTask<TResponse> InvokeFacetAsync<TRequest, TResponse>(string facet, string method, TRequest request, CancellationToken token) where TRequest : notnull where TResponse : notnull
+    {
+        var descriptor = await DescribeAsync(token).ConfigureAwait(false);
+        if (!descriptor.SupportsFacet(facet)) throw new NotSupportedException($"Execution target facet '{facet}' is not advertised.");
+        return await InvokeAsync<TRequest, TResponse>(method, request, token).ConfigureAwait(false);
+    }
     private void RequireFacet(string facet) { if (!Descriptor.SupportsFacet(facet)) throw new NotSupportedException($"Execution target facet '{facet}' is not advertised."); }
 }
 

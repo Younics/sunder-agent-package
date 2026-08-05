@@ -248,9 +248,7 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
                 DockerImageCatalogService.ImagesKey,
                 JsonSerializer.Serialize(interleaved, CatalogJsonOptions));
         });
-        var config = new DockerExecutionWorkspaceConfigService(context, catalog);
-        var editor = new DockerExecutionWorkspaceEditorContributor(config, catalog);
-        var handler = new DockerExecutionRuntimeOperationHandler(context, runner, catalog, editor);
+        var handler = new DockerExecutionRuntimeOperationHandler(context, runner, catalog);
 
         var response = await handler.HandleAsync(new DockerExecutionOperationRequest(
             DockerExecutionOperationKind.RefreshImages));

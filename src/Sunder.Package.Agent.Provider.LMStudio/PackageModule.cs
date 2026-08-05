@@ -16,6 +16,7 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         services.AddSingleton(new ProviderCredentialAccessor(
             context.Secrets,
             LMStudioProviderConfiguration.ApiKeyKey));
+        services.AddSingleton<ProviderCredentialRuntimeHandler>();
         services.AddSingleton(serviceProvider => new LMStudioConnection(
             context,
             serviceProvider.GetRequiredService<ProviderCredentialAccessor>()));
@@ -38,13 +39,21 @@ public sealed class PackageModule : ISunderRuntimePackageModule
         registry.RegisterSettingsSchema(LMStudioProviderConfiguration.Schema);
         registry.RegisterRpcProvider("lmstudio.chat", AgentChatProviderRpc.CreateHandler(services.GetRequiredService<LMStudioAgentProvider>()));
         registry.RegisterRpcProvider("lmstudio.embedding", AgentEmbeddingProviderRpc.CreateHandler(services.GetRequiredService<LMStudioEmbeddingProvider>()));
+        var credentials = services.GetRequiredService<ProviderCredentialRuntimeHandler>();
+        registry.RegisterRuntimeOperation(ProviderCredentialRuntimeOperations.Query, credentials);
+        registry.RegisterRuntimeOperation(ProviderCredentialRuntimeOperations.Command, credentials);
     }
 }
 
 public sealed class AppPackageModule : ISunderAppPackageModule
 {
     public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
-        => services.AddTransient(_ => new LMStudioSettingsViewModel(context));
+    {
+        services.AddSingleton<ProviderCredentialAppRuntimeGateway>();
+        services.AddTransient(serviceProvider => new LMStudioSettingsViewModel(
+            context,
+            serviceProvider.GetRequiredService<ProviderCredentialAppRuntimeGateway>()));
+    }
 
     public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
         => registry.RegisterSettingsView<LMStudioSettingsView>();

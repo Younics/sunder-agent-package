@@ -75,6 +75,12 @@ public sealed class AgentRpcContentScopeTests
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
+        public ValueTask<bool> TryReportInvariantViolationAsync(
+            SunderRpcEndpointReference endpoint,
+            Exception exception,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
         public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(
             string contractId,
             CancellationToken cancellationToken = default)
@@ -156,6 +162,12 @@ public sealed class AgentRpcContentScopeTests
 
         public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(
             SunderRpcEndpointReference endpoint,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<bool> TryReportInvariantViolationAsync(
+            SunderRpcEndpointReference endpoint,
+            Exception exception,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 

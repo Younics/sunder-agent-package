@@ -94,6 +94,11 @@ internal sealed partial class AgentAppRuntimeGateway
         {
             _workspaceSessions.Clear();
             _knownSessions.Clear();
+            _dashboard = new AgentDashboardProjection(
+                snapshot.Revision,
+                snapshot.Profiles,
+                snapshot.Workspaces,
+                snapshot.WorkspaceBindings);
             var retainedStreamingTurns = _knownTurns.Values
                 .Where(turn => turn.IsStreaming)
                 .ToArray();

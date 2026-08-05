@@ -413,7 +413,9 @@ public sealed class ShellViewInitializationTests
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public IReadOnlyList<SubagentProviderCatalogOption> ListChatProviders() => [];
+        public Task<IReadOnlyList<SubagentProviderCatalogOption>> ListChatProvidersAsync(
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<SubagentProviderCatalogOption>>([]);
 
         public Task<SubagentProviderModelCatalogResult> LoadChatModelsAsync(
             string providerId,
@@ -488,7 +490,9 @@ public sealed class ShellViewInitializationTests
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public IReadOnlyList<SubagentProviderCatalogOption> ListChatProviders() => [];
+        public Task<IReadOnlyList<SubagentProviderCatalogOption>> ListChatProvidersAsync(
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<SubagentProviderCatalogOption>>([]);
 
         public Task<SubagentProviderModelCatalogResult> LoadChatModelsAsync(
             string providerId,

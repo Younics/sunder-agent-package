@@ -1,6 +1,7 @@
 <Project>
   <ItemGroup Condition="('$(SunderPackageProject)' == 'true' or '$(SunderSdkReference)' == 'true') and '$(SunderUseSourceSdk)' == 'true'">
-    <ProjectReference Include="$(SunderSdkProject)" />
+    <ProjectReference Include="$(SunderSdkProject)"
+                      GlobalPropertiesToRemove="Version;VersionPrefix;VersionSuffix;PackageVersion;InformationalVersion" />
   </ItemGroup>
 
   <ItemGroup Condition="('$(SunderPackageProject)' == 'true' or '$(SunderSdkReference)' == 'true') and '$(SunderUseSourceSdk)' == 'false'">
@@ -8,7 +9,8 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(SunderSdkStacksReference)' == 'true' and '$(SunderUseSourceSdk)' == 'true'">
-    <ProjectReference Include="$(SunderSdkStacksProject)" />
+    <ProjectReference Include="$(SunderSdkStacksProject)"
+                      GlobalPropertiesToRemove="Version;VersionPrefix;VersionSuffix;PackageVersion;InformationalVersion" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(SunderSdkStacksReference)' == 'true' and '$(SunderUseSourceSdk)' == 'false'">
@@ -16,14 +18,24 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(SunderSdkAvaloniaReference)' == 'true' and '$(SunderUseSourceSdk)' == 'true'">
-    <ProjectReference Include="$(SunderSdkAvaloniaProject)" />
+    <ProjectReference Include="$(SunderSdkAvaloniaProject)"
+                      GlobalPropertiesToRemove="Version;VersionPrefix;VersionSuffix;PackageVersion;InformationalVersion" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(SunderSdkAvaloniaReference)' == 'true' and '$(SunderUseSourceSdk)' == 'false'">
     <PackageReference Include="Sunder.Sdk.Avalonia" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(SunderPackageProject)' == 'true' and '$(SunderUseSourceSdk)' == 'false'">
+  <ItemGroup Condition="'$(SunderSdkWorkerReference)' == 'true' and '$(SunderUseSourceSdk)' == 'true'">
+    <ProjectReference Include="$(SunderSdkWorkerProject)"
+                      GlobalPropertiesToRemove="Version;VersionPrefix;VersionSuffix;PackageVersion;InformationalVersion" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(SunderSdkWorkerReference)' == 'true' and '$(SunderUseSourceSdk)' == 'false'">
+    <PackageReference Include="Sunder.Sdk.Worker" />
+  </ItemGroup>
+
+  <ItemGroup Condition="('$(SunderPackageProject)' == 'true' or '$(SunderPackageAggregateProject)' == 'true') and '$(SunderUseSourceSdk)' == 'false'">
     <PackageReference Include="Sunder.Package.Build" PrivateAssets="all" />
   </ItemGroup>
 
@@ -186,10 +198,12 @@
             Text="SunderUseSourceSdk is true, but the Sunder Stack SDK project was not found at '$(SunderSdkStacksProject)'." />
     <Error Condition="'$(SunderUseSourceSdk)' == 'true' and '$(SunderSdkAvaloniaReference)' == 'true' and !Exists('$(SunderSdkAvaloniaProject)')"
            Text="SunderUseSourceSdk is true, but the Sunder Avalonia SDK project was not found at '$(SunderSdkAvaloniaProject)'." />
-    <Error Condition="'$(SunderUseSourceSdk)' == 'true' and '$(SunderPackageProject)' == 'true' and !Exists('$(SunderPackageBuildTargets)')"
+    <Error Condition="'$(SunderUseSourceSdk)' == 'true' and '$(SunderSdkWorkerReference)' == 'true' and !Exists('$(SunderSdkWorkerProject)')"
+           Text="SunderUseSourceSdk is true, but the Sunder Worker SDK project was not found at '$(SunderSdkWorkerProject)'." />
+    <Error Condition="'$(SunderUseSourceSdk)' == 'true' and ('$(SunderPackageProject)' == 'true' or '$(SunderPackageAggregateProject)' == 'true') and !Exists('$(SunderPackageBuildTargets)')"
            Text="SunderUseSourceSdk is true, but the Sunder package build targets were not found at '$(SunderPackageBuildTargets)'." />
   </Target>
 
   <Import Project="$(SunderPackageBuildTargets)"
-          Condition="'$(SunderPackageProject)' == 'true' and '$(SunderUseSourceSdk)' == 'true' and Exists('$(SunderPackageBuildTargets)')" />
+          Condition="('$(SunderPackageProject)' == 'true' or '$(SunderPackageAggregateProject)' == 'true') and '$(SunderUseSourceSdk)' == 'true' and Exists('$(SunderPackageBuildTargets)')" />
 </Project>

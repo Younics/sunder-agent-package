@@ -19,8 +19,10 @@ public sealed partial class AgentProfilesViewModel
             var created = await _profileService.CreateProfileAsync(
                 "New Agent",
                 mutation.CancellationToken)
-                .WaitAsync(mutation.CancellationToken);
+                .WaitAsync(mutation.CancellationToken)
+                .ConfigureAwait(false);
             DiscardPendingProfileRefresh();
+            var profiles = await LoadProfilesAsync(mutation.CancellationToken).ConfigureAwait(false);
             await _uiDispatcher.InvokeAsync(() =>
             {
                 if (!_requests.IsCurrent(mutation))
@@ -28,7 +30,7 @@ public sealed partial class AgentProfilesViewModel
                     return;
                 }
 
-                _listDetail.Reconcile(_profileService.ListProfiles());
+                _listDetail.Reconcile(profiles);
                 if (_listDetail.TryShowCreatedDetail(created.ProfileId, intentRevision))
                 {
                     ClearStatus();
@@ -42,15 +44,18 @@ public sealed partial class AgentProfilesViewModel
         }
         catch (Exception ex)
         {
-            if (_requests.IsCurrent(mutation))
+            await _uiDispatcher.InvokeAsync(() =>
             {
-                SetStatus(ex.Message, AgentProfileStatusKind.Error);
-            }
+                if (_requests.IsCurrent(mutation))
+                {
+                    SetStatus(ex.Message, AgentProfileStatusKind.Error);
+                }
+            }).ConfigureAwait(false);
         }
         finally
         {
             _requests.Complete(mutation);
-            EndOperation(operation);
+            await _uiDispatcher.InvokeAsync(() => EndOperation(operation)).ConfigureAwait(false);
         }
     }
 
@@ -66,43 +71,81 @@ public sealed partial class AgentProfilesViewModel
         try
         {
             var profileId = SelectedProfile.ProfileId;
-            _profileService.SaveProfile(
-                profileId,
-                string.IsNullOrWhiteSpace(DisplayName) ? "Unnamed Profile" : DisplayName.Trim(),
-                Normalize(Description),
-                Normalize(Instructions),
-                ChatBinding.SelectedProvider?.Id,
-                ChatBinding.SelectedModel?.Id,
-                CanConfigureEmbeddings ? EmbeddingBinding.SelectedProvider?.Id : null,
-                CanConfigureEmbeddings ? EmbeddingBinding.SelectedModel?.Id : null,
-                Capabilities.Assignments,
-                SelectedBehaviorLoop?.LoopId ?? string.Empty,
-                SelectedBehaviorLoop?.SourceId ?? string.Empty,
-                SelectedProfile.BehaviorLoopSettingsJson ?? string.Empty,
-                ChatBinding.SettingsJson ?? string.Empty);
-
-            _drafts.Remove(profileId);
-            OnPropertyChanged(nameof(IsDirty));
-            DiscardPendingProfileRefresh();
-            if (IsCompactLayout)
+            var displayName = string.IsNullOrWhiteSpace(DisplayName) ? "Unnamed Profile" : DisplayName.Trim();
+            if (_profileCommands is null)
             {
-                _listDetail.ShowList();
-                ClearStatus();
+                _profileService.SaveProfile(
+                    profileId,
+                    displayName,
+                    Normalize(Description),
+                    Normalize(Instructions),
+                    ChatBinding.SelectedProvider?.Id,
+                    ChatBinding.SelectedModel?.Id,
+                    CanConfigureEmbeddings ? EmbeddingBinding.SelectedProvider?.Id : null,
+                    CanConfigureEmbeddings ? EmbeddingBinding.SelectedModel?.Id : null,
+                    Capabilities.Assignments,
+                    SelectedBehaviorLoop?.LoopId ?? string.Empty,
+                    SelectedBehaviorLoop?.SourceId ?? string.Empty,
+                    SelectedProfile.BehaviorLoopSettingsJson ?? string.Empty,
+                    ChatBinding.SettingsJson ?? string.Empty);
             }
             else
             {
-                SetStatus("Profile saved.", AgentProfileStatusKind.Success, autoClear: true);
+                await _profileCommands.SaveProfileAsync(
+                        profileId,
+                        displayName,
+                        Normalize(Description),
+                        Normalize(Instructions),
+                        ChatBinding.SelectedProvider?.Id,
+                        ChatBinding.SelectedModel?.Id,
+                        CanConfigureEmbeddings ? EmbeddingBinding.SelectedProvider?.Id : null,
+                        CanConfigureEmbeddings ? EmbeddingBinding.SelectedModel?.Id : null,
+                        Capabilities.Assignments,
+                        SelectedBehaviorLoop?.LoopId ?? string.Empty,
+                        SelectedBehaviorLoop?.SourceId ?? string.Empty,
+                        SelectedProfile.BehaviorLoopSettingsJson ?? string.Empty,
+                        ChatBinding.SettingsJson ?? string.Empty,
+                        _lifetimeCancellation.Token)
+                    .ConfigureAwait(false);
             }
-            _listDetail.Reconcile(_profileService.ListProfiles());
-            await Task.CompletedTask;
+
+            DiscardPendingProfileRefresh();
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _drafts.Remove(profileId);
+                OnPropertyChanged(nameof(IsDirty));
+                if (IsCompactLayout)
+                {
+                    _listDetail.ShowList();
+                    ClearStatus();
+                }
+                else
+                {
+                    SetStatus("Profile saved.", AgentProfileStatusKind.Success, autoClear: true);
+                }
+            }).ConfigureAwait(false);
+            var profiles = await LoadProfilesAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed)
+                {
+                    _listDetail.Reconcile(profiles);
+                }
+            }).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            SetStatus(ex.Message, AgentProfileStatusKind.Error);
+            await _uiDispatcher.InvokeAsync(() =>
+                SetStatus(ex.Message, AgentProfileStatusKind.Error)).ConfigureAwait(false);
         }
         finally
         {
-            EndOperation(operation);
+            await _uiDispatcher.InvokeAsync(() => EndOperation(operation)).ConfigureAwait(false);
         }
     }
 
@@ -120,29 +163,52 @@ public sealed partial class AgentProfilesViewModel
             var profileId = SelectedProfile.ProfileId;
             var deletedName = SelectedProfile.DisplayName;
             var shouldClearSelection = IsCompactLayout;
-            _profileService.DeleteProfile(profileId);
-
-            _drafts.Remove(profileId);
-            DiscardPendingProfileRefresh();
-            if (shouldClearSelection)
+            if (_profileCommands is null)
             {
-                _listDetail.ShowList();
-                ClearStatus();
+                _profileService.DeleteProfile(profileId);
             }
             else
             {
-                SetStatus($"Deleted profile '{deletedName}'.", AgentProfileStatusKind.Success, autoClear: true);
+                await _profileCommands.DeleteProfileAsync(profileId, _lifetimeCancellation.Token)
+                    .ConfigureAwait(false);
             }
-            _listDetail.Reconcile(_profileService.ListProfiles());
-            await Task.CompletedTask;
+
+            DiscardPendingProfileRefresh();
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _drafts.Remove(profileId);
+                if (shouldClearSelection)
+                {
+                    _listDetail.ShowList();
+                    ClearStatus();
+                }
+                else
+                {
+                    SetStatus($"Deleted profile '{deletedName}'.", AgentProfileStatusKind.Success, autoClear: true);
+                }
+            }).ConfigureAwait(false);
+            var profiles = await LoadProfilesAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed)
+                {
+                    _listDetail.Reconcile(profiles);
+                }
+            }).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            SetStatus(ex.Message, AgentProfileStatusKind.Error);
+            await _uiDispatcher.InvokeAsync(() =>
+                SetStatus(ex.Message, AgentProfileStatusKind.Error)).ConfigureAwait(false);
         }
         finally
         {
-            EndOperation(operation);
+            await _uiDispatcher.InvokeAsync(() => EndOperation(operation)).ConfigureAwait(false);
         }
     }
 
@@ -171,17 +237,22 @@ public sealed partial class AgentProfilesViewModel
             await Task.WhenAll(
                     ChatBinding.RefreshAsync(ChatBinding.Selection, _lifetimeCancellation.Token),
                     EmbeddingBinding.RefreshAsync(EmbeddingBinding.Selection, _lifetimeCancellation.Token))
-                .WaitAsync(_lifetimeCancellation.Token);
-            UpdateCurrentDraft();
-            ClearStatus();
+                .WaitAsync(_lifetimeCancellation.Token)
+                .ConfigureAwait(false);
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                UpdateCurrentDraft();
+                ClearStatus();
+            }).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            SetStatus(ex.Message, AgentProfileStatusKind.Error);
+            await _uiDispatcher.InvokeAsync(() =>
+                SetStatus(ex.Message, AgentProfileStatusKind.Error)).ConfigureAwait(false);
         }
         finally
         {
-            EndOperation(operation);
+            await _uiDispatcher.InvokeAsync(() => EndOperation(operation)).ConfigureAwait(false);
         }
     }
 
@@ -240,6 +311,12 @@ public sealed partial class AgentProfilesViewModel
             await _runtimeRefresh.MarkDirty().WaitAsync(cancellationToken).ConfigureAwait(false);
         }
     }
+
+    private async Task<IReadOnlyList<AgentProfileRecord>> LoadProfilesAsync(
+        CancellationToken cancellationToken)
+        => _dashboardLoader is null
+            ? _profileService.ListProfiles()
+            : (await _dashboardLoader.LoadDashboardAsync(cancellationToken).ConfigureAwait(false)).Profiles;
 
     private void DiscardPendingProfileRefresh()
     {

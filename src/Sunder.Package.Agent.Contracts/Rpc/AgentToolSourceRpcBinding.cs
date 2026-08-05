@@ -12,42 +12,54 @@ public static class AgentToolSourceRpc
     public static ISunderRpcServiceHandler CreateHandler(IAgentToolSource source, AgentRpcCatalog? rpcCatalog = null)
         => AgentRpcServiceHandler.Create()
             .AddUnary<AgentRpcEmpty, ToolSourceDescription>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(new ToolSourceDescription(source.SourceId, source.DisplayName, source.SourceKind)))
-            .AddUnary<AgentToolSourceContextWire, IReadOnlyList<AgentToolDescriptor>>(ServiceId, "list-tools", (_, request, token) => source.ListToolsAsync(FromWire(request, rpcCatalog), token))
-            .AddUnary<ToolReadinessRequest, AgentRpcOptional<AgentToolReadiness>>(ServiceId, "get-readiness", async (_, request, token) => new(true, await source.GetReadinessAsync(request.ToolId, FromWire(request.Context, rpcCatalog), token).ConfigureAwait(false)))
-            .AddUnary<ToolInvocationRequest, AgentRpcOptional<AgentToolResult>>(ServiceId, "preflight", async (_, request, token) => new(true, source is IAgentToolExecutionPreflightSource preflight ? await preflight.PreflightExecutionAsync(FromWire(request.Context, rpcCatalog), request.Request, token).ConfigureAwait(false) : null))
-            .AddUnary<ToolInvocationRequest, AgentToolResult>(ServiceId, "execute", (_, request, token) => source.ExecuteAsync(FromWire(request.Context, rpcCatalog), request.Request, token))
+            .AddUnary<AgentToolSourceContextWire, IReadOnlyList<AgentToolDescriptor>>(ServiceId, "list-tools", async (_, request, token) => await source.ListToolsAsync(await FromWireAsync(request, rpcCatalog, token).ConfigureAwait(false), token).ConfigureAwait(false))
+            .AddUnary<ToolReadinessRequest, AgentRpcOptional<AgentToolReadiness>>(ServiceId, "get-readiness", async (_, request, token) => new(true, await source.GetReadinessAsync(request.ToolId, await FromWireAsync(request.Context, rpcCatalog, token).ConfigureAwait(false), token).ConfigureAwait(false)))
+            .AddUnary<ToolInvocationRequest, AgentRpcOptional<AgentToolResult>>(ServiceId, "preflight", async (_, request, token) => new(true, source is IAgentToolExecutionPreflightSource preflight ? await preflight.PreflightExecutionAsync(await FromWireAsync(request.Context, rpcCatalog, token).ConfigureAwait(false), request.Request, token).ConfigureAwait(false) : null))
+            .AddUnary<ToolInvocationRequest, AgentToolResult>(ServiceId, "execute", async (_, request, token) => await source.ExecuteAsync(await FromWireAsync(request.Context, rpcCatalog, token).ConfigureAwait(false), request.Request, token).ConfigureAwait(false))
             .AddUnary<ToolInvocationRequest, AgentRpcOptional<AgentPermissionRequestWire>>(ServiceId, "permission", async (_, request, token) =>
             {
                 var permissionRequest = source is IAgentPermissionAwareToolSource permission
-                    ? await permission.BuildPermissionRequestAsync(FromWire(request.Context, rpcCatalog), request.Request, token).ConfigureAwait(false)
+                    ? await permission.BuildPermissionRequestAsync(await FromWireAsync(request.Context, rpcCatalog, token).ConfigureAwait(false), request.Request, token).ConfigureAwait(false)
                     : null;
                 return new(true, permissionRequest is null ? null : AgentPermissionRequestWire.FromRequest(permissionRequest));
             })
             .AddUnary<AgentToolPresentationRequest, AgentRpcOptional<AgentToolPresentation>>(ServiceId, "presentation", (_, request, _) => ValueTask.FromResult(new AgentRpcOptional<AgentToolPresentation>(true, source is IAgentToolPresentationResolver presentation ? presentation.ResolveToolPresentation(request) : null)))
             .Build();
 
-    private static AgentToolSourceContext FromWire(AgentToolSourceContextWire wire, AgentRpcCatalog? rpcCatalog)
+    private static async ValueTask<AgentToolSourceContext> FromWireAsync(
+        AgentToolSourceContextWire wire,
+        AgentRpcCatalog? rpcCatalog,
+        CancellationToken cancellationToken)
         => wire.Context with
         {
-            ExecutionTargetReference = ResolveTarget(wire.ExecutionTarget, rpcCatalog),
+            ExecutionTargetReference = await ResolveTargetAsync(wire.ExecutionTarget, rpcCatalog, cancellationToken)
+                .ConfigureAwait(false),
             ExecutionTargetConfigurationGeneration = wire.ExecutionTargetConfigurationGeneration,
         };
 
-    private static AgentToolExecutionContext FromWire(AgentToolExecutionContextWire wire, AgentRpcCatalog? rpcCatalog)
+    private static async ValueTask<AgentToolExecutionContext> FromWireAsync(
+        AgentToolExecutionContextWire wire,
+        AgentRpcCatalog? rpcCatalog,
+        CancellationToken cancellationToken)
         => wire.Context with
         {
-            ExecutionTargetReference = ResolveTarget(wire.ExecutionTarget, rpcCatalog),
+            ExecutionTargetReference = await ResolveTargetAsync(wire.ExecutionTarget, rpcCatalog, cancellationToken)
+                .ConfigureAwait(false),
             ApprovedResourceCapabilities = wire.ApprovedResourceCapabilities,
             ResourceOperation = wire.ResourceOperation?.ToContext(),
             ExecutionTargetConfigurationGeneration = wire.ExecutionTargetConfigurationGeneration,
         };
 
-    private static AgentRpcReference<IAgentExecutionTarget>? ResolveTarget(
+    private static ValueTask<AgentRpcReference<IAgentExecutionTarget>?> ResolveTargetAsync(
         AgentRpcProviderHandle? handle,
-        AgentRpcCatalog? rpcCatalog)
+        AgentRpcCatalog? rpcCatalog,
+        CancellationToken cancellationToken)
         => handle is null || rpcCatalog is null
-            ? null
-            : rpcCatalog.GetServiceReference(AgentRpcServices.ExecutionTargets, handle);
+            ? ValueTask.FromResult<AgentRpcReference<IAgentExecutionTarget>?>(null)
+            : rpcCatalog.TryGetServiceReferenceAsync(
+                AgentRpcServices.ExecutionTargets,
+                handle,
+                cancellationToken);
 }
 
 public sealed class AgentToolSourceRpcClient :
@@ -68,6 +80,26 @@ public sealed class AgentToolSourceRpcClient :
 
     private ToolSourceDescription Description => _description ??= AgentRpcServiceHandler.InvokeAsync<AgentRpcEmpty, ToolSourceDescription>(
         _client, _endpoint, AgentToolSourceRpc.ServiceId, "describe", new AgentRpcEmpty()).AsTask().GetAwaiter().GetResult();
+
+    public async ValueTask<ToolSourceDescription> DescribeAsync(CancellationToken cancellationToken = default)
+    {
+        var cached = Volatile.Read(ref _description);
+        if (cached is not null)
+        {
+            return cached;
+        }
+
+        var description = await AgentRpcServiceHandler
+            .InvokeAsync<AgentRpcEmpty, ToolSourceDescription>(
+                _client,
+                _endpoint,
+                AgentToolSourceRpc.ServiceId,
+                "describe",
+                new AgentRpcEmpty(),
+                cancellationToken)
+            .ConfigureAwait(false);
+        return Interlocked.CompareExchange(ref _description, description, null) ?? description;
+    }
 
     public string SourceId => Description.SourceId;
     public string DisplayName => Description.DisplayName;

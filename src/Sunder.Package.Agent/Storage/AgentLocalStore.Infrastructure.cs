@@ -14,6 +14,18 @@ public sealed partial class AgentLocalStore
             Pooling = false,
         }.ToString();
 
+    private static void EnableWriteAheadLogging(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA journal_mode = WAL;";
+        var mode = command.ExecuteScalar() as string;
+        if (!string.Equals(mode, "wal", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"The Agent store could not enable SQLite WAL mode; journal mode remained '{mode ?? "unknown"}'.");
+        }
+    }
+
     private static void EnableSecureDelete(SqliteConnection connection)
     {
         using var command = connection.CreateCommand();

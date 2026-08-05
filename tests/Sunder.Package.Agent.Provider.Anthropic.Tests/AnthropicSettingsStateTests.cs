@@ -1,6 +1,7 @@
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Runtime;
 using Sunder.Sdk.Storage;
 using Xunit;
 
@@ -9,28 +10,43 @@ namespace Sunder.Package.Agent.Provider.Anthropic.Tests;
 public sealed class AnthropicSettingsStateTests
 {
     [Fact]
-    public async Task ApiKey_SetRetainReplaceAndDelete_AreExplicitAndDoNotRetainInput()
+    public async Task ApiKey_AppReceivesPresenceOnlyAndSetRetainClearAreExplicitCommands()
     {
-        var context = new ProviderTestPackageContext("sunder.package.agent.provider.anthropic");
-        var credentials = new ProviderCredentialAccessor(
-            context.Secrets,
-            AnthropicProviderConfiguration.ApiKeySecretKey);
-        using var viewModel = new AnthropicSettingsViewModel(context, credentials);
+        const string storedCanary = "runtime-stored-secret-canary";
+        const string replacementCanary = "replacement-command-secret-canary";
+        var context = new ProviderTestPackageContext(
+            "sunder.package.agent.provider.anthropic",
+            secretValues: new Dictionary<string, string>
+            {
+                [AnthropicProviderConfiguration.ApiKeySecretKey] = storedCanary,
+            });
+        var runtime = CreateCredentialRuntime(context);
+        using var viewModel = new AnthropicSettingsViewModel(context, runtime);
 
-        viewModel.ApiKeySettings.EnteredCredential = " first-key ";
-        await viewModel.ApiKeySettings.SaveCredentialCommand.ExecuteAsync(null);
-        Assert.Equal("first-key", await context.Secrets.GetSecretAsync(AnthropicProviderConfiguration.ApiKeySecretKey));
+        await viewModel.InitializeAsync();
+
+        Assert.True(viewModel.ApiKeySettings.HasStoredCredential);
         Assert.Null(viewModel.ApiKeySettings.EnteredCredential);
+        Assert.All(runtime.Invocations, invocation =>
+            Assert.DoesNotContain(storedCanary, invocation.ResponseJson, StringComparison.Ordinal));
 
         viewModel.ApiKeySettings.EnteredCredential = "   ";
         await viewModel.ApiKeySettings.SaveCredentialCommand.ExecuteAsync(null);
-        Assert.Equal("first-key", await context.Secrets.GetSecretAsync(AnthropicProviderConfiguration.ApiKeySecretKey));
+        Assert.Equal(storedCanary, await context.Secrets.GetSecretAsync(AnthropicProviderConfiguration.ApiKeySecretKey));
         Assert.Null(viewModel.ApiKeySettings.EnteredCredential);
 
-        viewModel.ApiKeySettings.EnteredCredential = "second-key";
+        viewModel.ApiKeySettings.EnteredCredential = $" {replacementCanary} ";
         await viewModel.ApiKeySettings.SaveCredentialCommand.ExecuteAsync(null);
-        Assert.Equal("second-key", await context.Secrets.GetSecretAsync(AnthropicProviderConfiguration.ApiKeySecretKey));
+        Assert.Equal(replacementCanary, await context.Secrets.GetSecretAsync(AnthropicProviderConfiguration.ApiKeySecretKey));
         Assert.Null(viewModel.ApiKeySettings.EnteredCredential);
+        var setCommand = Assert.Single(runtime.Invocations, invocation =>
+            invocation.OperationId == ProviderCredentialRuntimeOperations.Command.OperationId
+            && invocation.RequestJson.Contains(replacementCanary, StringComparison.Ordinal));
+        Assert.DoesNotContain(replacementCanary, setCommand.ResponseJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            runtime.Invocations,
+            invocation => invocation.OperationId == ProviderCredentialRuntimeOperations.Query.OperationId
+                && invocation.RequestJson.Contains(replacementCanary, StringComparison.Ordinal));
 
         viewModel.ApiKeySettings.RequestClearCredentialCommand.Execute(null);
         Assert.True(viewModel.ApiKeySettings.IsClearConfirmationRequested);
@@ -50,7 +66,7 @@ public sealed class AnthropicSettingsStateTests
             secrets: secrets);
         using var viewModel = new AnthropicSettingsViewModel(
             context,
-            new ProviderCredentialAccessor(secrets, AnthropicProviderConfiguration.ApiKeySecretKey));
+            CreateCredentialRuntime(context));
         viewModel.ApiKeySettings.EnteredCredential = "retry-key";
 
         await viewModel.ApiKeySettings.SaveCredentialCommand.ExecuteAsync(null);
@@ -67,7 +83,7 @@ public sealed class AnthropicSettingsStateTests
         var context = new ProviderTestPackageContext(
             "sunder.package.agent.provider.anthropic",
             settings: state);
-        using var viewModel = new AnthropicSettingsViewModel(context);
+        using var viewModel = new AnthropicSettingsViewModel(context, NullPackageRuntimeClient.Instance);
         viewModel.UtilityModelSettings.SelectedUtilityModel = viewModel.UtilityModelSettings.UtilityModels.Last();
 
         var save = viewModel.UtilityModelSettings.SaveUtilityModelCommand.ExecuteAsync(null);
@@ -78,6 +94,27 @@ public sealed class AnthropicSettingsStateTests
         Assert.True(viewModel.UtilityModelSettings.IsOperationStatusWarning);
         Assert.Contains("canceled", viewModel.UtilityModelSettings.OperationStatus, StringComparison.OrdinalIgnoreCase);
         Assert.Null(await state.GetValueAsync(AnthropicProviderConfiguration.UtilityModelKey));
+    }
+
+    private static ProviderTestRuntimeClient CreateCredentialRuntime(ProviderTestPackageContext context)
+    {
+        var handler = new ProviderCredentialRuntimeHandler(new ProviderCredentialAccessor(
+            context.Secrets,
+            AnthropicProviderConfiguration.ApiKeySecretKey));
+        return new ProviderTestRuntimeClient(async (operationId, request, cancellationToken) =>
+        {
+            if (operationId == ProviderCredentialRuntimeOperations.Query.OperationId)
+            {
+                return await handler.HandleAsync((ProviderCredentialQuery)request, cancellationToken);
+            }
+
+            if (operationId == ProviderCredentialRuntimeOperations.Command.OperationId)
+            {
+                return await handler.HandleAsync((ProviderCredentialCommand)request, cancellationToken);
+            }
+
+            throw new InvalidOperationException($"Unexpected Runtime operation '{operationId}'.");
+        });
     }
 
     private sealed class ThrowingSecrets : IPackageSecrets

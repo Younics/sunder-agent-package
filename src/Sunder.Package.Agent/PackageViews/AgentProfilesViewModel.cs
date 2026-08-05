@@ -19,6 +19,9 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     private const string MutationChannel = "profiles-mutation";
     private const string CapabilitiesChannel = "profile-capabilities";
     private readonly IAgentProfileGateway _profileService;
+    private readonly IAgentDashboardLoader? _dashboardLoader;
+    private readonly IAgentCatalogLoader? _catalogLoader;
+    private readonly IAgentProfileCommandGateway? _profileCommands;
     private readonly IAgentRuntimeAvailability? _runtimeAvailability;
     private readonly IPackageSettingsNavigationService? _settingsNavigationService;
     private readonly IPresentationDispatcher _uiDispatcher;
@@ -56,6 +59,9 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         TimeProvider? runtimeNoticeTimeProvider = null)
     {
         _profileService = profileService;
+        _dashboardLoader = profileService as IAgentDashboardLoader;
+        _catalogLoader = profileService as IAgentCatalogLoader;
+        _profileCommands = profileService as IAgentProfileCommandGateway;
         _runtimeAvailability = profileService as IAgentRuntimeAvailability;
         _settingsNavigationService = settingsNavigationService;
         _uiDispatcher = uiDispatcher;
@@ -632,7 +638,10 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         var applied = false;
         try
         {
-            var profiles = _profileService.ListProfiles();
+            var profiles = _dashboardLoader is null
+                ? _profileService.ListProfiles()
+                : (await _dashboardLoader.LoadDashboardAsync(request.CancellationToken)
+                    .ConfigureAwait(false)).Profiles;
             await _uiDispatcher.InvokeAsync(() =>
             {
                 if (_requests.IsCurrent(request))
@@ -702,14 +711,17 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
         try
         {
-            if (!await _settingsNavigationService.OpenPackageSettingsAsync(packageId))
+            if (!await _settingsNavigationService.OpenPackageSettingsAsync(packageId).ConfigureAwait(false))
             {
-                SetStatus("Package settings could not be opened.", AgentProfileStatusKind.Warning);
+                await _uiDispatcher.InvokeAsync(() =>
+                    SetStatus("Package settings could not be opened.", AgentProfileStatusKind.Warning))
+                    .ConfigureAwait(false);
             }
         }
         catch (Exception ex)
         {
-            SetStatus(ex.Message, AgentProfileStatusKind.Error);
+            await _uiDispatcher.InvokeAsync(() =>
+                SetStatus(ex.Message, AgentProfileStatusKind.Error)).ConfigureAwait(false);
         }
     }
 

@@ -49,7 +49,6 @@ public interface IAgentWorkspaceGateway
     IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId);
     AgentWorkspaceBindingRecord SavePrimaryExecutionBinding(string workspaceId, string contributionId,
         string displayRole = AgentWorkspaceBindingRoles.PrimaryExecutionTarget);
-    void RemovePrimaryExecutionBinding(string workspaceId);
     Task InitializeAsync(CancellationToken cancellationToken = default);
 }
 
@@ -107,7 +106,6 @@ public interface IAgentPermissionGateway
     void SaveOverride(string actionId, string boundaryId, AgentPermissionDecision decision);
     void DeleteOverride(string actionId, string boundaryId);
     IReadOnlyList<AgentPendingPermissionRequestRecord> ListPendingRequestsForSessionTree(Guid sessionId);
-    void SaveSessionApproval(Guid sessionId, string actionId, string boundaryId);
 }
 
 public interface IAgentRunGateway
